@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
                                     *attr_type == TypeId::ANY
                                         || *attr_type == TypeId::ERROR
                                         || self
-                                            .diagnostic_relation_boolean_guard(*attr_type, expected)
+                                            .assign_relation_outcome(*attr_type, expected)
+                                            .related
                                 }
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
@@ -438,10 +439,10 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self.diagnostic_relation_boolean_guard(
-                                TypeId::BOOLEAN_TRUE,
-                                expected_type,
-                            ) {
+                            if !self
+                                .assign_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
+                                .related
+                            {
                                 let target_str = self.format_type(expected_type);
                                 let message = format_message(
                                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -721,7 +722,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = outcome.provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self.diagnostic_relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type)
+                    if !self
+                        .assign_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
+                        .related
                     {
                         let is_literal_target = crate::query_boundaries::common::is_literal_type(
                             self.ctx.types,
@@ -888,7 +891,9 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self.diagnostic_relation_boolean_guard(actual_type, expected_type)
+                            && !self
+                                .assign_relation_outcome(actual_type, expected_type)
+                                .related
                         {
                             outcome.needs_special_attr_object_assignability = true;
                         }

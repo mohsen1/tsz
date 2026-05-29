@@ -100,7 +100,9 @@ impl<'a> CheckerState<'a> {
                 if evaluated_constraint != TypeId::ANY
                     && evaluated_constraint != TypeId::UNKNOWN
                     && evaluated_constraint != TypeId::ERROR
-                    && !self.is_assignable_to_with_env(type_arg, evaluated_constraint)
+                    && !self
+                        .assign_relation_outcome_with_env(type_arg, evaluated_constraint)
+                        .related
                 {
                     return false;
                 }
@@ -171,7 +173,7 @@ impl<'a> CheckerState<'a> {
                 if self
                     .primitive_parts(actual)
                     .into_iter()
-                    .any(|part| !self.is_assignable_to(part, constraint))
+                    .any(|part| !self.assign_relation_outcome(part, constraint).related)
                 {
                     failed = true;
                 }

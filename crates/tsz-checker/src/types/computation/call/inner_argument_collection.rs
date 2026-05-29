@@ -1403,7 +1403,12 @@
                                 // If the literal satisfies the contextual return type,
                                 // replace the callback return with the contextual type
                                 // to prevent widening in the solver's inference.
-                                if self.is_assignable_to_with_env(fn_shape.return_type, ctx_return)
+                                if self
+                                    .assign_relation_outcome_with_env(
+                                        fn_shape.return_type,
+                                        ctx_return,
+                                    )
+                                    .related
                                 {
                                     let mut new_shape = (*fn_shape).clone();
                                     new_shape.return_type = ctx_return;

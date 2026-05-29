@@ -1567,7 +1567,9 @@ impl<'a> CheckerState<'a> {
                         } else {
                             interface_type
                         };
-                        if !self.diagnostic_relation_boolean_guard(class_instance_type, target_type)
+                        if !self
+                            .assign_relation_outcome(class_instance_type, target_type)
+                            .related
                         {
                             let analysis = self
                                 .analyze_assignability_failure(class_instance_type, target_type);

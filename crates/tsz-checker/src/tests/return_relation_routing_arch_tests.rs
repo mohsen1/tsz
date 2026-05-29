@@ -31,6 +31,11 @@ fn return_statement_diagnostics_use_return_relation_outcome_boundary() {
         "return statement compatibility checks should use the return relation outcome"
     );
     assert!(
+        compact_return_source
+            .contains("return_relation_outcome(contextual_type,expected_type).related"),
+        "contextual return recovery should use the return relation outcome"
+    );
+    assert!(
         compact_return_source.contains("return_relation_outcome(return_type,member)"),
         "contextual callable-union return deferral should use the return relation outcome"
     );
@@ -38,6 +43,11 @@ fn return_statement_diagnostics_use_return_relation_outcome_boundary() {
         !compact_return_source
             .contains("diagnostic_relation_boolean_guard(return_type,expected_type)"),
         "return statement diagnostics should not pre-gate with a raw boolean relation"
+    );
+    assert!(
+        !compact_return_source
+            .contains("diagnostic_relation_boolean_guard(contextual_type,expected_type)"),
+        "contextual return recovery should not pre-gate with a raw boolean relation"
     );
     assert!(
         !compact_return_source.contains("assign_relation_outcome(return_type,member)"),

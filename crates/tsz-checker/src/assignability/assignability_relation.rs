@@ -203,7 +203,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
-        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+        let related = self.is_assignable_to(source, target);
+        if related {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
                 depth_exceeded: false,
@@ -217,7 +218,105 @@ impl<'a> CheckerState<'a> {
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
-        self.execute_relation_request(&request)
+        let mut outcome = self.execute_relation_request(&request);
+        outcome.related = false;
+        outcome
+    }
+
+    /// Execute a diagnostic-bearing assignment relation using the current
+    /// `TypeEnvironment`, preserving the no-cache semantics of
+    /// `is_assignable_to_with_env` while returning a structured outcome.
+    pub(crate) fn assign_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let outcome = |related| crate::query_boundaries::assignability::RelationOutcome {
+            related,
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        };
+
+        if source == target || self.is_assignable_to_with_env(source, target) {
+            return outcome(true);
+        }
+
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let target = self.substitute_this_type_if_needed(target);
+
+        if source != TypeId::NEVER
+            && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
+        {
+            return outcome(false);
+        }
+
+        {
+            let env = self.ctx.type_env.borrow();
+            let flags = self.ctx.pack_relation_flags();
+            let inputs = AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &*env,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            };
+            if let Some(result) = check_application_variance_assignability(&inputs) {
+                return outcome(result);
+            }
+        }
+
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let mut relation_outcome = {
+            let env = self.ctx.type_env.borrow();
+            let flags = self.ctx.pack_relation_flags();
+            let overrides = CheckerOverrideProvider::new(self, Some(&*env));
+            let request =
+                crate::query_boundaries::assignability::RelationRequest::assign(source, target);
+            crate::query_boundaries::assignability::execute_relation(
+                &request,
+                self.ctx.types,
+                &*env,
+                flags,
+                &self.ctx.inheritance_graph,
+                &overrides,
+                Some(&self.ctx),
+                self.ctx.sound_mode(),
+            )
+        };
+
+        self.propagate_overflow_flags(
+            relation_outcome.depth_exceeded,
+            relation_outcome.iteration_exceeded,
+        );
+
+        if relation_outcome.related
+            && self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+        {
+            relation_outcome.related = false;
+        }
+
+        if relation_outcome.related
+            && let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
+            && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
+        {
+            let source_str = self.ctx.types.resolve_atom(source_atom);
+            let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
+            if !allowed_keys.is_empty() && !allowed_keys.contains(&source_str) {
+                relation_outcome.related = false;
+            }
+        }
+
+        relation_outcome.related = false;
+        relation_outcome
     }
 
     /// Execute a diagnostic-bearing call-argument relation for raw checker

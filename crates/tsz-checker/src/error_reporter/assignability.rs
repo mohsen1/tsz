@@ -136,7 +136,6 @@ impl<'a> CheckerState<'a> {
         if source_prop.optional || source_prop.visibility != tsz_solver::Visibility::Public {
             return false;
         }
-
         let Some(target_prop) = self
             .property_info_for_any_missing_property_satisfaction_type(target_types, property_name)
         else {
@@ -145,18 +144,19 @@ impl<'a> CheckerState<'a> {
         if target_prop.visibility != tsz_solver::Visibility::Public {
             return false;
         }
-
         let read_ok = if source_prop.is_method || target_prop.is_method {
             self.diagnostic_relation_boolean_guard_bivariant(
                 source_prop.type_id,
                 target_prop.type_id,
             )
         } else {
-            self.diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
+            self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+                .related
         };
         let write_ok = target_prop.readonly
             || self
-                .diagnostic_relation_boolean_guard(target_prop.write_type, source_prop.write_type);
+                .assign_relation_outcome(target_prop.write_type, source_prop.write_type)
+                .related;
 
         read_ok && write_ok
     }
@@ -862,7 +862,7 @@ impl<'a> CheckerState<'a> {
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|&m| !self.diagnostic_relation_boolean_guard(m, target_eval))
+            .filter(|&m| !self.assign_relation_outcome(m, target_eval).related)
             .collect();
         if mismatched.len() == members.len()
             && members.len() == 2

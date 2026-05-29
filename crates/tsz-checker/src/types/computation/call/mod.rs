@@ -1028,7 +1028,9 @@ impl<'a> CheckerState<'a> {
                 match &result {
                     crate::query_boundaries::common::CallResult::Success(ret) => {
                         let contextual_return = self.evaluate_contextual_type(ctx_type);
-                        !self.is_assignable_to_with_env(*ret, contextual_return)
+                        !self
+                            .assign_relation_outcome_with_env(*ret, contextual_return)
+                            .related
                     }
                     _ => true,
                 }

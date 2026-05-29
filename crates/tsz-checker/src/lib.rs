@@ -819,6 +819,9 @@ mod optional_key_extraction_tests;
 #[path = "tests/optional_private_field_undefined_tests.rs"]
 mod optional_private_field_undefined_tests;
 #[cfg(test)]
+#[path = "tests/overlap_relation_helper_routing_arch_tests.rs"]
+mod overlap_relation_helper_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
@@ -833,6 +836,9 @@ mod predicate_narrowed_lib_union_access_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
+#[cfg(test)]
+#[path = "tests/private_member_relation_routing_arch_tests.rs"]
+mod private_member_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/private_optional_field_undefined_tests.rs"]
 mod private_optional_field_undefined_tests;

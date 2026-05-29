@@ -996,7 +996,9 @@ impl<'a> CheckerState<'a> {
                 match &result {
                     CallResult::Success(ret) => {
                         let contextual_return = self.evaluate_contextual_type(ctx_type);
-                        !self.is_assignable_to_with_env(*ret, contextual_return)
+                        !self
+                            .assign_relation_outcome_with_env(*ret, contextual_return)
+                            .related
                     }
                     _ => true,
                 }
@@ -1230,10 +1232,13 @@ impl<'a> CheckerState<'a> {
                         if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
                             return false;
                         }
-                        self.is_assignable_to_with_env(actual, expected)
+                        self.assign_relation_outcome_with_env(actual, expected)
+                            .related
                     });
                     if contextual_params_fit_args
-                        && self.is_assignable_to_with_env(instantiated_shape_return, ctx_type)
+                        && self
+                            .assign_relation_outcome_with_env(instantiated_shape_return, ctx_type)
+                            .related
                     {
                         result = CallResult::Success(instantiated_shape_return);
                     }
@@ -1267,7 +1272,9 @@ impl<'a> CheckerState<'a> {
                         &return_context_substitution,
                     );
                     if instantiated_return != shape.return_type
-                        && self.is_assignable_to_with_env(instantiated_return, ctx_type)
+                        && self
+                            .assign_relation_outcome_with_env(instantiated_return, ctx_type)
+                            .related
                     {
                         result = CallResult::Success(instantiated_return);
                     }

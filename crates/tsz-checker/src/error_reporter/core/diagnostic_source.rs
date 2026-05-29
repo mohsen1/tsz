@@ -1585,8 +1585,12 @@ impl<'a> CheckerState<'a> {
             // eliminated declared union members; the subset check handles
             // surviving members structurally compatible with eliminated ones.
             let expr_is_assignability_narrower = expr_display_type != declared_type
-                && self.diagnostic_relation_boolean_guard(expr_display_type, declared_type)
-                && !self.diagnostic_relation_boolean_guard(declared_type, expr_display_type);
+                && self
+                    .assign_relation_outcome(expr_display_type, declared_type)
+                    .related
+                && !self
+                    .assign_relation_outcome(declared_type, expr_display_type)
+                    .related;
             let expr_is_union_subset_narrower = expr_display_type != declared_type
                 && self.is_strict_union_member_subset(expr_display_type, declared_type);
             !(expr_is_assignability_narrower || expr_is_union_subset_narrower)
