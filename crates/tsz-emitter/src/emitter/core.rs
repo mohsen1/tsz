@@ -636,6 +636,15 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// Depth of converted-loop IIFE bodies currently being emitted. Greater than
+    /// zero while emitting directly inside a `_loop_N` body.
+    pub(crate) loop_iife_body_depth: u32,
+
+    /// Spread-call receiver temps (`var _a;`) that belong to the converted-loop
+    /// IIFE body currently being emitted, flushed at that body's top. Saved and
+    /// restored per IIFE so nested loops keep their own.
+    pub(crate) loop_iife_pending_hoisted_temps: Vec<String>,
+
     /// File-level class temps reserved ahead of legacy decorator computed-name temps.
     pub(crate) hoisted_file_level_class_temps: Vec<String>,
 

@@ -1970,12 +1970,48 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit: obj.method.apply(obj, args_array)
+        // The receiver is emitted twice (once as the property base, once as the
+        // `apply` `thisArg`). When it is a non-simple expression (anything other
+        // than an identifier, `this`, or a literal), evaluating it twice would be
+        // observable, so tsc captures it once into a hoisted temp and reuses it:
+        // `(_a = obj.prop).method.apply(_a, args)`.
+        if crate::transforms::emit_utils::is_simple_copiable_expression(
+            self.arena,
+            access.expression,
+        ) {
+            self.emit(access.expression);
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(".apply(");
+            self.emit(access.expression);
+            self.write(", ");
+            self.emit_spread_args_array(&args.nodes);
+            self.write(")");
+            return;
+        }
+
+        let receiver_temp = self.make_unique_name_hoisted_assignment_fresh();
+        self.write("(");
+        self.write(&receiver_temp);
+        self.write(" = ");
         self.emit(access.expression);
-        self.write(".");
-        self.emit(access.name_or_argument);
+        self.write(")");
+        if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit(access.name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+        }
         self.write(".apply(");
-        self.emit(access.expression);
+        self.write(&receiver_temp);
         self.write(", ");
         self.emit_spread_args_array(&args.nodes);
         self.write(")");
