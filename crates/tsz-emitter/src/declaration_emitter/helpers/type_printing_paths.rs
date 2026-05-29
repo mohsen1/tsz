@@ -444,6 +444,83 @@ impl<'a> DeclarationEmitter<'a> {
             && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
     }
 
+    /// When `sym_id` is the resolved target of a single in-scope
+    /// `import alias = Q.R.S` declaration, return the alias name so the type
+    /// printer can reference the symbol directly (e.g. `import xc = x.c;` makes
+    /// the type of `new xc()` print as `xc`, not `xc.c` or `x.c`). Ambiguous
+    /// targets (multiple aliases) fall back to the normal qualified path.
+    pub(crate) fn resolve_import_equals_alias_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<String> {
+        let candidates = self.local_import_equals_alias_for_target.get(&sym_id)?;
+        // tsc only uses an `import alias = Q.R.S` to name `S` when the alias is
+        // the most direct in-scope reference. If `S`'s own enclosing scope
+        // already encloses the current emit position, `S` is reachable by its
+        // local name there (e.g. inside `m_private`, `c_private` names itself),
+        // so tsc prints the original name rather than a same-scope alias.
+        if self.import_equals_target_locally_nameable(sym_id) {
+            return None;
+        }
+        // Keep only aliases whose declaration scope encloses the current emit
+        // position. An alias declared inside `m2.m3` may not be used to name a
+        // type at the top level (there tsc prints the expanded `x.c` instead).
+        let mut in_scope = candidates
+            .iter()
+            .filter(|(_, scope_sym)| self.import_equals_alias_scope_is_visible(*scope_sym));
+        let first = in_scope.next()?;
+        // Only substitute when the in-scope alias is unambiguous.
+        if in_scope.next().is_some() {
+            return None;
+        }
+        Some(first.0.clone())
+    }
+
+    /// Whether the import-equals target symbol is directly reachable by its own
+    /// (unqualified, scope-local) name at the current emit position, i.e. the
+    /// symbol's enclosing namespace/module scope encloses the current scope.
+    /// When true, tsc prefers the symbol's own name over an alias.
+    fn import_equals_target_locally_nameable(&self, sym_id: SymbolId) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(target_scope) = binder.symbols.get(sym_id).map(|sym| sym.parent) else {
+            return false;
+        };
+        // Top-level symbols are always locally nameable.
+        if !target_scope.is_some() {
+            return true;
+        }
+        self.import_equals_alias_scope_is_visible(target_scope)
+    }
+
+    /// Whether an `import alias = ...` declared in `alias_scope` is in lexical
+    /// scope at the current emit position. `SymbolId::NONE` denotes file/top-level
+    /// scope, which is always visible. Otherwise the alias scope must be the
+    /// current enclosing namespace or one of its ancestors.
+    fn import_equals_alias_scope_is_visible(&self, alias_scope: SymbolId) -> bool {
+        if !alias_scope.is_some() {
+            return true;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let mut current = self.enclosing_namespace_symbol;
+        while let Some(cur) = current {
+            if cur == alias_scope {
+                return true;
+            }
+            current = binder.symbols.get(cur).and_then(|sym| {
+                if sym.parent.is_some() {
+                    Some(sym.parent)
+                } else {
+                    None
+                }
+            });
+        }
+        false
+    }
+
     pub(crate) fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {
         let binder = self.binder?;
 

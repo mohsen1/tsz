@@ -44,6 +44,10 @@ pub struct TypePrinter<'a> {
     module_path_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
     /// Optional resolver for reusing in-scope namespace import aliases.
     namespace_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
+    /// Optional resolver mapping a symbol that is the resolved target of an
+    /// in-scope `import alias = Q.R.S` declaration to its alias name, so the
+    /// symbol is printed as the bare alias rather than its expanded path.
+    import_equals_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
     /// Optional resolver for deciding whether a local import alias survives in emitted output.
     local_import_alias_name_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
     /// Optional resolver for checking whether a foreign symbol has a local import
@@ -78,6 +82,7 @@ impl<'a> TypePrinter<'a> {
             node_arena: None,
             module_path_resolver: None,
             namespace_alias_resolver: None,
+            import_equals_alias_resolver: None,
             local_import_alias_name_resolver: None,
             has_local_import_alias_resolver: None,
             strict_null_checks: true,
@@ -163,6 +168,15 @@ impl<'a> TypePrinter<'a> {
         resolver: &'a dyn Fn(SymbolId) -> Option<String>,
     ) -> Self {
         self.namespace_alias_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a resolver mapping an `import alias = Q.R.S` target symbol to its alias name.
+    pub fn with_import_equals_alias_resolver(
+        mut self,
+        resolver: &'a dyn Fn(SymbolId) -> Option<String>,
+    ) -> Self {
+        self.import_equals_alias_resolver = Some(resolver);
         self
     }
 

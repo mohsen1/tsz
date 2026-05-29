@@ -86,6 +86,10 @@ path = "tests/recursive_const_arrow_dts_emit_tests.rs"
 name = "parenthesized_type_dts_emit_tests"
 path = "tests/parenthesized_type_dts_emit_tests.rs"
 
+[[test]]
+name = "import_equals_alias_dts_emit_tests"
+path = "tests/import_equals_alias_dts_emit_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
