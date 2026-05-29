@@ -1596,9 +1596,6 @@ impl<'a> CheckerState<'a> {
         }
         self.get_class_name_from_expression(object_expr)
             .or_else(|| {
-                // For `typeof X` types (TypeData::TypeQuery), extract the symbol name
-                // directly rather than parsing the rendered "typeof " prefix from the
-                // type printer — the printer output is not a reliable identity source.
                 if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
                     crate::query_boundaries::common::classify_type_query(
                         self.ctx.types,
