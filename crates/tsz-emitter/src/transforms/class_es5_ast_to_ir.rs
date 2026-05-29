@@ -1683,19 +1683,19 @@ impl<'a> AstToIr<'a> {
         let hoisted_var_groups =
             AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
         let this_arg = self.async_arrow_awaiter_this_arg();
+        // Capture `arguments` into the wrapper when the arrow body references it;
+        // a captured-arguments wrapper becomes a block (see helper for details).
+        let body = transformer.build_async_arrow_awaiter_body(
+            this_arg,
+            generator_body,
+            hoisted_var_groups,
+        );
+        let is_expression_body = !transformer.state.captures_arguments;
         IRNode::FunctionExpr {
             name: None,
             parameters: self.convert_parameters(&arrow.parameters),
-            body: vec![IRNode::AwaiterCall {
-                this_arg: Box::new(this_arg),
-                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
-                generator_body: Box::new(generator_body),
-                hoisted_var_groups,
-                promise_constructor: None,
-                multiline_callback: false,
-                directives: Vec::new(),
-            }],
-            is_expression_body: true,
+            body,
+            is_expression_body,
             body_source_range: None,
         }
     }

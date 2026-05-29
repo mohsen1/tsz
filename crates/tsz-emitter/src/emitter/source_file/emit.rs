@@ -1489,10 +1489,10 @@ impl<'a> Printer<'a> {
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();
         self.iterator_for_of_depth = 0;
-
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
         self.preallocate_iterator_return_temps_for_statements(&source.statements.nodes);
+        self.prealloc_for_of_destructure_temps(&source.statements.nodes);
         self.reserve_pending_file_level_class_temps();
 
         let mut hoisted_var_byte_offset = if is_file_module {

@@ -10,6 +10,7 @@ mod bindings_for_of;
 mod bindings_param_patterns;
 mod bindings_patterns;
 mod bindings_read;
+mod for_of_destructure_prealloc;
 mod helpers;
 mod helpers_async;
 mod helpers_async_generator;

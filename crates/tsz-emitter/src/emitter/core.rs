@@ -420,6 +420,15 @@ pub struct Printer<'a> {
     /// Marker that the next block emission is a function body.
     pub(crate) emitting_function_body_block: bool,
 
+    /// Set while emitting the expression that is the synthesized `return`
+    /// argument of a concise-body arrow function converted to a block body
+    /// (e.g. `=> classExpr` lowered to `=> { var _a; return _a = classExpr,
+    /// _a.x = ..., _a; }`). A class-expression comma wrapper in this position
+    /// is the direct operand of `return`, so it must not be parenthesized,
+    /// matching tsc's transform where the class expression's effective parent
+    /// is the synthesized return statement.
+    pub(crate) emitting_concise_arrow_return_argument: bool,
+
     /// Parameter nodes for the next function body block.
     ///
     /// ES5 block-scoped lowering needs parameters in the function's scope map

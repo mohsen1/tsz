@@ -74,3 +74,84 @@ fn es5_static_block_reuses_surrounding_class_alias() {
         "Static block `this` references should use the surrounding class alias.\nOutput:\n{output}"
     );
 }
+
+// A concise-body arrow returning an anonymous `class extends <base>` with a
+// static field (the mixin pattern) is lowered to a single-line block body
+// `(...) => { var _a; return _a = class extends <base> {...}, _a.<field> = ...,
+// _a; }`. tsc keeps the synthesized `{ var _a; return` on the arrow's `=>`
+// line and does *not* parenthesize the comma wrapper (it is the direct operand
+// of the synthesized `return`). These assertions are keyed on the structural
+// shape, not on the chosen identifier spellings, so they hold for any base /
+// parameter / field names.
+
+#[test]
+fn es2015_mixin_arrow_concise_class_expr_is_single_line_block_without_paren() {
+    let source = "const Mixin = (Sup) =>\n    class extends Sup {\n        static label = \"x\";\n        go() {}\n    }\n";
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("(Sup) => { var _a; return _a = class extends Sup {"),
+        "Mixin arrow body should be a single-line `{{ var _a; return _a = class ...`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a = "),
+        "Comma wrapper that is the direct `return` operand must not be parenthesized.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.label = \"x\","),
+        "Static field initializer should be a comma item on the wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a; };"),
+        "Single-line block should close with `_a; }};` on one line.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_mixin_arrow_renamed_param_and_base_keeps_single_line_block() {
+    // Same structural shape, different parameter / base / field spellings: the
+    // fix must not depend on the chosen identifiers.
+    let source = "const make = (B) =>\n    class extends B {\n        static tag = 1;\n        run() {}\n    }\n";
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("(B) => { var _a; return _a = class extends B {"),
+        "Renamed mixin should still emit a single-line block body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a = "),
+        "Renamed mixin comma wrapper must not be parenthesized after `return`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.tag = 1,") && output.contains("_a; };"),
+        "Renamed mixin static field should be a comma item closing with `_a; }};`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_mixin_arrow_typed_param_and_return_keeps_single_line_block() {
+    // Annotated mixin (type parameter + parameter type + return type) lowers to
+    // the same runtime shape once types are erased.
+    let source = concat!(
+        "type Ctor<T> = new (...a: any[]) => T;\n",
+        "const Printable = <T extends Ctor<object>>(superClass: T): Ctor<object> & { message: string } & T =>\n",
+        "    class extends superClass {\n",
+        "        static message = \"hello\";\n",
+        "        print() {}\n",
+        "    }\n",
+    );
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("(superClass) => { var _a; return _a = class extends superClass {"),
+        "Annotated mixin should erase types and emit a single-line block body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a = "),
+        "Annotated mixin comma wrapper must not be parenthesized after `return`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.message = \"hello\","),
+        "Annotated mixin static field should be a comma item.\nOutput:\n{output}"
+    );
+}
