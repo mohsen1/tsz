@@ -200,6 +200,25 @@ impl<'a> DeclarationEmitter<'a> {
                 self.with_symbol_declarations(alias_sym_id, |alias_arena, decl_idx| {
                     let decl_node = alias_arena.get(decl_idx)?;
                     let alias = alias_arena.get_type_alias(decl_node)?;
+                    // Only recurse into alias bodies that carry structural information
+                    // (object types, mapped types, unions, intersections). A bare type
+                    // reference with no type arguments is a transparent type-param
+                    // pass-through (e.g. `type Partial<T> = T`) and provides no
+                    // structural constraint — recursing into it would incorrectly infer
+                    // a substitution whenever the alias parameter name coincides with an
+                    // outer type-param name.
+                    let alias_body_node = alias_arena.get(alias.type_node)?;
+                    let body_is_structural = matches!(
+                        alias_body_node.kind,
+                        k if k == syntax_kind_ext::TYPE_LITERAL
+                            || k == syntax_kind_ext::MAPPED_TYPE
+                            || k == syntax_kind_ext::INTERSECTION_TYPE
+                            || k == syntax_kind_ext::UNION_TYPE
+                            || k == syntax_kind_ext::PARENTHESIZED_TYPE
+                    );
+                    if !body_is_structural {
+                        return None;
+                    }
                     let alias_type_params = alias.type_parameters.as_ref()?;
                     let alias_args = type_ref.type_arguments.as_ref()?;
                     let mut next_aliases = aliases.to_vec();

@@ -783,15 +783,28 @@ impl<'a> DeclarationEmitter<'a> {
                     other => other,
                 }
             } else if func.body.is_some() {
-                self.function_body_single_return_expression(func.body)
-                    .and_then(|return_expr| {
-                        self.declaration_summary_primitive_expression_type_text(
-                            return_expr,
-                            depth + 1,
-                        )
-                        .or_else(|| self.infer_fallback_type_text_at(return_expr, depth + 1))
-                    })
-                    .or_else(|| self.function_body_preferred_return_type_text(func.body))
+                // Guard against directly-recursive functions: `function f() { return f(); }`.
+                // `function_body_preferred_return_type_text` resets the depth counter to 0,
+                // which would bypass the depth guard above and cause an infinite cycle. Skip
+                // body analysis entirely for self-calling functions — they carry no useful
+                // type information beyond what a type annotation would provide.
+                let func_name = self.get_identifier_text(func.name);
+                let is_self_recursive = func_name.as_deref().is_some_and(|name| {
+                    self.source_function_body_contains_direct_call_to_name(self.arena, func, name)
+                });
+                if is_self_recursive {
+                    None
+                } else {
+                    self.function_body_single_return_expression(func.body)
+                        .and_then(|return_expr| {
+                            self.declaration_summary_primitive_expression_type_text(
+                                return_expr,
+                                depth + 1,
+                            )
+                            .or_else(|| self.infer_fallback_type_text_at(return_expr, depth + 1))
+                        })
+                        .or_else(|| self.function_body_preferred_return_type_text(func.body))
+                }
             } else {
                 None
             };
