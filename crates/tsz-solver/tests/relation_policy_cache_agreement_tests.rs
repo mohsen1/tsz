@@ -262,6 +262,86 @@ fn assignability_cache_skip_weak_type_checks_matches_uncached_relation_policy() 
 }
 
 #[test]
+fn assignability_cache_strict_null_checks_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let source = TypeId::UNDEFINED;
+    let target = TypeId::NUMBER;
+
+    let loose = RelationPolicy::unflagged_compatibility();
+    let strict_null = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let loose_key = RelationCacheKey::for_assignability(source, target, loose.cache_config());
+    let strict_null_key =
+        RelationCacheKey::for_assignability(source, target, strict_null.cache_config());
+
+    assert_ne!(
+        loose_key, strict_null_key,
+        "loose and strict-null policies must occupy distinct assignability cache slots",
+    );
+
+    let loose_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        loose,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_null_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_null,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        loose_uncached,
+        "loose nullability should allow `undefined` to satisfy a number target",
+    );
+    assert!(
+        !strict_null_uncached,
+        "strict null checks should reject `undefined` for a number target",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, loose),
+        loose_uncached,
+        "cached loose nullability policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        Some(loose_uncached),
+        "loose nullability result must be stored in the loose assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_null_key),
+        None,
+        "strict-null lookup must not hit the loose nullability slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict_null),
+        strict_null_uncached,
+        "cached strict-null policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_null_key),
+        Some(strict_null_uncached),
+        "strict-null result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        Some(loose_uncached),
+        "loose nullability slot must remain intact after the strict-null lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_strict_function_types_matches_uncached_function_variance() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
