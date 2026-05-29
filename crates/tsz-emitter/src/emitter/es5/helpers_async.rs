@@ -39,17 +39,6 @@ impl Es5StaticClassExpressionElement {
     }
 }
 
-fn avoid_generator_state_collision(segment: &str, class_temp: &str) -> String {
-    if class_temp != "_a" || !segment.contains("function (_a)") {
-        return segment.to_string();
-    }
-
-    segment
-        .replace("function (_a)", "function (_b)")
-        .replace("_a.label", "_b.label")
-        .replace("_a.sent()", "_b.sent()")
-}
-
 impl<'a> Printer<'a> {
     fn next_arguments_capture_name(&mut self) -> String {
         loop {
@@ -59,58 +48,6 @@ impl<'a> Printer<'a> {
                 return candidate;
             }
         }
-    }
-
-    fn get_class_expression_name(&self, class_node: NodeIndex) -> Option<String> {
-        let mut current = class_node;
-        let mut hops = 0;
-
-        while hops < 8 {
-            let parent = self.arena.get_extended(current)?.parent;
-            if parent.is_none() {
-                return None;
-            }
-            let parent_node = self.arena.get(parent)?;
-
-            match parent_node.kind {
-                // Parenthesized class expressions can be unwrapped.
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    current = parent;
-                    hops += 1;
-                    continue;
-                }
-                // `const C = class {}`
-                syntax_kind_ext::VARIABLE_DECLARATION => {
-                    let decl = self.arena.get_variable_declaration(parent_node)?;
-                    if decl.initializer != current {
-                        return None;
-                    }
-                    let name = emit_utils::identifier_text_or_empty(self.arena, decl.name);
-                    if name.is_empty() || !is_valid_identifier_name(&name) {
-                        return None;
-                    }
-                    return Some(name);
-                }
-                // `C = class {}`
-                syntax_kind_ext::BINARY_EXPRESSION => {
-                    let binary = self.arena.get_binary_expr(parent_node)?;
-                    if binary.right != current {
-                        return None;
-                    }
-                    if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                        return None;
-                    }
-                    let name = emit_utils::identifier_text_or_empty(self.arena, binary.left);
-                    if name.is_empty() || !is_valid_identifier_name(&name) {
-                        return None;
-                    }
-                    return Some(name);
-                }
-                _ => return None,
-            }
-        }
-
-        None
     }
 
     pub(in crate::emitter) fn es5_static_class_expression_elements(
@@ -342,11 +279,11 @@ impl<'a> Printer<'a> {
         let temp = class_value_temp.map_or_else(
             || {
                 if self.class_expression_is_in_loop_body(class_node) {
-                    let temp = self.make_unique_name();
+                    let temp = self.make_class_static_temp_name(class_node);
                     self.block_scoped_private_temps.push(temp.clone());
                     temp
                 } else {
-                    self.make_unique_name_hoisted()
+                    self.make_class_static_temp_name_hoisted(class_node)
                 }
             },
             str::to_string,
@@ -414,15 +351,6 @@ impl<'a> Printer<'a> {
                         let full = self.writer.get_output().to_string();
                         let segment = &full[before..after];
                         let replaced = replace_identifier(segment, class_name, &temp);
-                        let replaced = avoid_generator_state_collision(&replaced, &temp);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
-                    } else {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = avoid_generator_state_collision(segment, &temp);
                         if replaced != segment {
                             self.writer.truncate(before);
                             self.write(&replaced);
@@ -516,6 +444,38 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn async_body_function_declarations(&self, body: NodeIndex) -> Vec<NodeIndex> {
+        let Some(body_node) = self.arena.get(body) else {
+            return Vec::new();
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return Vec::new();
+        };
+
+        block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&stmt_idx| {
+                self.arena
+                    .get(stmt_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+            })
+            .collect()
+    }
+
+    fn emit_async_hoisted_function_declarations(&mut self, hoisted_function_decls: &[NodeIndex]) {
+        for &stmt in hoisted_function_decls {
+            if let Some(stmt_node) = self.arena.get(stmt) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
+            self.emit(stmt);
+            self.write_line();
+        }
+    }
+
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(in crate::emitter) fn emit_async_function_es5(
         &mut self,
@@ -530,6 +490,12 @@ impl<'a> Printer<'a> {
             this_expr,
             func.type_annotation,
         );
+    }
+
+    pub(in crate::emitter) fn skip_comments_for_async_lowered_body(&mut self, body: NodeIndex) {
+        if let Some(body_node) = self.arena.get(body) {
+            self.skip_comments_for_erased_node(body_node);
+        }
     }
 
     pub(in crate::emitter) fn emit_async_function_es5_body(
@@ -636,6 +602,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
+                self.skip_comments_for_async_lowered_body(body);
                 return;
             }
 
@@ -661,6 +628,7 @@ impl<'a> Printer<'a> {
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
             async_emitter.set_module_kind(self.ctx.outer_module_kind());
+            async_emitter.set_dynamic_import_promise_counter(self.next_dynamic_import_promise_id);
             async_emitter.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
@@ -676,9 +644,14 @@ impl<'a> Printer<'a> {
             let blocked_disposable_names = self.blocked_disposable_names_for_transform();
             async_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
+            if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
+                async_emitter
+                    .set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
+            }
 
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
+            let hoisted_function_decls = self.async_body_function_declarations(body);
             let hoist_function_decls_only =
                 !body_has_await && self.block_has_only_function_decls(body);
             if hoist_function_decls_only {
@@ -722,6 +695,7 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
                 self.write("}");
                 self.pop_temp_scope();
+                self.skip_comments_for_async_lowered_body(body);
                 return;
             }
             if !body_has_await
@@ -740,20 +714,15 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_var_groups, directive_prologue, _) = if body_has_await {
-                async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(body)
-            } else {
-                let (generator_body, hoisted_var_groups, needs_lexical_this_capture) =
-                    async_emitter.emit_simple_generator_body_with_hoisted_var_groups(body);
-                (
-                    generator_body,
-                    hoisted_var_groups,
-                    Vec::new(),
-                    needs_lexical_this_capture,
-                )
-            };
+            let (generator_body, hoisted_var_groups, directive_prologue, _) = async_emitter
+                .emit_generator_body_and_hoisted_vars_skipping(
+                    body,
+                    body_has_await,
+                    &hoisted_function_decls,
+                );
             let generator_mappings = async_emitter.take_mappings();
             self.next_disposable_env_id = async_emitter.disposable_env_counter();
+            self.next_dynamic_import_promise_id = async_emitter.dynamic_import_promise_counter();
             for generated_name in async_emitter.take_generated_disposable_env_names() {
                 self.generated_temp_names.insert(generated_name);
             }
@@ -765,6 +734,7 @@ impl<'a> Printer<'a> {
             self.write(this_expr);
             if hoisted_var_groups.is_empty() {
                 let can_inline_wrapper = body_is_single_line
+                    && hoisted_function_decls.is_empty()
                     && directive_prologue.is_empty()
                     && !(this_expr != "this" && generator_body.contains("return _this"))
                     && generator_mappings.is_empty();
@@ -777,6 +747,7 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.decrease_indent();
                     self.write("}");
+                    self.skip_comments_for_async_lowered_body(body);
                     // emit_function_parameters_es5() pushed a temp scope; the
                     // other early-return paths in this function (and the
                     // multi-line/normal exit below) all call pop_temp_scope.
@@ -803,6 +774,7 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
+                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
                 if this_expr != "this" && generator_body.contains("return _this") {
                     self.write("var _this = this;");
                     self.write_line();
@@ -833,6 +805,7 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
+                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
                 for group in &hoisted_var_groups {
                     self.write("var ");
                     for (i, var_name) in group.iter().enumerate() {
@@ -866,6 +839,7 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
             self.pop_temp_scope();
+            self.skip_comments_for_async_lowered_body(body);
             return;
         }
 
@@ -1412,6 +1386,58 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
+            es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
+        }
+        if self.es5_class_expression_extends_this_captured {
+            es5_emitter.set_extends_this_captured(true);
+        }
+        if self.ctx.target_es5
+            && !self.ctx.options.legacy_decorators
+            && self.can_render_simple_tc39_decorated_class_es5(node)
+        {
+            let decorator_exprs = self
+                .collect_class_decorators(&class_data.modifiers)
+                .into_iter()
+                .filter_map(|decorator_idx| {
+                    let decorator_node = self.arena.get(decorator_idx)?;
+                    let decorator = self.arena.get_decorator(decorator_node)?;
+                    let before_len = self.writer.len();
+                    self.emit_expression(decorator.expression);
+                    let after_len = self.writer.len();
+                    let full_output = self.writer.get_output().to_string();
+                    let emitted = full_output[before_len..after_len].trim().to_string();
+                    self.writer.truncate(before_len);
+                    Some(emitted)
+                })
+                .collect::<Vec<_>>();
+            let binding_name = self
+                .get_identifier_text_opt(class_data.name)
+                .or_else(|| self.resolve_class_expr_binding_name(class_node))
+                .unwrap_or_else(|| self.next_tc39_anonymous_class_name());
+            let inner_name = self.next_tc39_anonymous_class_name();
+
+            es5_emitter.set_indent_level(self.writer.indent_level() + 1);
+            es5_emitter.set_skip_static_members(true);
+            es5_emitter.set_tc39_decorators(true);
+            es5_emitter.set_tc39_wrap_output(false);
+            let inner_output = es5_emitter
+                .emit_class_with_name(class_node, &inner_name)
+                .trim_end_matches('\n')
+                .to_string();
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+            if let Some(output) = es5_emitter.wrap_tc39_es5_class_decorated_expression_output(
+                class_node,
+                &inner_name,
+                &binding_name,
+                &binding_name,
+                &inner_output,
+                &decorator_exprs,
+            ) {
+                self.write_multiline_fragment_preserving_indent(&output);
+                return;
+            }
+        }
         let class_expr_set_function_name = if class_data.name.is_none() {
             self.resolve_class_expr_binding_name(class_node)
         } else {
@@ -1455,11 +1481,11 @@ impl<'a> Printer<'a> {
                 }
             }
             let class_temp = if in_loop {
-                let t = self.make_unique_name();
+                let t = self.make_class_static_temp_name(class_node);
                 self.block_scoped_private_temps.push(t.clone());
                 t
             } else {
-                self.make_unique_name_hoisted()
+                self.make_class_static_temp_name_hoisted(class_node)
             };
 
             let comma_static_elements = if use_static_comma {
@@ -1514,7 +1540,7 @@ impl<'a> Printer<'a> {
         } else {
             let temp_name = self
                 .get_class_expression_name(class_node)
-                .unwrap_or_else(|| self.get_temp_var_name());
+                .unwrap_or_else(|| self.make_unique_name_from_base("class"));
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
         };
@@ -1944,12 +1970,48 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit: obj.method.apply(obj, args_array)
+        // The receiver is emitted twice (once as the property base, once as the
+        // `apply` `thisArg`). When it is a non-simple expression (anything other
+        // than an identifier, `this`, or a literal), evaluating it twice would be
+        // observable, so tsc captures it once into a hoisted temp and reuses it:
+        // `(_a = obj.prop).method.apply(_a, args)`.
+        if crate::transforms::emit_utils::is_simple_copiable_expression(
+            self.arena,
+            access.expression,
+        ) {
+            self.emit(access.expression);
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(".apply(");
+            self.emit(access.expression);
+            self.write(", ");
+            self.emit_spread_args_array(&args.nodes);
+            self.write(")");
+            return;
+        }
+
+        let receiver_temp = self.make_unique_name_hoisted_assignment_fresh();
+        self.write("(");
+        self.write(&receiver_temp);
+        self.write(" = ");
         self.emit(access.expression);
-        self.write(".");
-        self.emit(access.name_or_argument);
+        self.write(")");
+        if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit(access.name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+        }
         self.write(".apply(");
-        self.emit(access.expression);
+        self.write(&receiver_temp);
         self.write(", ");
         self.emit_spread_args_array(&args.nodes);
         self.write(")");

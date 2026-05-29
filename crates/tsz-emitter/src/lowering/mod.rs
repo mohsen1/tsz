@@ -41,6 +41,8 @@ mod core;
 mod decorator_helpers;
 mod helpers;
 mod helpers_class_expr_static_name;
+mod helpers_private_fields;
+mod import_usage;
 mod name_helpers;
 mod parameter_prologue;
 mod visit_children;

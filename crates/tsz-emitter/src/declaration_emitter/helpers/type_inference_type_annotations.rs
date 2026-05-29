@@ -34,12 +34,15 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::type_text_starts_with_string_intrinsic(raw_type_text)
                 });
             match printed {
-                Some(printed) if printed != "any" && raw_string_intrinsic_type_text.is_some() => {
+                Some(printed)
+                    if !matches!(printed.as_str(), "any" | "unknown")
+                        && raw_string_intrinsic_type_text.is_some() =>
+                {
                     raw_string_intrinsic_type_text
                         .expect("string intrinsic type text was checked above")
                 }
                 Some(printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
                         && !type_text.contains("typeof ") =>
@@ -47,7 +50,7 @@ impl<'a> DeclarationEmitter<'a> {
                     printed.replace("typeof ", "")
                 }
                 Some(printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && (!printed.contains("any") || type_text.contains("any")) =>
                 {
                     printed
@@ -63,7 +66,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .unwrap_or(rewritten);
             match printed {
                 Some(ref printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && !printed.contains("any")
                         && !expands_mapped_object
                         && (!Self::type_text_contains_import_type(&rewritten)
@@ -103,6 +106,43 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let sym_id = self.reference_declared_type_symbol(expr_idx)?;
         self.declared_non_nullish_type_annotation_text_for_symbol(sym_id)
+    }
+
+    pub(in crate::declaration_emitter) fn reference_declared_object_type_literal_arm_texts(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let sym_id = self.reference_declared_type_symbol(expr_idx)?;
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            self.object_type_literal_arm_texts_from_type_annotation(source_arena, type_annotation)
+        })
+    }
+
+    fn object_type_literal_arm_texts_from_type_annotation(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let type_node = source_arena.get(type_annotation)?;
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let type_text = self.emit_type_node_text_from_arena(source_arena, type_annotation)?;
+            return Some(vec![type_text.trim().to_string()]);
+        }
+        if type_node.kind != syntax_kind_ext::UNION_TYPE {
+            return None;
+        }
+
+        let union = source_arena.get_composite_type(type_node)?;
+        let mut arms = Vec::with_capacity(union.types.nodes.len());
+        for &part_idx in &union.types.nodes {
+            let part_node = source_arena.get(part_idx)?;
+            if part_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                return None;
+            }
+            let type_text = self.emit_type_node_text_from_arena(source_arena, part_idx)?;
+            arms.push(type_text.trim().to_string());
+        }
+        (!arms.is_empty()).then_some(arms)
     }
 
     fn reference_declared_type_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
@@ -229,6 +269,18 @@ impl<'a> DeclarationEmitter<'a> {
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> Option<NodeIndex> {
+        // A non-rest binding element's type is a single property/element projected
+        // out of the destructured source — not the source's own annotation. The
+        // climb below would otherwise resolve such an element to the enclosing
+        // parameter/variable annotation (the whole destructured value), which is
+        // wrong for an inferred return like
+        // `function f({ name: alias }: Named) { return alias; }` (tsc emits
+        // `string`, not `Named`). A rest element (`{ a, ...rest }`) is the
+        // exception: its type *is* structurally derived from the source annotation
+        // (the source object with the bound keys omitted), so it must still reach
+        // that annotation. Decide that distinction once up front.
+        let starts_in_non_rest_binding_element =
+            Self::declaration_is_non_rest_binding_element(arena, decl_idx);
         let mut current = decl_idx;
         for _ in 0..12 {
             let node = arena.get(current)?;
@@ -241,6 +293,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return Some(current);
             }
+            // Crossing a binding pattern means the annotation above describes the
+            // destructured source, not this element. Bail for non-rest elements so
+            // callers fall back to the solver/cache type (the projected property
+            // type). Rest elements continue up to the source annotation.
+            if (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                && starts_in_non_rest_binding_element
+            {
+                return None;
+            }
             let parent = arena.parent_of(current)?;
             if parent.is_none() {
                 break;
@@ -248,6 +310,22 @@ impl<'a> DeclarationEmitter<'a> {
             current = parent;
         }
         None
+    }
+
+    /// Whether `decl_idx` (a symbol declaration node) is the name of a binding
+    /// element that is *not* a rest element (`...x`). Used to decide whether the
+    /// enclosing destructured-source annotation may stand in for the element's
+    /// declared type during declaration emit.
+    fn declaration_is_non_rest_binding_element(arena: &NodeArena, decl_idx: NodeIndex) -> bool {
+        let Some(parent_idx) = arena.parent_of(decl_idx) else {
+            return false;
+        };
+        let Some(parent_node) = arena.get(parent_idx) else {
+            return false;
+        };
+        arena
+            .get_binding_element(parent_node)
+            .is_some_and(|binding| !binding.dot_dot_dot_token && binding.name == decl_idx)
     }
 
     pub(in crate::declaration_emitter) fn emit_type_node_text_from_arena(

@@ -12,10 +12,13 @@ mod computed_loops;
 mod core;
 mod core_type_query;
 pub(crate) mod cross_file;
+mod cross_file_alias_cycle;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
 mod cross_file_direct_actual_lib;
 mod cross_file_direct_alias_chain;
+#[cfg(test)]
+mod cross_file_direct_alias_chain_concrete_tests;
 #[cfg(test)]
 mod cross_file_direct_alias_chain_tests;
 mod cross_file_direct_declaration_alias;

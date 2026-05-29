@@ -987,8 +987,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //
                 // Always emit OptionalPropertyRequired when source is optional and target is
                 // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
-                // diagnostic priority: the optional-vs-required message ("Property 'x' is
-                // missing in type") takes precedence over a type-level mismatch message.
+                // diagnostic priority: the optional-vs-required message (TS2327, "Property 'x'
+                // is optional in type 'S' but required in type 'T'.") takes precedence over a
+                // type-level mismatch message. The property is present-but-optional, not
+                // absent, so this is TS2327 rather than the missing-property TS2741.
                 // The main subtype check gates whether the assignment is actually compatible
                 // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
                 // reaches this explain path).
@@ -1503,10 +1505,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             target.params.len()
         };
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
         // When the target has a rest parameter (e.g., ...args: number[]),
         // it can absorb unlimited arguments — skip the too-many check entirely
         // so we fall through to per-parameter type checking.
-        if !rest_is_top && !target_has_rest && source_required > target_fixed_count {
+        if !rest_is_top
+            && !target_has_rest
+            && !allow_bivariant_param_count
+            && source_required > target_fixed_count
+        {
             return Some(SubtypeFailureReason::TooManyParameters {
                 source_count: source_required,
                 target_count: target_fixed_count,
@@ -1547,20 +1554,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return None; // Invalid rest parameter
             };
-            if rest_is_top {
-                if let Some((param_index, source_param)) =
+            if rest_elem_type.is_any_or_unknown()
+                && let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
-                {
-                    let inner_reason = self
-                        .explain_failure(rest_elem_type, source_param)
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                        param_index,
-                        source_param,
-                        target_param: rest_elem_type,
-                        inner_reason,
-                    });
-                }
+            {
+                let inner_reason = self
+                    .explain_failure(rest_elem_type, source_param)
+                    .map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index,
+                    source_param,
+                    target_param: rest_elem_type,
+                    inner_reason,
+                });
+            }
+            if rest_is_top {
                 return None;
             }
 
@@ -1699,6 +1707,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
+    /// Build a `TupleElementTypeMismatch` for a failing element pair, recursing
+    /// into the element failure so the rendered chain carries the inner reason
+    /// (matching tsc, which walks a tuple element exactly like a numerically
+    /// keyed object property).
+    fn tuple_element_type_mismatch(
+        &mut self,
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+    ) -> SubtypeFailureReason {
+        let nested_reason = self
+            .explain_failure(source_element, target_element)
+            .map(Box::new);
+        SubtypeFailureReason::TupleElementTypeMismatch {
+            index,
+            source_element,
+            target_element,
+            nested_reason,
+        }
+    }
+
     /// Explain why a tuple type assignment failed.
     fn explain_tuple_failure(
         &mut self,
@@ -1759,11 +1788,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         if s_elem.rest {
                             let tp_array = self.interner.array(tail_elem.type_id);
                             if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
-                                return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                                    index: source_end - 1,
-                                    source_element: s_elem.type_id,
-                                    target_element: tail_elem.type_id,
-                                });
+                                return Some(self.tuple_element_type_mismatch(
+                                    source_end - 1,
+                                    s_elem.type_id,
+                                    tail_elem.type_id,
+                                ));
                             }
                             source_end -= 1;
                             continue;
@@ -1790,11 +1819,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         break;
                     }
                     if !assignable {
-                        return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                            index: source_end - 1,
-                            source_element: s_elem.type_id,
-                            target_element: tail_elem.type_id,
-                        });
+                        return Some(self.tuple_element_type_mismatch(
+                            source_end - 1,
+                            s_elem.type_id,
+                            tail_elem.type_id,
+                        ));
                     }
                     source_end -= 1;
                 }
@@ -1814,11 +1843,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 .check_subtype(s_elem.type_id, t_fixed.type_id)
                                 .is_true()
                             {
-                                return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                                    index: j,
-                                    source_element: s_elem.type_id,
-                                    target_element: t_fixed.type_id,
-                                });
+                                return Some(self.tuple_element_type_mismatch(
+                                    j,
+                                    s_elem.type_id,
+                                    t_fixed.type_id,
+                                ));
                             }
                         }
                         None => {
@@ -1838,11 +1867,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     for (j, s_elem) in source_iter {
                         if s_elem.rest {
                             if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
-                                return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                                    index: j,
-                                    source_element: s_elem.type_id,
-                                    target_element: variadic_array,
-                                });
+                                return Some(self.tuple_element_type_mismatch(
+                                    j,
+                                    s_elem.type_id,
+                                    variadic_array,
+                                ));
                             }
                         } else if variadic_is_type_param {
                             return Some(SubtypeFailureReason::TypeMismatch {
@@ -1850,11 +1879,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 target_type: variadic,
                             });
                         } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
-                            return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                                index: j,
-                                source_element: s_elem.type_id,
-                                target_element: variadic,
-                            });
+                            return Some(self.tuple_element_type_mismatch(
+                                j,
+                                s_elem.type_id,
+                                variadic,
+                            ));
                         }
                     }
                     return None;
@@ -1883,19 +1912,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // missing property (e.g., {} vs {a: string}), return MissingProperty
                     // to produce TS2741 instead of generic TS2322. This matches tsc behavior
                     // for tuple literals where elements have missing properties.
-                    if let Some(nested) = self.explain_failure(s_elem.type_id, t_elem.type_id)
-                        && matches!(
-                            nested,
+                    // Reuse the single `explain_failure` walk both to detect the
+                    // missing-property short-circuit and as the element's nested
+                    // reason, avoiding a second recursive type walk.
+                    let nested = self.explain_failure(s_elem.type_id, t_elem.type_id);
+                    if matches!(
+                        nested,
+                        Some(
                             SubtypeFailureReason::MissingProperty { .. }
                                 | SubtypeFailureReason::MissingProperties { .. }
                         )
-                    {
-                        return Some(nested);
+                    ) {
+                        return nested;
                     }
                     return Some(SubtypeFailureReason::TupleElementTypeMismatch {
                         index: i,
                         source_element: s_elem.type_id,
                         target_element: t_elem.type_id,
+                        nested_reason: nested.map(Box::new),
                     });
                 }
             } else if !t_elem.optional {

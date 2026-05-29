@@ -449,6 +449,36 @@ pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     }
 }
 
+/// Check if a spread source object type carries any readonly member at the top
+/// level — either a readonly property or a readonly index signature, including
+/// through a `ReadonlyType` wrapper, union, or intersection.
+///
+/// Object spread (`{ ...x }`) always produces *mutable* members, so when the
+/// spread source has readonly members the resulting type cannot be reconstructed
+/// verbatim from the source AST in declaration emit; the solver-computed spread
+/// type must be used instead.
+pub fn object_spread_source_has_readonly_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::ReadonlyType(_)) => true,
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape.properties.iter().any(|p| p.readonly)
+                || shape.string_index.is_some_and(|s| s.readonly)
+                || shape.number_index.is_some_and(|s| s.readonly)
+        }
+        Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+            let members = db.type_list(members);
+            members
+                .iter()
+                .any(|&m| object_spread_source_has_readonly_member(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is the polymorphic `this` type.
 ///
 /// `ThisType` represents `this` in class methods and needs to be resolved
@@ -763,6 +793,107 @@ pub fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
 }
 
+/// Whether `type_id` is "instantiable" — a type whose concrete shape depends on
+/// a pending type-parameter substitution. Mirrors the subset of tsc's
+/// `TypeFlags.Instantiable` that tsz models structurally.
+fn is_instantiable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::KeyOf(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Conditional(_)
+                | TypeData::TemplateLiteral(_)
+        )
+    )
+}
+
+/// True when `type_id` is or contains (top-level union) `null`/`undefined`.
+///
+/// Mirrors tsc's `maybeTypeOfKind(type, TypeFlags.Nullable)` for the cases that
+/// matter to constraint-position substitution.
+fn maybe_nullable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| member == TypeId::NULL || member == TypeId::UNDEFINED),
+        _ => false,
+    }
+}
+
+/// tsc's `isGenericTypeWithUnionConstraint`, combined with the `someType`
+/// distribution applied at its call sites.
+///
+/// Returns true when `type_id` (or, distributing over union/intersection
+/// members, some constituent) is an instantiable type whose base constraint is
+/// a union or includes `null`/`undefined`. Such references are substituted with
+/// their base constraint when they appear in a constraint position, so that a
+/// `T extends X | undefined` reference is seen as possibly-undefined at a
+/// property/element access or call target.
+pub fn is_generic_type_with_union_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| is_generic_type_with_union_constraint(db, member)),
+        _ => {
+            if !is_instantiable_type(db, type_id) {
+                return false;
+            }
+            let base = get_base_constraint_or_type(db, type_id);
+            base != type_id
+                && (matches!(db.lookup(base), Some(TypeData::Union(_))) || maybe_nullable(db, base))
+        }
+    }
+}
+
+/// tsc's `isGenericTypeWithoutNullableConstraint`, combined with the `someType`
+/// distribution applied at its call site.
+///
+/// Returns true when `type_id` (or some union/intersection constituent) is an
+/// instantiable type whose base constraint does not include `null`/`undefined`.
+/// Used to recognize the `obj[key]` exception to constraint-position
+/// substitution: when both the object is a generic type without a nullable
+/// constraint and the index is a generic index type, the access keeps its
+/// deferred `T[K]` form instead of being substituted.
+pub fn is_generic_type_without_nullable_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| is_generic_type_without_nullable_constraint(db, member)),
+        _ => {
+            is_instantiable_type(db, type_id)
+                && !maybe_nullable(db, get_base_constraint_or_type(db, type_id))
+        }
+    }
+}
+
+/// Substitute a constraint-position reference's type with its base constraint,
+/// distributing over union members (tsc's `mapType(type, getBaseConstraintOrType)`).
+pub fn substitute_reference_base_constraints(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if let Some(TypeData::Union(list)) = db.lookup(type_id) {
+        let mapped: Vec<TypeId> = db
+            .type_list(list)
+            .iter()
+            .map(|&member| get_base_constraint_or_type(db, member))
+            .collect();
+        crate::utils::union_or_single(db, mapped)
+    } else {
+        get_base_constraint_or_type(db, type_id)
+    }
+}
+
 fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
     if depth > 20 {
         return true;
@@ -783,7 +914,9 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
     }
 
     match db.lookup(resolved) {
-        // Primitives, null/undefined/void, literals, template literals, string intrinsics:
+        // Primitives, null/undefined/void, literals, template literals, string
+        // intrinsics, and `keyof T` (which is structurally a property-key
+        // primitive `string | number | symbol` whether evaluated or deferred):
         // not spreadable on their own.
         // (Definitely-falsy members are filtered out in the union branch instead.)
         Some(
@@ -801,7 +934,8 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
             | TypeData::Literal(_)
             | TypeData::TemplateLiteral(_)
             | TypeData::StringIntrinsic { .. }
-            | TypeData::Enum(_, _),
+            | TypeData::Enum(_, _)
+            | TypeData::KeyOf(_),
         ) => false,
         // Union: remove definitely-falsy members, then check remaining.
         // Matches tsc's removeDefinitelyFalsyTypes before checking.
@@ -830,16 +964,23 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
-        // tsc applies `getBaseConstraintOrType` before checking spread flags.
-        // For type operators that can evaluate against a concrete constraint
-        // (for example `T["x"]` where `T extends { x: Obj }`), validate the
-        // evaluated constraint. If evaluation cannot reduce the operator, do
-        // not assume it is object-like. For `keyof T`, evaluation yields
-        // property-key primitives, which the recursive primitive handling
-        // rejects.
-        Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_)) => {
+        // Mirrors tsc's `isValidSpreadType`:
+        //   if (type.flags & Instantiable) {
+        //       const constraint = getBaseConstraintOfType(type);
+        //       if (constraint !== undefined) return isValidSpreadType(constraint);
+        //   }
+        //   return !!(type.flags & (Any | NonPrimitive | Object | InstantiableNonPrimitive) | …);
+        //
+        // For an `IndexAccess` we first ask the evaluator to reduce through
+        // any usable constraint. If reduction succeeds the result is
+        // validated like any other type. If it does not, the deferred form
+        // itself carries `InstantiableNonPrimitive` (an indexed access could
+        // be an object at runtime), so the flag-check arm accepts the
+        // spread without recursing — the unchanged `resolved` carries no new
+        // information for a recursive call.
+        Some(TypeData::IndexAccess(_, _)) => {
             let evaluated = evaluate_type(db, resolved);
-            evaluated != resolved && is_valid_spread_type_impl(db, evaluated, depth + 1)
+            evaluated == resolved || is_valid_spread_type_impl(db, evaluated, depth + 1)
         }
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters (unconstrained ones reach here

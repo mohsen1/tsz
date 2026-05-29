@@ -488,3 +488,56 @@ type ParseArray<S extends string> =
         "TrimStart<First> and ParseJSON<TrimStart<First>> should satisfy string constraints; got: {diags:#?}"
     );
 }
+
+// ─── Issue #11354: recursive Split preserves literal tuple segments ──────────
+
+/// `Split` recursively decomposes a slash-separated string into a tuple.
+/// The recursive branch must preserve the inferred literal head and tail across
+/// tuple spread construction, and the bad assignment proves the result is not
+/// widened to `string[]` or `any[]`.
+#[test]
+fn recursive_split_slash_preserves_literal_tuple_segments() {
+    let diags = check(
+        r#"
+type Split<S extends string> = S extends `${infer Head}/${infer Tail}`
+  ? [Head, ...Split<Tail>]
+  : [S];
+
+type Parts = Split<"a/b/c">;
+declare const parts: Parts;
+const ok: ["a", "b", "c"] = parts;
+const bad: Parts = ["a", "b", "x"];
+"#,
+    );
+    let codes = error_codes(&diags);
+    assert_eq!(
+        codes,
+        vec![2322],
+        "Split<\"a/b/c\"> should preserve [\"a\", \"b\", \"c\"] and reject only the bad leaf; got: {diags:#?}"
+    );
+}
+
+/// Same structural recursion with renamed type parameters and a different
+/// delimiter, proving the behavior is not keyed to `Split`, `Head`/`Tail`, or
+/// slash-separated paths.
+#[test]
+fn recursive_split_renamed_dot_separator_preserves_literal_tuple_segments() {
+    let diags = check(
+        r#"
+type Segments<Input extends string> = Input extends `${infer First}.${infer Rest}`
+  ? [First, ...Segments<Rest>]
+  : [Input];
+
+type Result = Segments<"one.two.three">;
+declare const result: Result;
+const ok: ["one", "two", "three"] = result;
+const bad: Result = ["one", "two", "nope"];
+"#,
+    );
+    let codes = error_codes(&diags);
+    assert_eq!(
+        codes,
+        vec![2322],
+        "renamed dotted Split should preserve literal tuple segments and reject only the bad leaf; got: {diags:#?}"
+    );
+}

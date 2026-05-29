@@ -33,18 +33,18 @@ Recent local/live evidence on 2026-05-26:
 
 | Surface | Current read |
 | --- | ---: |
-| Open PRs | 2 |
-| Draft PRs | 0 |
+| Open PRs | live query: `gh pr list --state open` |
+| Draft/WIP PRs | live query: `gh pr list --state open` plus WIP labels/titles |
 | PR label hygiene | clean |
 | Diagnostic conformance detail | `12,582 / 12,582` |
-| Accepted-regression list | 30 tests |
+| Accepted-regression list | live query: `python3 scripts/conformance/query-conformance.py --dashboard` |
 | JavaScript emit snapshot | `13,094 / 13,530` |
 | Declaration emit snapshot | `1,606 / 1,669` |
-| Open issues | 134 |
-| Open bug issues | 56 |
-| Open performance issues | 9 |
-| Open tech-debt issues | 64 |
-| Output-surgery audit | red: 4 unallowlisted calls, 1 stale allowlist entry |
+| Open issues | live query: `gh issue list --state open` |
+| Open bug issues | live query: `gh issue list --state open --label bug` |
+| Open performance issues | live query: `gh issue list --state open --label performance` |
+| Open tech-debt issues | live query: `gh issue list --state open --label tech-debt` |
+| Output-surgery audit | live query: `python3 scripts/emit/audit-output-surgery.py` |
 
 Do not copy these numbers into PR bodies as proof. Re-run the commands in the
 owning lane and cite the resulting artifact, issue, or CI URL.
@@ -71,33 +71,53 @@ Rules:
 3. Use only the canonical labels above. Replace generated runner labels or
    `agnet:*` typos before marking work ready.
 4. Every PR body and substantive PR comment includes `AgentName`.
-5. Draft PRs are coordination state. Do not merge work that is draft, labelled
-   `WIP`, titled `[WIP]`, or described as blocked/not ready.
-6. If no open PR runway remains, issues may be used as intake context, but
+5. Draft PRs are active runway, not storage. Do not merge work that is draft,
+   labelled `WIP`, titled `[WIP]`, or described as blocked/not ready.
+6. A session drains owned PRs before opening unrelated new PRs. Valid runway
+   outcomes are: `merge-queue`, ready with verified PR-head checks, refreshed
+   draft/WIP with a signed blocker, signed handoff/help-wanted, or
+   evidence-linked duplicate/superseded closure.
+7. Keep draft runway small: at most two unstacked draft PRs per `agent:*`
+   owner unless the extras are intentional stack children or carry fresh signed
+   blocker comments. A draft with no fresh commit/comment for 24 hours needs
+   update, rebase, handoff, or a blocker note before new work starts.
+8. If no open PR runway remains, issues may be used as intake context, but
    durable ownership should still become an early draft PR with a real body.
-7. If a session pauses or abandons work, leave a signed comment with findings,
+9. If a session pauses or abandons work, leave a signed comment with findings,
    blocker or reason, verification already run, and next owner/action.
 
 ## Live Intake Rule
 
-Every implementation lane starts with its live PRs:
+Every implementation lane starts with its live PRs. Owned PRs are the work
+queue; issues are intake only after that queue is either drained or explicitly
+blocked.
 
 1. Run the lane's `Start Every Cycle` commands.
-2. If open PRs carry the lane label, complete, mark ready, close as
-   duplicate/superseded with evidence, or hand off with a signed comment before
-   starting new issue work.
-3. If no lane PRs are open, choose the next issue or metric row from that
-   lane's current assignment. Cluster by structural invariant rather than
-   starting one branch per issue.
-4. Open or update a draft PR early. The PR body is the live coordination state.
-5. Keep issue labels, PR labels, and PR body `AgentName` aligned.
+2. If open PRs carry the lane label, inspect each one and move it to the next
+   concrete state before starting new issue work: fix/rebase it, mark it ready,
+   add `merge-queue`, restore draft/WIP with a signed blocker, hand it off, or
+   close it only as duplicate/superseded with evidence.
+3. If an owned ready `main` PR has passing PR-head `CI Summary` and
+   `GitGuardian Security Checks`, is not dirty/conflicting, and is not WIP or
+   blocked, add `merge-queue`. If not, leave a signed blocker/next-action
+   comment instead of leaving it idle.
+4. Treat stale drafts as live debt. Drafts older than 24 hours without fresh
+   commits/comments, and owners over two unstacked drafts, must be refreshed,
+   handed off, marked help-wanted, or documented as blocked before new PRs.
+5. If no lane PRs are open or actionable, choose the next issue or metric row
+   from that lane's current assignment. Cluster by structural invariant rather
+   than starting one branch per issue.
+6. Open or update a draft PR early. The PR body is the live coordination state.
+7. Keep issue labels, PR labels, and PR body `AgentName` aligned.
 
 Useful live checks:
 
 ```bash
 scripts/agents/ensure-agent-labels.sh --audit
 scripts/agents/list-owned-work.sh --all
+scripts/agents/list-owned-work.sh --pr-state Studio-F
 node scripts/ci/pr-ownership-report.mjs
+node scripts/ci/pr-ownership-report.mjs --json /tmp/tsz-pr-ownership.json
 gh issue list --repo mohsen1/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
 ```
 
@@ -112,8 +132,33 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 ```
 
+When reviewing or developing a branch that edits a lane goal file, use
+`scripts/agents/show-goal.sh <AgentName> --local` to preview the branch-local
+file. The default command still prefers `origin/main` so launch sessions can be
+redirected without first merging the in-progress branch. If the branch-local
+file differs from the printed `origin/main` goal, `show-goal.sh` warns on
+stderr; treat that as a cue to inspect `--local` before acting on branch-local
+coordination.
+
 Then run the remaining commands listed in that lane's `Start Every Cycle`
 section.
+
+## GitHub Actions Outages
+
+When GitHub Actions is unavailable or checkout/action-download failures are
+clearly infrastructure-wide, do not rerun jobs as a watcher and do not add
+`merge-queue`. Keep the lane moving with local, cheap evidence:
+
+1. Confirm the branch is clean and synced with `origin/main`.
+2. Run the lane's local guardrail commands and any narrow script tests that
+   answer the PR's risk.
+3. Leave a signed PR comment naming the external blocker, the exact head SHA,
+   the local verification, and the next action after Actions recovers.
+
+Resume CI only after the external outage clears, and re-check the exact head
+before changing draft/ready state or adding `merge-queue`. `Queue Tested` is
+produced after the label is added, so it is not evidence to wait on before
+enqueue.
 
 ## Worktree And Cache Policy
 
@@ -189,15 +234,17 @@ smaller:
 ## Launch Checklist
 
 1. Merge this coordination update or tell sessions to read this branch.
-2. Confirm live PR runway state with `node scripts/ci/pr-ownership-report.mjs`.
+2. Confirm live PR runway state, draft parking risks, and queue candidates with
+   `node scripts/ci/pr-ownership-report.mjs`.
 3. Confirm labels with `scripts/agents/ensure-agent-labels.sh --audit`.
 4. Confirm cheap release metrics with the owning lane commands:
    conformance dashboard, emit families, project row summary, and architecture
    guard.
 5. For each session, run `scripts/agents/disk-preflight.sh <AgentName>`.
 6. Start each Codex session with the prompt from `docs/plan/agents/LAUNCH.md`.
-7. Each session opens or updates a draft PR early and keeps the PR body current
-   with root cause, scope changes, verification, and handoff notes.
+7. Each session drains owned PRs before creating unrelated new PRs, then opens
+   or updates a draft PR early for any new lane work and keeps the PR body
+   current with root cause, scope changes, verification, and handoff notes.
 8. Reviewer stays ongoing. It reviews changed PRs and waits when the queue is
    empty; its goal is not completed merely because no PR is currently
    reviewable.

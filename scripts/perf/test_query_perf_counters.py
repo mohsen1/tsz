@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).with_name("query-perf-counters.py")
 
 def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
     return {
-        "schema_version": 2,
+        "schema_version": 5,
         "mode": "attribution",
         "enabled": True,
         "delegate": {
@@ -63,6 +63,24 @@ def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
                 "overlay_copy_max_entries": 30,
             },
         ],
+        "slow_check_file_timings": [
+            {"file": "src/deep.ts", "elapsed_ms": 12.5, "diagnostics": 1},
+            {"file": "src/shallow.ts", "elapsed_ms": 2.0, "diagnostics": 0},
+        ],
+        "slow_check_statement_timings": [
+            {"file": "src/deep.ts", "kind": 244, "pos": 10, "end": 80, "elapsed_ms": 8.25},
+            {"file": "src/shallow.ts", "kind": 243, "pos": 1, "end": 9, "elapsed_ms": 1.5},
+        ],
+        "slow_type_alias_check_timings": [
+            {
+                "file": "src/deep.ts",
+                "name": "XOR",
+                "phase": "body",
+                "pos": 10,
+                "end": 80,
+                "elapsed_ms": 7.5,
+            },
+        ],
     }
 
 
@@ -89,6 +107,12 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("perf-counter JSON:", result.stdout)
         self.assertIn("delegate (cross-arena symbol resolution):", result.stdout)
+        self.assertIn("slowest semantic check files:", result.stdout)
+        self.assertIn("src/deep.ts", result.stdout)
+        self.assertIn("slowest semantic check statements:", result.stdout)
+        self.assertIn("kind= 244", result.stdout)
+        self.assertIn("slowest type alias check phases:", result.stdout)
+        self.assertIn("phase=body", result.stdout)
         self.assertIn("Dominant: TypeEnvironmentCore = 7", result.stdout)
         self.assertIn("Top non-baseline T2.2 target: ImportType = 3", result.stdout)
 

@@ -3,6 +3,7 @@ name = "tsz-cli"
 description = "CLI binaries for the tsz TypeScript compiler"
 version.workspace = true
 edition.workspace = true
+autobins = false
 autotests = false
 repository.workspace = true
 license.workspace = true
@@ -72,6 +73,30 @@ serde_json = { workspace = true }
 [[test]]
 name = "tsc_compat_tests"
 path = "tests/tsc_compat_tests.rs"
+
+[[test]]
+name = "recursive_defaulted_template_accumulator_tests"
+path = "tests/recursive_defaulted_template_accumulator_tests.rs"
+
+[[test]]
+name = "recursive_const_arrow_dts_emit_tests"
+path = "tests/recursive_const_arrow_dts_emit_tests.rs"
+
+[[test]]
+name = "parenthesized_type_dts_emit_tests"
+path = "tests/parenthesized_type_dts_emit_tests.rs"
+
+[[test]]
+name = "import_equals_alias_dts_emit_tests"
+path = "tests/import_equals_alias_dts_emit_tests.rs"
+
+[[test]]
+name = "inferred_object_index_signature_dts_emit_tests"
+path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
+
+[[test]]
+name = "generic_call_bare_type_param_dts_emit_tests"
+path = "tests/generic_call_bare_type_param_dts_emit_tests.rs"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,9 +1,13 @@
 use crate::construction::TypeInterner;
+use crate::def::DefId;
+use crate::evaluation::evaluate::TypeEvaluator;
+use crate::relations::subtype::TypeEnvironment;
 use crate::type_queries::{
-    collect_homomorphic_source_property_infos, collect_property_name_atoms_for_diagnostics,
-    keyof_object_properties,
+    collect_homomorphic_source_property_infos,
+    collect_homomorphic_source_property_infos_with_evaluator,
+    collect_property_name_atoms_for_diagnostics, keyof_object_properties,
 };
-use crate::{PropertyInfo, TypeId, Visibility};
+use crate::{PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility};
 
 fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
     interner.object(vec![PropertyInfo {
@@ -241,6 +245,17 @@ fn homomorphic_array_source_prefers_es5_display_head() {
         make_prop("toString", 4),
     ]);
     interner.set_array_display_base_type(array_base);
+    interner.store_display_properties(
+        array_base,
+        vec![
+            make_prop("includes", 1),
+            make_prop("length", 2),
+            make_prop("toLocaleString", 3),
+            make_prop("toString", 4),
+            make_prop("flatMap", 5),
+            make_prop("flat", 6),
+        ],
+    );
 
     let source = interner.array(TypeId::NUMBER);
     let ordered = collect_homomorphic_source_property_infos(&interner, source);
@@ -252,4 +267,42 @@ fn homomorphic_array_source_prefers_es5_display_head() {
         &names[..4],
         ["length", "toString", "toLocaleString", "includes"]
     );
+    assert!(names.iter().any(|name| name == "flatMap"));
+    assert!(names.iter().any(|name| name == "flat"));
+}
+
+#[test]
+fn homomorphic_array_source_uses_resolver_for_member_applications() {
+    let interner = TypeInterner::new();
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let box_def = DefId(99);
+    let array_base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("wrapped"),
+        interner.application(interner.lazy(box_def), vec![t_type]),
+    )]);
+    interner.set_array_base_type(array_base, vec![t_param]);
+
+    let value_atom = interner.intern_string("value");
+    let box_body = interner.object(vec![PropertyInfo::new(value_atom, t_type)]);
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(box_def, box_body, vec![t_param]);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    let props = collect_homomorphic_source_property_infos_with_evaluator(
+        &interner,
+        interner.array(TypeId::NUMBER),
+        &mut |type_id| evaluator.evaluate(type_id),
+    );
+    let wrapped = props
+        .iter()
+        .find(|prop| interner.resolve_atom_ref(prop.name).as_ref() == "wrapped")
+        .expect("expected wrapped property");
+    let expected = interner.object(vec![PropertyInfo::new(value_atom, TypeId::NUMBER)]);
+    assert_eq!(wrapped.type_id, expected);
 }

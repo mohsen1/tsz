@@ -206,6 +206,152 @@ fn source_line_count(path: &Path) -> usize {
         .count()
 }
 
+fn include_paths(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("include!(\"")
+                .and_then(|rest| rest.strip_suffix("\");"))
+        })
+        .collect()
+}
+
+fn contains_simple_type_param_wrapper(text: &str, wrapper: &str) -> bool {
+    let mut remaining = text;
+    while let Some(offset) = remaining.find(wrapper) {
+        let window = &remaining[offset..remaining.len().min(offset + 320)];
+        if window.contains("constraint: None")
+            && window.contains("default: None")
+            && window.contains("is_const: false")
+        {
+            return true;
+        }
+        remaining = &remaining[offset + wrapper.len()..];
+    }
+    false
+}
+
+fn contains_direct_evaluate_assert_block(text: &str) -> bool {
+    let lines: Vec<_> = text.lines().map(str::trim).collect();
+    lines.windows(3).any(|window| {
+        window[0] == "let mut evaluator = TypeEvaluator::new(&interner);"
+            && window[1].starts_with("let result = evaluator.evaluate(")
+            && window[2].starts_with("assert_eq!(result,")
+    })
+}
+
+/// Ratchet guard: keep generated evaluator test shards named after evaluator
+/// feature families. Anonymous numeric chunks make failures and regeneration
+/// diffs harder to review even when they satisfy the file-size ceiling.
+#[test]
+fn evaluate_tests_use_feature_family_shards() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+    let includes = include_paths(&text);
+
+    assert!(
+        !includes.is_empty(),
+        "{} should include evaluator test shards",
+        evaluate_tests.display()
+    );
+
+    let anonymous: Vec<_> = includes
+        .iter()
+        .copied()
+        .filter(|path| path.contains("evaluate_tests_parts/part_"))
+        .collect();
+    assert!(
+        anonymous.is_empty(),
+        "evaluator test shards should be named by feature family, not numeric chunks: {anonymous:?}"
+    );
+
+    for family in [
+        "conditional",
+        "infer",
+        "indexed_access",
+        "keyof",
+        "mapped",
+        "template_literal",
+    ] {
+        assert!(
+            includes.iter().any(|path| path.contains(family)),
+            "evaluator test shard list is missing a {family} shard: {includes:?}"
+        );
+    }
+}
+
+/// Ratchet guard: compact evaluator assertions should flow through the shared
+/// helper instead of rebuilding `TypeEvaluator` in individual generated cases.
+#[test]
+fn evaluate_tests_use_shared_evaluation_assert_helper() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+
+    assert!(
+        text.contains("fn assert_evaluates_to("),
+        "{} should define a shared evaluator assertion helper",
+        evaluate_tests.display()
+    );
+
+    for include in include_paths(&text) {
+        let shard = solver_dir.join("tests").join(include);
+        let shard_text = fs::read_to_string(&shard)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", shard.display()));
+
+        assert!(
+            !contains_direct_evaluate_assert_block(&shard_text),
+            "{} should use assert_evaluates_to for direct evaluate assertions",
+            shard.display()
+        );
+    }
+}
+
+/// Ratchet guard: generated evaluator shards should use the shared fixture
+/// helpers for unconstrained type and infer parameters instead of repeating the
+/// same `TypeParamInfo` setup in each case.
+#[test]
+fn evaluate_tests_use_shared_type_param_helpers() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+
+    assert!(
+        text.contains("fn test_type_param("),
+        "{} should define a shared type-parameter fixture helper",
+        evaluate_tests.display()
+    );
+    assert!(
+        text.contains("fn test_infer_param("),
+        "{} should define a shared infer-parameter fixture helper",
+        evaluate_tests.display()
+    );
+
+    for include in include_paths(&text) {
+        let shard = solver_dir.join("tests").join(include);
+        let shard_text = fs::read_to_string(&shard)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", shard.display()));
+
+        assert!(
+            !contains_simple_type_param_wrapper(
+                &shard_text,
+                "TypeData::TypeParameter(TypeParamInfo {",
+            ),
+            "{} should use test_type_param for generated type parameters",
+            shard.display()
+        );
+        assert!(
+            !contains_simple_type_param_wrapper(&shard_text, "TypeData::Infer(TypeParamInfo {"),
+            "{} should use test_infer_param for generated infer parameters",
+            shard.display()
+        );
+    }
+}
+
 /// Ratchet guard: prevent solver source files from growing beyond
 /// maintainability limits. Baseline values live in `file_size_baselines.txt`
 /// and can be updated via `TSZ_FILE_SIZE_RATCHET_UPDATE=1`.

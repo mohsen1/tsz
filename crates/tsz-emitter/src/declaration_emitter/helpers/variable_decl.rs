@@ -316,6 +316,9 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             let is_unique_symbol =
                 keyword == "const" && has_initializer && self.is_symbol_call(initializer);
+            let is_mutable_function_initializer = keyword != "const"
+                && has_initializer
+                && self.is_js_function_initializer(initializer);
 
             // For `const x = null` / `const x = undefined`, tsc always emits `: any`.
             // For `let`/`var`, tsc preserves the solver's type (e.g., `let x: null`).
@@ -380,6 +383,21 @@ impl<'a> DeclarationEmitter<'a> {
                         || kind == SyntaxKind::BigIntLiteral as u16
                 })
                 && let Some(type_text) = self.infer_fallback_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+                && let Some(type_text) = self
+                    .short_circuit_expression_type_text(initializer)
+                    .or_else(|| self.infer_arithmetic_binary_type_text(initializer, 0))
+                    .or_else(|| {
+                        self.preferred_expression_type_text(initializer)
+                            .filter(|text| text != "any")
+                    })
             {
                 self.write(": ");
                 self.write(&type_text);
@@ -499,6 +517,16 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) = self.json_require_call_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) =
+                    self.generic_call_constrained_mapped_return_type_text(initializer)
             {
                 self.write(": ");
                 self.write(&type_text);
@@ -634,35 +662,42 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             } else if has_initializer
-                && (self.emit_ts_late_bound_function_initializer_type_annotation(
-                    decl_name,
-                    initializer,
-                ) || ((self.function_initializer_has_type_predicate(
-                    decl_idx,
-                    decl_name,
-                    initializer,
-                ) || self.function_initializer_needs_source_signature(initializer)
-                    || self.function_initializer_has_inline_parameter_comments(initializer)
-                    || self.function_initializer_is_self_returning_for(initializer, decl_name)
-                    || self.function_initializer_returns_unique_identifier(initializer)
-                    || self.function_initializer_has_typeof_in_param_annotations(initializer)
-                    || self.function_initializer_has_destructured_parameters(initializer)
-                    || self.function_initializer_has_inferred_return_via_symbol(
-                        decl_idx,
+                && ((!is_mutable_function_initializer
+                    && self.emit_ts_late_bound_function_initializer_type_annotation(
                         decl_name,
                         initializer,
                     ))
-                    && {
-                        self.maybe_emit_non_portable_function_return_diagnostic(
-                            decl_name,
-                            initializer,
-                        );
-                        self.emit_function_initializer_type_annotation(
+                    || ((self.function_initializer_has_type_predicate(
+                        decl_idx,
+                        decl_name,
+                        initializer,
+                    ) || self.function_initializer_needs_source_signature(initializer)
+                        || self.function_initializer_has_inline_parameter_comments(initializer)
+                        || self
+                            .function_initializer_is_self_returning_for(initializer, decl_name)
+                        || self.function_initializer_returns_unique_identifier(initializer)
+                        || (keyword != "const"
+                            && self.function_initializer_has_parameter_type_annotations(
+                                initializer,
+                            ))
+                        || self.function_initializer_has_typeof_in_param_annotations(initializer)
+                        || self.function_initializer_has_destructured_parameters(initializer)
+                        || self.function_initializer_has_inferred_return_via_symbol(
                             decl_idx,
                             decl_name,
                             initializer,
-                        )
-                    }))
+                        ))
+                        && {
+                            self.maybe_emit_non_portable_function_return_diagnostic(
+                                decl_name,
+                                initializer,
+                            );
+                            self.emit_function_initializer_type_annotation(
+                                decl_idx,
+                                decl_name,
+                                initializer,
+                            )
+                        }))
             {
             } else if has_initializer
                 && self
@@ -672,14 +707,28 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
                 && type_text != "any"
             {
-                self.write(": ");
-                if keyword == "const"
-                    && let Some(template_index_type) =
-                        self.template_index_signature_element_access_type_text(initializer)
-                {
-                    self.write(&template_index_type);
-                } else {
-                    self.write(&type_text);
+                let emitted_truncation_diagnostic = self
+                    .get_identifier_text(decl_name)
+                    .zip(self.arena.get(decl_name))
+                    .zip(self.current_file_path.clone())
+                    .is_some_and(|((_, name_node), file_path)| {
+                        self.emit_truncation_diagnostic_if_needed(
+                            initializer,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        )
+                    });
+                if !emitted_truncation_diagnostic {
+                    self.write(": ");
+                    if keyword == "const"
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(&template_index_type);
+                    } else {
+                        self.write(&type_text);
+                    }
                 }
             } else if has_initializer
                 && self
@@ -691,16 +740,20 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
-                && self
+                && self.arena.get(initializer).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                })
+                && let Some(func) = self
                     .arena
                     .get(initializer)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
-                && let Some(type_text) = self
-                    .short_circuit_expression_type_text(initializer)
-                    .or_else(|| self.preferred_expression_type_text(initializer))
+                    .and_then(|node| self.arena.get_function(node))
+                && self.function_source_type_predicate_text(func).is_some()
+                && {
+                    self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
+                    self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
+                }
             {
-                self.write(": ");
-                self.write(&type_text);
             } else if !has_initializer
                 && keyword == "let"
                 && self
@@ -978,6 +1031,12 @@ impl<'a> DeclarationEmitter<'a> {
 
                 let selected_type_text = if has_initializer {
                     self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+                        .or_else(|| {
+                            self.object_literal_optional_method_type_text(
+                                initializer,
+                                self.indent_level,
+                            )
+                        })
                         .unwrap_or_else(|| selected_type_text.to_string())
                 } else {
                     selected_type_text.to_string()
@@ -1286,23 +1345,25 @@ impl<'a> DeclarationEmitter<'a> {
     fn constructor_reference_resolves_to_class(&self, expr_idx: NodeIndex) -> bool {
         if let Some(sym_id) = self.value_reference_symbol(expr_idx)
             && let Some(binder) = self.binder
-            && binder.lib_symbol_ids.contains(&sym_id)
         {
-            return true;
-        }
+            if binder.lib_symbol_ids.contains(&sym_id) {
+                return true;
+            }
 
-        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
-            && let Some(binder) = self.binder
-            && let Some(symbol) = binder.symbols.get(sym_id)
-            && (symbol.flags & symbol_flags::CLASS != 0
-                || symbol.declarations.iter().copied().any(|decl_idx| {
-                    self.arena.get(decl_idx).is_some_and(|decl_node| {
-                        decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    })
-                }))
-        {
-            return true;
+            // The heritage reference may be an import alias (e.g.
+            // `import { EventEmitter } from "events"`) or a re-export alias
+            // (`export = ...`) whose local binding carries no class flag itself.
+            // Follow the alias/portability chain so a class declared in another
+            // module is recognized as a constructor reference, matching tsc's
+            // direct `extends <name>` emit instead of synthesizing a `_base`
+            // const.
+            let resolved_sym_id = self.resolve_portability_declaration_symbol(sym_id, binder);
+            if self.symbol_is_class_constructor(sym_id, binder)
+                || self.symbol_is_class_constructor(resolved_sym_id, binder)
+                || self.symbol_value_meaning_is_class_constructor(resolved_sym_id, binder)
+            {
+                return true;
+            }
         }
 
         let Some(expr_name) = self.get_identifier_text(expr_idx) else {
@@ -1313,6 +1374,53 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_identifier_text(class.name).as_deref() == Some(expr_name.as_str())
             })
         })
+    }
+
+    /// Whether `sym_id` denotes a class constructor value: it carries the
+    /// `CLASS` symbol flag or is backed by a class declaration/expression.
+    fn symbol_is_class_constructor(&self, sym_id: SymbolId, binder: &BinderState) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.flags & symbol_flags::CLASS != 0
+            || symbol.declarations.iter().copied().any(|decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|decl_node| {
+                    decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                })
+            })
+    }
+
+    /// Whether the *value* meaning of `sym_id` is a class constructor that was
+    /// merged into a same-named namespace/module.
+    ///
+    /// This is the classic ambient pattern `namespace N { class N {} } export = N`
+    /// (e.g. `@types/node`'s `events`): the exported symbol is the namespace,
+    /// but its self-named member is a class, so a reference to `N` as a value is
+    /// a class constructor. tsc emits `extends N` directly here rather than
+    /// synthesizing a `_base` const. The match is structural (member name equals
+    /// the namespace's own name); no specific identifier is hard-coded.
+    fn symbol_value_meaning_is_class_constructor(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) == 0 {
+            return false;
+        }
+        let Some(exports) = symbol.exports.as_ref() else {
+            return false;
+        };
+        let Some(self_member) = exports.get(symbol.escaped_name.as_str()) else {
+            return false;
+        };
+        if self_member == sym_id {
+            return false;
+        }
+        self.symbol_is_class_constructor(self_member, binder)
     }
 
     pub(in crate::declaration_emitter) fn js_extends_entity_reference_has_any_annotation(

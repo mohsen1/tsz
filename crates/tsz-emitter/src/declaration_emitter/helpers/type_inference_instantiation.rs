@@ -9,6 +9,7 @@ use tsz_scanner::SyntaxKind;
 struct ShortCircuitTypePart {
     text: String,
     source_order: Option<u32>,
+    keeps_right_when_truthy_literal: bool,
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -46,21 +47,6 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(left_parts);
         }
 
-        // When every component of the left type is semantically always truthy (e.g. a
-        // non-empty string literal, non-zero number literal, or `true`), the right operand
-        // of `||` is unreachable — mirrors tsc's evaluate_logical returning `left` when
-        // narrow_to_falsy(left) == never.  The `!left_parts.is_empty()` guard is required
-        // because `.all(…)` on an empty iterator is vacuously true.
-        if operator == SyntaxKind::BarBarToken as u16
-            && !left_parts.is_empty()
-            && left_parts
-                .iter()
-                .all(|part| Self::short_circuit_part_is_always_truthy(&part.text))
-        {
-            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
-            return Some(left_parts);
-        }
-
         if operator == SyntaxKind::BarBarToken as u16
             && !left_parts.is_empty()
             && left_parts
@@ -70,8 +56,7 @@ impl<'a> DeclarationEmitter<'a> {
             return self.short_circuit_operand_type_parts(binary.right, depth + 1);
         }
 
-        let right_parts =
-            self.short_circuit_operand_type_parts_widening_literals(binary.right, depth + 1)?;
+        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
         let (include_right_parts, widen_right_parts) = if operator == SyntaxKind::BarBarToken as u16
         {
@@ -144,6 +129,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         if self.short_circuit_operand_is_syntactically_truthy(expr_idx, depth + 1) {
             return true;
+        }
+
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(initializer) = self.short_circuit_reference_initializer(expr_idx)
+        {
+            return self.expression_result_is_syntactically_always_truthy_for_declaration(
+                initializer,
+                depth + 1,
+            );
         }
 
         let Some(binary) = self.arena.get_binary_expr(expr_node) else {
@@ -329,14 +323,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.short_circuit_operand_type_parts_inner(expr_idx, depth, false)
     }
 
-    fn short_circuit_operand_type_parts_widening_literals(
-        &self,
-        expr_idx: NodeIndex,
-        depth: u32,
-    ) -> Option<Vec<ShortCircuitTypePart>> {
-        self.short_circuit_operand_type_parts_inner(expr_idx, depth, true)
-    }
-
     fn short_circuit_operand_type_parts_inner(
         &self,
         expr_idx: NodeIndex,
@@ -361,15 +347,46 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let text = self.short_circuit_operand_type_text_at(expr_idx, 0, widen_direct_literals)?;
+        let keeps_right_when_truthy_literal =
+            self.short_circuit_identifier_is_const_with_type_annotation(expr_idx);
         let mut parts = Self::split_top_level_union_type_parts(&text)
             .into_iter()
             .map(|text| ShortCircuitTypePart {
                 text,
                 source_order: self.short_circuit_source_order(expr_idx),
+                keeps_right_when_truthy_literal,
             })
             .collect::<Vec<_>>();
         Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
         Some(parts)
+    }
+
+    fn short_circuit_identifier_is_const_with_type_annotation(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.value_reference_symbol(expr_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            self.arena.get(decl_idx).is_some_and(|decl_node| {
+                self.arena
+                    .get_variable_declaration(decl_node)
+                    .is_some_and(|decl| {
+                        self.arena.is_const_variable_declaration(decl_idx)
+                            && decl.type_annotation.is_some()
+                    })
+            })
+        })
     }
 
     fn short_circuit_reference_initializer(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
@@ -434,6 +451,10 @@ impl<'a> DeclarationEmitter<'a> {
                 part.text = "true".to_string();
                 include_right_parts = true;
                 widen_right_parts = true;
+            } else if part.keeps_right_when_truthy_literal
+                && Self::short_circuit_or_literal_needs_right(trimmed, right_parts)
+            {
+                include_right_parts = true;
             } else if Self::short_circuit_or_broad_primitive_needs_right(trimmed, right_parts) {
                 include_right_parts = true;
                 widen_right_parts = true;
@@ -444,6 +465,17 @@ impl<'a> DeclarationEmitter<'a> {
 
         *left_parts = retained;
         (include_right_parts, widen_right_parts)
+    }
+
+    fn short_circuit_or_literal_needs_right(
+        type_text: &str,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        let is_literal = Self::is_short_circuit_string_literal_type(type_text)
+            || Self::is_short_circuit_number_literal_type(type_text)
+            || Self::is_short_circuit_bigint_literal_type(type_text)
+            || type_text == "true";
+        is_literal && !right_parts.iter().all(|part| part.text.trim() == type_text)
     }
 
     fn short_circuit_or_broad_primitive_needs_right(
@@ -491,25 +523,6 @@ impl<'a> DeclarationEmitter<'a> {
         matches!(type_text.trim(), "null" | "undefined" | "void")
     }
 
-    fn short_circuit_part_is_always_truthy(type_text: &str) -> bool {
-        let trimmed = type_text.trim();
-        // Mixed-truthiness primitives — can be empty string, zero, false, etc.
-        if matches!(
-            trimmed,
-            "string" | "number" | "boolean" | "bigint" | "any" | "unknown" | "object" | "never"
-        ) {
-            return false;
-        }
-        // Delegates to the canonical falsy-set (null/undefined/void/false/0/-0/0n/""/''
-        // as tracked by `short_circuit_or_excludes_left_type`).
-        if Self::short_circuit_or_excludes_left_type(trimmed) {
-            return false;
-        }
-        Self::is_short_circuit_string_literal_type(trimmed)
-            || Self::is_short_circuit_number_literal_type(trimmed)
-            || trimmed == "true"
-    }
-
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {
         let mut deduped: Vec<ShortCircuitTypePart> = Vec::new();
         for mut part in parts.drain(..) {
@@ -522,6 +535,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .iter_mut()
                 .find(|existing| existing.text == part.text)
             {
+                existing.keeps_right_when_truthy_literal |= part.keeps_right_when_truthy_literal;
                 if existing.source_order.is_none()
                     || part
                         .source_order
@@ -629,7 +643,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.short_circuit_const_literal_reference_type_text(expr_idx)
             .or_else(|| self.js_literal_type_text(expr_idx))
-            .or_else(|| self.preferred_expression_type_text(expr_idx))
+            .or_else(|| self.declaration_summary_primitive_expression_type_text(expr_idx, 0))
+            .or_else(|| {
+                self.preferred_expression_type_text(expr_idx)
+                    .filter(|text| text != "any")
+            })
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
@@ -641,7 +659,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 self.short_circuit_const_literal_reference_type_text(expr_idx)
                     .or_else(|| self.js_literal_type_text(expr_idx))
-                    .or_else(|| self.preferred_expression_type_text(expr_idx))
+                    .or_else(|| {
+                        self.declaration_summary_primitive_expression_type_text(expr_idx, 0)
+                    })
+                    .or_else(|| {
+                        self.preferred_expression_type_text(expr_idx)
+                            .filter(|text| text != "any")
+                    })
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
     }

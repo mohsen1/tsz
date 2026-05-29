@@ -206,6 +206,10 @@ pub struct ParserState {
     /// After a missing object-literal property initializer, allow the next
     /// line-broken property-like token to continue without a synthetic comma error.
     pub(crate) suppress_object_literal_comma_once: bool,
+    /// A malformed object method used `=>` where a body/return annotation should
+    /// appear. Abort the object-literal member list so the return-token tail is
+    /// recovered as ordinary statements.
+    pub(crate) abort_object_literal_recovery_once: bool,
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
@@ -277,6 +281,12 @@ pub struct ParserState {
     /// TS1359 at the reserved word and then cascades the statement's
     /// diagnostics (`'(' expected.` / `')' expected.`) at the following tokens.
     pub(crate) namespace_import_yielded_to_statement: bool,
+    /// Function declarations recover hard reserved parameter-name keywords by
+    /// leaving the keyword in the token stream for statement-level recovery.
+    pub(crate) recover_reserved_parameter_as_statement_tail_allowed: bool,
+    /// Set when the current function declaration parameter list yielded a hard
+    /// reserved keyword back to the statement parser.
+    pub(crate) reserved_parameter_yielded_to_statement: bool,
 }
 
 impl ParserState {
@@ -360,6 +370,7 @@ impl ParserState {
             in_import_type_options_context: false,
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
+            abort_object_literal_recovery_once: false,
             suppress_next_missing_close_paren_error_once: false,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
@@ -380,6 +391,8 @@ impl ParserState {
             recover_jsx_closing_tag_extra_namespace_tail: false,
             recover_jsx_invalid_namespace_head_tail: false,
             namespace_import_yielded_to_statement: false,
+            recover_reserved_parameter_as_statement_tail_allowed: false,
+            reserved_parameter_yielded_to_statement: false,
         }
     }
 
@@ -411,6 +424,7 @@ impl ParserState {
         self.in_import_type_options_context = false;
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
+        self.abort_object_literal_recovery_once = false;
         self.suppress_next_missing_close_paren_error_once = false;
         self.suppress_next_missing_class_close_brace_error_once = false;
         self.non_block_close_brace_statement_errors_remaining = 0;
@@ -431,6 +445,8 @@ impl ParserState {
         self.recover_jsx_closing_tag_extra_namespace_tail = false;
         self.recover_jsx_invalid_namespace_head_tail = false;
         self.namespace_import_yielded_to_statement = false;
+        self.recover_reserved_parameter_as_statement_tail_allowed = false;
+        self.reserved_parameter_yielded_to_statement = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.
         // When the parser is reused via `reset()` the caller passes a fresh
@@ -1513,6 +1529,53 @@ impl ParserState {
         }
     }
 
+    pub(crate) const fn is_statement_tail_reserved_parameter_keyword(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::EnumKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::ForKeyword
+        )
+    }
+
+    /// Report TS1390 and the companion parser recovery diagnostic for hard
+    /// reserved parameter names, but leave the keyword in the token stream so
+    /// statement-level recovery can parse the tail just like `tsc`.
+    pub(crate) fn error_reserved_word_in_parameter_name_without_consuming(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let keyword = self.token();
+        let keyword_end = self.token_end();
+        if self.should_report_error() {
+            let word = self.current_keyword_text();
+            let msg = diagnostic_messages::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME.replace("{0}", word);
+            self.parse_error_at_current_token(
+                &msg,
+                diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME,
+            );
+        }
+
+        match keyword {
+            SyntaxKind::EnumKeyword | SyntaxKind::FunctionKeyword => {
+                self.parse_error_at(
+                    keyword_end,
+                    1,
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            SyntaxKind::ClassKeyword => {
+                self.parse_error_at(keyword_end, 1, "'{' expected.", diagnostic_codes::EXPECTED);
+            }
+            SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword => {
+                self.parse_error_at(keyword_end, 1, "'(' expected.", diagnostic_codes::EXPECTED);
+            }
+            _ => {}
+        }
+    }
+
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
     pub(crate) fn error_reserved_word_identifier(&mut self) {
         // Use centralized error suppression heuristic
@@ -1706,7 +1769,25 @@ impl ParserState {
             // the missing-semicolon error: tsc's `parseErrorAtPosition` dedups
             // only by exact start, so `00.5;` reports TS1121 at col 1 AND
             // TS1005 at col 3.
-            if self.should_report_error() || self.last_error_was_leading_zero_at_other_pos() {
+            //
+            // Also dedup by exact start against a recent diagnostic: tsc emits
+            // the missing-semicolon error via `parseErrorAtPosition`, which drops
+            // it when the previous diagnostic shares its start. A recovered
+            // construct can anchor a diagnostic exactly at this token and leave
+            // the token to reparse (e.g. a mismatched JSX closing fragment
+            // `<>...</div>` reports TS17015 at `div`, then `div` reparses as the
+            // next statement). tsz may push another recovery diagnostic in
+            // between, so scan the most recent few by exact position.
+            let token_pos = self.token_pos();
+            let already_reported_here = self
+                .parse_diagnostics
+                .iter()
+                .rev()
+                .take(4)
+                .any(|diag| diag.start == token_pos);
+            if !already_reported_here
+                && (self.should_report_error() || self.last_error_was_leading_zero_at_other_pos())
+            {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;

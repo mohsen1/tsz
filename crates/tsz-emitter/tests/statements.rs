@@ -34,6 +34,41 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn parse_and_emit_strict_target(source: &str, file_name: &str, target: ScriptTarget) -> String {
+    let mut parser =
+        ParserState::new_with_language_version(file_name.to_string(), source.to_string(), target);
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::NodeNext,
+            resolved_node_module_to_cjs: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
     let output =
@@ -46,6 +81,121 @@ fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon
     assert!(
         !output.contains("a = () => 1 // ok\n;"),
         "Arrow body should not steal the statement trailing comment before the semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn reserved_void_type_alias_name_emits_recovered_runtime_statements() {
+    let source = "interface I {}\ntype any = I;\ntype void = I;\ntype object = I;";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(output.trim_end(), "\"use strict\";\ntype;\nvoid ;\nI;");
+}
+
+#[test]
+fn hard_reserved_parameter_names_emit_statement_tail_recovery() {
+    let source = "function f1(enum) {}\nfunction f2(class) {}\nfunction f3(function) {}\nfunction f4(while) {}\nfunction f5(for) {}";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction f1() { }\nvar ;\n(function () {\n})( || ( = {}));\n{ }\nfunction f2() { }\nclass {\n}\n{ }\nfunction f3() { }\nfunction () { }\n{ }\nfunction f4() { }\nwhile () { }\nfunction f5() { }\nfor (;;) { }"
+    );
+}
+
+#[test]
+fn reserved_array_binding_parameter_yields_statement_tail_recovery() {
+    let source = r#""use strict"
+function a4([while, for, public]){ }
+function a5(...while) { }
+"#;
+    let output = parse_and_emit_strict_es2015(source, "destructuring.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction a4([]) { }\nwhile (, )\n    for (, public; ; )\n        ;\n{ }\nfunction a5(...) { }\nwhile () { }"
+    );
+}
+
+#[test]
+fn invalid_import_attribute_entries_emit_statement_tail_recovery() {
+    let source = r#"export type LocalInterface =
+    & import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface
+    & import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface;
+
+export const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
+export const b = (null as any as import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface);"#;
+    let output = parse_and_emit_nodenext_cjs_es2015(source, "index.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.b = exports.a = void 0;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface\n    & import(\"pkg\", { with: { 1234: , \"resolution-mode\": \"import\" } }).ImportInterface;\nexports.a = null;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface;\n;\nexports.b = null;\n1234, \"resolution-mode\";\n\"import\";\nImportInterface;\n;"
+    );
+}
+
+#[test]
+fn es5_property_access_preserves_raw_astral_identifier_name() {
+    let source = "class Foo { methodA() { return this.\u{102A7}; } }";
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("return this.\u{102A7};"),
+        "Raw astral IdentifierName after property access should survive ES5 recovery.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return this.;"),
+        "Raw astral IdentifierName after property access should not be emitted as a missing name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_empty_block_preserves_inner_line_comment() {
+    let source = "const f: () => undefined = () => {\n    // keep\n};\n";
+    let output = parse_and_emit_strict_target(source, "arrow.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("var f = function () {\n    // keep\n};"),
+        "ES5 arrow block lowering should preserve comment-only bodies.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("};\n// keep"),
+        "Comment-only arrow body comments must not drift after the function expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_accessor_recovered_throw_preserves_comment_chain_and_semicolon_line() {
+    let source = "class C {\n    get value() {\n        // first\n        // second\n        throw null;\n        throw undefined.\n    }\n}\n";
+    let output = parse_and_emit_strict_target(source, "accessor.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("get: function () {\n            // first\n            // second\n            throw null;\n            throw undefined.\n            ;\n        }"),
+        "ES5 accessor lowering should keep leading comment chains and recovered throw semicolon layout.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_class_member_tail_emits_as_outer_statements() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+    methodA() {
+        return this.𐊧;
+    }
+}
+"#;
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("}());\n{\n    102;\n    A7;\n}\nstring;\nconstructor();"),
+        "Invalid braced astral class member tail should be recovered after the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return this.𐊧;"),
+        "Recovered method body should still preserve raw astral IdentifierName property access.\nOutput:\n{output}"
     );
 }
 
@@ -1372,5 +1522,96 @@ interface I2 extends Foo {
     assert!(
         output.contains("return 1;\n;"),
         "Recovered return from erased interface type body should emit before the leftover semicolon.\nOutput:\n{output}"
+    );
+}
+
+// =============================================================================
+// ES5 for-in destructuring head: synthetic `void 0` source materialization
+// =============================================================================
+//
+// Structural rule: an ES5 for-in head whose binding pattern has no real
+// iteration source synthesizes `void 0` as the source. tsc inlines the
+// parenthesized `(void 0)` directly into the single element/member access when
+// the pattern has exactly one element (the source is read once), and only falls
+// back to a shared `_x = void 0` source temp when the pattern has more than one
+// element (the source is read multiple times). The tests below vary the bound
+// names and the pattern shape so they prove the rule, not the spelling.
+
+#[test]
+fn es5_for_in_single_array_binding_with_default_inlines_void0() {
+    let source = "for (let [x = 'a' in {}] in { '': 0 }) console.log(x)";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0)[0]"),
+        "Single-element array for-in head should inline (void 0)[0].\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element array for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_single_object_binding_with_default_inlines_void0() {
+    // Renamed iteration variable (`y` not `x`) to prove the rule is structural.
+    let source = "for (let {y = 'a' in {}} in { '': 0 }) console.log(y)";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0).y"),
+        "Single-element object for-in head should inline (void 0).y.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element object for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_single_array_binding_no_default_inlines_void0() {
+    // Single element without a default still reads the source once -> inline.
+    let source = "for (var [first] in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0)[0]"),
+        "Single-element no-default array for-in head should inline (void 0)[0].\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_multi_array_binding_uses_source_temp() {
+    // Two elements read the source twice, so tsc binds it to a shared temp.
+    let source = "for (var [a, b] in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("= void 0,"),
+        "Multi-element array for-in head should allocate a shared source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)["),
+        "Multi-element array for-in head must not inline the synthetic source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_multi_object_binding_uses_source_temp() {
+    // Renamed members (`p`/`q`) prove the multi-element fallback is structural.
+    let source = "for (var {p, q} in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("= void 0,"),
+        "Multi-element object for-in head should allocate a shared source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)."),
+        "Multi-element object for-in head must not inline the synthetic source.\nOutput:\n{output}"
     );
 }

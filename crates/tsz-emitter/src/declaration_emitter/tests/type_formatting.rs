@@ -1657,6 +1657,58 @@ fn test_mapped_type_in_declaration() {
 }
 
 #[test]
+fn type_parameter_constraint_mapped_type_stays_inline() {
+    let output = emit_dts(
+        r#"
+export const cf = <T extends { [P in K]: string; } & { cool: string }, K extends keyof T>(t: T, k: K) => {};
+"#,
+    );
+    assert!(
+        output.contains("cf: <T extends { [P in K]: string; } & {\n    cool: string;"),
+        "Mapped type in a type-parameter constraint should stay inline: {output}"
+    );
+}
+
+#[test]
+fn type_parameter_constraint_mapped_type_stays_inline_with_renamed_key() {
+    let output = emit_dts(
+        r#"
+export const pick = <Shape extends { [Key in Field | "extra"]: number; }, Field extends keyof Shape>(shape: Shape, field: Field) => {};
+"#,
+    );
+    assert!(
+        output.contains(
+            "pick: <Shape extends { [Key in Field | \"extra\"]: number; }, Field extends keyof Shape>"
+        ),
+        "Mapped type constraint formatting must not depend on iteration variable names: {output}"
+    );
+}
+
+#[test]
+fn object_valued_type_parameter_constraint_mapped_type_stays_multiline() {
+    let output = emit_dts(
+        r#"
+export type Example<T extends { [Key in keyof T]: { prop: any; } }> = {
+    [Key in keyof T]: T[Key]["prop"];
+};
+"#,
+    );
+    assert!(
+        output.contains("T extends {\n    [Key in keyof T]: {\n        prop: any;\n    };\n}"),
+        "Object-valued mapped type constraints should keep structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn top_level_mapped_type_alias_stays_multiline() {
+    let output = emit_dts("export type Names<K extends string> = { [Key in K]: string; };");
+    assert!(
+        output.contains("{\n    [Key in K]: string;\n}"),
+        "Top-level mapped type aliases should keep structured multiline formatting: {output}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type() {
     let output = emit_dts("export type Name = Person['name'];");
     assert!(
@@ -1709,38 +1761,42 @@ fn test_typeof_type() {
 // Parenthesized type preservation
 // =============================================================================
 
-/// tsc preserves user-written parentheses on type annotations verbatim in
-/// the generated `.d.ts`.  Check the most common positions.
+/// tsc strips *redundant* parentheses around atomic/simple type annotations
+/// (`var x: (string)` → `string`) but *preserves* them around composite types
+/// such as unions, intersections, conditionals, and tuples (see the
+/// `parenthesized_*` tests below and
+/// `tests::infer_paren_and_union_intersection`).
 
 #[test]
-fn parenthesized_simple_type_annotation_preserved() {
-    // Simple parenthesized primitive — e.g. `var x: (string)`
+fn parenthesized_simple_type_annotation_stripped() {
+    // Redundant parens around a primitive keyword are stripped:
+    // `var x: (string)` → `string`.
     let output = emit_dts("export declare var x: (string);");
     assert!(
-        output.contains("(string)"),
-        "Expected source parens preserved: {output}"
+        output.contains("x: string;") && !output.contains("(string)"),
+        "Expected redundant parens stripped around keyword type: {output}"
     );
-    // Renamed variable — prove the fix is not spelling-dependent
+    // Renamed variable — prove the rule is not spelling-dependent.
     let output2 = emit_dts("export declare var value: (number);");
     assert!(
-        output2.contains("(number)"),
-        "Expected source parens preserved for number: {output2}"
+        output2.contains("value: number;") && !output2.contains("(number)"),
+        "Expected redundant parens stripped around keyword type (renamed): {output2}"
     );
 }
 
 #[test]
-fn parenthesized_union_type_annotation_preserved() {
-    // `(string | number)` as a variable annotation
+fn parenthesized_union_type_annotation_stripped() {
+    // `(string | number)` as a variable annotation — parens preserved
     let out = emit_dts("export declare var x: (string | number);");
     assert!(
-        out.contains("(string | number)"),
-        "Expected parenthesized union preserved: {out}"
+        out.contains("x: (string | number)"),
+        "Expected parenthesized union parens preserved: {out}"
     );
-    // Same shape with different type names
+    // Same rule with different type names
     let out2 = emit_dts("export declare var y: (boolean | null);");
     assert!(
-        out2.contains("(boolean | null)"),
-        "Expected parenthesized union preserved for boolean|null: {out2}"
+        out2.contains("y: (boolean | null)"),
+        "Expected parenthesized union parens preserved for boolean|null: {out2}"
     );
 }
 
@@ -1804,15 +1860,17 @@ fn parenthesized_intersection_arm_no_double_parens() {
 }
 
 #[test]
-fn parenthesized_function_param_and_return_type_preserved() {
+fn parenthesized_function_param_and_return_type_stripped() {
+    // Parens on parameter and return type annotations are preserved verbatim
+    // by tsc; they carry no semantic meaning but are kept in the output.
     let out = emit_dts("export declare function f(x: (string | number)): (boolean | null);");
     assert!(
-        out.contains("(string | number)"),
-        "Expected parens on param type: {out}"
+        out.contains("x: (string | number)"),
+        "Expected parens preserved on param type: {out}"
     );
     assert!(
-        out.contains("(boolean | null)"),
-        "Expected parens on return type: {out}"
+        out.contains("): (boolean | null)"),
+        "Expected parens preserved on return type: {out}"
     );
 }
 
@@ -1851,6 +1909,29 @@ fn mapped_type_named_tuple_union_constraint_stays_inline_renamed_var() {
     );
 }
 
+#[test]
+fn mapped_type_keyof_noinfer_object_constraint_formats_multiline() {
+    let output = emit_dts("export type M = { [K in keyof NoInfer<{ a: string, b: string }>]: K };");
+    assert!(
+        output.contains(
+            "export type M = {\n    [K in keyof NoInfer<{\n        a: string;\n        b: string;\n    }>]: K;\n};"
+        ),
+        "Object type literals inside mapped constraints should use structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn mapped_type_keyof_noinfer_object_constraint_formats_multiline_renamed_var() {
+    let output =
+        emit_dts("export type M = { [P in keyof NoInfer<{ left: number, right: boolean }>]: P };");
+    assert!(
+        output.contains(
+            "export type M = {\n    [P in keyof NoInfer<{\n        left: number;\n        right: boolean;\n    }>]: P;\n};"
+        ),
+        "Object type literal formatting should not depend on mapped variable or property names: {output}"
+    );
+}
+
 /// A union-of-named-tuples used as a top-level type alias must be preserved
 /// in output (no regression for non-mapped-type positions).
 #[test]
@@ -1872,3 +1953,10 @@ fn mapped_type_named_tuple_union_as_clause_stays_inline() {
         "Named-tuple union in mapped-type as-clause must stay inline: {output}"
     );
 }
+
+// The end-to-end array-of-union parenthesization for inferred `.map()` return
+// types (e.g. `mapOnTupleTypes01`: `let d = numStr.map(x => x)` producing
+// `(string | number)[]`) needs the checker's resolved parameter types, so it
+// is covered by the emit-runner baseline rather than the no-type-info
+// `emit_dts` harness here. The structural parenthesization rule itself is unit
+// tested directly in `type_inference_object_rewrites::array_element_paren_tests`.

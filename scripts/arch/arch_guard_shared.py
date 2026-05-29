@@ -238,41 +238,24 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/assignability/assignability_checker.rs",
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
-            "crates/tsz-checker/src/checkers/jsx/tests.rs",
-            "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
             "crates/tsz-checker/src/error_reporter/properties.rs",
-            "crates/tsz-checker/src/error_reporter/render_failure.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/jsdoc/params.rs",
-            "crates/tsz-checker/src/state/state_checking/class.rs",
             "crates/tsz-checker/src/state/state_checking/property.rs",
             "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/state/variable_checking/core.rs",
             "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
-            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/computation/call/inner.rs",
-            "crates/tsz-checker/src/types/computation/call_inference.rs",
-            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/queries/core.rs",
-            "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
-            "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
     (
@@ -299,7 +282,7 @@ FILE_LINE_LIMIT_CHECKS = [
         1920,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
+        "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -307,12 +290,13 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3381,
+        3378,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
     # target lowering, ...) are extracted into sibling submodules.
+    # Ratcheted 5150→4918 after submodule extraction reduced the core engine.
     (
         "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
         ROOT
@@ -321,7 +305,617 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "transforms"
         / "async_es5_ir.rs",
-        5150,
+        4918,
+    ),
+    # Emitter ES decorators: PR #10778 tracks sharding into 7 focused submodules.
+    # Ratchet down as submodules land.
+    (
+        "Emitter boundary: es_decorators monolith size ratchet (#10778)",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "es_decorators.rs",
+        5755,
+    ),
+    # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
+    # splitting into option-domain submodules. Ratchet down as each domain lands.
+    # Ratcheted 8206→4981 after extracting the 3.2k-LOC test module into
+    # config/tests/{options_parsing,module_resolution,strict_lib_extends}.rs.
+    (
+        "Core boundary: tsconfig/config monolith size ratchet (#8280)",
+        ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
+        4981,
+    ),
+    # LSP signature-help: carries TypeData and direct lookup() baseline debt
+    # (see arch_guard_policy.toml exclusions). Ratchet down per §19 splitting
+    # and arch-debt burn-down in Track 10.
+    (
+        "LSP boundary: signature_help monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
+        4808,
+    ),
+    # Scanner main loop: issue #9431 tracks splitting by token family.
+    (
+        "Scanner boundary: scanner_impl monolith size ratchet (#9431)",
+        ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
+        4190,
+    ),
+    # CLI driver resolution: split into discovery/exports_imports/package_resolution/
+    # path_resolution/type_packages submodules; ratchet holds the orchestrator at 301.
+    (
+        "CLI boundary: driver/resolution monolith size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "resolution.rs",
+        301,
+    ),
+    # Emitter class declarations: split by emit feature family per §19.
+    (
+        "Emitter boundary: class declaration emitter size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "declarations"
+        / "class"
+        / "emit_es6.rs",
+        4191,
+    ),
+    # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
+    # extracting the source-resolution phase.
+    # Ratcheted 3949→2466 after extracting the test module into
+    # driver/check_utils/tests.rs.
+    (
+        "CLI boundary: driver/check_utils monolith size ratchet (#9412)",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "check_utils.rs",
+        2466,
+    ),
+    # LSP module-specifier resolution: split by resolution family per §19.
+    (
+        "LSP boundary: module_specifiers monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
+        3669,
+    ),
+    # LSP import candidate collection: issue #9420 tracks splitting collection
+    # from ranking and rendering.
+    (
+        "LSP boundary: project/imports monolith size ratchet (#9420)",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
+        3449,
+    ),
+    # Binder declaration binding: split by declaration family per §19.
+    (
+        "Binder boundary: binder/declaration monolith size ratchet",
+        ROOT / "crates" / "tsz-binder" / "src" / "binding" / "declaration.rs",
+        3038,
+    ),
+    # Emitter class ES5 AST-to-IR: issue #10638 tracks splitting alongside
+    # async_es5_ir.rs. Partially split (comments/control-flow/expressions/for-in-of
+    # submodules already extracted); ratchet holds orchestrator at 1869.
+    (
+        "Emitter boundary: class ES5 AST-to-IR engine size ratchet (#10638)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "class_es5_ast_to_ir.rs",
+        1869,
+    ),
+    # CLI LSP server: completions handler — split by completion kind per §19.
+    (
+        "CLI LSP server: handlers_completions monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_completions.rs",
+        3577,
+    ),
+    # CLI main binary: split by command family per §19.
+    (
+        "CLI boundary: tsz main binary size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "bin" / "tsz.rs",
+        3573,
+    ),
+    # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
+    # as pipeline stages are extracted per §19.
+    (
+        "CLI boundary: driver/core monolith size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
+        3195,
+    ),
+    # CLI LSP server: structure/outline handler — split by request kind per §19.
+    (
+        "CLI LSP server: handlers_structure monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_structure.rs",
+        3075,
+    ),
+    # CLI LSP server: hover/signature/semantic handler — split by feature per §19.
+    (
+        "CLI LSP server: handlers_info monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_info.rs",
+        2881,
+    ),
+    # CLI LSP server: editing/refactor handler — split by action family per §19.
+    (
+        "CLI LSP server: handlers_editing monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_editing.rs",
+        2332,
+    ),
+    # LSP project core: orchestrates multi-file state. Ratchet down as file
+    # management is delegated to ProjectFileSet/CompilationGroup per §19.
+    (
+        "LSP boundary: project/core monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "core.rs",
+        2916,
+    ),
+    # LSP fourslash: language-service test protocol runner. Ratchet down as
+    # test helpers are extracted into focused sub-modules per §19.
+    (
+        "LSP boundary: fourslash test protocol size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "fourslash.rs",
+        2268,
+    ),
+    # Emitter DTS portability resolver: split by portability family per §19.
+    (
+        "Emitter boundary: declaration_emitter/helpers/portability_resolve size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "portability_resolve.rs",
+        3178,
+    ),
+    # Emitter DTS type-inference helper: issue #8276 tracks migrating inference
+    # output to structured declaration summary facts.
+    (
+        "Emitter boundary: declaration_emitter/helpers/type_inference size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "type_inference.rs",
+        2846,
+    ),
+    # Emitter using/disposable region: issue #8276 tracks migrating the 16
+    # output-surgery rewrites to structured resource-region IR.
+    (
+        "Emitter boundary: source_file/top_level_using size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "top_level_using.rs",
+        2537,
+    ),
+    # Emitter property/element access: split by access kind per §19.
+    (
+        "Emitter boundary: emitter/expressions/access size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "access.rs",
+        2554,
+    ),
+    # --- Blanket coverage batch: all production files > 2000 lines per §19 ---
+    # These entries pin the current baseline and prevent silent growth.
+    # Each file is a candidate for splitting; ratchet down as submodules land.
+    (
+        "Checker boundary: types/property_access_type/resolve.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "property_access_type"
+        / "resolve.rs",
+        3152,
+    ),
+    (
+        "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "type_checking"
+        / "duplicate_identifiers_helpers.rs",
+        3150,
+    ),
+    (
+        "Checker boundary: error_reporter/properties.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "error_reporter" / "properties.rs",
+        3107,
+    ),
+    (
+        "Checker boundary: declarations/import/declaration.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "declarations"
+        / "import"
+        / "declaration.rs",
+        3066,
+    ),
+    (
+        "Checker boundary: state/state_checking/property.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "state_checking"
+        / "property.rs",
+        3036,
+    ),
+    (
+        "Parser boundary: parser/state_expressions_literals.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-parser"
+        / "src"
+        / "parser"
+        / "state_expressions_literals.rs",
+        3054,
+    ),
+    (
+        "Checker boundary: jsdoc/params.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "params.rs",
+        2941,
+    ),
+    (
+        "Checker boundary: types/type_checking/duplicate_identifiers.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "type_checking"
+        / "duplicate_identifiers.rs",
+        2916,
+    ),
+    (
+        "Checker boundary: flow/control_flow/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "flow"
+        / "control_flow"
+        / "core.rs",
+        2886,
+    ),
+    (
+        "Solver boundary: type_queries/flow.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "type_queries" / "flow.rs",
+        2874,
+    ),
+    (
+        "Checker boundary: types/utilities/core.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "utilities" / "core.rs",
+        2779,
+    ),
+    (
+        "Checker boundary: state/type_analysis/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_analysis"
+        / "core.rs",
+        2798,
+    ),
+    (
+        "CLI boundary: driver/tests.rs size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "tests.rs",
+        2736,
+    ),
+    (
+        "Checker boundary: types/class_type/constructor.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "class_type"
+        / "constructor.rs",
+        2688,
+    ),
+    (
+        "Solver boundary: diagnostics/format/compound.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "diagnostics"
+        / "format"
+        / "compound.rs",
+        2602,
+    ),
+    (
+        "Checker boundary: assignability/assignability_diagnostics.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "assignability"
+        / "assignability_diagnostics.rs",
+        2600,
+    ),
+    (
+        "Checker boundary: state/type_resolution/module.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_resolution"
+        / "module.rs",
+        2596,
+    ),
+    (
+        "Parser boundary: parser/state_statements_class_members.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-parser"
+        / "src"
+        / "parser"
+        / "state_statements_class_members.rs",
+        2587,
+    ),
+    (
+        "Checker boundary: state/type_environment/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_environment"
+        / "core.rs",
+        2568,
+    ),
+    (
+        "Conformance boundary: conformance runner size ratchet",
+        ROOT / "crates" / "conformance" / "src" / "runner.rs",
+        2485,
+    ),
+    (
+        "Emitter boundary: emitter/module_emission/core/mod.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "module_emission"
+        / "core"
+        / "mod.rs",
+        2484,
+    ),
+    (
+        "Emitter boundary: emitter/source_file/emit.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "emit.rs",
+        2462,
+    ),
+    (
+        "Checker boundary: jsdoc/diagnostics.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "diagnostics.rs",
+        2437,
+    ),
+    (
+        "Checker boundary: state/variable_checking/destructuring.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "variable_checking"
+        / "destructuring.rs",
+        2250,
+    ),
+    (
+        "Checker boundary: state/state_checking_members/interface_checks.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "state_checking_members"
+        / "interface_checks.rs",
+        2250,
+    ),
+    (
+        "Solver boundary: operations/constraints/walker.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "constraints"
+        / "walker.rs",
+        2230,
+    ),
+    (
+        "Emitter boundary: emitter/es5/helpers_async.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "es5"
+        / "helpers_async.rs",
+        2260,
+    ),
+    (
+        "Checker boundary: state/variable_checking/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "variable_checking"
+        / "core.rs",
+        2207,
+    ),
+    (
+        "Emitter boundary: emitter/helpers.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "helpers.rs",
+        2222,
+    ),
+    (
+        "Emitter boundary: declaration_emitter/usage_analyzer.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "usage_analyzer.rs",
+        2154,
+    ),
+    (
+        "Emitter boundary: emitter/transform_dispatch.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "transform_dispatch.rs",
+        2124,
+    ),
+    (
+        "Solver boundary: visitors/visitor_predicates.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "visitors"
+        / "visitor_predicates.rs",
+        2123,
+    ),
+    (
+        "Solver boundary: operations/call_args.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "operations" / "call_args.rs",
+        2122,
+    ),
+    (
+        "LSP boundary: navigation/definition.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "navigation" / "definition.rs",
+        2121,
+    ),
+    (
+        "Solver boundary: relations/subtype/rules/functions/checking.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "relations"
+        / "subtype"
+        / "rules"
+        / "functions"
+        / "checking.rs",
+        2198,
+    ),
+    (
+        "LSP boundary: completions/member.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "completions" / "member.rs",
+        2117,
+    ),
+    (
+        "Emitter boundary: emitter/module_wrapper/system_emit.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "module_wrapper"
+        / "system_emit.rs",
+        2093,
+    ),
+    (
+        "LSP boundary: hierarchy/call_hierarchy.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "hierarchy" / "call_hierarchy.rs",
+        2091,
+    ),
+    (
+        "Solver boundary: intern/core/interner.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "intern" / "core" / "interner.rs",
+        2086,
+    ),
+    (
+        "CLI boundary: bin/tsz_server/tests_navigation.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "tests_navigation.rs",
+        2044,
+    ),
+    (
+        "Solver boundary: operations/core/call_resolution.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "core"
+        / "call_resolution.rs",
+        2031,
+    ),
+    (
+        "LSP boundary: hover/core.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "hover" / "core.rs",
+        2029,
+    ),
+    (
+        "Emitter boundary: emitter/statements/control_flow.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "statements"
+        / "control_flow.rs",
+        2029,
+    ),
+    (
+        "Solver boundary: evaluation/evaluate.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "evaluation" / "evaluate.rs",
+        2019,
+    ),
+    (
+        "Emitter boundary: transforms/module_commonjs.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "module_commonjs.rs",
+        2016,
     ),
 ]
 
@@ -338,7 +932,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        238,
+        239,
     ),
 ]
 
@@ -439,7 +1033,7 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        36,
+        35,
     ),
 ]
 
@@ -527,7 +1121,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Refreshed #9852 on current main for contextual-wrapper excess-property
         # diagnostics; this records the merged live count.
-        3440,
+        #
+        # Ratcheted down after current-main guard tests caught slack in the
+        # live direct-reference count.
+        #
+        # Ratcheted down to the live merged count after #10311 and #10359
+        # narrowed checker-side direct common references; removal condition
+        # remains #8225 narrowing this quarantine.
+        #
+        # Ratcheted down after current-main guard tests caught slack in the
+        # live direct-reference count.
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        3266,
     ),
 ]
 
@@ -547,7 +1153,7 @@ WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
     (
         "Workspace Clippy suppressions must not grow (#9446)",
         [ROOT / "crates"],
-        107,
+        10,
     ),
 ]
 
@@ -556,7 +1162,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        6,
+        4,
     ),
 ]
 
@@ -612,13 +1218,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        9,
+        6,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        36,
+        23,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
@@ -650,15 +1256,25 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
+        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
+        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
+        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
+        # tracks migrating it to a structured declaration summary.
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        3,
+        1,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        0,
+    ),
+    (
+        "Solver API boundary: root judge convenience re-export (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^\s*pub\s+mod\s+judge\s*\{"),
         0,
     ),
     (
@@ -675,6 +1291,12 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver relation boundary: RelationPolicy must store typed flags (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
         re.compile(r"^\s*(?:pub\s+)?flags\s*:\s*u16\s*,"),
+        0,
+    ),
+    (
+        "Solver relation boundary: RelationPolicy must not expose packed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bfn\s+legacy_packed_flags\s*\([^)]*\)\s*->\s*u16\b"),
         0,
     ),
     (
@@ -748,6 +1370,21 @@ REGEX_LINE_COUNT_CHECKS = [
         re.compile(
             r"\bfn\s+apply_flags\s*\([^)]*\bflags\s*:\s*u16"
             r"|\.\s*apply_flags\s*\(\s*policy\.flags\s*\)"
+        ),
+        0,
+    ),
+    (
+        "Solver relation boundary: legacy flag decoder avoids cache-key constants (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bRelationCacheKey::FLAG_[A-Z0-9_]+\b"),
+        0,
+    ),
+    (
+        "Solver relation boundary: legacy RelationPolicy::from_flags calls stay at boundary (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r'^\s*(?!//)(?:[^"\n]|"[^"\n]*")*?'
+            r"\bRelationPolicy::from_flags\s*\("
         ),
         0,
     ),

@@ -136,7 +136,6 @@ impl<'a> CheckerState<'a> {
         if source_prop.optional || source_prop.visibility != tsz_solver::Visibility::Public {
             return false;
         }
-
         let Some(target_prop) = self
             .property_info_for_any_missing_property_satisfaction_type(target_types, property_name)
         else {
@@ -145,18 +144,19 @@ impl<'a> CheckerState<'a> {
         if target_prop.visibility != tsz_solver::Visibility::Public {
             return false;
         }
-
         let read_ok = if source_prop.is_method || target_prop.is_method {
             self.diagnostic_relation_boolean_guard_bivariant(
                 source_prop.type_id,
                 target_prop.type_id,
             )
         } else {
-            self.diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
+            self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+                .related
         };
         let write_ok = target_prop.readonly
             || self
-                .diagnostic_relation_boolean_guard(target_prop.write_type, source_prop.write_type);
+                .assign_relation_outcome(target_prop.write_type, source_prop.write_type)
+                .related;
 
         read_ok && write_ok
     }
@@ -441,92 +441,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-    pub fn error_type_does_not_satisfy_the_expected_type(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        keyword_pos: Option<u32>,
-    ) {
-        if !self.has_exact_optional_property_mismatch(source, target)
-            && self.should_suppress_assignability_diagnostic(source, target)
-        {
-            return;
-        }
-
-        let reason = self
-            .analyze_assignability_failure(source, target)
-            .failure_reason;
-
-        // For TS1360, point the diagnostic at the `satisfies` keyword position
-        // when available, rather than walking up to the enclosing statement.
-        let anchor_idx = if keyword_pos.is_some() {
-            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::Exact)
-        } else {
-            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment)
-        };
-
-        let mut base_diag = match reason {
-            Some(reason) => self.render_failure_reason(&reason, source, target, anchor_idx, 0),
-            None => {
-                let Some(anchor) =
-                    self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
-                else {
-                    return;
-                };
-                let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                    self.ctx.types,
-                    &self.ctx.binder.symbols,
-                    self.ctx.file_name.as_str(),
-                )
-                .with_def_store(&self.ctx.definition_store)
-                .with_namespace_module_names(&self.ctx.namespace_module_names);
-                let diag = builder.type_not_assignable(source, target, anchor.start, anchor.length);
-                diag.to_checker_diagnostic(&self.ctx.file_name)
-            }
-        };
-
-        // Mutate the top-level diagnostic to be TS1360.
-        // When the target is not literal-sensitive (e.g. `1 satisfies boolean`),
-        // widen a bare literal source for display to match tsc, which reports
-        // `Type 'number' does not satisfy the expected type 'boolean'.`
-        // (tsc's `typeToString` widens fresh literal primitives when the target
-        // type does not preserve literal display.)
-        let display_source = if self.is_literal_sensitive_assignment_target(target) {
-            source
-        } else {
-            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source)
-        };
-        let src_str = self.format_type_for_assignability_message(display_source);
-        let tgt_str = self.format_type_for_assignability_message(target);
-        use tsz_common::diagnostics::data::diagnostic_codes;
-        use tsz_common::diagnostics::data::diagnostic_messages;
-        use tsz_common::diagnostics::format_message;
-
-        let msg = format_message(
-            diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE,
-            &[&src_str, &tgt_str],
-        );
-
-        if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
-            let new_related = self
-                .related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
-            base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
-            base_diag.message_text = msg;
-            base_diag.related_information = new_related;
-        }
-
-        // Override the diagnostic start position to the `satisfies` keyword
-        // when available. tsc points TS1360 at the keyword, not the expression.
-        if let Some(kw_pos) = keyword_pos {
-            base_diag.start = kw_pos;
-            // "satisfies" is 9 characters long
-            base_diag.length = 9;
-        }
-
-        self.ctx.push_diagnostic(base_diag);
-    }
-
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx =
@@ -948,7 +862,7 @@ impl<'a> CheckerState<'a> {
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|&m| !self.diagnostic_relation_boolean_guard(m, target_eval))
+            .filter(|&m| !self.assign_relation_outcome(m, target_eval).related)
             .collect();
         if mismatched.len() == members.len()
             && members.len() == 2

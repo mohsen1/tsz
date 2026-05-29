@@ -61,10 +61,7 @@ impl<'a> CheckerState<'a> {
         if object_node.kind != SyntaxKind::Identifier as u16 {
             return false;
         }
-        let Some(object_ident) = self.ctx.arena.get_identifier(object_node) else {
-            return false;
-        };
-        if object_ident.escaped_text != "Object" {
+        if !self.object_define_property_base_is_global_object(callee_access.expression) {
             return false;
         }
         let Some(name_node) = self.ctx.arena.get(callee_access.name_or_argument) else {
@@ -74,6 +71,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         name_ident.escaped_text == "defineProperty"
+    }
+
+    fn object_define_property_base_is_global_object(&self, idx: NodeIndex) -> bool {
+        self.identifier_resolves_to_proven_lib_global(idx, "Object")
     }
 
     fn define_property_descriptor_accessor_type(

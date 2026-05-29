@@ -428,13 +428,12 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(spread_expr, spread_expr) {
             return;
         }
-        if self.diagnostic_relation_boolean_guard(source, rest_target_type) {
-            return;
-        }
-
         // Use the canonical assign relation outcome so the weak-union hint is collected
         // alongside the failure reason and can be reused by the skip gate.
         let outcome = self.assign_relation_outcome(source, rest_target_type);
+        if outcome.related {
+            return;
+        }
         if self.should_skip_weak_union_error_with_outcome(
             source,
             rest_target_type,
@@ -554,10 +553,9 @@ impl<'a> CheckerState<'a> {
                                             || target_type == TypeId::ERROR
                                             || default_type == TypeId::ANY
                                             || default_type == TypeId::ERROR
-                                            || self.diagnostic_relation_boolean_guard(
-                                                default_type,
-                                                target_type,
-                                            );
+                                            || self
+                                                .assign_relation_outcome(default_type, target_type)
+                                                .related;
                                         if default_assignable {
                                             // Default is fine but property type might not be.
                                             self.check_destructuring_leaf_assignability_with_default(
@@ -739,24 +737,12 @@ impl<'a> CheckerState<'a> {
                         {
                             self.ensure_relation_input_ready(check_type);
                             self.ensure_relation_input_ready(target_type);
-                            if !self.diagnostic_relation_boolean_guard(check_type, target_type) {
-                                // Emit TS2322 directly with pre-resolved types.
-                                // The standard error pipeline would re-derive
-                                // the source type from the anchor node's parent
-                                // assignment, incorrectly showing the RHS array
-                                // type instead of the element type.
-                                let source_str = self.format_type_diagnostic(check_type);
-                                let target_str = self.format_type_diagnostic(target_type);
-                                let message = crate::diagnostics::format_message(
-                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                    &[&source_str, &target_str],
-                                );
-                                self.error_at_node(
-                                    target_idx,
-                                    &message,
-                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                );
-                            }
+                            self.check_pre_resolved_assignable_or_report_at_exact_anchor(
+                                check_type,
+                                target_type,
+                                target_idx,
+                                target_idx,
+                            );
                         }
                     }
                 }
@@ -853,7 +839,9 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| self.get_type_of_node(default_expr));
             if default_type != TypeId::ANY
                 && default_type != TypeId::ERROR
-                && !self.diagnostic_relation_boolean_guard(default_type, target_type)
+                && !self
+                    .assign_relation_outcome(default_type, target_type)
+                    .related
             {
                 if self.try_report_object_default_property_mismatch(
                     default_expr,
@@ -935,7 +923,7 @@ impl<'a> CheckerState<'a> {
         // Ensure both types are fully resolved before relation checking.
         self.ensure_relation_input_ready(prop_type);
         self.ensure_relation_input_ready(target_type);
-        if self.diagnostic_relation_boolean_guard(prop_type, target_type) {
+        if self.assign_relation_outcome(prop_type, target_type).related {
             return;
         }
         // Emit TS2322 directly. Format source type from the TypeId rather
@@ -1001,7 +989,10 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            if self.diagnostic_relation_boolean_guard(source_type, target_prop_type) {
+            if self
+                .assign_relation_outcome(source_type, target_prop_type)
+                .related
+            {
                 continue;
             }
             let source_for_display = {

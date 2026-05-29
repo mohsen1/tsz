@@ -56,6 +56,17 @@ pub struct ScopeWalker<'a> {
     scope_stack: Vec<SymbolTable>,
     /// Indices of function-scoped entries within `scope_stack`
     function_scope_indices: Vec<usize>,
+    /// Current recursion depth shared by all three recursive tree walks
+    /// (`walk_to_node`, `walk_for_scope`, `collect_references`). Incremented
+    /// on entry and decremented on exit so it reflects actual call-stack depth.
+    /// Used in place of `stacker::remaining_stack()`, which always reports the
+    /// current segment's headroom (~2 MB) inside a `maybe_grow` closure and
+    /// therefore never detects runaway chaining.
+    tree_walk_depth: u32,
+    /// Set to `true` when any tree walk exceeds `TREE_WALK_MAX_DEPTH`.
+    /// All subsequent recursive calls return immediately. The walker is
+    /// ephemeral (one per operation call) so no reset is needed.
+    ref_walk_stack_tripped: bool,
 }
 
 impl<'a> ScopeWalker<'a> {
@@ -119,6 +130,8 @@ impl<'a> ScopeWalker<'a> {
             // Start with file-level scope
             scope_stack: vec![binder.file_locals.clone()],
             function_scope_indices: vec![0],
+            tree_walk_depth: 0,
+            ref_walk_stack_tripped: false,
         }
     }
 
@@ -300,6 +313,28 @@ impl<'a> ScopeWalker<'a> {
         target: NodeIndex,
         path: &mut Vec<NodeIndex>,
     ) -> Option<SymbolId> {
+        if self.ref_walk_stack_tripped {
+            return None;
+        }
+        self.tree_walk_depth += 1;
+        if self.tree_walk_depth > Self::TREE_WALK_MAX_DEPTH {
+            self.ref_walk_stack_tripped = true;
+            self.tree_walk_depth -= 1;
+            return None;
+        }
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.walk_to_node_inner(current, target, path)
+        });
+        self.tree_walk_depth -= 1;
+        result
+    }
+
+    fn walk_to_node_inner(
+        &mut self,
+        current: NodeIndex,
+        target: NodeIndex,
+        path: &mut Vec<NodeIndex>,
+    ) -> Option<SymbolId> {
         if current == target {
             // Found the target! Try to resolve it
             if let Some(node) = self.arena.get(current) {
@@ -340,7 +375,8 @@ impl<'a> ScopeWalker<'a> {
 
         path.push(current);
 
-        // Recurse into children using for_each_child
+        // Recurse through the stacker-guarded wrapper to prevent stack overflow
+        // on deeply-nested ASTs (e.g. long inheritance chains, deeply nested classes).
         let result = self.for_each_child(current, |walker, child_idx| {
             walker.walk_to_node(child_idx, target, path)
         });
@@ -694,6 +730,28 @@ impl<'a> ScopeWalker<'a> {
         target: NodeIndex,
         result: &mut Option<Vec<SymbolTable>>,
     ) -> bool {
+        if self.ref_walk_stack_tripped {
+            return false;
+        }
+        self.tree_walk_depth += 1;
+        if self.tree_walk_depth > Self::TREE_WALK_MAX_DEPTH {
+            self.ref_walk_stack_tripped = true;
+            self.tree_walk_depth -= 1;
+            return false;
+        }
+        let found = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.walk_for_scope_inner(current, target, result)
+        });
+        self.tree_walk_depth -= 1;
+        found
+    }
+
+    fn walk_for_scope_inner(
+        &mut self,
+        current: NodeIndex,
+        target: NodeIndex,
+        result: &mut Option<Vec<SymbolTable>>,
+    ) -> bool {
         if current == target {
             // Found the target! If this node itself creates a new scope (e.g., it
             // is a Block that contains the cursor in whitespace), register its own
@@ -738,7 +796,8 @@ impl<'a> ScopeWalker<'a> {
             self.register_local_declarations(current);
         }
 
-        // Recurse into children
+        // Recurse through the stacker-guarded wrapper to prevent stack overflow
+        // on deeply-nested ASTs (e.g. long inheritance chains, deeply nested classes).
         let found = self
             .for_each_child(current, |walker, child_idx| {
                 walker
@@ -772,8 +831,36 @@ impl<'a> ScopeWalker<'a> {
         refs
     }
 
+    /// Maximum AST traversal depth for all recursive tree walks. Real TypeScript
+    /// files rarely exceed a few hundred levels; 4096 is a generous bound that
+    /// terminates pathological inputs (or malformed AST cycles) before the OS
+    /// stack limit is hit.
+    const TREE_WALK_MAX_DEPTH: u32 = 4096;
+
     /// Recursively collect references to a symbol.
     fn collect_references(
+        &mut self,
+        current: NodeIndex,
+        target_name: &str,
+        target_symbol: SymbolId,
+        refs: &mut Vec<NodeIndex>,
+    ) {
+        if self.ref_walk_stack_tripped {
+            return;
+        }
+        self.tree_walk_depth += 1;
+        if self.tree_walk_depth > Self::TREE_WALK_MAX_DEPTH {
+            self.ref_walk_stack_tripped = true;
+            self.tree_walk_depth -= 1;
+            return;
+        }
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.collect_references_guarded(current, target_name, target_symbol, refs);
+        });
+        self.tree_walk_depth -= 1;
+    }
+
+    fn collect_references_guarded(
         &mut self,
         current: NodeIndex,
         target_name: &str,

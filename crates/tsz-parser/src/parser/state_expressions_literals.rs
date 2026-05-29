@@ -302,10 +302,20 @@ impl ParserState {
                 continue;
             }
 
+            let in_parameter_binding_pattern = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                != 0;
+
             // Reserved words in the first array-binding position should recover as
             // an invalid destructuring pattern rather than a generic identifier error.
             if elements.is_empty() && self.is_reserved_word() {
                 self.error_array_element_destructuring_pattern_expected();
+                if in_parameter_binding_pattern
+                    && self.recover_reserved_parameter_as_statement_tail_allowed
+                {
+                    self.reserved_parameter_yielded_to_statement = true;
+                    break;
+                }
                 self.next_token();
                 continue;
             }
@@ -313,9 +323,6 @@ impl ParserState {
             // Later reserved words in an array binding should stay on the
             // structural recovery path instead of surfacing a reserved-word
             // identifier diagnostic that tsc does not emit here.
-            let in_parameter_binding_pattern = (self.context_flags
-                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
-                != 0;
             let hard_reserved_word = self.is_reserved_word();
             let parameter_future_reserved_word =
                 in_parameter_binding_pattern && self.is_strict_mode_future_reserved_word();
@@ -673,23 +680,50 @@ impl ParserState {
         let end_pos = self.token_end();
         self.next_token();
 
+        let super_node = self
+            .arena
+            .add_token(SyntaxKind::SuperKeyword as u16, start_pos, end_pos);
+
         // If super is followed by (, ., [, or <, return just the super keyword.
         // The caller (parse_member_expression_rest) will handle the access chain.
-        if !self.is_token(SyntaxKind::OpenParenToken)
-            && !self.is_token(SyntaxKind::DotToken)
-            && !self.is_token(SyntaxKind::OpenBracketToken)
-            && !self.is_token(SyntaxKind::LessThanToken)
+        if self.is_token(SyntaxKind::OpenParenToken)
+            || self.is_token(SyntaxKind::DotToken)
+            || self.is_token(SyntaxKind::OpenBracketToken)
+            || self.is_token(SyntaxKind::LessThanToken)
         {
-            // super must be followed by an argument list or member access.
-            // Emit TS1034 at the current token position (matching tsc's parseExpectedToken).
-            self.parse_error_at_current_token(
-                diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-                diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-            );
+            return super_node;
         }
 
-        self.arena
-            .add_token(SyntaxKind::SuperKeyword as u16, start_pos, end_pos)
+        // `super` must be followed by an argument list or member access. When it
+        // is not, tsc recovers by consuming an (expected) `.` token and parsing
+        // the right side of the dot, which yields a missing-identifier
+        // PropertyAccessExpression (`super.<missing>`). The downstream emitter
+        // then prints `super.` verbatim, and the static-member super lowering
+        // sees a real property access (e.g. `Reflect.get(base, "", self)` with an
+        // empty key). Matching tsc structurally — rather than returning a bare
+        // `super` keyword — keeps error-recovery emit aligned with tsc.
+        //
+        // Emit TS1034 at the current token position (matching tsc's
+        // `parseExpectedToken(DotToken, ...)`).
+        let missing_name_pos = self.token_pos();
+        self.parse_error_at_current_token(
+            diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+            diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+        );
+
+        // Build `super.<missing>`: a property access whose name is the missing
+        // identifier (NodeIndex::NONE), spanning from `super` to the recovery
+        // point. The dot token is synthetic (no `.` exists in the source).
+        self.arena.add_access_expr(
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+            start_pos,
+            missing_name_pos,
+            AccessExprData {
+                expression: super_node,
+                name_or_argument: NodeIndex::NONE,
+                question_dot_token: false,
+            },
+        )
     }
 
     /// Parse import expression: import(...), import.meta, or import.defer(...)
@@ -1441,14 +1475,36 @@ impl ParserState {
                     let saved_token = self.current_token;
                     let saved_state = self.scanner.save_state();
                     self.next_token(); // look past `;`
-                    let should_continue = self.is_expression_start()
-                        || self.is_token(SyntaxKind::DotDotDotToken)
-                        || self.is_token(SyntaxKind::CloseBracketToken);
+                    // A `;` is not a valid array-element separator and cannot begin
+                    // an array element. tsc's parseDelimitedList aborts the list at
+                    // such a token. When the token following `;` could itself begin a
+                    // fresh statement-level element list (an expression start or
+                    // spread), terminate the array literal at the `;` so the remainder
+                    // re-parses as a separate statement, matching tsc's recovery node
+                    // shape. The `;` is left unconsumed for the outer parser.
+                    let next_can_begin_element =
+                        self.is_expression_start() || self.is_token(SyntaxKind::DotDotDotToken);
+                    let next_is_close_bracket = self.is_token(SyntaxKind::CloseBracketToken);
                     let follows_eof = self.is_token(SyntaxKind::EndOfFileToken);
                     self.scanner.restore_state(saved_state);
                     self.current_token = saved_token;
 
-                    if should_continue {
+                    if next_can_begin_element {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        // Terminate the list at the `;`; do not consume it. The
+                        // enclosing statement parser handles the trailing tokens.
+                        break;
+                    }
+
+                    if next_is_close_bracket {
+                        // `[a ;]` — a trailing `;` immediately before the closer is a
+                        // mistyped comma rather than a list terminator. Report the
+                        // missing comma, consume the `;`, and let the loop close the
+                        // array on the `]`.
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "',' expected.",
@@ -1556,6 +1612,10 @@ impl ParserState {
             let prop = self.parse_property_assignment();
             if prop.is_some() {
                 properties.push(prop);
+            }
+            if self.abort_object_literal_recovery_once {
+                self.abort_object_literal_recovery_once = false;
+                break;
             }
 
             // Try to parse comma separator
@@ -1886,8 +1946,9 @@ impl ParserState {
 
         // Check for optional property marker '?' - not allowed in object literals
         // TSC emits TS1162: "An object member cannot be declared optional."
-        if self.is_token(SyntaxKind::QuestionToken) {
+        let question_pos = if self.is_token(SyntaxKind::QuestionToken) {
             use tsz_common::diagnostics::diagnostic_codes;
+            let pos = self.u32_from_usize(self.scanner.get_token_start());
             self.parse_error_at_current_token(
                 "An object member cannot be declared optional.",
                 diagnostic_codes::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
@@ -1905,7 +1966,10 @@ impl ParserState {
                     start_pos, name, false, false, true,
                 );
             }
-        }
+            pos
+        } else {
+            0
+        };
 
         // Check for definite assignment assertion '!' - not allowed in object literals.
         // TSC emits TS1255 as a grammar error (not a parse error), so it does not
@@ -1937,6 +2001,10 @@ impl ParserState {
                     self.suppress_object_literal_comma_once = true;
                 }
                 name // Use property name as fallback for error recovery
+            } else if let Some(recovered) =
+                self.recover_object_literal_computed_indexer_tail(name, expr)
+            {
+                recovered
             } else {
                 expr
             };
@@ -1991,10 +2059,72 @@ impl ParserState {
                     equals_token: has_equals,
                     equals_token_pos,
                     exclamation_token_pos: exclamation_pos,
+                    question_token_pos: question_pos,
                     object_assignment_initializer: initializer,
                 },
             )
         }
+    }
+
+    fn recover_object_literal_computed_indexer_tail(
+        &mut self,
+        name: NodeIndex,
+        left: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let name_node = self.arena.get(name)?;
+        let name_end = name_node.end;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            || !self.is_token(SyntaxKind::CloseBracketToken)
+        {
+            return None;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let has_colon_after_bracket = self.is_token(SyntaxKind::ColonToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        if !has_colon_after_bracket {
+            return None;
+        }
+
+        self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+        self.next_token();
+        self.parse_error_at_current_token(
+            "Property assignment expected.",
+            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+        );
+        self.next_token();
+        let right = self.parse_assignment_expression();
+        if right.is_none() {
+            return Some(left);
+        }
+        // tsc does not fold the trailing value into a comma expression; it
+        // re-reads it as the property name of a fresh object member that then
+        // expects a `:`. When that recovered tail butts directly against the
+        // object's closing `}` (no comma/semicolon separator), tsc reports
+        // TS1005 "':' expected." at the `}` for the missing property colon.
+        // Mirror that here so the recovered comma-expression AST is preserved
+        // while the trailing diagnostic still matches tsc.
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+        }
+        let left_start = self.arena.get(left).map_or(name_end, |node| node.pos);
+        let end_pos = self
+            .arena
+            .get(right)
+            .map_or(self.token_end(), |node| node.end);
+        Some(self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            left_start,
+            end_pos,
+            crate::parser::node::BinaryExprData {
+                left,
+                operator_token: SyntaxKind::CommaToken as u16,
+                right,
+            },
+        ))
     }
 
     /// Look ahead to check if get/set/async is a method vs property name
@@ -2445,20 +2575,11 @@ impl ParserState {
                     diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                 );
-                self.next_token();
             }
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                let block = self.parse_block();
-                if self.is_token(SyntaxKind::CloseBraceToken) {
-                    self.parse_error_at_current_token(
-                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                }
-                block
-            } else {
-                NodeIndex::NONE
-            }
+            self.abort_object_literal_recovery_once = true;
+            self.pop_label_scope();
+            self.context_flags = saved_flags;
+            return NodeIndex::NONE;
         } else {
             // tsc emits TS1005 "'{' expected." when an object method body is missing
             use tsz_common::diagnostics::diagnostic_codes;

@@ -271,15 +271,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let evaluated = self.evaluate_type_with_env(ty);
-            if evaluated != ty
-                && self.ctx.types.get_display_alias(evaluated).is_some()
-                && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+            if evaluated != ty {
+                if self.ctx.types.get_display_alias(evaluated).is_some()
+                    && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        def_id,
+                    )
+                {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
+                // tsc attaches an alias symbol (and renders the alias name) only
+                // to freshly-constructed structural types. A non-generic alias
+                // whose body resolves to a bare intrinsic keyword or a literal
+                // points at a shared singleton type with no alias symbol, so tsc
+                // shows the underlying type (`string`, `42`, `never`, …) —
+                // including through alias chains (`type A = B; type B = string`
+                // renders as `string`). `evaluate_type_with_env` collapses the
+                // chain, so a single check on the evaluated form covers the family.
+                if crate::query_boundaries::type_predicates::is_intrinsic_or_literal_type(
                     self.ctx.types.as_type_database(),
-                    &self.ctx.definition_store,
-                    def_id,
-                )
-            {
-                return self.format_type_for_assignability_message(evaluated);
+                    evaluated,
+                ) {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
@@ -934,6 +949,31 @@ impl<'a> CheckerState<'a> {
         other: TypeId,
     ) -> String {
         self.format_assignability_type_for_message_internal(ty, other, true)
+    }
+
+    pub(crate) fn format_type_for_assignability_message_skip_application_alias(
+        &mut self,
+        ty: TypeId,
+    ) -> String {
+        self.ensure_relation_input_ready(ty);
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_def_store(&self.ctx.definition_store)
+                .with_diagnostic_mode()
+                .with_skip_application_display_alias_chase()
+                .with_preserve_optional_parameter_surface_syntax(true)
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_builtin_iterator_return_type(
+                    if self.ctx.compiler_options.strict_builtin_iterator_return {
+                        TypeId::UNDEFINED
+                    } else {
+                        TypeId::ANY
+                    },
+                )
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                );
+        formatter.format(ty).into_owned()
     }
 
     pub(crate) fn format_assignability_type_for_message_preserving_nullish(

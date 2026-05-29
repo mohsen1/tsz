@@ -2150,8 +2150,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             {
                                 upper
                             } else if let Some(default) = tp.default {
-                                instantiate_call_type(
-                                    self.interner,
+                                self.eval_type_param_default(
                                     default,
                                     &final_subst,
                                     actual_this_type,
@@ -2312,8 +2311,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             } else if let Some(default) = tp.default {
-                let ty =
-                    instantiate_call_type(self.interner, default, &final_subst, actual_this_type);
+                let ty = self.eval_type_param_default(default, &final_subst, actual_this_type);
                 trace!(resolved_type = ?ty, "Using default type");
                 // Track that this type parameter fell back to its default.
                 // We should NOT check argument assignability against the default
@@ -2957,9 +2955,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
                 let final_param_type =
                     instantiate_type(self.interner, raw_param_type, &final_subst);
-                if let Some(expected) = self
-                    .conflicting_contextual_signature_instantiation_type(arg_type, final_param_type)
-                {
+                let mismatch = self.arg_mismatch(arg_type, raw_param_type, final_param_type, func);
+                if let Some(expected) = mismatch {
                     return CallResult::ArgumentTypeMismatch {
                         index: i,
                         expected,

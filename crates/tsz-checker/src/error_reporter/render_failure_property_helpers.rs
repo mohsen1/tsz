@@ -192,6 +192,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render an `OptionalPropertyRequired` failure: a source property that is
+    /// present but optional assigned to a required target property. tsc reports
+    /// TS2327 ("Property '_' is optional in type '_' but required in type '_'."),
+    /// not the absent-property message TS2741. The rule is structural, so it
+    /// covers inline `{ x?: T }` and mapped (`Partial<T>`, `{ [K in keyof T]?:
+    /// T[K] }`) sources alike.
     pub(super) fn render_optional_property_required(
         &mut self,
         ctx: &RenderContext,
@@ -219,7 +225,7 @@ impl<'a> CheckerState<'a> {
                 .checked_js_global_element_access_fallback_target_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(target));
             let detail = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
             );
             let mut diag = Diagnostic::error(
@@ -235,7 +241,7 @@ impl<'a> CheckerState<'a> {
                 length,
                 message_text: detail,
                 category: DiagnosticCategory::Message,
-                code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                code: diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             });
             diag
         } else {
@@ -247,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 .checked_js_global_element_access_fallback_target_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(target));
             let message = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
             );
             Diagnostic::error(
@@ -255,7 +261,7 @@ impl<'a> CheckerState<'a> {
                 start,
                 length,
                 message,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             )
         }
     }
@@ -569,6 +575,53 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn excess_property_name_display_for_site(
+        &self,
+        idx: NodeIndex,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        const MAX_DEPTH: u32 = 8;
+        let mut stack: Vec<(NodeIndex, u32)> = vec![(idx, 0)];
+        while let Some((current, depth)) = stack.pop() {
+            if depth > MAX_DEPTH {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                if let Some(display) =
+                    self.excess_property_name_display_in_literal(current, property_name)
+                {
+                    return Some(display);
+                }
+                continue;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                stack.push((paren.expression, depth + 1));
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+            {
+                stack.push((bin.right, depth + 1));
+                stack.push((bin.left, depth + 1));
+                continue;
+            }
+            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+            {
+                stack.push((cond.when_false, depth + 1));
+                stack.push((cond.when_true, depth + 1));
+                continue;
+            }
+        }
+        None
+    }
+
     pub(super) fn excess_property_name_span_in_literal(
         &self,
         literal_idx: NodeIndex,
@@ -601,6 +654,58 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn excess_property_name_display_in_literal(
+        &self,
+        literal_idx: NodeIndex,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = self.ctx.arena.get(literal_idx)?;
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        for &elem in &literal.elements.nodes {
+            let elem_node = self.ctx.arena.get(elem)?;
+            let maybe_name_idx = if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                self.ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .map(|prop| prop.name)
+            } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                self.ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .map(|prop| prop.name)
+            } else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_method_decl(elem_node)
+                    .map(|method| method.name)
+            } else {
+                None
+            };
+            let Some(name_idx) = maybe_name_idx else {
+                continue;
+            };
+
+            let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && self.property_name_matches_atom(name_idx, property_name)
+            {
+                let display = self
+                    .get_source_text_for_node(name_idx)
+                    .trim()
+                    .trim_end_matches(':')
+                    .trim_end()
+                    .to_string();
+                if !display.is_empty() {
+                    return Some(display);
+                }
+            }
+        }
+        None
+    }
+
     pub(super) fn property_name_matches_atom(
         &self,
         name_idx: NodeIndex,
@@ -616,6 +721,25 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(literal) = self.ctx.arena.get_literal(name_node) {
             return literal.text.as_str() == target_str;
+        }
+        if name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+        {
+            if let Some(suffix) = target_str.strip_prefix("__unique_")
+                && let Ok(target_symbol_id) = suffix.parse::<u32>()
+                && let Some(local_symbol_id) = self.resolve_identifier_symbol(computed.expression)
+            {
+                let symbol_id = self
+                    .ctx
+                    .resolve_import_alias_and_register(local_symbol_id)
+                    .unwrap_or(local_symbol_id);
+                if symbol_id.0 == target_symbol_id {
+                    return true;
+                }
+            }
+            return self
+                .computed_property_expression_name_atom(computed.expression)
+                .is_some_and(|resolved| resolved == target);
         }
         false
     }

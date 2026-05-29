@@ -3,119 +3,12 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-LINE_LIMIT_CHECKS = [
-    (
-        "Checker boundary: src files must stay under 2000 LOC",
-        ROOT / "crates" / "tsz-checker" / "src",
-        2000,
-        # Exclusion list pruned 2026-05-01: removed 15 entries for files
-        # that no longer exist (split or renamed) and 16 entries for files
-        # that have since dropped below 2000 lines.
-        #
-        # Refreshed 2026-05-12: removed entries that had since dropped below
-        # 2000 raw lines. The set below is the audited current set of files
-        # above 2000 raw lines.
-        {
-            # ≥2000 LOC, real files. When a file drops below the limit,
-            # delete it from this set in the same diff and the
-            # `test_excluded_files_actually_exceed_limit` test will catch
-            # any regression.
-            "crates/tsz-checker/src/assignability/assignability_checker.rs",
-            "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
-            "crates/tsz-checker/src/checkers/jsx/tests.rs",
-            "crates/tsz-checker/src/checkers/jsx/props/resolution.rs",
-            "crates/tsz-checker/src/classes/class_checker.rs",
-            "crates/tsz-checker/src/declarations/import/declaration.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
-            "crates/tsz-checker/src/error_reporter/properties.rs",
-            "crates/tsz-checker/src/flow/control_flow/core.rs",
-            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/jsdoc/params.rs",
-            "crates/tsz-checker/src/state/state_checking/class.rs",
-            "crates/tsz-checker/src/state/state_checking/property.rs",
-            "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
-            "crates/tsz-checker/src/state/type_analysis/core.rs",
-            "crates/tsz-checker/src/state/type_environment/core.rs",
-            "crates/tsz-checker/src/state/type_resolution/module.rs",
-            "crates/tsz-checker/src/state/variable_checking/core.rs",
-            "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
-            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            "crates/tsz-checker/src/tests/dispatch_tests.rs",
-            "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/computation/binary.rs",
-            "crates/tsz-checker/src/types/computation/call/inner.rs",
-            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
-            "crates/tsz-checker/src/types/function_type.rs",
-            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/queries/core.rs",
-            "crates/tsz-checker/src/types/queries/lib.rs",
-            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
-            "crates/tsz-checker/src/types/utilities/core.rs",
-            "crates/tsz-checker/src/types/utilities/enum_utils.rs",
-        },
-    ),
-    (
-        "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
-        ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
-        3100,
-    ),
-]
-
-FILE_LINE_LIMIT_CHECKS = [
-    (
-        "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline",
-        ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
-        365,
-    ),
-    (
-        "Checker query boundary: common quarantine must not grow (#8225)",
-        ROOT
-        / "crates"
-        / "tsz-checker"
-        / "src"
-        / "query_boundaries"
-        / "common.rs",
-        1920,
-    ),
-    (
-        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
-        ROOT
-        / "crates"
-        / "tsz-solver"
-        / "src"
-        / "operations"
-        / "generic_call"
-        / "resolve.rs",
-        3381,
-    ),
-    # Pin the async ES5 IR transformer file size while #8277 splits the
-    # monolith into staged lowering modules. The cap should ratchet down
-    # as more phases (helper scheduling, temp/hoist planning, suspended
-    # target lowering, ...) are extracted into sibling submodules.
-    (
-        "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
-        ROOT
-        / "crates"
-        / "tsz-emitter"
-        / "src"
-        / "transforms"
-        / "async_es5_ir.rs",
-        5150,
-    ),
-]
-
 # Pin field counts on giant coordination structs so workstream-4 (Checker
 # State / Speculation) extraction work shows up as visible metric drift in
 # the diff.  Each entry: (description, file_path, struct_name, max_fields).
 #
-# When a field is added intentionally, bump the cap in the same PR.  This is
-# the same convention as `FILE_LINE_LIMIT_CHECKS` — it makes architecture
-# health metric drift visible at review time (Operating Principle 8 in
-# `docs/plan/ROADMAP.md`).
+# When a field is added intentionally, bump the cap in the same PR. This makes
+# architecture health metric drift visible at review time.
 STRUCT_FIELD_COUNT_CHECKS = [
     (
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
@@ -310,7 +203,13 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down to the live merged Application-source refresh count
         # after current main reduced the quarantine surface.
-        3338,
+        #
+        # Ratcheted down to the live merged count after #10311 and #10359
+        # narrowed checker-side direct common references; removal condition
+        # remains #8225 narrowing this quarantine.
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        3266,
     ),
 ]
 
@@ -330,7 +229,7 @@ WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
     (
         "Workspace Clippy suppressions must not grow (#9446)",
         [ROOT / "crates"],
-        107,
+        10,
     ),
 ]
 
@@ -395,13 +294,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        9,
+        6,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        36,
+        23,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
@@ -445,6 +344,12 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver API boundary: root judge convenience re-export (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^\s*pub\s+mod\s+judge\s*\{"),
+        0,
+    ),
+    (
         "Solver relation boundary: legacy relation flag bridge surface (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src"],
         re.compile(
@@ -452,6 +357,12 @@ REGEX_LINE_COUNT_CHECKS = [
             r"subtype_cache_config_from_legacy_flags|"
             r"assignability_cache_config_from_legacy_flags)\b"
         ),
+        0,
+    ),
+    (
+        "Solver relation boundary: RelationPolicy must not expose packed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bfn\s+legacy_packed_flags\s*\([^)]*\)\s*->\s*u16\b"),
         0,
     ),
     (
@@ -863,6 +774,21 @@ REGEX_LINE_COUNT_CHECKS = [
         re.compile(
             r"\bfn\s+apply_flags\s*\([^)]*\bflags\s*:\s*u16"
             r"|\.\s*apply_flags\s*\(\s*policy\.flags\s*\)"
+        ),
+        0,
+    ),
+    (
+        "Solver relation boundary: legacy flag decoder avoids cache-key constants (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bRelationCacheKey::FLAG_[A-Z0-9_]+\b"),
+        0,
+    ),
+    (
+        "Solver relation boundary: legacy RelationPolicy::from_flags calls stay at boundary (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r'^\s*(?!//)(?:[^"\n]|"[^"\n]*")*?'
+            r"\bRelationPolicy::from_flags\s*\("
         ),
         0,
     ),

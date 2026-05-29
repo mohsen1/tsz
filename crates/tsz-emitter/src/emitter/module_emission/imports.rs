@@ -116,8 +116,7 @@ impl<'a> Printer<'a> {
         {
             return true;
         }
-        self.ctx.target_es5
-            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&names)
     }
 
     fn import_clause_is_namespace_only(
@@ -183,38 +182,29 @@ impl<'a> Printer<'a> {
         self.import_has_value_usage_after_node(node, clause)
     }
 
-    fn async_return_type_uses_imported_promise_constructor_after_node(
-        &self,
-        import_node: &Node,
-        names: &[String],
-    ) -> bool {
-        self.arena.nodes.iter().any(|node| {
-            if node.pos < import_node.end {
-                return false;
+    fn async_return_type_uses_imported_promise_constructor(&self, names: &[String]) -> bool {
+        self.arena.nodes.iter().any(|node| match node.kind {
+            kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || kind == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.arena.get_function(node).is_some_and(|func| {
+                    func.is_async
+                        && self
+                            .promise_constructor_type_name(func.type_annotation)
+                            .is_some_and(|name| names.iter().any(|import| import == &name))
+                })
             }
-            match node.kind {
-                kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || kind == syntax_kind_ext::ARROW_FUNCTION =>
-                {
-                    self.arena.get_function(node).is_some_and(|func| {
-                        func.is_async
-                            && self
-                                .promise_constructor_type_name(func.type_annotation)
-                                .is_some_and(|name| names.iter().any(|import| import == &name))
-                    })
-                }
-                kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
-                    self.arena.get_method_decl(node).is_some_and(|method| {
-                        self.arena
-                            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
-                            && self
-                                .promise_constructor_type_name(method.type_annotation)
-                                .is_some_and(|name| names.iter().any(|import| import == &name))
-                    })
-                }
-                _ => false,
+            kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(node).is_some_and(|method| {
+                    self.arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+                        && self
+                            .promise_constructor_type_name(method.type_annotation)
+                            .is_some_and(|name| names.iter().any(|import| import == &name))
+                })
             }
+            _ => false,
         })
     }
 
@@ -364,8 +354,13 @@ impl<'a> Printer<'a> {
         // Under `--emitDecoratorMetadata`, decorated-member type
         // annotations are *value* references; preserve the default whose
         // name appears in such an annotation.
-        self.ctx.options.emit_decorator_metadata
+        if self.ctx.options.emit_decorator_metadata
             && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor(&[local_name])
     }
 
     /// Filter named import specifiers to only those with value-level usage
@@ -421,6 +416,8 @@ impl<'a> Printer<'a> {
                         &haystack,
                         &local_name,
                     )
+                    || (self.ctx.target_es5
+                        && self.async_return_type_uses_imported_promise_constructor(&[local_name]))
             })
             .collect()
     }
@@ -448,9 +445,13 @@ impl<'a> Printer<'a> {
             &self.ctx.options.external_const_enum_bindings,
         );
 
-        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
             || (self.ctx.options.emit_decorator_metadata
                 && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &name))
+        {
+            return true;
+        }
+        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&[name])
     }
 
     /// Check if an import-equals declaration's identifier is used after the import.
@@ -1350,6 +1351,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if is_node_esm_external
+            && !is_exported_var
+            && !self.ctx.options.verbatim_module_syntax
+            && !self.source_is_js_file
+            && !self.import_equals_has_value_usage_after_node(node, import)
+        {
+            return;
+        }
+
         self.emit_import_equals_assignment_prefix(
             import.import_clause,
             is_external,
@@ -1424,17 +1434,36 @@ impl<'a> Printer<'a> {
             && statements.nodes.iter().any(|&stmt_idx| {
                 self.arena.get(stmt_idx).is_some_and(|stmt| {
                     if stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                        return self.import_equals_declaration_is_external(stmt);
+                        return self.import_equals_declaration_needs_node_esm_create_require(stmt);
                     }
                     if let Some(export) = self.arena.get_export_decl(stmt)
                         && let Some(clause_node) = self.arena.get(export.export_clause)
                         && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     {
-                        return self.import_equals_declaration_is_external(clause_node);
+                        return self
+                            .import_equals_declaration_needs_node_esm_create_require(clause_node);
                     }
                     false
                 })
             })
+    }
+
+    fn import_equals_declaration_needs_node_esm_create_require(&self, node: &Node) -> bool {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return false;
+        };
+        if !self.import_equals_declaration_is_external(node) {
+            return false;
+        }
+        if self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword)
+            || self.ctx.options.verbatim_module_syntax
+            || self.source_is_js_file
+        {
+            return true;
+        }
+        self.import_equals_has_value_usage_after_node(node, import)
     }
 
     pub(in crate::emitter) fn import_equals_declaration_is_external(&self, node: &Node) -> bool {

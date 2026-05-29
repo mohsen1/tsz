@@ -210,6 +210,41 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("core.rs:1", hits[2])
         self.assertIn("total matching lines: 3", hits[3])
 
+    def test_solver_internals_do_not_decode_legacy_relation_flags(self):
+        pattern, _max_lines = self._check_by_name("legacy RelationPolicy::from_flags calls")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "let policy = RelationPolicy::from_flags(flags);\n"
+                    "let typed = RelationPolicy::from_relation_flags(flags);\n"
+                    "/// RelationPolicy::from_flags(flags) is discussed here.\n"
+                    'let text = "RelationPolicy::from_flags(flags)";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
+    def test_legacy_flag_decoder_avoids_cache_key_constants(self):
+        pattern, _max_lines = self._check_by_name("decoder avoids cache-key constants")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/relations/relation_queries.rs": (
+                    "if flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0 {}\n"
+                    "if flags & RelationFlags::STRICT_NULL_CHECKS.bits() as u16 != 0 {}\n"
+                    "/// RelationCacheKey::FLAG_STRICT_NULL_CHECKS is discussed here.\n"
+                    'let text = "RelationCacheKey::FLAG_STRICT_NULL_CHECKS";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("relation_queries.rs:1", hits[0])
+        self.assertIn("relation_queries.rs:4", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
+
     def test_query_cache_relation_facade_guard(self):
         pattern, _max_lines = self._check_by_name("query cache uses relation facade")
         root = self._make_tree(
@@ -332,6 +367,25 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("lib.rs:1", hits[0])
+
+    def test_flags_root_solver_judge_convenience_reexport(self):
+        pattern, _max_lines = self._check_by_name("root judge convenience")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub mod judge {\n"
+                    "    pub use crate::relations::judge::*;\n"
+                    "}\n"
+                    "pub mod query {\n"
+                    "    pub use crate::visitors::visitor::*;\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
 
     def test_flags_legacy_relation_flag_bridge_surface(self):
         pattern, _max_lines = self._check_by_name("legacy relation flag bridge surface")

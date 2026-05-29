@@ -13,6 +13,47 @@ pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
 
+/// Whether a JSX attribute relation operand carries a conditional type that is
+/// still deferred over a type parameter, making a structural assignability
+/// answer unreliable.
+///
+/// This covers both whole-object spread sources (`{...props}` where `props` is
+/// `Omit`/`Pick`/`Exclude`/`Overwrite`/a user conditional over an unresolved
+/// `T`) and individual attribute operand types (e.g. `value={props.value}`
+/// whose type is `Option<C<T>> | C<T>`). `tsc` treats such instantiable types
+/// as *comparable* and does not emit `TS2322`; `tsz`'s structural relation
+/// cannot soundly decide them and conservatively reports "not assignable",
+/// producing a false positive.
+///
+/// Keyed purely on type structure (a deferred conditional member, or a
+/// conditional surface that still mentions a type parameter) so it is
+/// independent of the conditional helper's spelling or the type-parameter
+/// name.
+pub(crate) fn jsx_relation_operand_is_deferred_conditional(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    fn one(db: &dyn TypeDatabase, def_store: &DefinitionStore, type_id: TypeId) -> bool {
+        if !crate::query_boundaries::common::contains_type_parameters(db, type_id) {
+            return false;
+        }
+        crate::query_boundaries::common::has_deferred_conditional_member(db, type_id)
+            || crate::query_boundaries::common::contains_conditional_type(db, type_id)
+            || crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+                db, def_store, type_id,
+            )
+    }
+
+    if one(db, def_store, type_id) {
+        return true;
+    }
+    // The operand is frequently an intersection (`Omit<T, K> & Extra`);
+    // a conditional-bodied member anywhere in it defers the relation.
+    crate::query_boundaries::common::intersection_members(db, type_id)
+        .is_some_and(|members| members.iter().any(|&m| one(db, def_store, m)))
+}
+
 /// Check whether a type surface contains an explicit-readonly mapped type.
 pub(crate) fn contains_mapped_type_with_readonly_modifier(
     db: &dyn TypeDatabase,
@@ -88,7 +129,7 @@ pub(crate) fn types_are_assignable(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    checker.diagnostic_relation_boolean_guard(source, target)
+    checker.assign_relation_outcome(source, target).related
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -234,6 +275,92 @@ pub(crate) fn class_props_is_readonly_wrapper_intersection(
     })
 }
 
+/// Return true when a JSX spread source carries a target props type parameter
+/// through a readonly wrapper such as `Readonly<P & Extra>`.
+///
+/// `React` class `.props` surfaces commonly look like
+/// `Readonly<{ children?: ReactNode }> & Readonly<P>`. When such a value is
+/// spread into a component whose props target is the bare `P`, the synthesized
+/// JSX attrs object can lose the `P` identity and collapse to only enumerable
+/// wrapper props such as `children`. This query keeps the type-parameter
+/// containment decision structural instead of deriving it from rendered text.
+pub(crate) fn spread_source_covers_readonly_wrapped_type_parameter(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    spread_source: TypeId,
+    target: TypeId,
+) -> bool {
+    if !crate::query_boundaries::common::is_type_parameter_like(db, target) {
+        return false;
+    }
+    spread_source_covers_readonly_wrapped_type_parameter_inner(
+        db,
+        def_store,
+        spread_source,
+        target,
+        &mut Vec::new(),
+    )
+}
+
+fn spread_source_covers_readonly_wrapped_type_parameter_inner(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    spread_source: TypeId,
+    target: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if spread_source.is_intrinsic() || visited.contains(&spread_source) {
+        return false;
+    }
+    visited.push(spread_source);
+
+    if let Some(members) = crate::query_boundaries::common::intersection_members(db, spread_source)
+    {
+        return members.iter().any(|&member| {
+            spread_source_covers_readonly_wrapped_type_parameter_inner(
+                db, def_store, member, target, visited,
+            )
+        });
+    }
+
+    let Some(app) = crate::query_boundaries::common::type_application(db, spread_source) else {
+        return false;
+    };
+    if app.args.len() != 1 || !type_has_declaration_name(db, def_store, spread_source, "Readonly") {
+        return false;
+    }
+
+    type_is_target_or_direct_intersection_member(db, def_store, app.args[0], target)
+}
+
+fn type_is_target_or_direct_intersection_member(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    type_parameter_identity_matches(def_store, type_id, target)
+        || crate::query_boundaries::common::intersection_members(db, type_id).is_some_and(
+            |members| {
+                members
+                    .iter()
+                    .any(|&member| type_parameter_identity_matches(def_store, member, target))
+            },
+        )
+}
+
+fn type_parameter_identity_matches(
+    def_store: &DefinitionStore,
+    candidate: TypeId,
+    target: TypeId,
+) -> bool {
+    candidate == target
+        || def_store
+            .find_def_for_type(candidate)
+            .zip(def_store.find_def_for_type(target))
+            .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
+}
+
 fn contains_anonymous_object_surface_inner(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
@@ -262,4 +389,24 @@ fn contains_anonymous_object_surface_inner(
             .iter()
             .any(|&member| contains_anonymous_object_surface_inner(db, def_store, member, visited))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn types_are_assignable_uses_relation_outcome_boundary() {
+        let source = include_str!("jsx.rs");
+        let legacy = concat!("diagnostic_relation", "_boolean_guard(");
+
+        assert!(
+            source.contains("checker.assign_relation_outcome(source, target).related"),
+            "JSX assignability boundary should route relation decisions through \
+             the shared relation outcome boundary"
+        );
+        assert!(
+            !source.contains(legacy),
+            "JSX assignability boundary should not use raw diagnostic relation \
+             boolean guards"
+        );
+    }
 }

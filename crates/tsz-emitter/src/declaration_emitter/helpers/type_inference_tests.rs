@@ -1,8 +1,80 @@
 use super::DeclarationEmitter;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tsz_binder::BinderState;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::construction::TypeInterner;
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+fn first_function_declared_return_identifier_type_text(source: &str) -> Option<String> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    parser.arena.nodes.iter().find_map(|node| {
+        (node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+            .then(|| parser.arena.get_function(node))
+            .flatten()
+            .and_then(|func| emitter.function_body_declared_return_identifier_type_text(func))
+    })
+}
+
+fn emit_test_dts_with_binding(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.emit(root)
+}
+
+#[test]
+fn function_return_surface_reuses_returned_identifier_mapped_annotation() {
+    let text = first_function_declared_return_identifier_type_text(
+        r#"
+type PartialProperties<T, K extends keyof T> = Partial<Pick<T, K>>;
+export function sample<T extends { prop: string }>(a: T) {
+    const value: { [K in keyof PartialProperties<T, "prop">]: PartialProperties<T, "prop">[K]; } = null as any;
+    return value;
+}
+"#,
+    )
+    .expect("return identifier type text");
+
+    assert!(text.contains("[K in keyof PartialProperties<T, \"prop\">]"));
+    assert!(text.contains("PartialProperties<T, \"prop\">[K]"));
+}
+
+#[test]
+fn function_return_surface_reuses_renamed_returned_identifier_mapped_annotation() {
+    let text = first_function_declared_return_identifier_type_text(
+        r#"
+type Picked<U, Q extends keyof U> = Pick<U, Q>;
+export function sample<U extends { name: string }>(input: U) {
+    const value: { [Q in keyof Picked<U, "name">]: Picked<U, "name">[Q]; } = null as any;
+    return value;
+}
+"#,
+    )
+    .expect("return identifier type text");
+
+    assert!(text.contains("[Q in keyof Picked<U, \"name\">]"));
+    assert!(text.contains("Picked<U, \"name\">[Q]"));
+}
 
 #[test]
 fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
@@ -345,6 +417,143 @@ fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
 }
 
 #[test]
+fn conditional_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+        "{}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a: number;\n    b: number;\n} | {\n    a?: undefined;\n    b?: undefined;\n}"
+    );
+}
+
+#[test]
+fn conditional_empty_then_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{}".to_string(),
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n}"
+    );
+}
+
+#[test]
+fn nested_object_union_member_properties_cross_normalize_from_source_arms() {
+    let source = r#"
+declare const flag: boolean;
+let result = [
+    { kind: "first", pos: { x: 1, y: 2 } },
+    { kind: "second", pos: flag ? { a: "value" } : { b: 3 } },
+];
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("x: number;")
+            && output.contains("y: number;")
+            && output.contains("a?: undefined;")
+            && output.contains("b?: undefined;"),
+        "expected first nested source arm to gain sibling optional members: {output}"
+    );
+    assert!(
+        output.contains("a: string;")
+            && output.contains("b: number;")
+            && output.contains("x?: undefined;")
+            && output.contains("y?: undefined;"),
+        "expected conditional nested source arms to stay structured through normalization: {output}"
+    );
+}
+
+#[test]
+fn conditional_object_literal_union_widens_member_literals() {
+    let source = r#"
+declare const flag: boolean;
+let result = flag ? { a: "x", b: 0, c: true } : {};
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("a: string;"),
+        "expected string literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("b: number;"),
+        "expected numeric literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("c: boolean;"),
+        "expected boolean literal member to widen through source arm summary: {output}"
+    );
+}
+
+#[test]
+fn generic_rest_identity_object_literal_union_preserves_argument_order() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+let result = f({}, { a: "abc" }, { a: 1, b: 2 });
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "declare let result: {\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: string;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n};"
+        ),
+        "expected generic rest identity object union in argument order: {output}"
+    );
+}
+
+#[test]
+fn generic_rest_identity_prefers_declared_object_literal_surface() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+declare let data: { a: 1, b: "abc", c: true };
+let first = f(data, { a: 2 });
+let second = f({ a: 2 }, data);
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    for name in ["first", "second"] {
+        let expected =
+            format!("declare let {name}: {{\n    a: 1;\n    b: \"abc\";\n    c: true;\n}};");
+        assert!(
+            output.contains(&expected),
+            "expected `{name}` to reuse declared literal object surface: {output}"
+        );
+    }
+}
+
+#[test]
+fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
+    let own_members = vec!["z: number".to_string()];
+
+    let projected = DeclarationEmitter::prepend_object_members_to_type_literal_text(
+        "{\n    a: string;\n    b: string;\n}",
+        &own_members,
+        0,
+    );
+
+    assert_eq!(
+        projected,
+        Some("{\n    z: number;\n    a: string;\n    b: string;\n}".to_string())
+    );
+}
+
+#[test]
 fn object_union_property_scan_ignores_nested_members() {
     assert_eq!(
         DeclarationEmitter::object_type_top_level_member_names(
@@ -516,5 +725,173 @@ fn tuple_item_lookup_mapped_type_expands_compact_string_key() {
             "{\n    a: {\n        readonly name: \"a\";\n    };\n    b: {\n        readonly name: \"b\";\n    };\n}"
                 .to_string()
         )
+    );
+}
+
+#[test]
+fn isomorphic_mapped_argument_unwraps_tuple_and_array_wrappers() {
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "[Box<number>, Box<string>, ...Box<boolean>[]]",
+            "Box",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "[Box<number>, Box<string>, ...Box<boolean>]",
+            "Box",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text("Box<number>[]", "Box"),
+        Some("number[]".to_string())
+    );
+}
+
+#[test]
+fn partial_argument_inference_restores_required_public_surface() {
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "[number | undefined, string?, ...boolean[]]",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "[number | undefined, string?, ...boolean]",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "{ a: number | undefined; b?: string[]; }",
+        ),
+        Some("{\n    a: number;\n    b: string[];\n}".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_inverts_isomorphic_mapped_tuple_argument() {
+    let source = r#"
+type Box<T> = { value: T };
+type Boxified<T> = { [P in keyof T]: Box<T[P]> };
+declare function unboxify<T>(x: Boxified<T>): T;
+declare let x10: [Box<number>, Box<string>, ...Box<boolean>[]];
+let y10 = unboxify(x10);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_inverts_structural_partial_like_mapped_alias() {
+    let source = r#"
+type OptionalShape<T> = { [Key in keyof T]?: T[Key] };
+declare function complete<T>(x: OptionalShape<T>): T;
+declare let value: { a?: number; b: string | undefined };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("{\n    a: number;\n    b: string;\n}".to_string())
+    );
+}
+
+#[test]
+fn call_reused_type_inverts_reverse_mapped_handler_parameters() {
+    let source = r#"
+type Callbacks<Shape> = { [Field in keyof Shape]: (value: Shape[Field]) => void };
+declare function listen<Shape>(handlers: Callbacks<Shape>): Shape;
+let result = listen({ ready: () => {}, flag: (value: boolean) => {} });
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_reused_type_text(call_idx),
+        Some("{\n    ready: unknown;\n    flag: boolean;\n}".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_does_not_treat_shadowed_partial_name_as_builtin() {
+    let source = r#"
+type Partial<T> = T;
+declare function complete<T>(x: Partial<T>): T;
+declare let value: { a?: number };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        None
     );
 }

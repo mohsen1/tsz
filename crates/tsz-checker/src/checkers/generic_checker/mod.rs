@@ -240,10 +240,18 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         if extends_type == constraint
-                            || (self.diagnostic_relation_boolean_guard(extends_type, constraint)
-                                && self.diagnostic_relation_boolean_guard(constraint, extends_type))
-                            || self.diagnostic_relation_boolean_guard(extends_resolved, constraint)
-                            || self.diagnostic_relation_boolean_guard(extends_evaluated, constraint)
+                            || (self
+                                .assign_relation_outcome(extends_type, constraint)
+                                .related
+                                && self
+                                    .assign_relation_outcome(constraint, extends_type)
+                                    .related)
+                            || self
+                                .assign_relation_outcome(extends_resolved, constraint)
+                                .related
+                            || self
+                                .assign_relation_outcome(extends_evaluated, constraint)
+                                .related
                         {
                             return true;
                         }
@@ -283,7 +291,10 @@ impl<'a> CheckerState<'a> {
         // → intersection is `{a: string} & {b: number}` which satisfies `{a: string, b: number}`.
         if accumulated_extends.len() >= 2 {
             let intersection = self.ctx.types.intersection(accumulated_extends);
-            if self.diagnostic_relation_boolean_guard(intersection, constraint) {
+            if self
+                .assign_relation_outcome(intersection, constraint)
+                .related
+            {
                 return true;
             }
         }
@@ -969,6 +980,9 @@ impl<'a> CheckerState<'a> {
         // A syntactic check cannot reliably distinguish these cases and produces
         // false positives.  TS4109 should be emitted from the solver's type
         // resolution path once cycle detection is implemented there.
+        if type_params.iter().all(|param| param.constraint.is_none()) {
+            return false;
+        }
         self.validate_type_args_against_params(type_params, type_args_list);
         false
     }
@@ -1039,14 +1053,19 @@ impl<'a> CheckerState<'a> {
                 } else {
                     evaluated_constraint
                 };
-            if self.diagnostic_relation_boolean_guard(type_arg, constraint_for_check) {
+            if self
+                .assign_relation_outcome(type_arg, constraint_for_check)
+                .related
+            {
                 continue;
             }
             let base = self.constraint_check_base_type(type_arg);
             if base != type_arg && base != TypeId::UNKNOWN {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
+                if self
+                    .assign_relation_outcome(base, constraint_for_check)
+                    .related
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
@@ -1058,7 +1077,9 @@ impl<'a> CheckerState<'a> {
             {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
+                if self
+                    .assign_relation_outcome(base, constraint_for_check)
+                    .related
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
@@ -1319,6 +1340,7 @@ impl<'a> CheckerState<'a> {
 }
 
 mod array_like_constraint_helpers;
+mod boolean_probe_constraints;
 mod callable_constraint_helpers;
 mod conditional_constraint_helpers;
 mod constraint_display_helpers;

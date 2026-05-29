@@ -920,6 +920,26 @@ impl<'a> Printer<'a> {
         name
     }
 
+    /// Like `make_unique_name_hoisted_assignment`, but always advances the temp
+    /// counter to a brand-new name instead of consuming a queued preallocated
+    /// temp. Used by emitters that allocate a hoisted temp while emitting a body
+    /// whose surrounding header has already reserved (but not yet consumed)
+    /// preallocated temps that must keep their lower numbers.
+    ///
+    /// When emitted directly inside a converted-loop IIFE body, the `var _a;`
+    /// declaration belongs to that IIFE (tsc emits spread-call receiver temps in
+    /// the loop body), so the name is recorded in the IIFE's pending list rather
+    /// than the enclosing function's hoist pool.
+    pub(super) fn make_unique_name_hoisted_assignment_fresh(&mut self) -> String {
+        let name = self.make_unique_name_fresh();
+        if self.loop_iife_body_depth > 0 {
+            self.loop_iife_pending_hoisted_temps.push(name.clone());
+        } else {
+            self.hoisted_assignment_temps.push(name.clone());
+        }
+        name
+    }
+
     pub(super) fn preallocate_logical_assignment_value_temps(&mut self, count: usize) {
         self.preallocated_logical_assignment_value_temps.clear();
         for _ in 0..count {
@@ -1682,11 +1702,10 @@ impl<'a> Printer<'a> {
                 if is_external && self.in_namespace_iife {
                     return true;
                 }
-                // In Node ESM emit, `import x = require("...")` is not erased.
-                // TypeScript lowers it to a per-file `createRequire` binding and
-                // rewrites each alias to `const x = __require("...")`.
                 if is_external && self.ctx.options.resolved_node_module_to_esm {
-                    return false;
+                    return !(self.ctx.options.verbatim_module_syntax
+                        || self.source_is_js_file
+                        || self.import_equals_has_value_usage_after_node(node, import_data));
                 }
                 if is_es_module_output && is_external {
                     return true;

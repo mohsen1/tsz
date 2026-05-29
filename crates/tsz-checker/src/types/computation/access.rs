@@ -9,6 +9,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[path = "access/symbol_constructor_index.rs"]
+mod symbol_constructor_index;
+
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -73,6 +76,34 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_element_access_with_request(idx, &TypingRequest::NONE)
     }
 
+    /// Resolve the member-access result type when the (resolved) object type is
+    /// `unknown`, under `strictNullChecks`.
+    ///
+    /// `tsc` forbids accessing a member of a value of type `unknown` — by name
+    /// (`x.p`), by index (`x[k]`), or through an optional chain (`x?.p` / `x?.[k]`)
+    /// — so under `strictNullChecks` we emit the diagnostic and return `Some`:
+    /// `TS18046` (`'x' is of type 'unknown'.`) when the base expression has a
+    /// printable name, otherwise the object form `TS2571` (`Object is of type
+    /// 'unknown'.`), returning `ERROR` to stop cascading diagnostics. When
+    /// `strictNullChecks` is off, `unknown` behaves like `any`; we return `None` so
+    /// each caller can apply its own non-strict fallback (index-signature handling
+    /// for element access, `error_property_not_exist_at` for property access).
+    ///
+    /// This is the single decision gate for the unknown-object access result,
+    /// shared by the element-access `literal_string`/`literal_index` arms and the
+    /// property-access path, so the `TS2571`/`TS18046` choice is not re-derived
+    /// independently in each place.
+    pub(crate) fn unknown_object_access_result(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
+        if !self.ctx.compiler_options.strict_null_checks {
+            return None;
+        }
+        if self.error_is_of_type_unknown(base_expr) {
+            Some(TypeId::ERROR)
+        } else {
+            Some(TypeId::ANY)
+        }
+    }
+
     pub(crate) fn get_type_of_element_access_with_request(
         &mut self,
         idx: NodeIndex,
@@ -121,13 +152,14 @@ impl<'a> CheckerState<'a> {
             .map(|name| self.ctx.types.literal_string(name))
             .unwrap_or(index_type);
 
-        // When the index is a `symbol`-typed identifier, convert to a
-        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
-        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
-        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
-        // name in the object's type declaration.
+        // When the index is a `symbol`-typed identifier, convert it to the same
+        // binding-identity key used by computed property lowering. Cross-file
+        // const-symbol bindings use the stable `__symbol_<file>_<sym>` atom;
+        // local non-unique symbol declarations fall back to `__unique_<sym>`.
         let index_type_for_access = if index_type == TypeId::SYMBOL {
-            self.nonunique_symbol_index_type(access.name_or_argument)
+            self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+                .map(|name| self.ctx.types.literal_string(&name))
+                .or_else(|| self.nonunique_symbol_index_type(access.name_or_argument))
                 .unwrap_or(index_type_for_access)
         } else {
             index_type_for_access
@@ -1153,18 +1185,11 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    if self.ctx.compiler_options.strict_null_checks {
+                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    if unknown_result.is_some() {
                         use_index_signature_check = false;
-                        // TS18046: 'x' is of type 'unknown'.
-                        // Without strictNullChecks, unknown is treated like any.
-                        if self.error_is_of_type_unknown(access.expression) {
-                            Some(TypeId::ERROR)
-                        } else {
-                            Some(TypeId::ANY)
-                        }
-                    } else {
-                        None
                     }
+                    unknown_result
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // TS2576 parity for element access on instance/super with a static member name.
@@ -1292,20 +1317,11 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    if self.ctx.compiler_options.strict_null_checks {
-                        if !keep_index_signature_check {
-                            use_index_signature_check = false;
-                        }
-                        // TS18046: 'x' is of type 'unknown'.
-                        // Without strictNullChecks, unknown is treated like any.
-                        if self.error_is_of_type_unknown(access.expression) {
-                            Some(TypeId::ERROR)
-                        } else {
-                            Some(TypeId::ANY)
-                        }
-                    } else {
-                        None
+                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    if unknown_result.is_some() && !keep_index_signature_check {
+                        use_index_signature_check = false;
                     }
+                    unknown_result
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,
             };
@@ -1462,6 +1478,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if result_type.is_none()
+            && !skip_flow_narrowing
+            && self.is_generic_index_type(index_type)
+            && crate::query_boundaries::common::is_index_access_type(
+                self.ctx.types,
+                raw_object_type,
+            )
+            && self.get_element_access_type(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            ) != TypeId::ERROR
+        {
+            result_type = Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .index_access(raw_object_type, index_type),
+            );
+            use_index_signature_check = false;
+        }
+
         let mut result_type = result_type.unwrap_or_else(|| {
             if crate::query_boundaries::common::is_type_parameter(
                 self.ctx.types,
@@ -1484,7 +1522,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(key_source) =
                     self.keyof_source_type_param(index_type, pre_resolution_object_type)
                     && !self
-                        .diagnostic_relation_boolean_guard(pre_resolution_object_type, key_source)
+                        .assign_relation_outcome(pre_resolution_object_type, key_source)
+                        .related
                     && !self.object_constraint_covers_keyof_source(
                         pre_resolution_object_type,
                         key_source,
@@ -1607,6 +1646,11 @@ impl<'a> CheckerState<'a> {
                 literal_index,
             )
         });
+
+        if self.shadowed_symbol_constructor_member_index(access.name_or_argument) {
+            result_type = TypeId::ANY;
+            use_index_signature_check = false;
+        }
 
         // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
         // the solver's evaluate_index_access_with_options (called via

@@ -326,7 +326,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn variable_declaration_from_symbol_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn variable_declaration_from_symbol_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = decl_idx;
         for _ in 0..8 {
             let node = self.arena.get(current)?;
@@ -338,7 +341,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn function_declaration_from_symbol_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn function_declaration_from_symbol_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = decl_idx;
         for _ in 0..8 {
             let node = self.arena.get(current)?;
@@ -356,7 +362,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn enclosing_function_data(
+    pub(in crate::declaration_emitter) fn enclosing_function_data(
         &self,
         from_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::FunctionData> {
@@ -385,12 +391,156 @@ impl<'a> DeclarationEmitter<'a> {
             .as_ref()
             .map(|type_params| self.collect_type_param_names(type_params))
             .unwrap_or_default();
+        if let Some(binding_name) = self.function_initializer_binding_name(inner_idx)
+            && let Some(type_text) = self.source_function_initializer_expando_type_text(
+                outer_func,
+                binding_name,
+                inner_idx,
+                inner_func,
+                &outer_type_param_names,
+            )
+        {
+            return Some(type_text);
+        }
         self.source_nested_function_type_text(
             Some(outer_func),
             inner_idx,
             inner_func,
             &outer_type_param_names,
         )
+    }
+
+    pub(in crate::declaration_emitter) fn source_function_initializer_expando_type_text(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        binding_name: NodeIndex,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let members =
+            self.collect_late_bound_assignment_members_in_node(binding_name, outer_func.body);
+        if members.is_empty() {
+            return None;
+        }
+        let call_signature = self
+            .source_nested_function_call_signature_text(
+                Some(outer_func),
+                inner_idx,
+                inner_func,
+                outer_type_param_names,
+            )
+            .or_else(|| {
+                self.source_nested_function_fallback_call_signature_text(
+                    Some(outer_func),
+                    inner_idx,
+                    inner_func,
+                    outer_type_param_names,
+                )
+            })?;
+        let mut lines = vec![format!("    {call_signature};")];
+        for member in members {
+            lines.push(format!(
+                "    {}: {};",
+                member.property_name_text, member.type_text
+            ));
+        }
+        Some(format!("{{\n{}\n}}", lines.join("\n")))
+    }
+
+    fn source_nested_function_fallback_call_signature_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let mut outer_type_param_names = outer_type_param_names.to_vec();
+        if let Some(type_params) = outer_func.and_then(|func| func.type_parameters.as_ref()) {
+            for name in self.collect_type_param_names(type_params) {
+                if !outer_type_param_names.contains(&name) {
+                    outer_type_param_names.push(name);
+                }
+            }
+        }
+        let inner_type_params = inner_func.type_parameters.as_ref();
+        let inner_renames = inner_type_params.map_or_else(Vec::new, |type_params| {
+            self.shadowed_function_type_param_renames(type_params, &outer_type_param_names)
+        });
+        let type_params_text = inner_type_params
+            .filter(|type_params| !type_params.nodes.is_empty())
+            .and_then(|type_params| {
+                let params = type_params
+                    .nodes
+                    .iter()
+                    .copied()
+                    .map(|param_idx| {
+                        self.source_function_type_parameter_text(param_idx, &inner_renames)
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("<{}>", params.join(", ")))
+            })
+            .unwrap_or_default();
+        let jsdoc = self.returned_function_expression_jsdoc(inner_idx, inner_func);
+        let jsdoc_function_parts = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_type_text)
+            .and_then(|type_text| Self::parse_function_type_text(&type_text));
+        let mut used_param_names = Vec::new();
+        let mut params = Vec::with_capacity(inner_func.parameters.nodes.len());
+        for (position, param_idx) in inner_func.parameters.nodes.iter().copied().enumerate() {
+            params.push(self.source_function_parameter_text(
+                param_idx,
+                position,
+                &inner_renames,
+                jsdoc.as_deref(),
+                jsdoc_function_parts.as_ref(),
+                &mut used_param_names,
+            )?);
+        }
+        let return_text = self
+            .source_nested_function_fallback_return_type_text(inner_func)
+            .unwrap_or_else(|| "any".to_string());
+        Some(format!(
+            "{type_params_text}({}): {return_text}",
+            params.join(", ")
+        ))
+    }
+
+    fn source_nested_function_fallback_return_type_text(
+        &self,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        if inner_func.body.is_none() {
+            return None;
+        }
+        if self.body_returns_void(inner_func.body) {
+            return Some("void".to_string());
+        }
+        let body_node = self.arena.get(inner_func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return self
+                .function_body_preferred_return_type_text(inner_func.body)
+                .filter(|text| !text.is_empty() && text != "any");
+        }
+        self.preferred_expression_type_text(inner_func.body)
+            .or_else(|| self.infer_fallback_type_text_at(inner_func.body, 0))
+            .filter(|text| !text.is_empty() && text != "any")
+    }
+
+    fn function_initializer_binding_name(&self, initializer: NodeIndex) -> Option<NodeIndex> {
+        let mut current = initializer;
+        for _ in 0..8 {
+            let parent_idx = self.arena.parent_of(current)?;
+            let parent_node = self.arena.get(parent_idx)?;
+            if let Some(decl) = self.arena.get_variable_declaration(parent_node)
+                && decl.initializer == initializer
+            {
+                return Some(decl.name);
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn source_nested_function_type_text(
@@ -580,6 +730,7 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
         let return_text = direct_function_return
+            .or_else(|| self.function_body_parameter_return_type_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)

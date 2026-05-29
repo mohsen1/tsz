@@ -29,7 +29,9 @@ impl<'a> CheckerState<'a> {
 
         contextual_actual != TypeId::ANY
             && contextual_actual != TypeId::ERROR
-            && self.diagnostic_relation_boolean_guard(contextual_actual, expected)
+            && self
+                .assign_relation_outcome(contextual_actual, expected)
+                .related
     }
 
     pub(crate) fn recover_new_expression_return_type_after_contextual_argument_match(

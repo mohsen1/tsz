@@ -1,4 +1,5 @@
 use super::super::Printer;
+use crate::transforms::helpers::HelpersNeeded;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -166,12 +167,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let mut needs_import_default = false;
-        let mut needs_import_star = false;
+        let mut helpers = if self.transforms.helpers_populated() {
+            self.transforms.helpers().clone()
+        } else {
+            HelpersNeeded::default()
+        };
 
         // Check if lowering pass detected dynamic import() calls needing __importStar
         if self.transforms.helpers_populated() && self.transforms.helpers().import_star {
-            needs_import_star = true;
+            helpers.import_star = true;
         }
 
         for &stmt_idx in &source.statements.nodes {
@@ -204,7 +208,7 @@ impl<'a> Printer<'a> {
                 continue;
             }
             if clause.name.is_some() {
-                needs_import_default = true;
+                helpers.import_default = true;
             }
             if clause.named_bindings.is_some()
                 && let Some(bindings_node) = self.arena.get(clause.named_bindings)
@@ -212,7 +216,7 @@ impl<'a> Printer<'a> {
                 && named_imports.name.is_some()
                 && named_imports.elements.nodes.is_empty()
             {
-                needs_import_star = true;
+                helpers.import_star = true;
             }
         }
 
@@ -232,21 +236,13 @@ impl<'a> Printer<'a> {
             if let Some(clause_node) = self.arena.get(export_decl.export_clause)
                 && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
             {
-                needs_import_star = true;
+                helpers.import_star = true;
             }
         }
 
-        if needs_import_star {
-            self.write(crate::transforms::helpers::CREATE_BINDING_HELPER);
-            self.write_line();
-            self.write(crate::transforms::helpers::SET_MODULE_DEFAULT_HELPER);
-            self.write_line();
-            self.write(crate::transforms::helpers::IMPORT_STAR_HELPER);
-            self.write_line();
-        }
-        if needs_import_default {
-            self.write(crate::transforms::helpers::IMPORT_DEFAULT_HELPER);
-            self.write_line();
+        let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
+        if !helpers_code.is_empty() {
+            self.write(&helpers_code);
         }
     }
 }

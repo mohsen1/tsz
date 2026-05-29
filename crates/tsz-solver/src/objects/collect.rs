@@ -14,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
-use crate::caches::db::TypeDatabase;
+use crate::caches::db::{QueryDatabase, TypeDatabase};
 use std::cell::RefCell;
 
 thread_local! {
@@ -110,9 +110,26 @@ pub fn collect_properties<R>(
 where
     R: TypeResolver,
 {
+    collect_properties_cached(type_id, interner, resolver, None)
+}
+
+/// [`collect_properties`] with an explicit cross-call query cache so spawned
+/// evaluators can reuse memoized application/instantiation results. Callers
+/// that already hold a `QueryDatabase` (checker/solver paths) should pass it to
+/// avoid re-evaluating the same generic applications across collections.
+pub fn collect_properties_cached<'a, R>(
+    type_id: TypeId,
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    query_db: Option<&'a dyn QueryDatabase>,
+) -> PropertyCollectionResult
+where
+    R: TypeResolver,
+{
     let mut collector = PropertyCollector {
         interner,
         resolver,
+        query_db,
         properties: Vec::new(),
         prop_index: FxHashMap::default(),
         string_index: None,
@@ -166,6 +183,10 @@ where
 struct PropertyCollector<'a, R> {
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
+    /// Optional cross-call query cache so the evaluators this collector spawns
+    /// for `Application` members reuse memoized application/instantiation
+    /// results instead of recomputing them per collection.
+    query_db: Option<&'a dyn QueryDatabase>,
     properties: Vec<PropertyInfo>,
     /// Maps property name (Atom) to index in `properties` for O(1) lookup during merge
     prop_index: FxHashMap<Atom, usize>,
@@ -232,6 +253,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         self.interner,
                         self.resolver,
                     );
+                    if let Some(db) = self.query_db {
+                        evaluator = evaluator.with_query_db(db);
+                    }
                     let evaluated = evaluator.evaluate(resolved);
                     if evaluated != resolved {
                         stack.push(evaluated);
@@ -379,7 +403,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         }
 
         let resolved_source = resolve_type(source_type, self.interner, self.resolver);
-        match collect_properties(resolved_source, self.interner, self.resolver) {
+        match collect_properties_cached(
+            resolved_source,
+            self.interner,
+            self.resolver,
+            self.query_db,
+        ) {
             PropertyCollectionResult::Properties { properties, .. } => {
                 PropertyInfo::find_in_slice(&properties, property_name)
                     .map(|prop| (prop.optional, prop.readonly))
@@ -400,7 +429,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         // Collect properties from each union member using sub-collectors
         let mut member_props: Vec<PropertyCollectionResult> = Vec::new();
         for &member in member_list.iter() {
-            let result = collect_properties(member, self.interner, self.resolver);
+            let result =
+                collect_properties_cached(member, self.interner, self.resolver, self.query_db);
             member_props.push(result);
         }
 

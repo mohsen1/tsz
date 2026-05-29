@@ -19,9 +19,11 @@ usage: scripts/agents/ensure-agent-labels.sh [--audit]
 
 Create or refresh the GitHub labels used by multi-agent sessions.
 
-With --audit, list noncanonical agent ownership labels and open PRs whose
-agent ownership labels are missing, duplicated, or noncanonical. The audit
-does not edit labels.
+With --audit, list noncanonical agent ownership labels; open PRs whose
+agent ownership labels are missing, duplicated, or noncanonical; and open
+release-triage issues whose agent ownership labels are missing, duplicated, or
+noncanonical. Open PRs whose body explicitly says no canonical agent lane was
+assigned are reported separately. The audit does not edit labels.
 USAGE
 }
 
@@ -56,17 +58,27 @@ is_canonical_agent_label() {
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
 
 if [[ "$AUDIT" == true ]]; then
-  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels)"
+  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels,body,url)"
+  issues_json="$(gh issue list --state open --limit 500 --json number,title,labels,url)"
   agents_json="$(
     printf '%s\n' "${AGENTS[@]}" | node -e '
       const fs = require("fs");
       process.stdout.write(JSON.stringify(fs.readFileSync(0, "utf8").trim().split(/\n/).filter(Boolean)));
     '
   )"
-  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" node <<'NODE'
+  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" node <<'NODE'
 const canonical = new Set(JSON.parse(process.env.AGENTS_JSON).map((agent) => `agent:${agent}`));
 const labels = process.env.LABELS_TEXT.split(/\n/).filter(Boolean);
 const prs = JSON.parse(process.env.PRS_JSON);
+const issues = JSON.parse(process.env.ISSUES_JSON);
+const releaseTriageIssueLabels = new Set([
+  "accepted-regression",
+  "bug",
+  "false-negative",
+  "false-positive",
+  "urgent",
+  "WIP",
+]);
 
 const ownershipLabel = (label) => label.startsWith("agent:") || label.startsWith("agnet:");
 const noncanonicalLabels = labels
@@ -75,11 +87,19 @@ const noncanonicalLabels = labels
 const missingCanonicalLabels = [...canonical].filter((label) => !labels.includes(label)).sort();
 
 const missingPrs = [];
+const intentionallyUnassignedPrs = [];
 const multiplePrs = [];
 const noncanonicalPrs = [];
+const missingIssues = [];
+const multipleIssues = [];
+const noncanonicalIssues = [];
 for (const pr of prs) {
   const agentLabels = pr.labels.map((label) => label.name).filter(ownershipLabel);
   if (agentLabels.length === 0) {
+    if (/\bno canonical agent lane was assigned\b/i.test(pr.body ?? "")) {
+      intentionallyUnassignedPrs.push(pr);
+      continue;
+    }
     missingPrs.push(pr);
     continue;
   }
@@ -89,6 +109,22 @@ for (const pr of prs) {
   const generated = agentLabels.filter((label) => !canonical.has(label));
   if (generated.length > 0) {
     noncanonicalPrs.push({ ...pr, agentLabels: generated });
+  }
+}
+
+for (const issue of issues) {
+  const labels = issue.labels.map((label) => label.name);
+  const agentLabels = labels.filter(ownershipLabel);
+  const needsOwner = labels.some((label) => releaseTriageIssueLabels.has(label));
+  if (needsOwner && agentLabels.length === 0) {
+    missingIssues.push(issue);
+  }
+  if (agentLabels.length > 1) {
+    multipleIssues.push({ ...issue, agentLabels });
+  }
+  const generated = agentLabels.filter((label) => !canonical.has(label));
+  if (generated.length > 0) {
+    noncanonicalIssues.push({ ...issue, agentLabels: generated });
   }
 }
 
@@ -108,21 +144,43 @@ console.log("");
 console.log(`missing_canonical_labels=${missingCanonicalLabels.length}`);
 console.log(`noncanonical_agent_labels=${noncanonicalLabels.length}`);
 console.log(`open_prs_missing_agent_label=${missingPrs.length}`);
+console.log(`open_prs_intentionally_unassigned=${intentionallyUnassignedPrs.length}`);
 console.log(`open_prs_multiple_agent_labels=${multiplePrs.length}`);
 console.log(`open_prs_noncanonical_agent_label=${noncanonicalPrs.length}`);
+console.log(`open_release_issues_missing_agent_label=${missingIssues.length}`);
+console.log(`open_issues_multiple_agent_labels=${multipleIssues.length}`);
+console.log(`open_issues_noncanonical_agent_label=${noncanonicalIssues.length}`);
 
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
-printRows("Open PRs Missing Agent Label", missingPrs, (pr) => `- #${pr.number} ${pr.title}`);
+const prRow = (pr) => `- #${pr.number} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`;
+
+printRows("Open PRs Missing Agent Label", missingPrs, prRow);
+printRows(
+  "Open PRs Intentionally Unassigned",
+  intentionallyUnassignedPrs,
+  prRow,
+);
 printRows(
   "Open PRs With Multiple Agent Labels",
   multiplePrs,
-  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}`,
+  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`,
 );
 printRows(
   "Open PRs With Noncanonical Agent Labels",
   noncanonicalPrs,
-  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}`,
+  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`,
+);
+printRows("Open Release Issues Missing Agent Label", missingIssues, prRow);
+printRows(
+  "Open Issues With Multiple Agent Labels",
+  multipleIssues,
+  (issue) => `- #${issue.number} ${issue.agentLabels.join(", ")} ${issue.title}${issue.url ? ` ${issue.url}` : ""}`,
+);
+printRows(
+  "Open Issues With Noncanonical Agent Labels",
+  noncanonicalIssues,
+  (issue) => `- #${issue.number} ${issue.agentLabels.join(", ")} ${issue.title}${issue.url ? ` ${issue.url}` : ""}`,
 );
 NODE
   exit 0

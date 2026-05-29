@@ -147,7 +147,8 @@ impl<'a> CheckerState<'a> {
         let Some(function_type) = self.global_function_type_id() else {
             return false;
         };
-        self.diagnostic_relation_boolean_guard(decorator_type, function_type)
+        self.assign_relation_outcome(decorator_type, function_type)
+            .related
     }
 
     fn global_function_type_id(&mut self) -> Option<TypeId> {
@@ -514,7 +515,10 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
-        if !self.diagnostic_relation_boolean_guard(return_type, expected_return) {
+        if !self
+            .assign_relation_outcome(return_type, expected_return)
+            .related
+        {
             let return_str = self.format_type_diagnostic(return_type);
             let expected_str = self.format_type_diagnostic(expected_return);
             let message = format_message(
@@ -654,7 +658,10 @@ impl<'a> CheckerState<'a> {
         if matches!(return_type, TypeId::ERROR | TypeId::ANY) {
             return;
         }
-        if !self.diagnostic_relation_boolean_guard(return_type, TypeId::VOID) {
+        if !self
+            .assign_relation_outcome(return_type, TypeId::VOID)
+            .related
+        {
             let return_str = self.format_type_diagnostic(return_type);
             let message = format_message(
                 diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY,

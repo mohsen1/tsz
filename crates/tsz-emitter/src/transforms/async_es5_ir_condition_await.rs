@@ -150,10 +150,13 @@ impl<'a> AsyncES5Transformer<'a> {
             break_label: exit_placeholder,
             continue_label: loop_label,
         };
-        let label_stack_len = self.labeled_continue_targets.len();
+        let continue_stack_len = self.labeled_continue_targets.len();
+        let break_stack_len = self.labeled_break_targets.len();
         if let Some(label) = labeled_continue {
             self.labeled_continue_targets
                 .push((label.to_string(), loop_label));
+            self.labeled_break_targets
+                .push((label.to_string(), exit_placeholder));
         }
         self.process_loop_body_statement_in_async(
             loop_data.statement,
@@ -162,9 +165,12 @@ impl<'a> AsyncES5Transformer<'a> {
             current_label,
             loop_control,
         );
-        self.labeled_continue_targets.truncate(label_stack_len);
+        self.labeled_continue_targets.truncate(continue_stack_len);
+        self.labeled_break_targets.truncate(break_stack_len);
 
-        current_statements.push(Self::generator_break_statement(loop_label));
+        if !Self::loop_statements_end_control_flow(current_statements) {
+            current_statements.push(Self::generator_break_statement(loop_label));
+        }
 
         cases.push(IRGeneratorCase {
             label: *current_label,
@@ -187,6 +193,23 @@ impl<'a> AsyncES5Transformer<'a> {
         cases: &mut Vec<IRGeneratorCase>,
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
+    ) {
+        self.process_do_while_statement_in_async_with_label(
+            idx,
+            cases,
+            current_statements,
+            current_label,
+            None,
+        );
+    }
+
+    pub(super) fn process_do_while_statement_in_async_with_label(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        labeled_continue: Option<&str>,
     ) {
         let Some(node) = self.arena.get(idx) else {
             return;
@@ -212,7 +235,9 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let loop_label = *current_label;
         let exit_placeholder = self.next_loop_exit_placeholder();
-        let has_loop_continue = self.contains_unlabeled_loop_local_continue(loop_data.statement);
+        let has_loop_continue = self.contains_unlabeled_loop_local_continue(loop_data.statement)
+            || labeled_continue
+                .is_some_and(|label| self.contains_labeled_continue(loop_data.statement, label));
         let continue_placeholder = if has_loop_continue {
             self.next_loop_exit_placeholder()
         } else {
@@ -222,6 +247,14 @@ impl<'a> AsyncES5Transformer<'a> {
             break_label: exit_placeholder,
             continue_label: continue_placeholder,
         };
+        let continue_stack_len = self.labeled_continue_targets.len();
+        let break_stack_len = self.labeled_break_targets.len();
+        if let Some(label) = labeled_continue {
+            self.labeled_continue_targets
+                .push((label.to_string(), continue_placeholder));
+            self.labeled_break_targets
+                .push((label.to_string(), exit_placeholder));
+        }
 
         self.process_loop_body_statement_in_async(
             loop_data.statement,
@@ -230,25 +263,46 @@ impl<'a> AsyncES5Transformer<'a> {
             current_label,
             loop_control,
         );
+        self.labeled_continue_targets.truncate(continue_stack_len);
+        self.labeled_break_targets.truncate(break_stack_len);
 
-        // When the condition itself yields we still want `continue` to skip
-        // straight to the condition check (do-while semantics). With
-        // `continue` present the yield must live in its own case so we can
-        // jump there without re-running the body; otherwise the yield can
-        // share the body case and the runtime's auto-increment carries us
-        // into the post-resume case directly.
-        let condition_label = if let Some(operand_idx) = condition_await_operand {
-            if has_loop_continue {
-                let yield_case_label = self.state.next_label();
-                current_statements.push(Self::generator_label_assignment(yield_case_label));
+        // tsc always materializes the do-while condition test as its own
+        // generator case: the loop's continue target. The body's last case
+        // falls through to it (via `_a.label = cond_label`) unless the body
+        // already ended in control flow; a `continue` jumps to it. Flush the
+        // body and make `cond_label` the current case regardless of whether the
+        // body contains a `continue`, so the back-edge structure matches tsc's
+        // emitted shape (body case, condition case, exit case).
+        let cond_label = self.state.next_label();
+        if Self::loop_statements_end_control_flow(current_statements) {
+            // Body case already exits unconditionally; close it without a
+            // fallthrough label if there is anything to close.
+            if !current_statements.is_empty() {
                 cases.push(IRGeneratorCase {
                     label: *current_label,
                     statements: std::mem::take(current_statements),
                 });
-                *current_label = yield_case_label;
             }
+        } else {
+            // Either there are pending body statements, or the loop body
+            // already flushed its last case internally and left
+            // `current_statements` empty (e.g. a single `if` with an await
+            // inside one branch). In either case emit a visible
+            // `_a.label = cond_label` so control falls through to the condition
+            // case (and any `continue` can jump here).
+            current_statements.push(Self::generator_label_assignment(cond_label));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        }
+        *current_label = cond_label;
+
+        // Evaluate the condition starting at `cond_label`. An awaited condition
+        // yields its operand in the condition case, then tests `_a.sent()` in
+        // the following case; a plain condition tests inline.
+        let condition = if let Some(operand_idx) = condition_await_operand {
             let operand = self.expression_to_ir(operand_idx);
-            let yield_case_label = *current_label;
             self.push_generator_yield(
                 opcodes::YIELD,
                 operand,
@@ -257,37 +311,30 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements,
                 current_label,
             );
-            current_statements.push(IRNode::IfBreak {
-                condition: Box::new(Self::negated_condition(IRNode::GeneratorSent)),
-                target_label: exit_placeholder,
-            });
-            has_loop_continue.then_some(yield_case_label)
+            IRNode::GeneratorSent
         } else {
-            let condition_label = has_loop_continue.then(|| {
-                let label = self.state.next_label();
-                current_statements.push(Self::generator_label_assignment(label));
-                label
-            });
-            let condition = self.expression_to_ir(loop_data.condition);
-            current_statements.push(IRNode::IfBreak {
-                condition: Box::new(Self::negated_condition(condition)),
-                target_label: exit_placeholder,
-            });
-            condition_label
+            self.expression_to_ir(loop_data.condition)
         };
-        current_statements.push(Self::generator_break_statement(loop_label));
+        // Positive test: when the condition holds, branch back to the loop
+        // start; otherwise fall through to the exit case (matching tsc, which
+        // emits `if (cond) return [3 /*break*/, start]; _a.label = exit;`).
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(condition),
+            target_label: loop_label,
+        });
 
+        let exit_label = self.state.next_label();
+        current_statements.push(Self::generator_label_assignment(exit_label));
         cases.push(IRGeneratorCase {
             label: *current_label,
             statements: std::mem::take(current_statements),
         });
-
-        let exit_label = self.state.next_label();
-        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
-        if let Some(condition_label) = condition_label {
-            Self::patch_if_break_target(cases, continue_placeholder, condition_label);
-        }
         *current_label = exit_label;
+
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        if has_loop_continue {
+            Self::patch_if_break_target(cases, continue_placeholder, cond_label);
+        }
     }
 
     /// Process a `for (init; cond; incr) body` statement inside an async
@@ -451,12 +498,14 @@ impl<'a> AsyncES5Transformer<'a> {
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             if let Some(var_list) = self.arena.get_variable(init_node) {
                 let decls: Vec<NodeIndex> = var_list.declarations.nodes.clone();
+                let mut trailing_comment = None;
                 for decl_idx in decls {
                     self.process_variable_declaration(
                         decl_idx,
                         cases,
                         current_statements,
                         current_label,
+                        &mut trailing_comment,
                     );
                 }
             }

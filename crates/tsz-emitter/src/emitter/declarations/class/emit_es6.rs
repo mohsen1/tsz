@@ -2,7 +2,7 @@ use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
 use super::replace_identifier;
 use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
-use crate::emitter::core::PrivateMemberInfo;
+use crate::emitter::core::{PrivateMemberInfo, PrivateMethodDef};
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
     collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
@@ -262,6 +262,9 @@ impl<'a> Printer<'a> {
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(&class.modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if emit_invalid_namespace_static
                         && mod_node.kind == SyntaxKind::StaticKeyword as u16
                     {
@@ -603,8 +606,15 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        // Generated private-helper names are uniquified against a single file-wide
+        // set so nested or sibling classes that reuse a class name receive
+        // `_N`-suffixed helpers instead of colliding (matches tsc's per-file name
+        // generator). Seed once from the enclosing source bindings, then keep the
+        // accumulated set on the emitter and reuse it for every later class.
         let mut used_private_names = if needs_private_field_lowering {
-            collect_enclosing_source_binding_names(self.arena, _idx)
+            self.generated_private_names
+                .take()
+                .unwrap_or_else(|| collect_enclosing_source_binding_names(self.arena, _idx))
         } else {
             rustc_hash::FxHashSet::default()
         };
@@ -675,6 +685,13 @@ impl<'a> Printer<'a> {
             None
         };
 
+        // Publish the accumulated generated-name set back onto the emitter so any
+        // nested classes emitted while printing this class body (and later sibling
+        // classes) uniquify their private helpers against the names allocated here.
+        if needs_private_field_lowering {
+            self.generated_private_names = Some(std::mem::take(&mut used_private_names));
+        }
+
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
@@ -740,6 +757,9 @@ impl<'a> Printer<'a> {
             && static_initializer_alias_source_nodes
                 .iter()
                 .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_directly_uses_private_name = static_initializer_alias_source_nodes
+            .iter()
+            .any(|idx| self.expression_directly_contains_private_identifier(*idx));
         let static_initializer_needs_class_alias = static_initializer_contains_class_name
             && (static_initializer_needs_this_alias
                 || has_static_privates
@@ -822,37 +842,21 @@ impl<'a> Printer<'a> {
             }
 
             // Private members in source order. Walk `class.members.nodes`
-            // once and look up each member's pre-computed info entry by
-            // private-identifier name. Accessors share a private name across
-            // get/set, so we dedupe within an accessor pair.
-            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+            // once and look up each member's pre-computed info entry by source
+            // member identity, not by private clean-name. When several members
+            // share a clean-name (an instance and a static `#foo`, or duplicate
+            // declarations in an error case), each member owns a distinct
+            // `_N`-suffixed helper; matching by identity keeps this hoisted
+            // var-decl list in agreement with the initializer/assignment paths
+            // that iterate the same collections. Accessors collapse a get/set
+            // pair into one entry, so we emit each accessor entry once when its
+            // first member is reached.
+            let mut emitted_accessor_entries: rustc_hash::FxHashSet<usize> =
                 rustc_hash::FxHashSet::default();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                let private_name = match member_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                        .arena
-                        .get_property_decl(member_node)
-                        .and_then(|p| get_private_field_name(self.arena, p.name)),
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|m| get_private_field_name(self.arena, m.name)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|a| get_private_field_name(self.arena, a.name))
-                    }
-                    _ => None,
-                };
-                let Some(private_name) = private_name else {
-                    continue;
-                };
-                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
                 match member_node.kind {
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                         if let Some(accessor) = private_auto_accessors
@@ -862,13 +866,14 @@ impl<'a> Printer<'a> {
                             var_names.push(accessor.get_var_name.clone());
                             var_names.push(accessor.set_var_name.clone());
                         } else if let Some(field) =
-                            private_fields.iter().find(|f| f.name == clean_name)
+                            private_fields.iter().find(|f| f.member_idx == member_idx)
                         {
                             var_names.push(field.weakmap_name.clone());
                         }
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        if let Some(method) =
+                            private_methods.iter().find(|m| m.member_idx == member_idx)
                         {
                             var_names.push(method.fn_var_name.clone());
                         }
@@ -876,12 +881,14 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
-                        if !emitted_accessor_names.insert(clean_name.to_string()) {
-                            continue;
-                        }
-                        if let Some(accessor) =
-                            private_accessors.iter().find(|a| a.name == clean_name)
+                        if let Some((entry_pos, accessor)) = private_accessors
+                            .iter()
+                            .enumerate()
+                            .find(|(_, a)| a.member_indices.contains(&member_idx))
                         {
+                            if !emitted_accessor_entries.insert(entry_pos) {
+                                continue;
+                            }
                             if let Some(ref name) = accessor.get_var_name
                                 && accessor.getter_body.is_some()
                             {
@@ -1052,11 +1059,13 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 if let Some(body_idx) = method.body {
-                    self.pending_private_method_defs.push((
-                        method.fn_var_name.clone(),
-                        body_idx,
-                        method.parameters.clone(),
-                    ));
+                    self.pending_private_method_defs.push(PrivateMethodDef {
+                        var_name: method.fn_var_name.clone(),
+                        body: body_idx,
+                        params: method.parameters.clone(),
+                        is_async: method.is_async,
+                        is_generator: method.is_generator,
+                    });
                 }
             }
 
@@ -1125,14 +1134,59 @@ impl<'a> Printer<'a> {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                // Only property declarations participate in computed property hoisting
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
-                    continue;
+                let (modifiers, name_idx, property_is_erased) = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        let is_erased = if self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            true
+                        } else {
+                            let is_private = self
+                                .arena
+                                .get(prop.name)
+                                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                            let has_accessor = self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                            // A no-initializer field is erased *unless* it is still
+                            // runtime-materialized as a defined field (define
+                            // semantics). Use the shared predicate so this stays in
+                            // lockstep with the runtime field-lowering site, which
+                            // would otherwise reference a temp that was never recorded.
+                            prop.initializer.is_none()
+                                && !is_private
+                                && !has_accessor
+                                && !self.no_init_property_is_runtime_materialized(prop)
+                        };
+                        (&prop.modifiers, prop.name, Some(is_erased))
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if !method.body.is_some() {
+                            continue;
+                        }
+                        (&method.modifiers, method.name, None)
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        let Some(accessor) = self.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        (&accessor.modifiers, accessor.name, None)
+                    }
+                    _ => continue,
                 };
-                let Some(name_node) = self.arena.get(prop.name) else {
+                let Some(name_node) = self.arena.get(name_idx) else {
                     continue;
                 };
                 if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -1151,44 +1205,41 @@ impl<'a> Printer<'a> {
                 if is_constant {
                     continue;
                 }
-                // Check if this property is erased (type-only, abstract, declared).
-                // `declare` fields have no runtime effect even when an
-                // initializer is present (the initializer is part of the
-                // declaration and is dropped). tsc still emits the computed
-                // expression for its side effects, but does not allocate a
-                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
-                // baseline where `static declare [field3] = 3;` produces
-                // no `var _a; _a = field3;` pair.
-                let is_erased = if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                    || self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    true
-                } else {
-                    let is_private = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-                    let has_accessor = self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    prop.initializer.is_none() && !is_private && !has_accessor
-                };
-                if is_erased {
+                let has_legacy_decorators = self.ctx.options.legacy_decorators
+                    && !self.collect_class_decorators(modifiers).is_empty();
+                if property_is_erased.is_none() {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp);
+                    }
+                    continue;
+                }
+                if property_is_erased == Some(true) {
                     // Side-effect only: expression is emitted for its effects but no temp.
-                    let is_side_effect_free =
-                        self.is_computed_name_expr_side_effect_free(computed.expression);
-                    if !is_side_effect_free {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.computed_prop_temp_map
+                            .insert(computed.expression, temp.clone());
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                        computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                    } else if !self.is_computed_name_expr_side_effect_free(computed.expression) {
                         computed_prop_entries.push((None, computed.expression, member_idx));
                     }
                 } else {
                     // Allocate a temp variable for this computed property name
-                    let temp = self.make_unique_name_hoisted();
+                    let temp = if self.ctx.options.legacy_decorators && !has_legacy_decorators {
+                        self.make_class_static_temp_name_hoisted(_idx)
+                    } else {
+                        self.make_unique_name_hoisted()
+                    };
                     self.computed_prop_temp_map
                         .insert(computed.expression, temp.clone());
+                    if has_legacy_decorators {
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                    }
                     computed_prop_entries.push((Some(temp), computed.expression, member_idx));
                 }
             }
@@ -1227,7 +1278,11 @@ impl<'a> Printer<'a> {
                 if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
                     return false;
                 }
-                true
+                // A static field that lowers to no runtime statement (a bare type-only
+                // declaration) neither needs a comma-expr temp nor a `__setFunctionName`
+                // helper item. Fields with runtime state (initializer, auto-accessor, or
+                // decorator) still carry static state.
+                crate::transforms::emit_utils::class_field_decl_has_runtime_state(self.arena, prop)
             });
         let has_static_block_comma_expr = target_needs_static_block_lowering
             && class.members.nodes.iter().any(|&member_idx| {
@@ -1235,9 +1290,17 @@ impl<'a> Printer<'a> {
                     .get(member_idx)
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
+        // A computed-named *static method or accessor* is emitted inline in the
+        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
+        // comma wrapping when the binding *also* loses JS named evaluation --
+        // i.e. a `using`/`await using` declaration lowered to
+        // `__addDisposableResource`, which moves the class out of
+        // direct-assignment position. A plain `var X = class {...}` keeps named
+        // evaluation and needs no wrapping for inline computed method names.
         let has_static_computed_method_or_accessor = emits_as_class_expression
             && class.name.is_none()
             && self.resolve_class_expr_binding_name(_idx).is_some()
+            && self.class_expr_binding_loses_named_evaluation(_idx)
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena
                     .get(member_idx)
@@ -1268,11 +1331,101 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
-        let needs_computed_prop_comma_expr =
-            emits_as_class_expression && !computed_prop_entries.is_empty();
+        let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
+        if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
+            let mut pending_computed_entries = Vec::new();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    if let Some(entry_idx) = computed_prop_entries
+                        .iter()
+                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+                    {
+                        pending_computed_entries.push(entry_idx);
+                    }
+                    continue;
+                }
+
+                let computed_name = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|method| self.arena.get(method.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|accessor| self.arena.get(accessor.name))
+                    }
+                    _ => None,
+                };
+                let Some(computed_name) = computed_name else {
+                    continue;
+                };
+                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(computed_name) else {
+                    continue;
+                };
+                let decorated_key_temp = self
+                    .legacy_decorator_computed_name_temp_map
+                    .get(&computed.expression)
+                    .cloned();
+                if pending_computed_entries.is_empty() && decorated_key_temp.is_none() {
+                    continue;
+                }
+
+                let mut comma_parts = Vec::new();
+                for entry_idx in pending_computed_entries.drain(..) {
+                    let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
+                    let expr_text = self.capture_emit(expr_idx);
+                    if let Some(temp) = temp_name {
+                        comma_parts.push(format!("{temp} = {expr_text}"));
+                    } else {
+                        comma_parts.push(expr_text);
+                    }
+                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
+                }
+                let expr_text = self.capture_emit(computed.expression);
+                if let Some(temp) = decorated_key_temp {
+                    comma_parts.push(format!("{temp} = {expr_text}"));
+                } else {
+                    comma_parts.push(expr_text);
+                }
+                let replacement = if comma_parts.len() == 1 {
+                    comma_parts.pop().unwrap_or_default()
+                } else {
+                    format!("({})", comma_parts.join(", "))
+                };
+                self.computed_prop_temp_map
+                    .insert(computed.expression, replacement);
+            }
+        }
+        if let Some(member_idx) = auto_accessor_computed_storage_key_member
+            && let Some(entry_idx) = computed_prop_entries
+                .iter()
+                .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+            && !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+        {
+            computed_prop_entries_consumed_by_member_name.push(entry_idx);
+        }
+
+        let needs_computed_prop_comma_expr = emits_as_class_expression
+            && computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                });
         let needs_any_comma_expr =
             needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
+            && !self.emitting_concise_arrow_return_argument
             && self
                 .arena
                 .get_extended(_idx)
@@ -1330,76 +1483,6 @@ impl<'a> Printer<'a> {
             }
         });
 
-        let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
-        if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
-            let mut pending_computed_entries = Vec::new();
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.arena.get(member_idx) else {
-                    continue;
-                };
-
-                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    if let Some(entry_idx) = computed_prop_entries
-                        .iter()
-                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
-                    {
-                        pending_computed_entries.push(entry_idx);
-                    }
-                    continue;
-                }
-
-                let computed_name = match member_node.kind {
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|method| self.arena.get(method.name)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|accessor| self.arena.get(accessor.name))
-                    }
-                    _ => None,
-                };
-                let Some(computed_name) = computed_name else {
-                    continue;
-                };
-                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.arena.get_computed_property(computed_name) else {
-                    continue;
-                };
-                if pending_computed_entries.is_empty() {
-                    continue;
-                }
-
-                let mut comma_parts = Vec::new();
-                for entry_idx in pending_computed_entries.drain(..) {
-                    let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
-                    let expr_text = self.capture_emit(expr_idx);
-                    if let Some(temp) = temp_name {
-                        comma_parts.push(format!("{temp} = {expr_text}"));
-                    } else {
-                        comma_parts.push(expr_text);
-                    }
-                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
-                }
-                comma_parts.push(self.capture_emit(computed.expression));
-                self.computed_prop_temp_map
-                    .insert(computed.expression, format!("({})", comma_parts.join(", ")));
-            }
-        }
-        if let Some(member_idx) = auto_accessor_computed_storage_key_member
-            && let Some(entry_idx) = computed_prop_entries
-                .iter()
-                .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
-            && !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
-        {
-            computed_prop_entries_consumed_by_member_name.push(entry_idx);
-        }
-
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
             clauses.nodes.iter().any(|&idx| {
                 self.arena
@@ -1423,6 +1506,10 @@ impl<'a> Printer<'a> {
             && let Some(alias) = static_initializer_class_alias.as_ref()
             && !self
                 .hoisted_assignment_temps
+                .iter()
+                .any(|name| name == alias)
+            && !self
+                .hoisted_file_level_class_temps
                 .iter()
                 .any(|name| name == alias)
         {
@@ -1462,6 +1549,11 @@ impl<'a> Printer<'a> {
                 static_super_base_alias.as_deref()
             };
 
+        if self.should_preserve_native_decorator_comments(&class.modifiers)
+            && let Some(name_node) = self.arena.get(class.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
         self.write("class");
 
         // Determine the class expression name.
@@ -1626,8 +1718,7 @@ impl<'a> Printer<'a> {
                     // Without that flag the typed-only declaration has no
                     // runtime effect, so skip it.
                     let no_initializer_node = prop.initializer.is_none();
-                    let materialize_no_init =
-                        no_initializer_node && self.ctx.options.use_define_for_class_fields;
+                    let materialize_no_init = self.no_init_property_is_runtime_materialized(prop);
                     if !materialize_no_init
                         && (no_initializer_node
                             || !self.class_property_initializer_has_equals(member_node, prop))
@@ -1820,6 +1911,13 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
+            // Temps allocated while emitting field initializers in this synthesized
+            // constructor body (e.g. a class-expression lowered inside a private-field
+            // initializer needing `_a`) must be declared in this constructor's scope,
+            // not leak to the enclosing function/file hoist list. Push a body temp
+            // scope and capture the insertion anchor for the `var` line.
+            self.push_temp_scope();
+            let synth_ctor_hoist_anchor = self.capture_hoist_anchor();
             // Emit _X_instances.add(this) for private methods/accessors
             if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
                 self.write(ws_name);
@@ -1949,6 +2047,26 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
+            // Insert any temps hoisted while emitting field initializers (e.g.
+            // `_a` for a class expression lowered inside a private-field init) at
+            // the top of this synthesized constructor body, then drop the scope.
+            if !self.hoisted_assignment_temps.is_empty() {
+                let indent = self
+                    .writer
+                    .indent_string_at(synth_ctor_hoist_anchor.indent_level);
+                let var_decl = format!(
+                    "{}var {};",
+                    indent,
+                    self.hoisted_assignment_temps.join(", ")
+                );
+                self.writer.insert_line_at(
+                    synth_ctor_hoist_anchor.byte_offset,
+                    synth_ctor_hoist_anchor.line_no,
+                    &var_decl,
+                );
+                self.hoisted_assignment_temps.clear();
+            }
+            self.pop_temp_scope();
             self.decrease_indent();
             self.write("}");
             self.write_line();
@@ -2725,7 +2843,13 @@ impl<'a> Printer<'a> {
                     self.emit_expression(*expr_idx);
                     self.decrease_indent();
                 }
-            } else {
+            } else if computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                })
+            {
                 // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
                 self.write_line();
                 let mut emitted_entry = false;
@@ -2796,7 +2920,9 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && (static_initializer_class_alias.is_some() || has_static_privates)
+            && (static_initializer_class_alias.is_some()
+                || has_static_privates
+                || static_initializer_directly_uses_private_name)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {
@@ -2805,7 +2931,10 @@ impl<'a> Printer<'a> {
             let instances_ws = self.pending_instances_weakset_add.take();
             let method_defs = std::mem::take(&mut self.pending_private_method_defs);
             let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
-            let weakmap_inits = self.pending_weakmap_inits.clone();
+            // Consume the pending WeakMap inits here so the later post-class
+            // emission path (which re-checks `pending_weakmap_inits`) does not
+            // emit the same `_X = new WeakMap()` lines a second time.
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
             let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
                 .iter()
                 .filter(|a| !a.is_static)
@@ -2851,37 +2980,16 @@ impl<'a> Printer<'a> {
                     self.write(init);
                     first = false;
                 }
-                for (var_name, body_idx, params) in &method_defs {
+                for def in &method_defs {
                     if !first {
                         self.write(", ");
                     }
-                    self.write(var_name);
-                    self.write(" = function ");
-                    self.write(var_name);
-                    self.write("(");
-                    for (i, &param_idx) in params.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        if let Some(param_node) = self.arena.get(param_idx)
-                            && let Some(param_data) = self.arena.get_parameter(param_node)
-                        {
-                            self.emit(param_data.name);
-                        }
-                    }
-                    self.write(") ");
-                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                    if private_member_def_needs_class_alias
-                        && let Some(alias) = class_value_alias.as_ref()
-                        && !class_name.is_empty()
-                    {
-                        self.scoped_class_expression_self_alias = Some((
-                            Arc::<str>::from(class_name.as_str()),
-                            Arc::<str>::from(alias.as_str()),
-                        ));
-                    }
-                    self.emit_single_line_block(*body_idx);
-                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    self.emit_private_method_function_def(
+                        def,
+                        private_member_def_needs_class_alias,
+                        class_value_alias.as_deref(),
+                        &class_name,
+                    );
                     first = false;
                 }
                 for def in &accessor_defs {
@@ -3196,7 +3304,7 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.write("value: ");
                     let before = self.writer.len();
-                    self.emit_expression_with_scoped_static_initializer_mode(
+                    self.emit_static_field_initializer_with_inner_comments(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
@@ -3235,7 +3343,7 @@ impl<'a> Printer<'a> {
                     }
                     self.write(" = ");
                     let before = self.writer.len();
-                    self.emit_expression_with_scoped_static_initializer_mode(
+                    self.emit_static_field_initializer_with_inner_comments(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
@@ -3453,37 +3561,16 @@ impl<'a> Printer<'a> {
             }
 
             // Private method function definitions
-            for (var_name, body_idx, params) in &method_defs {
+            for def in &method_defs {
                 self.write(",");
                 self.write_line();
                 self.increase_indent();
-                self.write(var_name);
-                self.write(" = function ");
-                self.write(var_name);
-                self.write("(");
-                for (i, &param_idx) in params.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    if let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(*body_idx);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_method_function_def(
+                    def,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 self.decrease_indent();
             }
 
@@ -3655,38 +3742,16 @@ impl<'a> Printer<'a> {
 
             // Private method function definitions:
             // _C_method = function _C_method(params) { ... }
-            for (var_name, body_idx, params) in &method_defs {
+            for def in &method_defs {
                 if !first {
                     self.write(", ");
                 }
-                self.write(var_name);
-                self.write(" = function ");
-                self.write(var_name);
-                self.write("(");
-                for (i, &param_idx) in params.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    // Emit parameter name (identifier or pattern)
-                    if let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(*body_idx);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_method_function_def(
+                    def,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 first = false;
             }
 
@@ -3900,6 +3965,28 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    /// Structural predicate: is this initializer-less `PROPERTY_DECLARATION`
+    /// still runtime-materialized as a *defined* field?
+    ///
+    /// Under `useDefineForClassFields` a field declared without an initializer is
+    /// not erased: `tsc` materializes it with
+    /// `Object.defineProperty(this, <name>, { ... value: void 0 })`. A computed
+    /// name on such a field is therefore hoisted into a temp exactly like a
+    /// computed-name field that *does* have an initializer.
+    ///
+    /// This is the single source of truth shared by the computed-name
+    /// hoisting-classification pass and the runtime field-lowering site so the
+    /// two cannot disagree about whether a no-initializer field survives to
+    /// runtime. It keys purely on structural facts (no initializer + define
+    /// semantics enabled) and intentionally does not re-check abstract/declare/
+    /// private/accessor — those are filtered independently at each call site.
+    const fn no_init_property_is_runtime_materialized(
+        &self,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        prop.initializer.is_none() && self.ctx.options.use_define_for_class_fields
     }
 
     fn class_property_initializer_has_equals(

@@ -19,7 +19,7 @@ struct FunctionParameterList<'a> {
 }
 
 impl<'a> FunctionParameterList<'a> {
-    fn new(text: &'a str) -> Self {
+    const fn new(text: &'a str) -> Self {
         Self { text }
     }
 

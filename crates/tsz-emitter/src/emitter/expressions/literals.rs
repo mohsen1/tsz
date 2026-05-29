@@ -69,8 +69,17 @@ impl<'a> Printer<'a> {
                     return true;
                 }
             } else if !array.elements.nodes.is_empty() {
-                // All elements are NONE (elisions); check for newlines in the array body.
-                let end = std::cmp::min(node.end as usize, text.len());
+                // First element is NONE (elision); only the source span up to the first
+                // top-level comma belongs to the outer array's element separation. A
+                // newline nested inside a later element must not force the outer array
+                // to multi-line, so bound the scan to the first elided element's region.
+                // `find_comma_pos_after` must start *after* the opening `[` so the array's
+                // own bracket does not raise the nesting depth.
+                let scan_end = self
+                    .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                    .map(|c| c as usize)
+                    .unwrap_or(node.end as usize);
+                let end = std::cmp::min(scan_end, text.len());
                 if bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n') {
                     return true;
                 }
@@ -147,9 +156,16 @@ impl<'a> Printer<'a> {
                         let start = std::cmp::min(bracket_pos, end);
                         text[start..end].contains('\n')
                     } else {
-                        // NONE (elision) first element: check for newline in array body after '['
+                        // NONE (elision) first element: only scan the first elided element's
+                        // region (up to the first top-level comma), mirroring the multiline
+                        // detection above so a newline nested in a later element does not
+                        // count as the outer array's first element being on a new line.
                         let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
-                        let end = std::cmp::min(node.end as usize, text.len());
+                        let scan_end = self
+                            .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                            .map(|c| c as usize)
+                            .unwrap_or(node.end as usize);
+                        let end = std::cmp::min(scan_end, text.len());
                         bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n')
                     }
                 } else {
@@ -488,7 +504,7 @@ impl<'a> Printer<'a> {
             let es2018_num = ScriptTarget::ES2018 as u32;
             if has_spread && target_num < es2018_num {
                 // Target is ES2015/ES2016/ES2017: lower to Object.assign()
-                self.emit_object_literal_with_object_assign(&emitted_properties);
+                self.emit_object_literal_with_object_assign(node, &emitted_properties);
                 if self.object_spread_has_recovered_trailing_empty_object(node, &emitted_properties)
                 {
                     self.write(", {}");
@@ -1075,6 +1091,14 @@ impl<'a> Printer<'a> {
             if is_computed {
                 if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
                 {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit(prop.name);
+                        self.write(": ");
+                        self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                        return;
+                    }
                     self.write("[");
                     let name_expr =
                         self.emit_tc39_named_class_computed_property_name(computed.expression);
@@ -1083,7 +1107,8 @@ impl<'a> Printer<'a> {
                     self.emit_with_tc39_class_expression_name(prop.initializer, name_expr, true);
                     return;
                 }
-            } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
+            } else if let Some(name) =
+                self.tc39_class_expression_name_from_object_property_name(prop.name)
             {
                 self.emit_property_key_name(prop.name);
                 self.write(": ");
@@ -1237,7 +1262,7 @@ impl<'a> Printer<'a> {
         class.name.is_none()
             && !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
-            && !self.collect_class_decorators(&class.modifiers).is_empty()
+            && self.class_has_tc39_decorator_nodes(class)
     }
 
     pub(in crate::emitter) fn emit_with_tc39_class_expression_name(
@@ -1282,6 +1307,34 @@ impl<'a> Printer<'a> {
             || name_node.kind == SyntaxKind::NumericLiteral as u16
         {
             let literal = self.arena.get_literal(name_node)?;
+            return Some(literal.text.clone());
+        }
+        None
+    }
+
+    fn tc39_class_expression_name_from_object_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        self.tc39_class_expression_name_from_property_name(name)
+            .map(|name| {
+                if name == "__proto__" {
+                    String::new()
+                } else {
+                    name
+                }
+            })
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_computed_property_expr(
+        &self,
+        expression: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expression)?;
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(expr_node)?;
             return Some(literal.text.clone());
         }
         None
@@ -1405,7 +1458,7 @@ impl<'a> Printer<'a> {
     /// - `{ ...a, x: 1, ...b }` → `Object.assign(Object.assign(Object.assign({}, a), { x: 1 }), b)`
     ///
     /// The pattern left-folds: each spread/segment adds one more `Object.assign` wrapping.
-    fn emit_object_literal_with_object_assign(&mut self, elements: &[NodeIndex]) {
+    fn emit_object_literal_with_object_assign(&mut self, node: &Node, elements: &[NodeIndex]) {
         // Segment elements into alternating spans of regular props and spread elements.
         // Each segment is either a slice of regular properties or a single spread node.
         #[derive(Clone)]
@@ -1413,6 +1466,20 @@ impl<'a> Printer<'a> {
             Props(&'a [NodeIndex]),
             Spread(NodeIndex),
         }
+
+        // A trailing line comment on the object literal's last element (e.g.
+        // `{ a: 1, ...b } // c`) must survive the Object.assign lowering. tsc
+        // emits it after the final argument and moves the closing `)` to the
+        // next line. The argument span and the literal's closing brace bound
+        // the comment scan so we never steal comments belonging to outer code.
+        let last_element_trailing = (!self.ctx.options.remove_comments)
+            .then(|| elements.last().copied())
+            .flatten()
+            .and_then(|last_idx| self.arena.get(last_idx).map(|n| (n.pos, n.end)))
+            .map(|(last_pos, last_end_raw)| {
+                let token_end = self.find_token_end_before_trivia(last_pos, last_end_raw);
+                (token_end, node.end)
+            });
 
         let mut segs: Vec<Seg<'_>> = Vec::new();
         let mut seg_start = 0usize;
@@ -1480,6 +1547,7 @@ impl<'a> Printer<'a> {
                         // Single spread of simple literal: Object.assign(expr)
                         self.write("Object.assign(");
                         self.emit_spread_expression_node(*spread_idx);
+                        self.emit_object_assign_last_element_trailing(last_element_trailing);
                         self.write(")");
                     } else {
                         // Multiple segments, simple literal first: use expr as seed
@@ -1489,6 +1557,9 @@ impl<'a> Printer<'a> {
                     // Non-literal spread: seed is {}
                     self.write("Object.assign({}, ");
                     self.emit_spread_expression_node(*spread_idx);
+                    if segs.len() == 1 {
+                        self.emit_object_assign_last_element_trailing(last_element_trailing);
+                    }
                     self.write(")");
                 }
             }
@@ -1499,7 +1570,8 @@ impl<'a> Printer<'a> {
         }
 
         // Emit remaining segments, each adding `, seg)` to close one Object.assign.
-        for seg in segs.iter().skip(1) {
+        let last_seg_i = segs.len().saturating_sub(1);
+        for (i, seg) in segs.iter().enumerate().skip(1) {
             self.write(", ");
             match seg {
                 Seg::Props(props) => {
@@ -1509,7 +1581,30 @@ impl<'a> Printer<'a> {
                     self.emit_spread_expression_node(*spread_idx);
                 }
             }
+            // The outermost (last) Object.assign call wraps the final source
+            // element, so its trailing comment belongs right before this `)`.
+            if i == last_seg_i {
+                self.emit_object_assign_last_element_trailing(last_element_trailing);
+            }
             self.write(")");
+        }
+    }
+
+    /// Emit a trailing comment captured from the last element of an object
+    /// literal that was lowered to `Object.assign(...)`. tsc renders it after
+    /// the final argument with the closing `)` moved onto the next line, e.g.
+    /// `Object.assign({ a: 1 }, b // c\n)`.
+    fn emit_object_assign_last_element_trailing(
+        &mut self,
+        last_element_trailing: Option<(u32, u32)>,
+    ) {
+        if let Some((token_end, max_pos)) = last_element_trailing
+            && self.has_trailing_comment_on_same_line(token_end, max_pos)
+        {
+            // `emit_trailing_comments_before` writes its own leading space, so
+            // do not add one here.
+            self.emit_trailing_comments_before(token_end, max_pos);
+            self.write_line();
         }
     }
 

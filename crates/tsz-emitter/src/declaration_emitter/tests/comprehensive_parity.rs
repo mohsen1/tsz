@@ -130,6 +130,60 @@ declare module "pkg" {
 }
 
 #[test]
+fn ambient_external_module_with_scope_marker_preserves_export_keywords() {
+    // When `export {}` is present in the body, `export` on individual
+    // members must be preserved so consumers can tell exported from
+    // non-exported members.
+    let result = emit_dts_with_usage_analysis(
+        r#"
+declare module "bar" {
+    var before: string;
+    export function normal(): void;
+    export default function func(): string;
+    var after: string;
+    export {}
+}
+"#,
+    );
+
+    assert!(
+        result.contains("export function normal(): void;"),
+        "exported function inside ambient module with scope marker must keep `export`: {result}"
+    );
+    assert!(
+        result.contains("var before: string;"),
+        "non-exported var must still be emitted: {result}"
+    );
+    assert!(
+        result.contains("export {};"),
+        "explicit scope marker must be re-emitted: {result}"
+    );
+}
+
+#[test]
+fn ambient_external_module_without_scope_marker_strips_export_on_function() {
+    // Without an explicit scope marker, tsc strips `export` from all
+    // members (all members are implicitly accessible via the module name).
+    let result = emit_dts_with_usage_analysis(
+        r#"
+declare module "bar" {
+    export function normal(): void;
+    export function other(): string;
+}
+"#,
+    );
+
+    assert!(
+        result.contains("function normal(): void;"),
+        "function in ambient module without scope marker should lose export: {result}"
+    );
+    assert!(
+        !result.contains("export function normal"),
+        "ambient external module without scope marker must strip export: {result}"
+    );
+}
+
+#[test]
 fn namespace_local_require_aliases_do_not_become_public_type_names() {
     let result = emit_dts_with_usage_analysis(
         r#"

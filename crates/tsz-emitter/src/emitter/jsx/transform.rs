@@ -436,6 +436,23 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         }
         self.close_brace();
+        if self
+            .ctx
+            .flags
+            .recovered_jsx_missing_false_tail_break_pending
+        {
+            self.ctx
+                .flags
+                .recovered_jsx_missing_false_tail_break_pending = false;
+            self.write_line();
+            self.write_line();
+            let saved_indent = self.writer.indent_level();
+            self.writer.set_indent_level(0);
+            self.write("    ");
+            self.write_line();
+            self.write("        ");
+            self.writer.set_indent_level(saved_indent);
+        }
     }
 
     fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {
@@ -598,7 +615,7 @@ impl<'a> Printer<'a> {
     // JSX Auto Import Injection
     // =========================================================================
 
-    pub(in super::super) const fn effective_jsx_emit(&self) -> JsxEmit {
+    pub(in super::super) fn effective_jsx_emit(&self) -> JsxEmit {
         if matches!(
             self.ctx.options.jsx,
             JsxEmit::Preserve | JsxEmit::ReactNative
@@ -614,8 +631,27 @@ impl<'a> Printer<'a> {
                     JsxEmit::ReactJsx
                 }
             }
+            // No explicit `@jsxRuntime` pragma: a per-file `@jsxImportSource`
+            // pragma implies the automatic runtime even when the global jsx
+            // mode is classic (`react`). tsc routes such files through the
+            // jsx-runtime import path rather than `React.createElement`.
+            // Explicit `@jsxRuntime` still wins because it is handled above.
+            None if matches!(self.ctx.options.jsx, JsxEmit::React)
+                && self.has_jsx_import_source_pragma() =>
+            {
+                JsxEmit::ReactJsx
+            }
             _ => self.ctx.options.jsx,
         }
+    }
+
+    /// Returns whether the file declares a per-file `@jsxImportSource` pragma.
+    ///
+    /// This is the structural signal tsc uses (alongside an explicit
+    /// `@jsxRuntime automatic`) to select the automatic JSX runtime for a
+    /// single file regardless of the global classic `jsx` setting.
+    fn has_jsx_import_source_pragma(&self) -> bool {
+        self.extract_jsx_import_source_pragma().is_some()
     }
 
     pub(in crate::emitter) fn jsx_pragma_text(&self) -> Option<&'a str> {

@@ -139,6 +139,14 @@ impl<'a> DeclarationEmitter<'a> {
         if self.has_export_modifier(modifiers) {
             return false;
         }
+        // A non-exported namespace member is still part of the public surface
+        // when an exported namespace function returns it by identifier; the
+        // exported return type must be nameable as `typeof Member`.
+        if let Some(idx) = decl_idx
+            && self.namespace_member_decl_returned_by_exported_function(idx)
+        {
+            return false;
+        }
         // If the member is referenced by the exported API surface, keep it
         if let Some(idx) = decl_idx
             && self.is_ns_member_used_by_exports(idx)
@@ -147,6 +155,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
         // Non-exported member inside non-ambient namespace: skip
         true
+    }
+
+    pub(crate) fn namespace_member_decl_returned_by_exported_function(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(name_idx) = self.get_declaration_name_idx(decl_node) else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        self.namespace_member_returned_by_exported_function(decl_idx, &name)
     }
 
     /// Check if a non-exported namespace member's symbol appears in `used_symbols`.
@@ -230,6 +254,7 @@ impl<'a> DeclarationEmitter<'a> {
             return used.contains_key(&sym_id) && self.symbol_parent_matches(sym_id, direct_parent);
         }
         self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+            || self.namespace_member_returned_by_exported_function(decl_idx, &name)
     }
 
     fn symbol_parent_matches(
@@ -261,6 +286,65 @@ impl<'a> DeclarationEmitter<'a> {
                 self.exported_variable_statement_initializer_references_name(stmt_idx, name)
             })
         }) || self.object_literal_member_references_name(name)
+    }
+
+    fn namespace_member_returned_by_exported_function(
+        &self,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(module_block_idx) = self.containing_module_block_for_decl(decl_idx) else {
+            return false;
+        };
+        let Some(module_block_node) = self.arena.get(module_block_idx) else {
+            return false;
+        };
+        let Some(module_block) = self.arena.get_module_block(module_block_node) else {
+            return false;
+        };
+        let Some(statements) = module_block.statements.as_ref() else {
+            return false;
+        };
+
+        statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let func_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| {
+                        self.arena
+                            .get(export.export_clause)
+                            .map(|_| export.export_clause)
+                    })
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
+            let Some(func_node) = self.arena.get(func_idx) else {
+                return false;
+            };
+            let Some(func) = self.arena.get_function(func_node) else {
+                return false;
+            };
+            if !self.statement_has_effective_export(stmt_idx) {
+                return false;
+            }
+            func.body.is_some() && self.function_body_returns_identifier(func.body, name)
+        })
+    }
+
+    fn containing_module_block_for_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     fn object_literal_member_references_name(&self, name: &str) -> bool {
@@ -1051,6 +1135,60 @@ impl<'a> DeclarationEmitter<'a> {
             return self.get_rightmost_name(access.name_or_argument);
         }
         idx
+    }
+
+    /// Resolve the symbol that the entity name on the right-hand side of an
+    /// `import alias = Q.R.S` declaration refers to. Walks the qualified-name
+    /// chain left-to-right: the leftmost identifier resolves through normal
+    /// scope lookup, then each `.right` member is looked up in the running
+    /// symbol's exports/members tables. Returns the final member symbol.
+    pub(in crate::declaration_emitter) fn import_equals_entity_target_symbol(
+        &self,
+        binder: &tsz_binder::BinderState,
+        entity_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        // Collect member names from leftmost to rightmost.
+        let mut chain: Vec<NodeIndex> = Vec::new();
+        let mut current = entity_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                chain.push(qn.right);
+                current = qn.left;
+            } else {
+                break;
+            }
+        }
+        // `current` is now the leftmost identifier node.
+        let leftmost_name = self
+            .arena
+            .get(current)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone())?;
+        let mut sym_id = self.resolve_identifier_symbol(current, &leftmost_name)?;
+
+        // Walk member names right-to-left (chain was pushed leftmost-first).
+        for &member_idx in chain.iter().rev() {
+            let member_name = self
+                .arena
+                .get(member_idx)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|id| id.escaped_text.clone())?;
+            let resolved = self.resolve_portability_symbol(sym_id, binder);
+            let symbol = binder.symbols.get(resolved)?;
+            let next = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(&member_name))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(&member_name))
+                })?;
+            sym_id = next;
+        }
+        Some(sym_id)
     }
 
     pub(in crate::declaration_emitter) fn leftmost_qualified_name_ident(

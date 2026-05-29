@@ -1015,6 +1015,12 @@ impl<'a> Printer<'a> {
             helpers.create_binding = false;
             helpers.import_star = false;
             helpers.import_default = false;
+            if matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD | ModuleKind::UMD)
+            ) {
+                helpers = crate::transforms::helpers::HelpersNeeded::default();
+            }
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
@@ -1474,6 +1480,7 @@ impl<'a> Printer<'a> {
         // Save position for hoisted temp var declarations (assignment destructuring).
         // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
         self.hoisted_assignment_temps.clear();
+        self.hoisted_file_level_class_temps.clear();
         self.hoisted_assignment_value_temps.clear();
         self.preallocated_logical_assignment_value_temps.clear();
         self.preallocated_assignment_temps.clear();
@@ -1482,10 +1489,11 @@ impl<'a> Printer<'a> {
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();
         self.iterator_for_of_depth = 0;
-
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
         self.preallocate_iterator_return_temps_for_statements(&source.statements.nodes);
+        self.prealloc_for_of_destructure_temps(&source.statements.nodes);
+        self.reserve_pending_file_level_class_temps();
 
         let mut hoisted_var_byte_offset = if is_file_module {
             self.writer.len()
@@ -2264,6 +2272,28 @@ impl<'a> Printer<'a> {
 
         if !ref_vars.is_empty() {
             let var_decl = format!("var {};", ref_vars.join(", "));
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
+
+        // A class-lowering temp can be reachable from more than one hoist
+        // bucket (e.g. a class alias reserved as a file-level class temp that
+        // is also collected with the private-field var names). Emit each name
+        // in exactly one `var` declaration: a name already declared by the
+        // ref-vars or deferred buckets must not be re-declared here.
+        let file_level_class_temps: Vec<String> = self
+            .hoisted_file_level_class_temps
+            .iter()
+            .filter(|name| {
+                !ref_vars.contains(name)
+                    && !self
+                        .hoisted_deferred_static_class_result_temps
+                        .contains(name)
+            })
+            .cloned()
+            .collect();
+        if !file_level_class_temps.is_empty() {
+            let var_decl = format!("var {};", file_level_class_temps.join(", "));
             self.writer
                 .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }

@@ -106,6 +106,21 @@ pub(crate) fn compute_conditional_expression_type(
     )
 }
 
+/// Resolver-aware conditional (ternary) expression type. The resolver lets
+/// subtype reduction of the branch union see through alias/application wrappers
+/// (e.g. `Record<string, unknown>`).
+pub(crate) fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    condition: TypeId,
+    true_type: TypeId,
+    false_type: TypeId,
+    resolver: Option<&R>,
+) -> TypeId {
+    tsz_solver::operations::expression_ops::compute_conditional_expression_type_with_resolver(
+        db, condition, true_type, false_type, resolver,
+    )
+}
+
 /// Merge a single object-spread property contribution through the solver-owned
 /// AST-independent spread merge rule.
 pub(crate) fn merge_object_spread_property(

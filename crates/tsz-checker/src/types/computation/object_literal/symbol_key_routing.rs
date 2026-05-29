@@ -110,9 +110,102 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
             return false;
         };
-        if self.ctx.arena.get_identifier(expr_node).is_none() {
+        let is_supported_wide_symbol_syntax = self.ctx.arena.get_identifier(expr_node).is_some()
+            || matches!(
+                expr_node.kind,
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            );
+        if !is_supported_wide_symbol_syntax {
+            return false;
+        }
+        if self
+            .declared_unique_symbol_member_property_name(computed.expression)
+            .is_some()
+        {
             return false;
         }
         self.get_type_of_node(computed.expression) == TypeId::SYMBOL
+    }
+
+    pub(super) fn report_contextual_symbol_index_value_mismatch(
+        &mut self,
+        name_idx: NodeIndex,
+        value_idx: Option<NodeIndex>,
+        source_value_type: TypeId,
+        contextual_type: Option<TypeId>,
+    ) -> bool {
+        let Some(target_value_type) = self.contextual_symbol_index_value_type(contextual_type)
+        else {
+            return false;
+        };
+        if self
+            .assign_relation_outcome(source_value_type, target_value_type)
+            .related
+        {
+            return false;
+        }
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let source_type = value_idx
+            .and_then(|idx| self.literal_type_from_initializer(idx))
+            .unwrap_or(source_value_type);
+        let source_type = self.widen_literal_type(source_type);
+        let source_str = self.format_type_for_assignability_message(source_type);
+        let target_str = self.format_type_for_assignability_message(target_value_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.error_at_node(
+            name_idx,
+            &message,
+            diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        true
+    }
+
+    fn contextual_symbol_index_value_type(
+        &mut self,
+        contextual_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let contextual_type = contextual_type?;
+        let mut value_types = Vec::new();
+        self.collect_contextual_symbol_index_value_types(contextual_type, &mut value_types);
+        if value_types.is_empty() {
+            return None;
+        }
+        Some(tsz_solver::utils::union_or_single(
+            self.ctx.types,
+            value_types,
+        ))
+    }
+
+    fn collect_contextual_symbol_index_value_types(
+        &mut self,
+        type_id: TypeId,
+        value_types: &mut Vec<TypeId>,
+    ) {
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let resolved = self.resolve_lazy_type(evaluated);
+        if let Some(shape) =
+            crate::query_boundaries::state::checking::object_shape(self.ctx.types, resolved)
+        {
+            if let Some(index) = &shape.string_index
+                && self.resolve_index_signature_key_type_via_env(index.key_type) == TypeId::SYMBOL
+            {
+                value_types.push(index.value_type);
+            }
+            return;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, resolved)
+        {
+            for member in members {
+                self.collect_contextual_symbol_index_value_types(member, value_types);
+            }
+        }
     }
 }

@@ -325,6 +325,10 @@ impl<'a> CheckerState<'a> {
     /// independently of whether the property name is statically extractable.
     pub(crate) fn file_has_define_property_export_call(&self, target_file_idx: usize) -> bool {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_binder = self
+            .ctx
+            .get_binder_for_file(target_file_idx)
+            .unwrap_or(self.ctx.binder);
         let Some(source_file) = target_arena.source_files.first() else {
             return false;
         };
@@ -356,12 +360,14 @@ impl<'a> CheckerState<'a> {
             let Some(access) = target_arena.get_access_expr(callee_node) else {
                 continue;
             };
-            let is_object_define_property = target_arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "Object")
-                && target_arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "defineProperty");
+            let is_object_define_property = self.identifier_resolves_to_unshadowed_global_in_arena(
+                target_arena,
+                target_binder,
+                access.expression,
+                "Object",
+            ) && target_arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "defineProperty");
             if !is_object_define_property {
                 continue;
             }
@@ -692,10 +698,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let is_define_property = self
-                .ctx
-                .arena
-                .get_identifier_at(callee.expression)
-                .is_some_and(|ident| ident.escaped_text == "Object")
+                .identifier_resolves_to_unshadowed_global(callee.expression, "Object")
                 && self
                     .ctx
                     .arena
@@ -1053,6 +1056,10 @@ impl<'a> CheckerState<'a> {
         start_statement_ordinal: Option<usize>,
     ) {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let target_binder = self
+            .ctx
+            .get_binder_for_file(target_file_idx)
+            .unwrap_or(self.ctx.binder);
         let Some(source_file) = target_arena.source_files.first() else {
             return;
         };
@@ -1089,12 +1096,14 @@ impl<'a> CheckerState<'a> {
             let Some(access) = target_arena.get_access_expr(callee_node) else {
                 continue;
             };
-            let is_object_define_property = target_arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "Object")
-                && target_arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "defineProperty");
+            let is_object_define_property = self.identifier_resolves_to_unshadowed_global_in_arena(
+                &target_arena,
+                target_binder,
+                access.expression,
+                "Object",
+            ) && target_arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "defineProperty");
             if !is_object_define_property {
                 continue;
             }

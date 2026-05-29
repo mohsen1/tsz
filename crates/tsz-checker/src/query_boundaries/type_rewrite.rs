@@ -4,6 +4,8 @@
 use tsz_solver::construction::QueryDatabase;
 use tsz_solver::{SymbolRef, TypeData, TypeId};
 
+pub(crate) use super::common::{TypeSubstitution, instantiate_type};
+
 pub(crate) fn replace_type_queries_and_lazies_with(
     db: &dyn QueryDatabase,
     type_id: TypeId,
@@ -233,4 +235,135 @@ pub(crate) fn replace_type_queries_and_lazies_with(
         &mut replacement_for_lazy,
         &mut rustc_hash::FxHashSet::default(),
     )
+}
+
+pub(crate) fn strip_noinfer_wrappers(db: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
+    fn rewrite(
+        db: &dyn QueryDatabase,
+        type_id: TypeId,
+        active: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> TypeId {
+        if !active.insert(type_id) {
+            return type_id;
+        }
+        let Some(key) = db.lookup(type_id) else {
+            active.remove(&type_id);
+            return type_id;
+        };
+        let rewritten = match key {
+            TypeData::NoInfer(inner) => rewrite(db, inner, active),
+            TypeData::Union(list_id) => {
+                let members = db.type_list(list_id);
+                let rewritten: Vec<_> = members
+                    .iter()
+                    .map(|&member| rewrite(db, member, active))
+                    .collect();
+                if members
+                    .iter()
+                    .zip(rewritten.iter())
+                    .all(|(&before, &after)| before == after)
+                {
+                    type_id
+                } else {
+                    db.factory().union_preserve_members(rewritten)
+                }
+            }
+            TypeData::Intersection(list_id) => {
+                let members = db.type_list(list_id);
+                let rewritten: Vec<_> = members
+                    .iter()
+                    .map(|&member| rewrite(db, member, active))
+                    .collect();
+                if members
+                    .iter()
+                    .zip(rewritten.iter())
+                    .all(|(&before, &after)| before == after)
+                {
+                    type_id
+                } else {
+                    db.factory().intersection(rewritten)
+                }
+            }
+            TypeData::ReadonlyType(inner) => {
+                let inner = rewrite(db, inner, active);
+                if let Some(TypeData::ReadonlyType(before)) = db.lookup(type_id)
+                    && inner == before
+                {
+                    type_id
+                } else {
+                    db.factory().readonly_type(inner)
+                }
+            }
+            TypeData::Array(element) => {
+                let element = rewrite(db, element, active);
+                if let Some(TypeData::Array(before)) = db.lookup(type_id)
+                    && element == before
+                {
+                    type_id
+                } else {
+                    db.factory().array(element)
+                }
+            }
+            TypeData::Tuple(tuple_list_id) => {
+                let elements = db.tuple_list(tuple_list_id);
+                let rewritten: Vec<_> = elements
+                    .iter()
+                    .map(|element| {
+                        let mut element = *element;
+                        element.type_id = rewrite(db, element.type_id, active);
+                        element
+                    })
+                    .collect();
+                if elements
+                    .iter()
+                    .zip(rewritten.iter())
+                    .all(|(&before, &after)| before == after)
+                {
+                    type_id
+                } else {
+                    db.factory().tuple(rewritten)
+                }
+            }
+            TypeData::Application(app_id) => {
+                let app = db.type_application(app_id);
+                let base = rewrite(db, app.base, active);
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|&arg| rewrite(db, arg, active))
+                    .collect();
+                if base == app.base && args.iter().zip(app.args.iter()).all(|(&a, &b)| a == b) {
+                    type_id
+                } else {
+                    db.factory().application(base, args)
+                }
+            }
+            TypeData::Function(shape_id) => {
+                let mut shape = db.function_shape(shape_id).as_ref().clone();
+                let mut changed = false;
+                for param in &mut shape.params {
+                    let rewritten = rewrite(db, param.type_id, active);
+                    if rewritten != param.type_id {
+                        param.type_id = rewritten;
+                        changed = true;
+                    }
+                }
+                let return_type = rewrite(db, shape.return_type, active);
+                if return_type != shape.return_type {
+                    shape.return_type = return_type;
+                    changed = true;
+                }
+                if changed {
+                    db.factory().function(shape)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        };
+        active.remove(&type_id);
+        rewritten
+    }
+
+    rewrite(db, type_id, &mut rustc_hash::FxHashSet::default())
 }

@@ -1,6 +1,7 @@
 use crate::emitter::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 /// The opening and (terminated) closing delimiter pair for a template part,
@@ -35,6 +36,75 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(tag_node) = self.arena.get(tagged.tag)
+        {
+            if tag_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(tag_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                if self.scoped_static_super_direct_access {
+                    self.write(&base_alias);
+                    self.write(".");
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
+                } else {
+                    self.write("Reflect.get(");
+                    self.write(&base_alias);
+                    self.write(", ");
+                    self.emit_scoped_static_super_property_name(access.name_or_argument);
+                    self.write(", ");
+                    self.emit_scoped_static_super_receiver();
+                    self.write(")");
+                }
+                self.write(".bind(");
+                self.emit_scoped_static_super_receiver();
+                self.write(")");
+                self.write_space();
+                self.emit(tagged.template);
+                return;
+            }
+
+            if tag_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(tag_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                if self.scoped_static_super_direct_access {
+                    if let Some(index_alias) =
+                        self.scoped_static_super_index_alias.as_ref().cloned()
+                    {
+                        self.write(&index_alias);
+                        self.write("(");
+                        self.emit(access.name_or_argument);
+                        self.write(")");
+                        if self.scoped_static_super_index_value_access {
+                            self.write(".value");
+                        }
+                    } else {
+                        self.write(&base_alias);
+                        self.write("[");
+                        self.emit(access.name_or_argument);
+                        self.write("]");
+                    }
+                } else {
+                    self.write("Reflect.get(");
+                    self.write(&base_alias);
+                    self.write(", ");
+                    self.emit(access.name_or_argument);
+                    self.write(", ");
+                    self.emit_scoped_static_super_receiver();
+                    self.write(")");
+                }
+                self.write(".bind(");
+                self.emit_scoped_static_super_receiver();
+                self.write(")");
+                self.write_space();
+                self.emit(tagged.template);
+                return;
+            }
+        }
+
         // When the tag is a bare identifier whose CJS-named-import
         // substitution turns it into a property access (`css` →
         // `react_1.css`), wrap the substituted expression in `(0, …)` so
@@ -54,7 +124,9 @@ impl<'a> Printer<'a> {
             None
         };
 
-        if let Some(subst) = cjs_subst {
+        if self.emit_private_field_tagged_template_tag(tagged.tag) {
+            // private tag emitted with its required receiver binding
+        } else if let Some(subst) = cjs_subst {
             self.write("(0, ");
             self.write(&subst);
             self.write(")");

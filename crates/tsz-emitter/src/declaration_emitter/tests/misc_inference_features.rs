@@ -95,6 +95,64 @@ function rawr(dino: RexOrRaptor) {
 }
 
 #[test]
+fn isomorphic_mapped_call_infers_variadic_tuple_return_from_argument() {
+    let output = emit_dts_with_binding(
+        r#"
+type Box<T> = { value: T };
+type Boxified<T> = { [P in keyof T]: Box<T[P]> };
+declare function unboxify<T>(x: Boxified<T>): T;
+declare let x10: [Box<number>, Box<string>, ...Box<boolean>[]];
+let y10 = unboxify(x10);
+"#,
+    );
+
+    assert!(
+        output.contains("declare let y10: [number, string, ...boolean[]];"),
+        "Expected mapped tuple call to recover the public tuple return: {output}"
+    );
+}
+
+#[test]
+fn implemented_generic_mapped_helper_uses_lexical_parameter_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+function boxify<T>(obj: T): Boxified<T> {
+    return obj as any;
+}
+type A = { a: string };
+type B = { b: string };
+function f1(x: A | B | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+function wrap<Value>(value: Value): Wrapped<Value> {
+    return value as any;
+}
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(x: A | B | undefined): Boxified<A | B | undefined>;"),
+        "Expected mapped helper return to use the source-visible parameter annotation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper and parameter names to use the same structural surface: {output}"
+    );
+}
+
+#[test]
 fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
     let source = r#"
 let [hello, brave] = ["Hello", "Brave"];
@@ -217,23 +275,23 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
 "#,
     );
 
-    // When the left operand of `||` is an always-truthy literal type (non-empty string),
-    // tsc gives just the left type — the right operand is unreachable.
     assert!(
-        output.contains("declare const stringOrNumber: \"string\";"),
-        "Expected `||` over definitely-truthy literal consts to keep the reachable left arm: {output}"
+        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
+        "Expected `||` over literal-typed identifiers to preserve the source union: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\";"),
-        "Expected `||` to drop the unreachable right arm for a definitely-truthy left literal: {output}"
+        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
+        "Expected `||` over literal-typed identifiers to include the right operand: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\";"),
-        "Expected `||` to keep the reachable left operand when it is definitely truthy: {output}"
+        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
+        "Expected `||` over literal-typed identifiers to preserve numeric and boolean arms: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
-        "Expected chained `||` to keep pruning unreachable right operands: {output}"
+        output.contains(
+            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+        ),
+        "Expected chained `||` over literal-typed identifiers to preserve all source arms: {output}"
     );
 }
 
@@ -798,6 +856,48 @@ class Foo {
     assert!(
         output.contains("getX(): number;"),
         "Expected method returning this.x to be inferred as number: {output}"
+    );
+}
+
+#[test]
+fn js_method_return_type_uses_constructor_assignment_property_facts() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class Counted {
+    constructor() {
+        this.total = 12;
+        this.label = "ok";
+    }
+    value() {
+        return this.total;
+    }
+    describe() {
+        return "value: " + this.label;
+    }
+}
+
+export class Renamed {
+    constructor(seed) {
+        this.amount = seed;
+    }
+    current() {
+        return this.amount;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value(): number;"),
+        "Expected JS method return to reuse constructor-assigned property facts: {output}"
+    );
+    assert!(
+        output.contains("describe(): string;"),
+        "Expected composed JS method return to reuse constructor-assigned property facts: {output}"
+    );
+    assert!(
+        output.contains("current(): any;"),
+        "Expected unsupported untyped constructor parameter assignments to preserve fallback behavior: {output}"
     );
 }
 

@@ -2,6 +2,8 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
+use super::assignability::RelationFlags;
+
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
     array_element_type as get_array_element_type, call_signatures_for_type,
@@ -245,6 +247,44 @@ pub(crate) fn narrow_to_objectish(
     narrowing.narrow_to_objectish(type_id)
 }
 
+/// Apply an inferred predicate guard to a parameter type.
+///
+/// The checker owns recognizing an inferable predicate body and matching the
+/// guard target to a parameter. This boundary owns the reusable semantic guard
+/// application and wires the optional `TypeEnvironment` so `Lazy(DefId)` inputs
+/// resolve consistently during solver narrowing.
+pub(crate) fn narrow_inferred_predicate_guard(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    param_type: TypeId,
+    guard: &TypeGuard,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_type(param_type, guard, GuardSense::Positive)
+}
+
+/// Return true when a falsy branch type contains only nullish constituents.
+///
+/// The checker owns recognizing double-negation truthiness in an inferable
+/// predicate body. This boundary owns the reusable type-shape classification
+/// that decides whether the false branch is narrow enough for tsc-style
+/// inferred predicate synthesis.
+pub(crate) fn is_nullish_only_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+        return true;
+    }
+    if let Some(members) = union_members_for_type(db, type_id) {
+        return !members.is_empty()
+            && members
+                .iter()
+                .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+    }
+    false
+}
+
 fn resolve_assignment_reduction_type(
     db: &dyn TypeDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
@@ -292,6 +332,19 @@ fn non_nullish_constraint_reduction_for_assignment(
 
     let non_nullish_initial = tsz_solver::narrowing::remove_nullish(db, initial_type);
     let assigned_type = resolve_assignment_reduction_type(db, env, assigned_type);
+    // A value that is itself possibly nullish does not prove the binding is
+    // non-nullish, so it must not collapse the binding to the non-nullish
+    // constraint. This covers a bare generic `T extends X | undefined` (and
+    // `null! as T`, whose type is `T`), whose constraint still includes
+    // `undefined`. Only a definitely-non-nullish value (e.g. `x!`, typed
+    // `NonNullable<T>`) may drive this reduction. Without this guard, a
+    // `let v = null! as T` access loses the possibly-undefined diagnostic.
+    if tsz_solver::narrowing::split_nullish_type(db, assigned_type)
+        .1
+        .is_some()
+    {
+        return None;
+    }
     let assigned_matches_non_nullish_initial = if let Some(environment) = env {
         non_nullish_initial != initial_type
             && is_assignable_with_env(db, environment, assigned_type, non_nullish_initial, true)
@@ -484,7 +537,7 @@ pub(crate) fn is_assignable_strict_null(
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
         tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
-            tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            RelationFlags::STRICT_NULL_CHECKS,
         ),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
@@ -554,7 +607,7 @@ pub(crate) fn is_assignable_with_env(
 ) -> bool {
     let mut flags = 0u16;
     if strict_null_checks {
-        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= RelationFlags::STRICT_NULL_CHECKS;
     }
 
     tsz_solver::relations::relation_queries::query_relation_with_resolver(
@@ -665,7 +718,7 @@ fn types_are_subtype_with_env(
 ) -> bool {
     let mut flags = 0u16;
     if strict_null_checks {
-        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= RelationFlags::STRICT_NULL_CHECKS;
     }
 
     tsz_solver::relations::relation_queries::query_relation_with_resolver(

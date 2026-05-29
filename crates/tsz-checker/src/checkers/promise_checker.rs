@@ -241,7 +241,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_standard_or_conditional_awaited_alias(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+    pub(crate) fn is_standard_or_conditional_awaited_alias(
+        &self,
+        sym_id: SymbolId,
+        symbol: &Symbol,
+    ) -> bool {
         if self.symbol_has_standard_lib_origin(sym_id) {
             return true;
         }
@@ -643,7 +647,7 @@ impl<'a> CheckerState<'a> {
         for sig in &sigs {
             if let Some(expected_this) = sig.this_type
                 && expected_this != TypeId::VOID
-                && !self.diagnostic_relation_boolean_guard(type_id, expected_this)
+                && !self.assign_relation_outcome(type_id, expected_this).related
             {
                 rejected_this_type.get_or_insert(expected_this);
                 continue;
@@ -1218,34 +1222,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a return type annotation syntactically looks like `Promise<T>` or `PromiseLike<T>`.
-    ///
-    /// Syntactic fallback used when the type can't yet be resolved (e.g. during implicit
-    /// return-type checks). Matches only the two canonical lib names; user-chosen names
-    /// containing "Promise" are intentionally excluded.
-    pub fn return_type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_annotation) else {
-            return false;
-        };
-
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-        {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
-            }
-            // Qualified name like `SomeModule.Promise` — check the rightmost identifier.
-            if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
-                && let Some(right_node) = self.ctx.arena.get(qualified.right)
-                && let Some(ident) = self.ctx.arena.get_identifier(right_node)
-            {
-                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
-            }
-        }
-
-        false
-    }
-
     /// Check if a type is an Application (generic instantiation) whose base is definitively
     /// NOT the global Promise type.
     ///
@@ -1526,21 +1502,23 @@ impl<'a> CheckerState<'a> {
     /// Iterator, `AsyncIterator`, `IterableIterator`, `AsyncIterableIterator`,
     /// Iterable, `AsyncIterable`).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
-        // Fast path: Check for Lazy types to known Generator-like types
+        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
         {
-            if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
-                // Use def_to_symbol_id to find the symbol
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.get_symbol_globally(sym_id)
-                    && Self::is_generator_like_name(&symbol.escaped_name)
-                {
-                    return true;
-                }
+            let name = symbol.escaped_name.as_str();
+            if Self::is_generator_like_name(name)
+                && (!self.ctx.has_lib_loaded()
+                    || self
+                        .ctx
+                        .sym_id_is_actual_or_cloned_lib_global_type_named(sym_id, name))
+            {
+                return true;
             }
         }
 
-        // Robust check: Resolve the global types and compare TypeIds
-        // This handles cases where the type is structural (Object/Callable) rather than a Lazy
+        // Resolve the global protocol types and compare TypeIds. A module-local
+        // alias named `Generator` is not the lib/global generator protocol.
         for name in &[
             "Generator",
             "AsyncGenerator",

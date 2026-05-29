@@ -4,6 +4,7 @@ use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::intersection_members;
+pub(crate) use super::common::raw_property_type;
 pub(crate) use super::common::{
     array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };

@@ -7,6 +7,17 @@ use crate::types::{FunctionShape, ObjectFlags, ParamInfo, TypeData, TypeId, Type
 use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    pub(super) fn eval_type_param_default(
+        &mut self,
+        default: TypeId,
+        subst: &TypeSubstitution,
+        actual_this_type: Option<TypeId>,
+    ) -> TypeId {
+        let instantiated =
+            super::instantiate_call_type(self.interner, default, subst, actual_this_type);
+        self.checker.evaluate_type(instantiated)
+    }
+
     pub(super) fn resolve_direct_parameter_inference_type(
         &mut self,
         lower_bounds: &[TypeId],

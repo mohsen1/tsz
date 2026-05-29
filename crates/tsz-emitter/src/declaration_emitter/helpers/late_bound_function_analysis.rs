@@ -9,6 +9,30 @@ use tsz_scanner::SyntaxKind;
 
 use super::super::DeclarationEmitter;
 use super::LateBoundAssignmentMember;
+
+/// Accumulator threaded through the recursive late-bound assignment walk.
+///
+/// Holds the ordered member list plus the set of already-recorded resolved
+/// assignment nodes. A single physical `Foo.prop = value` assignment is
+/// reachable through multiple nodes during the walk — most commonly through a
+/// parenthesized/non-null/comma wrapper node *and* its inner binary node, both
+/// of which strip to the same assignment via
+/// `skip_parenthesized_and_assertions_and_comma`. Deduplicating by the resolved
+/// assignment node keeps each expando property recorded exactly once.
+#[derive(Default)]
+struct LateBoundCollect {
+    members: Vec<LateBoundAssignmentMember>,
+    seen_assignments: FxHashSet<NodeIndex>,
+    /// Set when the symbol-filtered walk encountered a `root.prop = value`
+    /// assignment whose receiver matched the function name but resolved to a
+    /// *different* binding (block-level shadowing). Such an assignment belongs
+    /// to the inner binding, not the function, so it is correctly rejected.
+    /// When this happens, the empty-result fallback (which re-walks with
+    /// `root_symbol = None` and would otherwise resurrect the shadowed
+    /// assignment) must be suppressed.
+    saw_shadowed_receiver: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     fn escape_non_ascii_for_double_quote(text: &str) -> String {
         let mut result = String::with_capacity(text.len() + 8);
@@ -324,12 +348,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Returns the resolved assignment node (after stripping parenthesized,
+    /// non-null, and comma wrappers) together with the member it contributes.
+    /// The resolved node is returned so callers can deduplicate: the same
+    /// physical `Foo.prop = value` assignment is reachable through both a
+    /// parenthesized wrapper node (e.g. `(Foo.prop = value)`) and its inner
+    /// binary node during the recursive walk, and must be recorded once.
     fn late_bound_assignment_member_for_expression(
         &self,
         expr_idx: NodeIndex,
         root_name: &str,
         root_symbol: Option<SymbolId>,
-    ) -> Option<LateBoundAssignmentMember> {
+        existing_members: &[LateBoundAssignmentMember],
+    ) -> Option<(NodeIndex, LateBoundAssignmentMember)> {
         let expr_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(expr_idx);
@@ -400,19 +431,286 @@ impl<'a> DeclarationEmitter<'a> {
         if self.source_is_js_file && property_name_text == "prototype" {
             return None;
         }
-        let type_text = self
-            .preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
-            .or_else(|| {
-                self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx))
-                    .map(|resolved| resolved.emitted_type_text)
-            })
-            .unwrap_or_else(|| "any".to_string());
+        let rhs_references_root =
+            self.expression_references_late_bound_root(rhs_idx, root_name, root_symbol, 0);
+        let resolved_type_text = || {
+            self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx))
+                .map(|resolved| resolved.emitted_type_text)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[rhs_idx])
+                        .filter(|type_id| {
+                            !matches!(
+                                *type_id,
+                                tsz_solver::types::TypeId::ANY
+                                    | tsz_solver::types::TypeId::UNKNOWN
+                                    | tsz_solver::types::TypeId::ERROR
+                            )
+                        })
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+        };
+        let type_text = if rhs_references_root {
+            self.late_bound_self_referential_rhs_type_text(
+                rhs_idx,
+                root_name,
+                root_symbol,
+                existing_members,
+                0,
+            )
+            .or_else(resolved_type_text)
+        } else {
+            self.preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
+                .or_else(resolved_type_text)
+        }
+        .unwrap_or_else(|| "any".to_string());
 
-        Some(LateBoundAssignmentMember {
-            property_name_text,
-            namespace_member_name,
-            type_text,
-        })
+        Some((
+            expr_idx,
+            LateBoundAssignmentMember {
+                property_name_text,
+                namespace_member_name,
+                type_text,
+            },
+        ))
+    }
+
+    /// Returns true when `expr_idx` is a `root_name.prop = value` assignment
+    /// whose receiver matches the function name by spelling but resolves to a
+    /// *different* binding than `root_symbol` (i.e. an inner block-scoped
+    /// `const`/`function`/etc. shadows the outer function). Such an assignment
+    /// is an expando property of the shadowing binding, not of the function,
+    /// so it must not be merged into the function namespace.
+    fn late_bound_assignment_receiver_shadows_root(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: SymbolId,
+    ) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        let lhs_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let Some(lhs_node) = self.arena.get(lhs_idx) else {
+            return false;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+            return false;
+        };
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let Some(receiver_name) = self.get_identifier_text(receiver_idx) else {
+            return false;
+        };
+        if receiver_name != root_name {
+            return false;
+        }
+        self.resolve_identifier_symbol(receiver_idx, &receiver_name)
+            .is_some_and(|receiver_symbol| receiver_symbol != root_symbol)
+    }
+
+    fn late_bound_self_referential_rhs_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+        existing_members: &[LateBoundAssignmentMember],
+        depth: u8,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string".to_string())
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if !self.late_bound_access_root_matches(expr_idx, root_name, root_symbol) {
+                    return None;
+                }
+                let (property_name, _) = self.late_bound_assignment_property_key_parts(expr_idx)?;
+                existing_members
+                    .iter()
+                    .rev()
+                    .find(|member| member.property_name_text == property_name)
+                    .map(|member| member.type_text.clone())
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(expr_node)?;
+                let left = self.late_bound_self_referential_rhs_type_text(
+                    binary.left,
+                    root_name,
+                    root_symbol,
+                    existing_members,
+                    depth + 1,
+                )?;
+                let right = self.late_bound_self_referential_rhs_type_text(
+                    binary.right,
+                    root_name,
+                    root_symbol,
+                    existing_members,
+                    depth + 1,
+                )?;
+                Self::late_bound_binary_result_type_text(binary.operator_token, &left, &right)
+            }
+            _ => None,
+        }
+    }
+
+    fn late_bound_binary_result_type_text(
+        operator: u16,
+        left: &str,
+        right: &str,
+    ) -> Option<String> {
+        match operator {
+            k if k == SyntaxKind::PlusToken as u16 => {
+                if left == "string" || right == "string" {
+                    Some("string".to_string())
+                } else if left == "number" && right == "number" {
+                    Some("number".to_string())
+                } else {
+                    None
+                }
+            }
+            k if k == SyntaxKind::MinusToken as u16
+                || k == SyntaxKind::AsteriskToken as u16
+                || k == SyntaxKind::SlashToken as u16
+                || k == SyntaxKind::PercentToken as u16
+                || k == SyntaxKind::AsteriskAsteriskToken as u16
+                || k == SyntaxKind::LessThanLessThanToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16
+                || k == SyntaxKind::AmpersandToken as u16
+                || k == SyntaxKind::BarToken as u16
+                || k == SyntaxKind::CaretToken as u16 =>
+            {
+                (left == "number" && right == "number").then(|| "number".to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn expression_references_late_bound_root(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+        depth: u8,
+    ) -> bool {
+        if depth > 64 {
+            return false;
+        }
+
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if depth > 0
+            && (expr_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || expr_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || expr_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || expr_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || expr_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || expr_node.kind == syntax_kind_ext::MODULE_DECLARATION)
+        {
+            return false;
+        }
+
+        if (expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && self.late_bound_access_root_matches(expr_idx, root_name, root_symbol)
+        {
+            return true;
+        }
+
+        self.arena
+            .get_children(expr_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.expression_references_late_bound_root(
+                    child_idx,
+                    root_name,
+                    root_symbol,
+                    depth + 1,
+                )
+            })
+    }
+
+    fn late_bound_access_root_matches(
+        &self,
+        access_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+    ) -> bool {
+        let Some(root_idx) = self.late_bound_access_root_idx(access_idx, 0) else {
+            return false;
+        };
+        let Some(receiver_name) = self.get_identifier_text(root_idx) else {
+            return false;
+        };
+        if receiver_name != root_name {
+            return false;
+        }
+        if let Some(root_symbol) = root_symbol
+            && let Some(receiver_symbol) = self.resolve_identifier_symbol(root_idx, &receiver_name)
+        {
+            return receiver_symbol == root_symbol;
+        }
+        true
+    }
+
+    fn late_bound_access_root_idx(&self, expr_idx: NodeIndex, depth: u8) -> Option<NodeIndex> {
+        if depth > 16 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return Some(expr_idx);
+        }
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        self.late_bound_access_root_idx(access.expression, depth + 1)
     }
 
     fn collect_late_bound_assignment_members_from_node(
@@ -421,7 +719,7 @@ impl<'a> DeclarationEmitter<'a> {
         root_name: &str,
         root_symbol: Option<SymbolId>,
         declared_members: &FxHashSet<String>,
-        members: &mut Vec<LateBoundAssignmentMember>,
+        collect: &mut LateBoundCollect,
     ) {
         let Some(node) = self.arena.get(node_idx) else {
             return;
@@ -436,10 +734,27 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if let Some(member) =
-            self.late_bound_assignment_member_for_expression(node_idx, root_name, root_symbol)
+        // Record an applicable `root.prop = value` assignment exactly once. When
+        // the symbol-filtered walk rejects a name-matching assignment because the
+        // receiver resolves to an inner shadowing binding, note it so the caller
+        // can suppress the unfiltered empty-result fallback.
+        if let Some(root_symbol) = root_symbol
+            && self.late_bound_assignment_receiver_shadows_root(node_idx, root_name, root_symbol)
         {
-            Self::record_late_bound_assignment_member(members, member, declared_members);
+            collect.saw_shadowed_receiver = true;
+        }
+        if let Some((assignment_idx, member)) = self.late_bound_assignment_member_for_expression(
+            node_idx,
+            root_name,
+            root_symbol,
+            &collect.members,
+        ) && collect.seen_assignments.insert(assignment_idx)
+        {
+            Self::record_late_bound_assignment_member(
+                &mut collect.members,
+                member,
+                declared_members,
+            );
         }
 
         if let Some(block) = self.arena.get_block(node) {
@@ -449,7 +764,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             return;
@@ -462,7 +777,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
                 if loop_data.condition.is_some() {
                     self.collect_late_bound_assignment_members_from_node(
@@ -470,7 +785,7 @@ impl<'a> DeclarationEmitter<'a> {
                         root_name,
                         root_symbol,
                         declared_members,
-                        members,
+                        collect,
                     );
                 }
                 return;
@@ -482,7 +797,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             if loop_data.condition.is_some() {
@@ -491,7 +806,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             self.collect_late_bound_assignment_members_from_node(
@@ -499,7 +814,7 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             if loop_data.incrementor.is_some() {
                 self.collect_late_bound_assignment_members_from_node(
@@ -507,7 +822,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             return;
@@ -519,21 +834,21 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.expression,
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.statement,
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             return;
         }
@@ -544,7 +859,7 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
         }
     }
@@ -564,10 +879,40 @@ impl<'a> DeclarationEmitter<'a> {
                     existing.property_name_text == member.property_name_text
                 })
         {
-            *existing = member;
+            if let Some(type_text) = Self::late_bound_repeated_object_assignment_union_type_text(
+                &existing.type_text,
+                &member.type_text,
+            ) {
+                existing.type_text = type_text;
+            } else {
+                *existing = member;
+            }
         } else {
             members.push(member);
         }
+    }
+
+    fn late_bound_repeated_object_assignment_union_type_text(
+        existing_type_text: &str,
+        next_type_text: &str,
+    ) -> Option<String> {
+        let mut arms = Self::split_top_level_union_type_parts(existing_type_text);
+        arms.push(next_type_text.trim().to_string());
+        if arms.len() < 2
+            || !arms
+                .iter()
+                .all(|arm| Self::is_object_literal_type_text(arm))
+        {
+            return None;
+        }
+
+        Self::expand_object_union_arms_from_sibling_properties(&mut arms);
+        Some(arms.join(" | "))
+    }
+
+    fn is_object_literal_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        trimmed.starts_with('{') && trimmed.ends_with('}')
     }
 
     fn declared_late_bound_namespace_member_names(&self, root_name: &str) -> FxHashSet<String> {
@@ -666,12 +1011,32 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_node_symbol(root_name_idx)
                 .or_else(|| binder.file_locals.get(&root_name))
         });
+        let mut collect = LateBoundCollect::default();
+        let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
+        if let Some(scope_idx) = self.containing_module_block_scope(root_name_idx) {
+            self.collect_late_bound_assignment_members_from_node(
+                scope_idx,
+                &root_name,
+                root_symbol,
+                &declared_members,
+                &mut collect,
+            );
+            if collect.members.is_empty() && root_symbol.is_some() && !collect.saw_shadowed_receiver
+            {
+                self.collect_late_bound_assignment_members_from_node(
+                    scope_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut collect,
+                );
+            }
+            return collect.members;
+        }
+
         let Some(source_file) = self.arena.source_files.first() else {
             return Vec::new();
         };
-
-        let mut members = Vec::new();
-        let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         for &stmt_idx in &source_file.statements.nodes {
             if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
                 continue;
@@ -681,11 +1046,123 @@ impl<'a> DeclarationEmitter<'a> {
                 &root_name,
                 root_symbol,
                 &declared_members,
-                &mut members,
+                &mut collect,
             );
         }
+        if collect.members.is_empty() && root_symbol.is_some() && !collect.saw_shadowed_receiver {
+            for &stmt_idx in &source_file.statements.nodes {
+                if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
+                    continue;
+                }
+                self.collect_late_bound_assignment_members_from_node(
+                    stmt_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut collect,
+                );
+            }
+        }
 
-        members
+        collect.members
+    }
+
+    fn containing_module_block_scope(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn returned_late_bound_function_typeof_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.inside_non_ambient_namespace {
+            return None;
+        }
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let name = self.get_identifier_text(returned_identifier)?;
+        if !self.returned_identifier_resolves_to_function_declaration(returned_identifier)
+            && !self.containing_module_block_has_function_declaration(returned_identifier, &name)
+        {
+            return None;
+        }
+        Some(format!("typeof {name}"))
+    }
+
+    fn returned_identifier_resolves_to_function_declaration(
+        &self,
+        identifier_idx: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.value_reference_symbol(identifier_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            self.function_declaration_from_symbol_decl(decl_idx)
+                .is_some()
+        })
+    }
+
+    fn containing_module_block_has_function_declaration(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(scope_idx) = self.containing_module_block_scope(node_idx) else {
+            return false;
+        };
+        let Some(scope_node) = self.arena.get(scope_idx) else {
+            return false;
+        };
+        let Some(module_block) = self.arena.get_module_block(scope_node) else {
+            return false;
+        };
+        let Some(statements) = module_block.statements.as_ref() else {
+            return false;
+        };
+        statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(func) = self.arena.get_function(stmt_node) else {
+                return false;
+            };
+            self.get_identifier_text(func.name).as_deref() == Some(name)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn collect_late_bound_assignment_members_in_node(
+        &self,
+        root_name_idx: NodeIndex,
+        scope_idx: NodeIndex,
+    ) -> Vec<LateBoundAssignmentMember> {
+        let Some(root_name) = self.get_identifier_text(root_name_idx) else {
+            return Vec::new();
+        };
+        let declared_members = FxHashSet::default();
+        let mut collect = LateBoundCollect::default();
+        self.collect_late_bound_assignment_members_from_node(
+            scope_idx,
+            &root_name,
+            None,
+            &declared_members,
+            &mut collect,
+        );
+        collect.members
     }
 
     pub(in crate::declaration_emitter) fn should_emit_ts_late_bound_function_namespace(

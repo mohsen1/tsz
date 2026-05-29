@@ -601,8 +601,12 @@ impl<'a> CheckerState<'a> {
                     when_true = self.unwrap_promise_type(when_true).unwrap_or(when_true);
                     when_false = self.unwrap_promise_type(when_false).unwrap_or(when_false);
                 }
-                !self.diagnostic_relation_boolean_guard(when_true, expected_return_type)
-                    || !self.diagnostic_relation_boolean_guard(when_false, expected_return_type)
+                !self
+                    .return_relation_outcome(when_true, expected_return_type)
+                    .related
+                    || !self
+                        .return_relation_outcome(when_false, expected_return_type)
+                        .related
             });
         if conditional_branch_mismatch
             && !self
@@ -1681,11 +1685,9 @@ impl<'a> CheckerState<'a> {
 
     fn jsdoc_comment_declares_promise_typedef(comment: &str) -> bool {
         comment.contains("@typedef")
-            && comment.split_whitespace().any(|token| {
-                token.trim_matches(|c: char| {
-                    matches!(c, '*' | '/' | '{' | '}' | '(' | ')' | '[' | ']' | ',')
-                }) == "Promise"
-            })
+            && Self::parse_jsdoc_typedefs(comment)
+                .iter()
+                .any(|(name, _)| name == "Promise")
     }
 
     fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {
@@ -1806,12 +1808,13 @@ impl<'a> CheckerState<'a> {
             is_async,
             is_generator,
         );
-        // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
-        // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355.
+        // For async functions, suppress return-completeness diagnostics only
+        // when the annotation resolves to the actual global Promise. A local
+        // or qualified type named Promise still follows normal return checks.
         if is_async
             && check_return_type == effective_return_type
             && has_type_annotation
-            && self.return_type_annotation_looks_like_promise(type_annotation)
+            && self.return_type_annotation_is_exactly_promise(type_annotation)
         {
             check_return_type = TypeId::VOID;
         }

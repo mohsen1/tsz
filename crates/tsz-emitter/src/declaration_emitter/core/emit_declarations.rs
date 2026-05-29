@@ -20,6 +20,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
         self.local_namespace_alias_targets.clear();
+        self.local_import_equals_alias_for_target.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -643,26 +644,22 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
-        let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
 
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
+        let jsdoc_facts = Self::statement_jsdoc_declaration_facts(
+            self.current_statement_jsdoc_chain.clone(),
+            has_jsdoc_type_function_signature,
+        );
         let is_effectively_exported = self.statement_has_effective_export(stmt_idx);
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
             && is_effectively_exported
-            && !has_jsdoc_type_function_signature
-            && jsdoc_chain
-                .iter()
-                .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+            && !jsdoc_facts.has_type_function_signature()
+            && jsdoc_facts.has_type_alias_tag();
         if has_leading_jsdoc_typedef {
-            // Reuse the already-computed jsdoc_chain instead of re-walking comments.
-            for jsdoc in &jsdoc_chain {
-                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(jsdoc) {
-                    self.emit_rendered_jsdoc_type_alias(decl, is_effectively_exported);
-                }
-            }
+            self.emit_jsdoc_type_alias_facts(&jsdoc_facts, is_effectively_exported);
         }
 
         let jsdoc_overload_function_node =
@@ -671,38 +668,36 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
 
         let effective_chain: Vec<String> = if has_leading_jsdoc_typedef {
-            jsdoc_chain
-                .iter()
-                .filter(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc))
-                .cloned()
-                .collect()
+            jsdoc_facts.comments_without_type_alias_tags()
         } else {
-            jsdoc_chain
+            jsdoc_facts.comments().to_vec()
         };
+        let effective_facts = Self::statement_jsdoc_declaration_facts(
+            effective_chain,
+            jsdoc_facts.has_type_function_signature(),
+        );
 
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted with each overload signature.
-        } else if has_jsdoc_type_function_signature {
-            let filtered = Self::jsdoc_chain_without_type_or_alias_tags(&effective_chain);
+        } else if effective_facts.has_type_function_signature() {
+            let filtered = effective_facts.comments_without_type_or_alias_tags();
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
                 &filtered,
             ) {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
-        } else if effective_chain
-            .iter()
-            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
+        } else if effective_facts.has_function_signature_tags()
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
-                &effective_chain,
+                effective_facts.comments(),
             ) {
-                self.emit_jsdoc_comment_chain(&effective_chain);
+                self.emit_jsdoc_comment_chain(effective_facts.comments());
             }
         } else {
-            self.emit_jsdoc_comment_chain(&effective_chain);
+            self.emit_jsdoc_comment_chain(effective_facts.comments());
         }
         let saved_comment_idx = self.comment_emit_idx;
         self.comment_emit_idx = self
@@ -765,10 +760,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.get_identifier_text(func.name).is_some_and(|name| {
                 self.namespace_member_referenced_by_exported_object_literal(func_idx, &name)
             });
+        let used_by_exported_function_return =
+            self.namespace_member_decl_returned_by_exported_function(func_idx);
         if !is_exported
             && !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
             && !used_by_exported_object_literal
+            && !used_by_exported_function_return
         {
             return;
         }
@@ -925,6 +923,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.returned_late_bound_function_typeof_text(func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let (Some(return_type_text), true) =
             self.function_body_return_hint(func, func_body)
         {
@@ -989,7 +994,13 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                     return;
                 }
-                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+                if func_body.is_some()
+                    && let Some(predicate_text) = self.function_source_type_predicate_text(func)
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, func_type_id)
                 {
                     let effective_return_type_id = if func_body.is_some() {
                         self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
@@ -1038,11 +1049,25 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if func_body.is_some()
+                        && self.function_body_returns_object_with_this_only_methods(func_body)
+                        && let Some(object_literal_idx) =
+                            self.direct_returned_object_literal(func_body)
+                        && let Some(type_text) =
+                            self.infer_object_literal_type_text_at(object_literal_idx, 0)
+                    {
+                        // Prefer AST-derived text: solver's TypePrinter expands self-referential
+                        // `this`-returning object types exponentially (max_depth = 128 levels).
+                        // `infer_object_literal_type_text_at` emits `/*elided*/ any` for
+                        // `this`-returning methods, which matches tsc's declaration output.
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some((type_text, _)) = scoped_preferred_return.as_ref()
                         && func_body.is_some()
                         && self.function_body_returns_object_with_this_only_methods(func_body)
                     {
-                        // Prefer AST-derived text: solver print of `this`-returning object methods expands exponentially.
+                        // Fallback when direct object-literal inference is unavailable:
+                        // use the scoped preferred return text derived from the source annotation.
                         self.write(": ");
                         self.write(type_text);
                     } else if let Some(type_text) = func_body
@@ -1063,11 +1088,42 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     } else if let Some(type_text) = func_body
                         .is_some()
+                        .then(|| self.returned_late_bound_function_typeof_text(func_body))
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.function_body_local_function_expando_return_type_text(func_body)
+                        })
+                        .flatten()
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, &type_text);
+                        self.emit_non_portable_function_return_diagnostics(
+                            &type_text, func_body, func_name,
+                        );
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
                         .then(|| {
                             self.function_body_single_spread_object_literal_type_text(func_body)
                         })
                         .flatten()
                         .filter(|type_text| !type_text.is_empty())
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.function_body_source_indexed_access_return_type_text(func_body)
+                        })
+                        .flatten()
+                        && self.print_type_id(effective_return_type_id) != type_text
                     {
                         self.write(": ");
                         self.write(&type_text);
@@ -1262,8 +1318,20 @@ impl<'a> DeclarationEmitter<'a> {
         func_body: NodeIndex,
         func_name: NodeIndex,
     ) -> bool {
+        if let Some(predicate_text) = self.function_source_type_predicate_text(func) {
+            self.write(": ");
+            self.write(&predicate_text);
+            return true;
+        }
+
         if self.body_returns_void(func_body) {
             self.write(": void");
+            return true;
+        }
+
+        if let Some(type_text) = self.returned_late_bound_function_typeof_text(func_body) {
+            self.write(": ");
+            self.write(&type_text);
             return true;
         }
 

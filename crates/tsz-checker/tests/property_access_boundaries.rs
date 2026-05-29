@@ -204,3 +204,28 @@ fn def_id_and_application_queries() {
     assert_eq!(application_first_arg(&types, TypeId::ANY), None);
     assert_eq!(application_first_arg(&types, lazy1), None);
 }
+
+#[test]
+fn checker_property_access_has_no_ast_interface_recovery_backstop() {
+    let source_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/state/state_checking/property_access.rs");
+    let source = std::fs::read_to_string(&source_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
+
+    for retired_helper in [
+        "recover_lazy_interface_member_type",
+        "recover_inherited_member_from_heritage",
+        "process_heritage_entries",
+        "resolve_heritage_sym_in_arena",
+        "find_named_member_in_iface_decl",
+        "resolve_cross_file_type_arg",
+        "AST-recovery",
+        "AST heritage recovery",
+    ] {
+        assert!(
+            !source.contains(retired_helper),
+            "checker property access should use the solver-backed resolver boundary, \
+             not AST heritage recovery helper `{retired_helper}`"
+        );
+    }
+}

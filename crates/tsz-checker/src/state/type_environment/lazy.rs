@@ -224,6 +224,12 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // First pass uses the limited `TypeEnvironment` resolver, which
+                // can leave residue (unresolved Lazy/IndexAccess/Mapped). Do NOT
+                // let it populate the resolver-independent application-eval cache,
+                // or sibling reads would observe under-resolved results. Writes
+                // are reserved for the authoritative full-resolver second pass.
+                None,
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -298,6 +304,10 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 use_cache,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // Second pass uses the authoritative full `CheckerContext`
+                // resolver, so its application expansions are safe to memoize in
+                // the per-file application-eval cache.
+                Some(self.ctx.types),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -788,8 +798,56 @@ impl<'a> CheckerState<'a> {
         self.resolve_lib_type_by_name(name)
     }
 
+    /// When `type_id` is a union with at least one `Application` member, evaluate
+    /// those application members through the type environment and return the
+    /// rebuilt union. Returns `None` when `type_id` is not such a union or no
+    /// application member made progress, so callers can fall through to their
+    /// normal resolution path.
+    fn resolve_union_application_members(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::state::type_environment::is_application_type;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        if !members
+            .iter()
+            .any(|&m| is_application_type(self.ctx.types, m))
+        {
+            return None;
+        }
+        let mut changed = false;
+        let resolved: Vec<TypeId> = members
+            .iter()
+            .map(|&member| {
+                if is_application_type(self.ctx.types, member) {
+                    let evaluated = self.evaluate_application_type(member);
+                    if evaluated != member {
+                        changed = true;
+                    }
+                    evaluated
+                } else {
+                    member
+                }
+            })
+            .collect();
+        changed.then(|| self.ctx.types.union(resolved))
+    }
+
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
+
+        // A union whose members are `Application(Lazy(DefId), …)` instantiations
+        // of generic lib references (e.g. `Int32Array | Uint8Array`) keeps those
+        // members opaque under the solver's environment-free evaluator, hiding
+        // the referenced interface's members and index signatures. Such unions
+        // arise from narrowing or constraint-position substitution, where the
+        // members are interned in their raw application form rather than the
+        // resolved object form a directly-declared union would carry. Resolve
+        // the application members through the type environment first so property
+        // and element access see the interface shape; the recursion then runs
+        // the normal per-member resolution on the resolved union. This precedes
+        // the per-id resolve cache, which can otherwise return a stale identity
+        // entry recorded on an earlier pass before the members were resolvable.
+        if let Some(resolved) = self.resolve_union_application_members(type_id) {
+            return self.resolve_type_for_property_access(resolved);
+        }
 
         if let Some(&cached) = self
             .ctx
@@ -1466,6 +1524,23 @@ impl<'a> CheckerState<'a> {
                         symbol
                             .primary_declaration()
                             .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                    })
+                    .or_else(|| {
+                        owner_file_idx
+                            .filter(|file_idx| *file_idx != self.ctx.current_file_idx)
+                            .and_then(|file_idx| {
+                                self.ctx
+                                    .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
+                                    .map(|(instance_type, _)| instance_type)
+                            })
+                    })
+                    .or_else(|| {
+                        owner_file_idx
+                            .filter(|file_idx| *file_idx != self.ctx.current_file_idx)
+                            .and_then(|_| {
+                                self.delegate_cross_arena_class_instance_type(sym_id)
+                                    .map(|(instance_type, _)| instance_type)
+                            })
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {

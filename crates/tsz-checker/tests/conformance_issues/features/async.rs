@@ -1370,3 +1370,84 @@ const unexpectedlyFailingExample: Mapped = {
         "Did not expect a false TS2322 when a computed mapped callback property should inherit callable context.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// TS1062 must still fire for a generic thenable whose `then` fulfillment value
+/// is the *same* instantiation — awaiting it never terminates. The rule is
+/// structural, so the type-parameter spelling must not matter (#10675).
+#[test]
+fn ts1062_fires_for_generic_same_instantiation_thenable() {
+    if !lib_files_available() {
+        return;
+    }
+    for source in [
+        r#"
+interface Wrap<T> { then(cb: (v: Wrap<T>) => void): void }
+declare const w: Wrap<number>;
+async function run() { await w; }
+"#,
+        r#"
+interface Box<Elem> { then(cb: (v: Box<Elem>) => void): void }
+declare const b: Box<string>;
+async function run() { await b; }
+"#,
+    ] {
+        let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        );
+        let ts1062 = diagnostics.iter().filter(|(code, _)| *code == 1062).count();
+        assert!(
+            ts1062 >= 1,
+            "Expected TS1062 for a generic same-instantiation thenable cycle.\nGot: {diagnostics:#?}"
+        );
+    }
+}
+
+/// A generic builder that is thenable but whose `then` resolves to a concrete
+/// (or distinct, finite) value type is not circular. tsc is clean here, so tsz
+/// must not over-fire TS1062 just because the same generic alias appears in the
+/// fulfillment position — distinct instantiations are not a cycle (#10675).
+#[test]
+fn no_ts1062_for_finite_generic_thenable() {
+    if !lib_files_available() {
+        return;
+    }
+    for source in [
+        // kysely-style executable builder: `then` resolves to a concrete row array.
+        r#"
+interface Builder<O> {
+  then<R1 = O[], R2 = never>(
+    onfulfilled?: ((value: O[]) => R1 | PromiseLike<R1>) | undefined | null,
+    onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | undefined | null
+  ): Promise<R1 | R2>;
+}
+declare const qb: Builder<{ id: number }>;
+async function run() { return await qb; }
+"#,
+        // `then`'s fulfillment value is a *different* instantiation of the same
+        // generic alias — terminating, so not a cycle. Renamed type param.
+        r#"
+interface Holder<Elem> { then(onfulfilled: (value: Holder<Elem[]>) => void): void }
+declare const h: Holder<number>;
+async function run() { await h; }
+"#,
+    ] {
+        let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        );
+        let ts1062 = diagnostics.iter().filter(|(code, _)| *code == 1062).count();
+        assert_eq!(
+            ts1062, 0,
+            "Did not expect TS1062 for a finite generic thenable.\nGot: {diagnostics:#?}"
+        );
+    }
+}

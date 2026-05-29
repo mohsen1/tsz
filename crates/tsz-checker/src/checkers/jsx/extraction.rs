@@ -815,7 +815,9 @@ impl<'a> CheckerState<'a> {
                         Self::jsx_callable_params_compatible_for_element_type(
                             source_params,
                             target_params,
-                        ) && self.diagnostic_relation_boolean_guard(*source_return, *target_return)
+                        ) && self
+                            .assign_relation_outcome(*source_return, *target_return)
+                            .related
                     })
             })
     }
@@ -834,7 +836,10 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.diagnostic_relation_boolean_guard(source_render, target_render) {
+        if self
+            .assign_relation_outcome(source_render, target_render)
+            .related
+        {
             return true;
         }
 
@@ -846,7 +851,8 @@ impl<'a> CheckerState<'a> {
 
         source_returns.iter().any(|&source_return| {
             target_returns.iter().any(|&target_return| {
-                self.diagnostic_relation_boolean_guard(source_return, target_return)
+                self.assign_relation_outcome(source_return, target_return)
+                    .related
             })
         })
     }
@@ -1002,7 +1008,8 @@ impl<'a> CheckerState<'a> {
                                 all_valid = false;
                             }
                         } else if !self
-                            .diagnostic_relation_boolean_guard(non_null_return, element_type)
+                            .assign_relation_outcome(non_null_return, element_type)
+                            .related
                         {
                             all_valid = false;
                         }
@@ -1077,7 +1084,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 ret
                             };
-                            self.diagnostic_relation_boolean_guard(check_ret, t)
+                            self.assign_relation_outcome(check_ret, t).related
                                 || (!is_call_sig
                                     && self
                                         .jsx_construct_return_can_use_render_fallback(check_ret, t))
@@ -1148,7 +1155,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !self.diagnostic_relation_boolean_guard(non_null_return, jsx_element_type) {
+        if !self
+            .assign_relation_outcome(non_null_return, jsx_element_type)
+            .related
+        {
             self.report_invalid_jsx_component_return_type(tag_name_idx);
         }
     }

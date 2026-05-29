@@ -57,6 +57,7 @@ impl<'a> DeclarationEmitter<'a> {
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             in_object_type_class_body: false,
+            object_type_recursive_constructor_reference: None,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
             class_extends_another: false,
@@ -123,6 +124,7 @@ impl<'a> DeclarationEmitter<'a> {
             isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
             local_namespace_alias_targets: FxHashMap::default(),
+            local_import_equals_alias_for_target: FxHashMap::default(),
         }
     }
 
@@ -132,6 +134,14 @@ impl<'a> DeclarationEmitter<'a> {
         type_interner: &'a TypeInterner,
         binder: &'a BinderState,
     ) -> Self {
+        for (&kind, &type_id) in &type_cache.boxed_types {
+            type_interner.set_boxed_type(kind, type_id);
+        }
+        for (&kind, def_ids) in &type_cache.boxed_def_ids {
+            for &def_id in def_ids {
+                type_interner.register_boxed_def_id(kind, def_id);
+            }
+        }
         DeclarationEmitter {
             arena,
             writer: SourceWriter::with_capacity(4096),
@@ -175,6 +185,7 @@ impl<'a> DeclarationEmitter<'a> {
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             in_object_type_class_body: false,
+            object_type_recursive_constructor_reference: None,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
             class_extends_another: false,
@@ -241,6 +252,7 @@ impl<'a> DeclarationEmitter<'a> {
             isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
             local_namespace_alias_targets: FxHashMap::default(),
+            local_import_equals_alias_for_target: FxHashMap::default(),
         }
     }
 
@@ -495,7 +507,24 @@ impl<'a> DeclarationEmitter<'a> {
                     self.local_namespace_alias_targets
                         .entry((parent_sym_id, leftmost))
                         .or_default()
-                        .insert(alias_name);
+                        .insert(alias_name.clone());
+
+                    // Record the symbol the *whole* qualified path resolves to.
+                    // `import alias = Q.R.S` makes `alias` reference that symbol
+                    // directly, so a type printed with that exact symbol should
+                    // render as the bare alias name rather than the expanded path.
+                    let resolved = self
+                        .import_equals_entity_target_symbol(binder, import_eq.module_specifier)
+                        .or_else(|| binder.resolve_import_symbol(alias_sym_id));
+                    if let Some(target_sym_id) = resolved {
+                        // `parent_sym_id` is the alias's enclosing namespace/module
+                        // symbol (SymbolId::NONE at file/top-level scope). The alias
+                        // name is only usable within that scope.
+                        self.local_import_equals_alias_for_target
+                            .entry(target_sym_id)
+                            .or_default()
+                            .push((alias_name, parent_sym_id));
+                    }
                 }
             } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 self.recurse_module_body(binder, stmt_node);

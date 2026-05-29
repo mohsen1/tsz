@@ -420,6 +420,9 @@ pub struct HelpersNeeded {
     pub dispose_resources: bool,
     pub es_decorate: bool,
     pub run_initializers: bool,
+    /// Direct helper declarations keep `tsc`'s stable same-priority order for
+    /// member decorators, where initializer helper requests precede decoration.
+    pub run_initializers_before_es_decorate: bool,
     pub prop_key: bool,
     pub set_function_name: bool,
     pub rewrite_relative_import_extension: bool,
@@ -588,11 +591,14 @@ impl HelpersNeeded {
         if self.dispose_resources {
             names.push("__disposeResources");
         }
-        self.push_unprioritized_names(&mut names);
         if self.prop_key {
             names.push("__propKey");
         }
-        if self.set_function_name {
+        if self.es_decorate && self.set_function_name {
+            names.push("__setFunctionName");
+        }
+        self.push_unprioritized_names(&mut names);
+        if !self.es_decorate && self.set_function_name {
             names.push("__setFunctionName");
         }
         if self.rewrite_relative_import_extension {
@@ -661,7 +667,7 @@ impl HelpersNeeded {
 /// Priority mapping (from TypeScript's factory/emitHelpers.ts):
 ///   0: extends, makeTemplateObject
 ///   1: assign, createBinding
-///   2: decorate, esDecorate, runInitializers, importStar, exportStar
+///   2: decorate, esDecorate/runInitializers, importStar, exportStar
 ///   3: metadata
 ///   4: param
 ///   5: awaiter
@@ -690,16 +696,20 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(CREATE_BINDING_HELPER);
         output.push('\n');
     }
-    // Priority 2: decorate, esDecorate, runInitializers, importStar (with setModuleDefault), exportStar
+    // Priority 2: decorate, esDecorate/runInitializers, importStar (with setModuleDefault), exportStar
     if helpers.decorate {
         output.push_str(DECORATE_HELPER);
+        output.push('\n');
+    }
+    if helpers.run_initializers_before_es_decorate && helpers.run_initializers {
+        output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
     if helpers.es_decorate {
         output.push_str(ES_DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.run_initializers {
+    if !helpers.run_initializers_before_es_decorate && helpers.run_initializers {
         output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
@@ -741,7 +751,13 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(GENERATOR_HELPER);
         output.push('\n');
     }
-    if helpers.set_function_name {
+    let mut emitted_unprioritized = Vec::new();
+    if helpers.es_decorate && helpers.set_function_name {
+        output.push_str(SET_FUNCTION_NAME_HELPER);
+        output.push('\n');
+    }
+    emit_class_private_helpers(helpers, &mut output, &mut emitted_unprioritized);
+    if !helpers.es_decorate && helpers.set_function_name {
         output.push_str(SET_FUNCTION_NAME_HELPER);
         output.push('\n');
     }
@@ -753,27 +769,92 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(DISPOSE_RESOURCES_HELPER);
         output.push('\n');
     }
-    emit_unprioritized_helpers(helpers, &mut output);
+    emit_unprioritized_helpers(helpers, &mut output, &mut emitted_unprioritized);
 
     output
 }
 
-fn emit_unprioritized_helpers(helpers: &HelpersNeeded, output: &mut String) {
-    let mut emitted = Vec::new();
-
+fn emit_unprioritized_helpers(
+    helpers: &HelpersNeeded,
+    output: &mut String,
+    emitted: &mut Vec<HelperEmitOrder>,
+) {
     if helpers.unprioritized_order.is_empty() {
         for helper in fallback_unprioritized_order(helpers) {
-            emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+            emit_unprioritized_helper(helper, helpers, output, emitted);
         }
         return;
     }
 
     for &helper in &helpers.unprioritized_order {
-        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+        emit_unprioritized_helper(helper, helpers, output, emitted);
     }
     for helper in fallback_unprioritized_order(helpers) {
-        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+        emit_unprioritized_helper(helper, helpers, output, emitted);
     }
+}
+
+fn emit_class_private_helpers(
+    helpers: &HelpersNeeded,
+    output: &mut String,
+    emitted: &mut Vec<HelperEmitOrder>,
+) {
+    if helpers.es_decorate && !helpers.unprioritized_order.is_empty() {
+        for &helper in &helpers.unprioritized_order {
+            if is_class_private_helper(helper) {
+                emit_unprioritized_helper(helper, helpers, output, emitted);
+            }
+        }
+        for helper in fallback_class_private_order(helpers) {
+            emit_unprioritized_helper(helper, helpers, output, emitted);
+        }
+        return;
+    }
+
+    let (first, second) = if helpers.class_private_field_set_before_get {
+        (
+            HelperEmitOrder::ClassPrivateFieldSet,
+            HelperEmitOrder::ClassPrivateFieldGet,
+        )
+    } else {
+        (
+            HelperEmitOrder::ClassPrivateFieldGet,
+            HelperEmitOrder::ClassPrivateFieldSet,
+        )
+    };
+    emit_unprioritized_helper(first, helpers, output, emitted);
+    emit_unprioritized_helper(second, helpers, output, emitted);
+    emit_unprioritized_helper(
+        HelperEmitOrder::ClassPrivateFieldIn,
+        helpers,
+        output,
+        emitted,
+    );
+}
+
+const fn is_class_private_helper(helper: HelperEmitOrder) -> bool {
+    matches!(
+        helper,
+        HelperEmitOrder::ClassPrivateFieldGet
+            | HelperEmitOrder::ClassPrivateFieldSet
+            | HelperEmitOrder::ClassPrivateFieldIn
+    )
+}
+
+const fn fallback_class_private_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 3] {
+    [
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldSet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldGet
+        },
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldGet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldSet
+        },
+        HelperEmitOrder::ClassPrivateFieldIn,
+    ]
 }
 
 const fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
@@ -1037,6 +1118,8 @@ mod tests {
                 "__generator",
                 "__addDisposableResource",
                 "__disposeResources",
+                "__propKey",
+                "__setFunctionName",
                 "__await",
                 "__asyncGenerator",
                 "__asyncDelegator",
@@ -1049,8 +1132,6 @@ mod tests {
                 "__classPrivateFieldGet",
                 "__classPrivateFieldSet",
                 "__classPrivateFieldIn",
-                "__propKey",
-                "__setFunctionName",
                 "__rewriteRelativeImportExtension",
             ],
         );
@@ -1207,6 +1288,67 @@ mod tests {
         assert!(i_generator < i_set_name);
         assert!(i_set_name < i_await);
         assert!(i_await < i_async_generator);
+    }
+
+    #[test]
+    fn emit_helpers_order_class_private_before_set_function_name() {
+        let mut helpers = HelpersNeeded {
+            set_function_name: true,
+            await_helper: true,
+            ..HelpersNeeded::default()
+        };
+        helpers.mark_class_private_field_get();
+
+        let output = emit_helpers(&helpers);
+        let i_get = find_helper(&output, "__classPrivateFieldGet");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+        let i_await = find_helper(&output, "__await");
+
+        assert!(i_get < i_set_name);
+        assert!(i_set_name < i_await);
+    }
+
+    #[test]
+    fn emit_helpers_order_tc39_set_function_name_before_private_helpers() {
+        let mut helpers = HelpersNeeded {
+            es_decorate: true,
+            set_function_name: true,
+            ..HelpersNeeded::default()
+        };
+        helpers.mark_class_private_field_in();
+        helpers.mark_class_private_field_get();
+        helpers.mark_class_private_field_set();
+
+        let output = emit_helpers(&helpers);
+        let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+        let i_in = find_helper(&output, "__classPrivateFieldIn");
+        let i_get = find_helper(&output, "__classPrivateFieldGet");
+        let i_set = find_helper(&output, "__classPrivateFieldSet");
+
+        assert!(i_es_decorate < i_set_name);
+        assert!(i_set_name < i_in);
+        assert!(i_in < i_get);
+        assert!(i_get < i_set);
+    }
+
+    #[test]
+    fn emit_helpers_orders_member_decorator_initializers_before_es_decorate() {
+        let helpers = HelpersNeeded {
+            run_initializers: true,
+            run_initializers_before_es_decorate: true,
+            es_decorate: true,
+            set_function_name: true,
+            ..HelpersNeeded::default()
+        };
+
+        let output = emit_helpers(&helpers);
+        let i_run = find_helper(&output, "__runInitializers");
+        let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+
+        assert!(i_run < i_es_decorate);
+        assert!(i_es_decorate < i_set_name);
     }
 
     #[test]

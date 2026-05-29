@@ -46,6 +46,27 @@ fn with_alias_defid_visited<R>(f: impl FnOnce(&mut rustc_hash::FxHashSet<DefId>)
     r
 }
 
+#[inline]
+fn record_type_alias_phase_timing(
+    file: &str,
+    name: Option<&str>,
+    phase: &'static str,
+    pos: u32,
+    end: u32,
+    start: Option<web_time::Instant>,
+) {
+    if let Some(start) = start {
+        tsz_common::perf_counters::record_slow_type_alias_check_timing(
+            file,
+            name,
+            phase,
+            pos,
+            end,
+            start.elapsed().as_nanos() as u64,
+        );
+    }
+}
+
 impl<'a> CheckerState<'a> {
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
         let mut current = self
@@ -79,13 +100,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let resolving_defs: rustc_hash::FxHashSet<_> = self
-            .ctx
-            .symbol_resolution_set
-            .iter()
-            .filter_map(|sid| self.ctx.get_existing_def_id(*sid))
-            .collect();
-        if resolving_defs.is_empty() {
+        if self.ctx.symbol_resolution_set.is_empty() {
             return false;
         }
 
@@ -100,7 +115,12 @@ impl<'a> CheckerState<'a> {
                 if !visited.insert(def_id) {
                     continue;
                 }
-                if resolving_defs.contains(&def_id) {
+                if self
+                    .ctx
+                    .symbol_resolution_set
+                    .iter()
+                    .any(|sid| self.ctx.get_existing_def_id(*sid) == Some(def_id))
+                {
                     return true;
                 }
                 let Some(body) = self.ctx.definition_store.get_body(def_id) else {
@@ -138,6 +158,9 @@ impl<'a> CheckerState<'a> {
         let Some(alias) = self.ctx.arena.get_type_alias(node) else {
             return;
         };
+        let alias_timing_enabled = tsz_common::perf_counters::enabled_fast();
+        let alias_pos = node.pos;
+        let alias_end = node.end;
 
         // TS1277: 'const' modifier not allowed on type alias type parameters
         self.check_const_type_parameter_on_non_function(alias.type_parameters.as_ref());
@@ -154,6 +177,7 @@ impl<'a> CheckerState<'a> {
             .get(alias.name)
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|id| id.escaped_text.to_string());
+        let parameter_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         // Push type parameters to scope FIRST so that constraints like
         // `type Pair<A extends B, B>` can reference sibling type parameters.
         let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
@@ -209,6 +233,14 @@ impl<'a> CheckerState<'a> {
                     .insert(ident.escaped_text.clone(), constrained_param);
             }
         }
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "parameters",
+            alias_pos,
+            alias_end,
+            parameter_timing_start,
+        );
         // Temporarily register this alias in `symbol_resolution_set` before visiting
         // the type body. This is used by TS4110 (tuple type circularity) and other
         // circular-reference detection during type node checking.
@@ -226,8 +258,9 @@ impl<'a> CheckerState<'a> {
         let is_generic_self_circular =
             alias_sym_id.is_some_and(|sid| self.type_alias_is_generic_self_circular(sid));
 
-        let variance_annotations_supported =
-            self.check_variance_annotations_supported_for_type_alias(alias);
+        let should_check_variance_annotations = self
+            .check_variance_annotations_supported_for_type_alias(alias)
+            && self.type_alias_has_variance_annotation_to_check(alias.type_parameters.as_ref());
 
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
@@ -237,6 +270,7 @@ impl<'a> CheckerState<'a> {
                 && self.ctx.symbol_resolution_set.contains(&alias_sid)
                 && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
         });
+        let body_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
             // Clear any stale tuple_too_large flag before constructing the body
@@ -247,7 +281,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_from_type_node(alias.type_node)
             };
-            if variance_annotations_supported {
+            if should_check_variance_annotations {
                 self.check_variance_annotations_with_body(
                     node_idx,
                     &alias.type_parameters,
@@ -261,6 +295,14 @@ impl<'a> CheckerState<'a> {
                 body_type
             }
         };
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "body",
+            alias_pos,
+            alias_end,
+            body_timing_start,
+        );
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
         let mut body_produced_too_large_tuple = self.alias_body_owns_too_large_tuple(body_type);
         let has_type_params = alias
@@ -272,11 +314,21 @@ impl<'a> CheckerState<'a> {
         let body_evaluation_too_complex = if has_deferred_self_reference || has_type_params {
             false
         } else {
+            let evaluation_timing_start = alias_timing_enabled.then(web_time::Instant::now);
             let _ = self.evaluate_type_with_env_uncached(body_type);
+            record_type_alias_phase_timing(
+                &self.ctx.file_name,
+                alias_name_str.as_deref(),
+                "evaluation",
+                alias_pos,
+                alias_end,
+                evaluation_timing_start,
+            );
             body_produced_too_large_tuple =
                 body_produced_too_large_tuple || self.alias_body_owns_too_large_tuple(body_type);
             self.ctx.types.take_union_too_complex()
         };
+        let registration_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         if body_type != TypeId::ERROR
             && let Some(alias_sid) = alias_sym_id
         {
@@ -300,6 +352,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.clear_type_evaluation_caches_for_def(alias_def_id);
             }
         }
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "registration",
+            alias_pos,
+            alias_end,
+            registration_timing_start,
+        );
         if body_produced_too_large_tuple || self.type_node_produces_too_large_tuple(alias.type_node)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -332,6 +392,7 @@ impl<'a> CheckerState<'a> {
         // 1. Verifying the body references the alias's own DefId
         // 2. Registering the body temporarily so the evaluator can resolve it
         // 3. Evaluating with a special flag that detects Application cycle = TS2589
+        let recursion_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         if let Some(alias_sid) = alias_sym_id {
             let def_id = self.ctx.get_or_create_def_id(alias_sid);
             // Only check when the body is a conditional type — tsc emits TS2589
@@ -360,29 +421,8 @@ impl<'a> CheckerState<'a> {
                 || has_unresolved_computed_recursive_ref
                 || has_recursive_wrapper_arg
             {
-                // Collect type params that were pushed into scope above
-                let type_params: Vec<tsz_solver::TypeParamInfo> = alias
-                    .type_parameters
-                    .as_ref()
-                    .map(|tps| {
-                        tps.nodes
-                            .iter()
-                            .filter_map(|&param_idx| {
-                                let param_node = self.ctx.arena.get(param_idx)?;
-                                let param = self.ctx.arena.get_type_parameter(param_node)?;
-                                let name_node = self.ctx.arena.get(param.name)?;
-                                let ident = self.ctx.arena.get_identifier(name_node)?;
-                                let atom = self.ctx.types.intern_string(&ident.escaped_text);
-                                Some(tsz_solver::TypeParamInfo {
-                                    name: atom,
-                                    constraint: None,
-                                    default: None,
-                                    is_const: false,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                // Reuse scoped alias params so TS2589 sees constraints/defaults.
+                let type_params = self.current_alias_type_params(alias.type_parameters.as_ref());
 
                 // Register body temporarily for evaluation
                 self.ctx
@@ -427,6 +467,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "recursive_depth",
+            alias_pos,
+            alias_end,
+            recursion_timing_start,
+        );
 
         // TS4109: detect circular type arguments when the alias body is directly
         // a TypeReference (e.g. `type X = Foo<X extends {} ? A : B>`).  In TSC
@@ -475,6 +523,7 @@ impl<'a> CheckerState<'a> {
         if is_generic_self_circular {
             self.validate_collapsed_alias_body_reference(alias.type_node);
         }
+        let validation_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         if has_deferred_self_reference {
             if let Some(owner_name) = alias_name_str.as_deref() {
                 self.check_type_literal_self_indexed_property_annotations(
@@ -493,8 +542,18 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             self.check_type_node(alias.type_node);
-            self.check_type_for_missing_names(alias.type_node);
+            if !self.type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node) {
+                self.check_type_for_missing_names(alias.type_node);
+            }
         }
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "body_validation",
+            alias_pos,
+            alias_end,
+            validation_timing_start,
+        );
 
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);
@@ -504,7 +563,16 @@ impl<'a> CheckerState<'a> {
         // control flow (e.g., inside an `if (typeof c === 'string')` block).
         // The results are stored in `node_types` and consumed by `TypeLowering`
         // via the `type_query_override` callback during `ensure_type_alias_resolved`.
+        let flow_timing_start = alias_timing_enabled.then(web_time::Instant::now);
         self.precompute_type_query_flow_types(alias.type_node);
+        record_type_alias_phase_timing(
+            &self.ctx.file_name,
+            alias_name_str.as_deref(),
+            "type_query_flow",
+            alias_pos,
+            alias_end,
+            flow_timing_start,
+        );
         self.pop_type_parameters(updates);
     }
 
@@ -619,6 +687,39 @@ impl<'a> CheckerState<'a> {
         }
 
         !emitted_unsupported_variance_diagnostic
+    }
+
+    fn type_alias_has_variance_annotation_to_check(
+        &self,
+        type_parameters: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> bool {
+        let Some(type_params) = type_parameters else {
+            return false;
+        };
+
+        type_params.nodes.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return false;
+            };
+            let Some(modifiers) = &param.modifiers else {
+                return false;
+            };
+
+            let mut declared_in = false;
+            let mut declared_out = false;
+            for modifier_idx in modifiers.nodes.iter().copied() {
+                let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                    continue;
+                };
+                declared_in |= modifier_node.kind == SyntaxKind::InKeyword as u16;
+                declared_out |= modifier_node.kind == SyntaxKind::OutKeyword as u16;
+            }
+
+            declared_in != declared_out
+        })
     }
 
     fn type_alias_body_supports_variance_annotations(
@@ -811,6 +912,26 @@ impl<'a> CheckerState<'a> {
                 if self.type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args) {
                     return false;
                 }
+                if self
+                    .type_args_contain_subtractive_alias_guard_for_depth_check(alias_sid, type_args)
+                {
+                    return false;
+                }
+                if self
+                    .type_args_reset_defaulted_alias_params_with_scoped_transform_for_depth_check(
+                        alias_sid, type_args,
+                    )
+                {
+                    return true;
+                }
+                if type_args.nodes.iter().copied().all(|arg_idx| {
+                    self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
+                        || self.type_node_is_bounded_indexed_descent_for_depth_check(
+                            alias_sid, arg_idx,
+                        )
+                }) {
+                    return false;
+                }
                 return !self
                     .type_arg_nodes_contain_scoped_type_parameter_for_depth_check(type_args);
             }
@@ -823,6 +944,76 @@ impl<'a> CheckerState<'a> {
             .any(|child_idx| {
                 self.conditional_body_has_definite_recursive_alias_ref(child_idx, alias_sid)
             })
+    }
+
+    fn conditional_body_has_computed_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            return resolved == Some(alias_sid)
+                && type_ref.type_arguments.as_ref().is_some_and(|type_args| {
+                    !self.type_args_match_alias_params(alias_sid, type_args)
+                        && !self
+                            .type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args)
+                        && !self.type_args_contain_subtractive_alias_guard_for_depth_check(
+                            alias_sid, type_args,
+                        )
+                        && type_args.nodes.iter().copied().any(|arg_idx| {
+                            !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
+                                && !self.type_node_is_bounded_indexed_descent_for_depth_check(
+                                    alias_sid, arg_idx,
+                                )
+                        })
+                });
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.conditional_body_has_computed_recursive_alias_ref(child_idx, alias_sid)
+            })
+    }
+
+    pub(crate) fn type_alias_has_computed_recursive_conditional_body(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+        declarations.into_iter().any(|decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .is_some_and(|alias| {
+                            self.ctx
+                                .arena
+                                .kind_at(alias.type_node)
+                                .is_some_and(|kind| kind == syntax_kind_ext::CONDITIONAL_TYPE)
+                                && self.conditional_body_has_computed_recursive_alias_ref(
+                                    alias.type_node,
+                                    alias_sid,
+                                )
+                        })
+            })
+        })
     }
 
     /// True when the alias body contains a conditional whose `extends` clause is
@@ -865,55 +1056,6 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn type_arg_nodes_all_are_deferred_passthrough_for_depth_check(
-        &mut self,
-        type_args: &tsz_parser::parser::NodeList,
-    ) -> bool {
-        !type_args.nodes.is_empty()
-            && type_args
-                .nodes
-                .iter()
-                .copied()
-                .all(|node_idx| self.type_node_is_deferred_passthrough_for_depth_check(node_idx))
-    }
-
-    fn type_node_is_deferred_passthrough_for_depth_check(&mut self, node_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-
-        if let Some(identifier) = self.ctx.arena.get_identifier(node)
-            && self
-                .ctx
-                .type_parameter_scope
-                .contains_key(&identifier.escaped_text)
-        {
-            return true;
-        }
-        if let Some(identifier) = self.ctx.arena.get_identifier(node)
-            && self
-                .identifier_references_enclosing_infer_binding(node_idx, &identifier.escaped_text)
-        {
-            return true;
-        }
-
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-        {
-            if type_ref
-                .type_arguments
-                .as_ref()
-                .is_some_and(|type_args| !type_args.nodes.is_empty())
-            {
-                return false;
-            }
-
-            return self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name);
-        }
-
-        false
-    }
-
     fn conditional_body_has_unresolved_computed_recursive_alias_ref(
         &mut self,
         node_idx: NodeIndex,
@@ -932,6 +1074,8 @@ impl<'a> CheckerState<'a> {
             if resolved == Some(alias_sid)
                 && let Some(type_args) = &type_ref.type_arguments
                 && !self.type_args_match_alias_params(alias_sid, type_args)
+                && !self
+                    .type_args_contain_subtractive_alias_guard_for_depth_check(alias_sid, type_args)
                 && type_args.nodes.iter().copied().any(|arg_idx| {
                     !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                         && self
@@ -951,120 +1095,6 @@ impl<'a> CheckerState<'a> {
                     child_idx, alias_sid,
                 )
             })
-    }
-
-    fn type_node_contains_unresolved_type_reference_for_depth_check(
-        &mut self,
-        node_idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && self
-                .resolve_type_symbol_for_lowering(type_ref.type_name)
-                .is_none()
-            && self
-                .ctx
-                .arena
-                .kind_at(type_ref.type_name)
-                .is_some_and(|kind| kind == syntax_kind_ext::QUALIFIED_NAME)
-            && !self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name)
-        {
-            return true;
-        }
-
-        self.ctx
-            .arena
-            .get_children(node_idx)
-            .into_iter()
-            .any(|child_idx| {
-                self.type_node_contains_unresolved_type_reference_for_depth_check(child_idx)
-            })
-    }
-
-    fn type_name_is_deferred_passthrough_for_depth_check(&mut self, name_idx: NodeIndex) -> bool {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return false;
-        };
-        let Some(identifier) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-
-        self.ctx
-            .type_parameter_scope
-            .contains_key(&identifier.escaped_text)
-            || self
-                .identifier_references_enclosing_infer_binding(name_idx, &identifier.escaped_text)
-    }
-
-    fn identifier_references_enclosing_infer_binding(
-        &self,
-        node_idx: NodeIndex,
-        name: &str,
-    ) -> bool {
-        let mut current = node_idx;
-        for _ in 0..50 {
-            let parent = self
-                .ctx
-                .arena
-                .get_extended(current)
-                .map_or(NodeIndex::NONE, |ext| ext.parent);
-            if parent.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-            if let Some(conditional) = self.ctx.arena.get_conditional_type(parent_node)
-                && self.type_node_contains_infer_binding_named(conditional.extends_type, name)
-            {
-                return true;
-            }
-            current = parent;
-        }
-        false
-    }
-
-    fn type_node_contains_infer_binding_named(&self, node_idx: NodeIndex, name: &str) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
-            return self.ctx.arena.get_template_span(node).is_some_and(|span| {
-                self.type_node_contains_infer_binding_named(span.expression, name)
-            });
-        }
-        if node.kind == syntax_kind_ext::INFER_TYPE {
-            let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
-                return false;
-            };
-            if let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
-                && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
-                && let Some(name_node) = self.ctx.arena.get(type_param.name)
-                && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
-                && identifier.escaped_text == name
-            {
-                return true;
-            }
-            return self.type_node_contains_infer_binding_named(infer_data.type_parameter, name);
-        }
-        if node.kind == syntax_kind_ext::TYPE_PARAMETER
-            && let Some(type_param) = self.ctx.arena.get_type_parameter(node)
-        {
-            return (type_param.constraint != NodeIndex::NONE
-                && self.type_node_contains_infer_binding_named(type_param.constraint, name))
-                || (type_param.default != NodeIndex::NONE
-                    && self.type_node_contains_infer_binding_named(type_param.default, name));
-        }
-
-        self.ctx
-            .arena
-            .get_children(node_idx)
-            .into_iter()
-            .any(|child_idx| self.type_node_contains_infer_binding_named(child_idx, name))
     }
 
     /// Walk `extends_type` collecting every `infer X` binding and push each as a

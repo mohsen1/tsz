@@ -957,6 +957,18 @@ impl<'a> CheckerState<'a> {
             }
             let arg_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            // A fresh `[...] as const` argument drops its `readonly` modifier when
+            // the parameter expects a mutable array/tuple (including a generic
+            // `[...T]` inference site), matching tsc. The contextual type is not
+            // routed through `request` for as-const literals, so apply the same
+            // rule here on the computed argument type.
+            let raw_arg_type = self
+                .const_assertion_array_literal_drops_readonly(
+                    arg_idx,
+                    raw_arg_type,
+                    expected_context_type.or(expected_type),
+                )
+                .unwrap_or(raw_arg_type);
             let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
                 let expected_eval = self.evaluate_type_with_env(expected);
                 let expected_shape =
@@ -1037,6 +1049,11 @@ impl<'a> CheckerState<'a> {
             let contextual_callback_param_spans =
                 self.contextual_callback_function_param_spans(arg_idx);
             let contextual_callback_indices = self.contextual_callback_function_indices(arg_idx);
+            let callback_target_can_type_all_params = expected_context_type
+                .or(expected_type)
+                .is_none_or(|target| {
+                    self.target_can_contextually_type_callback_params(arg_idx, target)
+                });
             let function_arg_span = self.callback_argument_span(arg_idx);
             let is_sensitive_contextual_arg = apply_contextual
                 && expected_type.is_some()
@@ -1139,6 +1156,8 @@ impl<'a> CheckerState<'a> {
                         true
                     } else if is_direct_function_arg {
                         is_direct_callback_body_assignability
+                            || (!callback_target_can_type_all_params
+                                && is_function_arg_implicit_any_diag)
                             || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
                     } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                         // Generic contextual refresh re-checks object literal members with

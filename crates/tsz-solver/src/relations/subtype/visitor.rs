@@ -362,9 +362,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if object_shape_id(self.checker.interner, self.target).is_some()
             || object_with_index_shape_id(self.checker.interner, self.target).is_some()
         {
-            use crate::objects::{PropertyCollectionResult, collect_properties};
+            use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
-            match collect_properties(self.source, self.checker.interner, self.checker.resolver) {
+            match collect_properties_cached(
+                self.source,
+                self.checker.interner,
+                self.checker.resolver,
+                self.checker.query_db,
+            ) {
                 PropertyCollectionResult::Any => {
                     // any & T = any, so check if any is subtype of target
                     return self.checker.check_subtype(TypeId::ANY, self.target);
@@ -406,7 +411,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // members. This handles values built with Object.assign:
         //   ((...) => ...) & { method(): void } <: { (...): R; method(): void }
         if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
-            use crate::objects::{PropertyCollectionResult, collect_properties};
+            use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
             let mut call_signatures = Vec::new();
             let mut construct_signatures = Vec::new();
@@ -434,10 +439,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
 
             if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-                let (properties, string_index, number_index) = match collect_properties(
+                let (properties, string_index, number_index) = match collect_properties_cached(
                     self.source,
                     self.checker.interner,
                     self.checker.resolver,
+                    self.checker.query_db,
                 ) {
                     PropertyCollectionResult::Any => return SubtypeResult::True,
                     PropertyCollectionResult::Properties {
@@ -910,11 +916,22 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // S[I] <: T[J]  <=>  S <: T  AND  I <: J
         // This handles deferred index access types (usually involving type parameters).
         if let Some((t_obj, t_idx)) = index_access_parts(self.checker.interner, self.target) {
+            // Coinductive check: delegate back to check_subtype for both parts
+            if self.checker.check_subtype(object_type, t_obj).is_true()
+                && self.checker.check_subtype(key_type, t_idx).is_true()
+            {
+                return SubtypeResult::True;
+            }
+
             // CRITICAL FIX: Check if both keys are type parameters with different names.
             // Even if they have the same constraint, different type parameters should not
             // be considered subtypes of each other. This fixes cases like:
             //   JSX.IntrinsicElements[T1] <: JSX.IntrinsicElements[T2]
             // where T1 and T2 are both `extends keyof JSX.IntrinsicElements` but different params.
+            //
+            // Run this after the operand relation above so declaration-scoped type
+            // parameters that were re-created as fresh TypeIds can still prove they
+            // are related through the normal type-parameter relation.
             if self
                 .checker
                 .index_accesses_have_distinct_type_param_keys(key_type, t_idx)
@@ -936,13 +953,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                     return SubtypeResult::False;
                 }
                 return SubtypeResult::False;
-            }
-
-            // Coinductive check: delegate back to check_subtype for both parts
-            if self.checker.check_subtype(object_type, t_obj).is_true()
-                && self.checker.check_subtype(key_type, t_idx).is_true()
-            {
-                return SubtypeResult::True;
             }
 
             // Special case: if both source and target have the same object type,

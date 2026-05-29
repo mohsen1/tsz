@@ -19,6 +19,31 @@ mod type_printing_composites;
 #[path = "type_printing_references.rs"]
 mod type_printing_references;
 
+/// Re-escape a cooked template-literal text span so it can be placed back
+/// inside backtick delimiters. The solver stores the cooked value (e.g. a
+/// real tab/newline for `\t`/`\n`), so this converts the characters that are
+/// significant in a backtick-delimited context back into escape sequences,
+/// analogous to `escape_string_for_double_quote` for double-quoted strings.
+fn escape_text_for_backtick(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            // Escape the `$` of a `${` sequence so it is not re-read as the
+            // start of a substitution when the text round-trips.
+            '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 impl<'a> TypePrinter<'a> {
     pub(crate) fn property_is_hidden_in_declaration_shape(
         &self,
@@ -345,6 +370,10 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        if visitor::type_param_info(self.interner, type_id).is_some() {
+            return self.interner.union2(type_id, TypeId::UNDEFINED);
+        }
+
         let Some(list_id) = visitor::union_list_id(self.interner, type_id) else {
             return type_id;
         };
@@ -359,13 +388,28 @@ impl<'a> TypePrinter<'a> {
             .filter(|&member| member != TypeId::UNDEFINED)
             .collect::<Vec<_>>();
 
+        if self.interner.get_union_origin(type_id).is_some() {
+            return type_id;
+        }
+
         if non_undefined.len() == 1
-            && visitor::contains_type_parameters(self.interner, non_undefined[0])
+            && visitor::function_shape_id(self.interner, non_undefined[0]).is_none()
+            && visitor::callable_shape_id(self.interner, non_undefined[0]).is_none()
         {
             return non_undefined[0];
         }
 
         type_id
+    }
+
+    pub(crate) fn print_optional_param_type(&self, type_id: TypeId) -> String {
+        let display_type = self.optional_param_display_type(type_id);
+        let text = self.print_type(display_type);
+        if self.type_param_scope_contains_name(&text) {
+            format!("{text} | undefined")
+        } else {
+            text
+        }
     }
 
     pub(crate) fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
@@ -662,12 +706,11 @@ impl<'a> TypePrinter<'a> {
                 }
                 result.push_str(": ");
             }
-            let display_type = if param.optional {
-                scoped.optional_param_display_type(param.type_id)
+            if param.optional {
+                result.push_str(&scoped.print_optional_param_type(param.type_id));
             } else {
-                param.type_id
-            };
-            result.push_str(&scoped.print_type(display_type));
+                result.push_str(&scoped.print_type(param.type_id));
+            }
         }
         result.push(')');
 
@@ -821,12 +864,11 @@ impl<'a> TypePrinter<'a> {
                 part.push_str("...");
             }
 
-            let display_type = if param.optional {
-                self.optional_param_display_type(param.type_id)
+            if param.optional {
+                part.push_str(&self.print_optional_param_type(param.type_id));
             } else {
-                param.type_id
-            };
-            part.push_str(&self.print_type(display_type));
+                part.push_str(&self.print_type(param.type_id));
+            }
             if param.name.is_none() && param.optional && !param.rest {
                 part.push('?');
             }
@@ -1046,7 +1088,12 @@ impl<'a> TypePrinter<'a> {
         for span in spans.iter() {
             match span {
                 tsz_solver::types::TemplateSpan::Text(atom) => {
-                    result.push_str(&self.resolve_atom(*atom));
+                    // Resolved atoms hold the *cooked* text span, so control
+                    // characters and template-significant characters (`` ` ``,
+                    // `\`, `${`) must be re-escaped for the backtick-delimited
+                    // context — otherwise a cooked `\t`/`\r\n` would be written
+                    // as a literal tab/newline.
+                    result.push_str(&escape_text_for_backtick(&self.resolve_atom(*atom)));
                 }
                 tsz_solver::types::TemplateSpan::Type(type_id) => {
                     let printed = self.print_type(*type_id);
@@ -1375,6 +1422,65 @@ mod tests {
             "`get${Capitalize<string & K>}`"
         );
         assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
+    }
+
+    #[test]
+    fn optional_param_display_omits_synthesized_primitive_undefined() {
+        let interner = TypeInterner::new();
+        let separator = interner.intern_string("separator");
+        let ty = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "join",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(separator, ty)],
+            None,
+            TypeId::STRING,
+        );
+        assert_eq!(printed, "join(separator?: string): string");
+    }
+
+    #[test]
+    fn optional_param_display_preserves_callback_undefined() {
+        let interner = TypeInterner::new();
+        let compare_fn = interner.intern_string("compareFn");
+        let callback = interner.function(tsz_solver::FunctionShape::new(
+            vec![
+                tsz_solver::ParamInfo::required(interner.intern_string("a"), TypeId::NUMBER),
+                tsz_solver::ParamInfo::required(interner.intern_string("b"), TypeId::NUMBER),
+            ],
+            TypeId::NUMBER,
+        ));
+        let ty = interner.union2(callback, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "sort",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(compare_fn, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(
+            printed,
+            "sort(compareFn?: ((a: number, b: number) => number) | undefined): void"
+        );
+    }
+
+    #[test]
+    fn optional_param_display_preserves_explicit_union_origin() {
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let ty = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        interner.replace_union_origin_for_display(ty, vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "set",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(value, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(printed, "set(value?: string | undefined): void");
     }
 
     #[test]

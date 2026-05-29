@@ -82,7 +82,8 @@ fn test_pack_relation_flags_tracks_checker_strict_options() {
 
     let expected = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
         | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
-        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
+        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
 
     assert_eq!(ctx.pack_relation_flags(), expected);
 }

@@ -216,7 +216,7 @@ impl<'a> FlowAnalyzer<'a> {
         property_match
     }
 
-    fn is_member_like_reference(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_member_like_reference(&self, idx: NodeIndex) -> bool {
         let idx = self.skip_parens_and_assertions(idx);
         self.arena.get(idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION

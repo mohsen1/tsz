@@ -773,6 +773,7 @@ impl<'a> CheckerState<'a> {
 
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
+            && !self.ctx.emit_declarations()
             && !self.lib_name_has_local_augmentation(name)
             && let Some(ty) = self
                 .ctx
@@ -1116,8 +1117,6 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
-        // Merge heritage (extends) from lib interface declarations.
-        // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
         // Merge heritage (extends) from lib interface declarations.
         // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
         if let Some(ty) = lib_type_id {

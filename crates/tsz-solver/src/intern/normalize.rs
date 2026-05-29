@@ -356,9 +356,11 @@ impl TypeInterner {
             }
         }
 
-        // Dedup after replacement (may have introduced duplicates).
+        // Order-preserving dedup after replacement (may have introduced
+        // non-adjacent duplicates).
         if changed {
-            flat.dedup();
+            let mut seen = FxHashSet::default();
+            flat.retain(|id| seen.insert(*id));
         }
     }
 

@@ -524,3 +524,55 @@ const arr2: JSONValue = [1, 2, 3];
         "Expected array literals to be assignable to JSONValue with website libs. Got: {diags:#?}"
     );
 }
+
+/// A fixed tuple with a known numeric slot satisfies an interface that extends
+/// `Array<T>` and declares the same numeric property. A plain array cannot
+/// prove that the property is present, so the tuple facts must be preserved.
+#[test]
+fn fixed_tuple_satisfies_numeric_property_on_array_interface() {
+    let source = r#"
+interface IndexedNumbers extends Array<Number> {
+  2: number;
+}
+
+function ok(): IndexedNumbers {
+  return <[number, number, number]>[1, 2, 3];
+}
+
+function renamed(): IndexedNumbers {
+  return <[number, number, number]>[4, 5, 6];
+}
+"#;
+    let diags = check(source);
+    let errors = ts2322(&diags);
+    assert!(
+        errors.is_empty(),
+        "Expected fixed tuple numeric property to satisfy Array interface target. Got: {diags:#?}"
+    );
+}
+
+/// The fixed-tuple rule must not make open arrays or shorter tuples satisfy a
+/// required numeric property they cannot prove is present.
+#[test]
+fn array_interface_numeric_property_still_requires_known_tuple_slot() {
+    let source = r#"
+interface IndexedNumbers extends Array<Number> {
+  2: number;
+}
+
+function arraySource(xs: number[]): IndexedNumbers {
+  return xs;
+}
+
+function shortTuple(): IndexedNumbers {
+  return <[number, number]>[1, 2];
+}
+"#;
+    let diags = check(source);
+    let errors = ts2322(&diags);
+    assert_eq!(
+        errors.len(),
+        2,
+        "Expected TS2322 for both plain array and short tuple sources. Got: {diags:#?}"
+    );
+}

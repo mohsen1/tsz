@@ -30,6 +30,6 @@ impl<'a> CheckerState<'a> {
 
         let (_, nullable_target) = self.split_nullish_type(target);
         nullable_target
-            .is_none_or(|nullable| !self.diagnostic_relation_boolean_guard(source, nullable))
+            .is_none_or(|nullable| !self.assign_relation_outcome(source, nullable).related)
     }
 }

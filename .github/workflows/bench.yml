@@ -18,11 +18,10 @@ on:
         default: false
         type: boolean
 
-# Do not use workflow-level concurrency here. A queued workflow run would start
-# after the active benchmark finishes and benchmark an old "next" commit. The
-# gate below skips new non-release runs while another Bench run is active
-# instead. Release-only daily runs are allowed to publish the latest artifact
-# without waiting behind benchmark shards.
+# Do not use workflow-level concurrency here. Let one active benchmark finish
+# even if `main` moves while it is running; benchmark freshness is about
+# avoiding very old public data, not forcing exact-head timing. The gate below
+# skips duplicate active runs and rejects genuinely old targets.
 
 permissions:
   contents: write
@@ -36,6 +35,7 @@ env:
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
+  BENCH_MAX_TARGET_AGE_HOURS: "48"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -84,15 +84,25 @@ jobs:
             release_only=true
           fi
 
+          max_target_age_hours="${BENCH_MAX_TARGET_AGE_HOURS:-48}"
+          if ! [[ "$max_target_age_hours" =~ ^[0-9]+$ ]]; then
+            max_target_age_hours=48
+          fi
           if [[ "$release_only" != "true" ]]; then
-            main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-            if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-              echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+            target_date="$(gh api "repos/${{ github.repository }}/commits/${target_sha}" --jq '.commit.committer.date' 2>/dev/null || true)"
+            target_epoch="$(date -u -d "${target_date}" +%s 2>/dev/null || true)"
+            now_epoch="$(date -u +%s)"
+            max_target_age_seconds=$((max_target_age_hours * 3600))
+            if [[ "$target_epoch" =~ ^[0-9]+$ &&
+                  $((now_epoch - target_epoch)) -gt "$max_target_age_seconds" ]]; then
+              echo "Benchmark target ${target_sha} is older than ${max_target_age_hours}h (${target_date}); skipping genuinely stale run."
               should_run=false
             fi
           fi
 
-          if [[ "$should_run" == "true" && "$release_only" != "true" ]]; then
+          if [[ "$should_run" == "true" &&
+                "$release_only" != "true" &&
+                "${{ github.event_name }}" == "workflow_run" ]]; then
             active_runs_raw="$(
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
@@ -109,7 +119,7 @@ jobs:
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run is already active; skipping ${target_sha} instead of cancelling or queuing."
+              echo "Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
@@ -181,7 +191,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-prepare.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
             --format='value(id)' \
@@ -257,7 +267,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-prepare.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             --format='value(id)' \
@@ -636,10 +646,14 @@ jobs:
           const env = findLocation([
             `/bench-prep/${targetSha}/bench-prep.env`,
             `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -655,6 +669,25 @@ jobs:
             source "$manifest_paths"
             [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
+          }
+          validate_downloaded_prep_artifact() {
+            tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null || return 1
+            tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null || return 1
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            [[ "${manifest_target_sha}" == "${target_sha}" &&
+              "${manifest_pgo_optimized}" == "1" ]]
+          }
+          copy_from_latest_prep_artifact() {
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env || return 1
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+              bench-prep.tar || return 1
+            mv latest-bench-prep.env bench-prep.env
+            validate_downloaded_prep_artifact
           }
           cloudbuild_status() {
             local build_id="$1"
@@ -675,28 +708,25 @@ jobs:
               storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
                 bench-prep.tar; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+              if validate_downloaded_prep_artifact; then
                 exit 0
               fi
               echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
-            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "$target_sha"; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+            if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_latest_prep_artifact; then
                 exit 0
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+              if copy_from_cloudbuild_manifest "$target_sha"; then
+                if validate_downloaded_prep_artifact; then
+                  exit 0
+                fi
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                exit 1
+              fi
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
@@ -788,10 +818,14 @@ jobs:
           const env = findLocation([
             `/bench-prep/${targetSha}/bench-prep.env`,
             `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -807,6 +841,25 @@ jobs:
             source "$manifest_paths"
             [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
+          }
+          validate_downloaded_prep_artifact() {
+            tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null || return 1
+            tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null || return 1
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            [[ "${manifest_target_sha}" == "${target_sha}" &&
+              "${manifest_pgo_optimized}" == "1" ]]
+          }
+          copy_from_latest_prep_artifact() {
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env || return 1
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+              bench-prep.tar || return 1
+            mv latest-bench-prep.env bench-prep.env
+            validate_downloaded_prep_artifact
           }
           cloudbuild_status() {
             local build_id="$1"
@@ -827,28 +880,25 @@ jobs:
               storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
                 bench-prep.tar; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+              if validate_downloaded_prep_artifact; then
                 exit 0
               fi
               echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
-            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "${target_sha}"; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+            if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_latest_prep_artifact; then
                 exit 0
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+              if copy_from_cloudbuild_manifest "${target_sha}"; then
+                if validate_downloaded_prep_artifact; then
+                  exit 0
+                fi
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                exit 1
+              fi
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
@@ -878,7 +928,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-prep-ready
-          path: bench-prep.tar
+          path: |
+            bench-prep.env
+            bench-prep.tar
           retention-days: 1
           if-no-files-found: error
           compression-level: 1
@@ -913,7 +965,7 @@ jobs:
             filter: 'Mapped complex template keys'
           - label: projects
             timeout: 120
-            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-essentials-project|rxjs-project|type-fest-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
+            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
             timeout: 120
             filter: '^large-ts-repo$'
@@ -922,6 +974,23 @@ jobs:
         with:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Validate source benchmark prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f bench-prep.env
+          test -f bench-prep.tar
+          grep -qx "BENCH_TARGET_SHA=${BENCH_TARGET_SHA}" bench-prep.env
+          grep -qx "BENCH_PGO_OPTIMIZED=1" bench-prep.env
+          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+          tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
 
       - id: cloudbuild-submit
         name: Submit benchmark shard to Cloud Build pool
@@ -933,7 +1002,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-shard.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-shard.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}" \
             --format='value(id)' \
@@ -967,12 +1036,127 @@ jobs:
               --region=us-central1 \
               > "bench-cloudbuild-${{ matrix.label }}.log" 2>&1 || true
           }
+          copy_from_cloudbuild_manifest() {
+            local manifest_file=cloudbuild-artifacts.json
+            local manifest_paths=cloudbuild-artifacts.env
+
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/artifacts-${{ steps.cloudbuild-submit.outputs.build_id }}.json" \
+              "$manifest_file" || return 1
+            if ! node - "$manifest_file" "${{ matrix.label }}" > "$manifest_paths" <<'NODE'
+          const fs = require("node:fs");
+
+          const [manifestPath, label] = process.argv.slice(2);
+          const rawManifest = fs.readFileSync(manifestPath, "utf8").trim();
+          const parseManifest = (raw) => {
+            if (!raw) return [];
+            try {
+              return JSON.parse(raw);
+            } catch (jsonError) {
+              return raw.split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line, index) => {
+                  try {
+                    return JSON.parse(line);
+                  } catch (lineError) {
+                    lineError.message = `Could not parse Cloud Build artifact manifest line ${index + 1}: ${lineError.message}`;
+                    throw lineError;
+                  }
+                });
+            }
+          };
+          const collectEntries = (manifest) => {
+            const queue = Array.isArray(manifest) ? [...manifest] : [manifest];
+            const entries = [];
+            for (const entry of queue) {
+              if (!entry || typeof entry !== "object") continue;
+              if (entry.location) entries.push(entry);
+              for (const key of ["artifacts", "results", "objects", "files"]) {
+                if (Array.isArray(entry[key])) queue.push(...entry[key]);
+              }
+            }
+            return entries;
+          };
+          const entries = collectEntries(parseManifest(rawManifest));
+          const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
+          const findLocation = (basename) => {
+            for (const entry of entries) {
+              const location = locationOf(entry);
+              if (location.endsWith(`/${basename}`) || location.endsWith(basename)) {
+                return location;
+              }
+            }
+            return "";
+          };
+          const files = {
+            status: `bench-status-${label}.env`,
+            results: `bench-results-${label}.json`,
+            run: `bench-run-${label}.log`,
+            postmortem: `bench-postmortem-${label}.log`,
+            prep_fetch: `bench-prep-fetch-${label}.log`,
+          };
+          const locations = Object.fromEntries(
+            Object.entries(files).map(([key, basename]) => [key, findLocation(basename)]),
+          );
+          if (!locations.status) {
+            console.error(`Cloud Build artifact manifest did not include bench status for ${label}.`);
+            process.exit(1);
+          }
+          for (const [key, location] of Object.entries(locations)) {
+            if (location) {
+              console.log(`manifest_${key}=${JSON.stringify(location)}`);
+            }
+          }
+          NODE
+            then
+              return 1
+            fi
+            # shellcheck disable=SC1090
+            source "$manifest_paths"
+            [[ -n "${manifest_status:-}" ]] || return 1
+            storage_cp "$manifest_status" "bench-status-${{ matrix.label }}.env" || return 1
+            [[ -z "${manifest_results:-}" ]] || storage_cp "$manifest_results" "bench-results-${{ matrix.label }}.json" || true
+            [[ -z "${manifest_run:-}" ]] || storage_cp "$manifest_run" "bench-run-${{ matrix.label }}.log" || true
+            [[ -z "${manifest_postmortem:-}" ]] || storage_cp "$manifest_postmortem" "bench-postmortem-${{ matrix.label }}.log" || true
+            [[ -z "${manifest_prep_fetch:-}" ]] || storage_cp "$manifest_prep_fetch" "bench-prep-fetch-${{ matrix.label }}.log" || true
+          }
           download_shard_artifacts() {
             local prefix="gs://tsz-ci_cloudbuild/bench-shards/${BENCH_TARGET_SHA}/${{ matrix.label }}"
-            storage_cp "${prefix}/bench-status-${{ matrix.label }}.env" "bench-status-${{ matrix.label }}.env" || return 1
-            storage_cp "${prefix}/bench-results-${{ matrix.label }}.json" "bench-results-${{ matrix.label }}.json" || true
-            storage_cp "${prefix}/bench-run-${{ matrix.label }}.log" "bench-run-${{ matrix.label }}.log" || true
-            storage_cp "${prefix}/bench-postmortem-${{ matrix.label }}.log" "bench-postmortem-${{ matrix.label }}.log" || true
+            if storage_cp "${prefix}/bench-status-${{ matrix.label }}.env" "bench-status-${{ matrix.label }}.env"; then
+              storage_cp "${prefix}/bench-results-${{ matrix.label }}.json" "bench-results-${{ matrix.label }}.json" || true
+              storage_cp "${prefix}/bench-run-${{ matrix.label }}.log" "bench-run-${{ matrix.label }}.log" || true
+              storage_cp "${prefix}/bench-postmortem-${{ matrix.label }}.log" "bench-postmortem-${{ matrix.label }}.log" || true
+              storage_cp "${prefix}/bench-prep-fetch-${{ matrix.label }}.log" "bench-prep-fetch-${{ matrix.label }}.log" || true
+              return 0
+            fi
+            copy_from_cloudbuild_manifest
+          }
+          shard_status_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' "bench-status-${{ matrix.label }}.env"
+          }
+          shard_published_complete_results() {
+            local results_file="bench-results-${{ matrix.label }}.json"
+            local run_log="bench-run-${{ matrix.label }}.log"
+            [[ -s "$results_file" ]] || return 1
+            [[ -s "$run_log" ]] || return 1
+            grep -q "Results Summary" "$run_log" || return 1
+            grep -q "JSON results written:" "$run_log" || return 1
+            node - "$results_file" <<'NODE'
+          const fs = require("node:fs");
+
+          const file = process.argv[2];
+          const data = JSON.parse(fs.readFileSync(file, "utf8"));
+          const results = Array.isArray(data.results) ? data.results : [];
+          if (data.error) process.exit(1);
+          if (results.length === 0) process.exit(1);
+          if (data.totals && Number(data.totals.rows) !== results.length) process.exit(1);
+          process.exit(0);
+          NODE
           }
 
           deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
@@ -984,15 +1168,25 @@ jobs:
                 capture_cloudbuild_log
                 exit 1
               fi
-              # shellcheck disable=SC1091
-              source "bench-status-${{ matrix.label }}.env"
-              if [[ "${BENCH_TARGET_SHA:-}" != "${{ env.BENCH_TARGET_SHA }}" ||
-                    "${BENCH_SHARD_LABEL:-}" != "${{ matrix.label }}" ]]; then
+              status_target_sha="$(shard_status_value BENCH_TARGET_SHA)"
+              status_shard_label="$(shard_status_value BENCH_SHARD_LABEL)"
+              status_exit="$(shard_status_value BENCH_SHARD_STATUS)"
+              if [[ "${status_target_sha}" != "${{ env.BENCH_TARGET_SHA }}" ||
+                    "${status_shard_label}" != "${{ matrix.label }}" ]]; then
                 echo "Cloud Build shard status metadata did not match this shard."
                 cat "bench-status-${{ matrix.label }}.env"
                 exit 1
               fi
-              exit "${BENCH_SHARD_STATUS:-1}"
+              if ! [[ "${status_exit}" =~ ^[0-9]+$ ]]; then
+                echo "Cloud Build shard status did not include numeric BENCH_SHARD_STATUS."
+                cat "bench-status-${{ matrix.label }}.env"
+                exit 1
+              fi
+              if [[ "${status_exit}" != "0" ]] && shard_published_complete_results; then
+                echo "Cloud Build shard reported BENCH_SHARD_STATUS=${status_exit}, but it published complete benchmark results for ${{ matrix.label }}; allowing publish to merge the artifact."
+                exit 0
+              fi
+              exit "${status_exit}"
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
@@ -1021,8 +1215,10 @@ jobs:
           name: bench-results-${{ matrix.label }}
           path: |
             bench-results-${{ matrix.label }}.json
+            bench-status-${{ matrix.label }}.env
             bench-run-${{ matrix.label }}.log
             bench-postmortem-${{ matrix.label }}.log
+            bench-prep-fetch-${{ matrix.label }}.log
             bench-cloudbuild-${{ matrix.label }}.log
           retention-days: 7
           if-no-files-found: warn

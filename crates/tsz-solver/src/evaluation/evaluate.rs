@@ -155,10 +155,16 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
+        Self::with_resolver_and_defaults(interner, &NOOP)
+    }
+}
+
+impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn with_resolver_and_defaults(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
             interner,
             query_db: None,
-            resolver: &NOOP,
+            resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
@@ -180,9 +186,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             detection_growth_runs: FxHashMap::default(),
         }
     }
-}
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Return entry and size accounting for this evaluator's operation-local caches.
     #[must_use]
     pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
@@ -267,30 +271,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
-        TypeEvaluator {
-            interner,
-            query_db: None,
-            resolver,
-            no_unchecked_indexed_access: false,
-            cache: FxHashMap::default(),
-            guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
-            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
-            def_depth: FxHashMap::default(),
-            real_instantiation_depth_count: 0,
-            suppress_this_binding: false,
-            conditional_subtype_cache: FxHashMap::default(),
-            contains_infer_cache: FxHashMap::default(),
-            max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
-            flag_depth_on_app_cycle: false,
-            expand_application_display_alias_args: false,
-            apparent_conditional_branch: None,
-            silent_depth_bailed: false,
-            detection_growth_runs: FxHashMap::default(),
-        }
+        Self::with_resolver_and_defaults(interner, resolver)
     }
 
     /// Set the query database for Salsa-backed memoization.
@@ -729,10 +710,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // restore `saved_apparent` — outer caller observes `None`.
         let saved_apparent = self.apparent_conditional_branch.take();
 
-        // Phase 4 — raw-args cache shortcut. Lite resolvers (e.g. inside
-        // `SubtypeChecker`) often return `None` for `get_lazy_type_params`,
-        // so the normal expanded-args lookup never runs. Trying `app.args`
-        // first lets every context benefit from previously computed results.
+        // Phase 4 — raw-args cache shortcut. Only evaluators with an explicit
+        // `query_db` consume this cache: limited/noop resolvers can otherwise
+        // observe a result computed under stronger resolution assumptions and
+        // skip the fallback behavior that preserves recursive/inference parity.
         if let Some(db) = self.query_db {
             let no_unchecked = self.no_unchecked_indexed_access;
             if let Some(cached) = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
@@ -878,6 +859,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         args: &[TypeId],
         ctx: &ApplicationEvalContext,
     ) -> ApplicationEvalOutcome {
+        // Recursive-call-return placeholder: an `Application(Lazy(value_def),
+        // type_args)` whose `value_def` is a value-space symbol (a function or
+        // `const`/`let`/`var` initialized to a function) with a callable type
+        // denotes the RETURN type of a self-referential generic call
+        // `f<type_args>(...)` whose return type was still being inferred when
+        // the placeholder was built (see the checker's circular-call path).
+        // It must evaluate to the matching call signature's return type
+        // instantiated with `type_args`, not to the instantiated function
+        // value, so property access, assignability, and display observe the
+        // object the call returns. Instantiation expressions (`f<T>` /
+        // `typeof f<T>`) never reach here as a `Lazy`-based application — they
+        // are instantiated eagerly and `typeof f<T>` carries a `TypeQuery`
+        // base — so this shape is unambiguous.
+        if !ctx.base_is_type_query
+            && let Some(resolved) = ctx.resolved
+            && let Some(call_return) = self.value_call_return_application(def_id, resolved, args)
+        {
+            return ApplicationEvalOutcome::Computed(call_return);
+        }
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
                 return ApplicationEvalOutcome::Computed(original_type_id);
@@ -891,6 +891,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // opaque so later evaluator passes (with a populated body) can
             // expand it correctly.
             if resolved == TypeId::UNKNOWN {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
+
+            // The same situation arises when the body resolves to the alias's
+            // own self-lazy wrapper `Lazy(def_id)`: the structural body (e.g. a
+            // mapped type registered on demand in the type environment) is not
+            // available on this query, so substituting `Args` into
+            // `Lazy(def_id)` yields bare `Lazy(def_id)` — dropping the type
+            // arguments. Caching that degenerate result poisons every later
+            // use: a nested `Partial<X>` first evaluated while `Partial`'s body
+            // is still self-lazy makes the enclosing `Omit<Partial<X>, K>`
+            // collapse to `{}`, producing a false `TS2345` against a fresh
+            // object literal with a valid optional subset (see #10682). Keep
+            // the application opaque so a later pass (with the populated body)
+            // expands it correctly.
+            //
+            // Gate on the outermost (non-recursive) expansion of this def:
+            // `increment_def_depth` has already run for this entry, so depth 1
+            // is the first expansion. For a genuinely recursive alias the
+            // self-lazy wrapper is the legitimate cycle breaker at deeper
+            // entries, where bailing must not interfere.
+            if self.def_depth.get(&def_id).copied().unwrap_or(0) <= 1
+                && matches!(
+                    self.interner.lookup(resolved),
+                    Some(TypeData::Lazy(body_def_id)) if body_def_id == def_id
+                )
+            {
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
             self.evaluate_application_with_known_params(
@@ -1090,7 +1117,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::classify_body_for_arg_preservation(self.interner, body);
         let body_is_conditional =
             matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)));
-        if body_is_conditional {
+        if matches!(
+            arg_preservation,
+            crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+        ) {
+            std::borrow::Cow::Owned(
+                args.iter()
+                    .map(|&arg| self.prepare_conditional_application_infer_arg(arg))
+                    .collect(),
+            )
+        } else if body_is_conditional {
             std::borrow::Cow::Owned(
                 args.iter()
                     .map(|&arg| {
@@ -1110,6 +1146,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(args))
         } else {
             self.expand_type_args(args)
+        }
+    }
+
+    fn prepare_conditional_application_infer_arg(&mut self, arg: TypeId) -> TypeId {
+        if crate::visitor::contains_type_parameters(self.interner, arg) {
+            return arg;
+        }
+        if let Some(reduced) = self.reduce_alias_body_to_application_form(arg)
+            && matches!(
+                self.interner.lookup(reduced),
+                Some(TypeData::Application(_))
+            )
+        {
+            return reduced;
+        }
+        if matches!(self.interner.lookup(arg), Some(TypeData::Application(_))) {
+            arg
+        } else {
+            self.try_expand_type_arg(arg)
         }
     }
 
@@ -1257,6 +1312,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Insert into the application-eval cache iff `query_db` is connected.
     /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
     /// repeated in every body-aware shortcut and finalize helper.
+    ///
+    /// Writes stay gated on an authoritative (full-resolver) `query_db`
+    /// context: a limited resolver could otherwise store an under-resolved
+    /// result under the resolver-independent `(DefId, args)` key and poison
+    /// sibling reads. Reads use the same explicit `query_db` gate for the same
+    /// reason.
     fn insert_application_eval_cache_if_some(
         &self,
         def_id: DefId,
@@ -1297,6 +1358,72 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match shape.construct_signatures.first() {
             Some(construct_sig) => construct_sig.return_type,
             None => resolved,
+        }
+    }
+
+    /// Resolve a recursive-call-return placeholder `Application(Lazy(value_def),
+    /// type_args)` to the call signature's return type, instantiated with
+    /// `type_args`.
+    ///
+    /// Returns `Some` only when `def_id` is a value-space symbol
+    /// (`DefKind::Variable`/`DefKind::Function`) and `resolved` is a callable
+    /// with a generic call signature whose arity matches `type_args`. The
+    /// returned type is instantiated one level and left otherwise un-evaluated:
+    /// nested self-referential returns stay deferred (they carry the inner
+    /// signature's free type parameter) and expand lazily on demand, matching
+    /// `tsc`'s recursive object type — never eagerly expanding into an
+    /// excessively deep instantiation.
+    ///
+    /// `None` keeps the normal generic-instantiation path, so type aliases,
+    /// classes, interfaces, and non-generic value functions are unaffected.
+    fn value_call_return_application(
+        &self,
+        def_id: DefId,
+        resolved: TypeId,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        if type_args.is_empty() {
+            return None;
+        }
+        if !matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Variable | crate::def::DefKind::Function)
+        ) {
+            return None;
+        }
+        // The resolved value type is either a single-signature `Function` or a
+        // multi-signature `Callable`; in both cases pick the generic call
+        // signature whose type-parameter arity matches the supplied
+        // `type_args` and instantiate its return type.
+        match self.interner.lookup(resolved)? {
+            TypeData::Function(fs_id) => {
+                let shape = self.interner.function_shape(fs_id);
+                if shape.is_constructor
+                    || shape.type_params.is_empty()
+                    || shape.type_params.len() != type_args.len()
+                {
+                    return None;
+                }
+                Some(instantiate_generic(
+                    self.interner,
+                    shape.return_type,
+                    &shape.type_params,
+                    type_args,
+                ))
+            }
+            TypeData::Callable(cs_id) => {
+                let shape = self.interner.callable_shape(cs_id);
+                let signature = shape.call_signatures.iter().find(|sig| {
+                    !sig.type_params.is_empty() && sig.type_params.len() == type_args.len()
+                })?;
+                Some(instantiate_generic(
+                    self.interner,
+                    signature.return_type,
+                    &signature.type_params,
+                    type_args,
+                ))
+            }
+            _ => None,
         }
     }
 
@@ -1849,6 +1976,16 @@ pub fn evaluate_index_access_with_options(
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+}
+
+/// Convenience function for full type evaluation with an explicit resolver.
+pub fn evaluate_type_with_resolver(
+    interner: &dyn TypeDatabase,
+    resolver: &impl TypeResolver,
+    type_id: TypeId,
+) -> TypeId {
+    let mut evaluator = TypeEvaluator::with_resolver(interner, resolver);
+    evaluator.evaluate(type_id)
 }
 
 /// Convenience function for full type evaluation with explicit request options.

@@ -1631,6 +1631,9 @@ impl<'a> CheckerState<'a> {
         let mut candidates = Vec::new();
         if let Some(members) = common::union_members(self.ctx.types, target_prop_type) {
             candidates.extend(members);
+        } else if let Some(members) = common::intersection_members(self.ctx.types, target_prop_type)
+        {
+            candidates.extend(members);
         } else {
             candidates.push(target_prop_type);
         }

@@ -99,8 +99,13 @@ impl<'a> TypePrinter<'a> {
             // Parenthesize function/constructor types and conditional types in union position.
             // Conditional types need parens because `extends` binds more tightly than `|`:
             // `A | B extends C ? D : E` parses as `(A | B) extends C ? D : E`.
+            // Intersection members need parens so the grouping round-trips
+            // unambiguously: an intersection nested in a union (`A & B | C`)
+            // must render as `(A & B) | C`. Mirrors `print_intersection`,
+            // which parenthesizes nested unions.
             let part = if self.type_needs_parentheses_in_composition(type_id)
                 || visitor::conditional_type_id(self.interner, type_id).is_some()
+                || visitor::intersection_list_id(self.interner, type_id).is_some()
             {
                 format!("({s})")
             } else {
@@ -509,6 +514,9 @@ impl<'a> TypePrinter<'a> {
 
         // Parameters
         let mut params = Vec::new();
+        if let Some(this_type) = func_shape.this_type {
+            params.push(format!("this: {}", scoped.print_type(this_type)));
+        }
         for param in &func_shape.params {
             let mut param_str = String::new();
 
@@ -526,12 +534,11 @@ impl<'a> TypePrinter<'a> {
                 param_str.push_str(": ");
             }
 
-            let display_type = if param.optional {
-                scoped.optional_param_display_type(param.type_id)
+            if param.optional {
+                param_str.push_str(&scoped.print_optional_param_type(param.type_id));
             } else {
-                param.type_id
-            };
-            param_str.push_str(&scoped.print_type(display_type));
+                param_str.push_str(&scoped.print_type(param.type_id));
+            }
 
             params.push(param_str);
         }

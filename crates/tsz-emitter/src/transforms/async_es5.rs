@@ -90,6 +90,11 @@ pub struct AsyncES5Emitter<'a> {
     mappings: Vec<Mapping>,
     this_capture_depth: u32,
     class_name: Option<String>,
+    /// Outer names (e.g. a class-expression alias) that must not be chosen as
+    /// the generator state variable.  When non-empty they are treated as
+    /// already-allocated hoisted vars for the purpose of `generator_state_name_for_hoisted`,
+    /// so the state-name picker skips past them.
+    outer_reserved_for_generator_state: Vec<String>,
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
     tslib_import_binding: String,
@@ -107,6 +112,7 @@ impl<'a> AsyncES5Emitter<'a> {
             mappings: Vec::new(),
             this_capture_depth: 0,
             class_name: None,
+            outer_reserved_for_generator_state: Vec::new(),
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             system_import_meta: false,
@@ -131,6 +137,14 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.transformer.set_module_kind(kind);
+    }
+
+    pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
+        self.transformer.dynamic_import_promise_counter.set(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.transformer.dynamic_import_promise_counter.get()
     }
 
     pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
@@ -174,6 +188,12 @@ impl<'a> AsyncES5Emitter<'a> {
     /// Set the class name for private field access transformations
     pub fn set_class_name(&mut self, name: &str) {
         self.class_name = Some(name.to_string());
+    }
+
+    /// Declare outer names (e.g. a class-expression alias) that must not be
+    /// chosen as the `__generator` state variable.
+    pub fn set_outer_reserved_for_generator_state(&mut self, names: Vec<String>) {
+        self.outer_reserved_for_generator_state = names;
     }
 
     pub const fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
@@ -267,9 +287,20 @@ impl<'a> AsyncES5Emitter<'a> {
         body_idx: NodeIndex,
         has_await: bool,
     ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
-        let mut ir = self
-            .transformer
-            .transform_generator_body(body_idx, has_await);
+        self.emit_generator_body_and_hoisted_vars_skipping(body_idx, has_await, &[])
+    }
+
+    pub fn emit_generator_body_and_hoisted_vars_skipping(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        skipped_statements: &[NodeIndex],
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
+        let mut ir = self.transformer.transform_generator_body_skipping(
+            body_idx,
+            has_await,
+            skipped_statements,
+        );
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
         let hoisted = self.transformer.extract_hoisted_var_groups(&mut ir);
         let needs_lexical_this_capture = ir.contains_captured_this_reference();
@@ -285,8 +316,18 @@ impl<'a> AsyncES5Emitter<'a> {
             .iter()
             .flat_map(|group| group.iter().map(String::as_str))
             .collect();
-        printer
-            .set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted_names));
+        let state_name = if self.outer_reserved_for_generator_state.is_empty() {
+            IRPrinter::generator_state_name_for_hoisted(&hoisted_names)
+        } else {
+            let mut combined: Vec<&str> = hoisted_names.clone();
+            combined.extend(
+                self.outer_reserved_for_generator_state
+                    .iter()
+                    .map(String::as_str),
+            );
+            IRPrinter::generator_state_name_for_hoisted(&combined)
+        };
+        printer.set_generator_state_name(state_name);
         printer.emit(&ir);
         (
             printer.take_output(),

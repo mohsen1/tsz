@@ -97,6 +97,66 @@ const table: { [k: symbol]: string } = {
 }
 
 #[test]
+fn renamed_unique_symbol_property_access_reports_computed_property_value_mismatch() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Sym: { readonly foo: unique symbol };
+
+const table: { [k: symbol]: string } = {
+    [Sym.foo]: 123,
+};
+"#,
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "expected TS2418 for renamed unique-symbol property access, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "did not expect the object-level TS2322 fallback, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "did not expect TS2353 excess property fallback, got {codes:?}",
+    );
+}
+
+#[test]
+fn plain_symbol_property_access_reports_computed_property_value_mismatch() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Sym: { readonly foo: symbol };
+
+const table: { [k: symbol]: string } = {
+    [Sym.foo]: 123,
+};
+"#,
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "expected TS2418 for plain-symbol property access, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "did not expect the object-level TS2322 fallback, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "did not expect TS2353 excess property fallback, got {codes:?}",
+    );
+}
+
+#[test]
 fn keyof_well_known_symbol_property_preserves_symbol_key_type() {
     let codes = diagnostic_codes_for_ts(
         r#"
@@ -234,9 +294,50 @@ const value: number = ws[importedSym];
         "./b.ts",
     );
 
+    for code in [
+        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    ] {
+        assert!(
+            !codes.contains(&code),
+            "imported same-binding symbol access should preserve declared member type, got {codes:?}",
+        );
+    }
+}
+
+#[test]
+fn imported_distinct_symbol_binding_does_not_match_computed_member() {
+    let codes = diagnostic_codes_for_project(
+        &[
+            (
+                "./a.ts",
+                r#"
+export declare const memberKey: symbol;
+export declare const otherKey: symbol;
+
+export interface WithSymbol {
+    [memberKey]: number;
+}
+"#,
+            ),
+            (
+                "./b.ts",
+                r#"
+import { otherKey, type WithSymbol } from "./a";
+
+declare const ws: WithSymbol;
+const value = ws[otherKey];
+"#,
+            ),
+        ],
+        "./b.ts",
+    );
+
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "imported same-binding symbol access should preserve declared member type, got {codes:?}",
+        codes.contains(
+            &diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN
+        ),
+        "different exported symbol bindings must not resolve to the declared member type, got {codes:?}",
     );
 }
 
@@ -380,6 +481,64 @@ const dst: { [k: symbol]: string } = src;
     assert!(
         !msg.contains(": string]"),
         "TS2322 target must not display string key kind for a symbol index, got: {msg:?}",
+    );
+}
+
+#[test]
+fn ts2353_computed_symbol_excess_property_displays_source_name() {
+    let diagnostics = check_source_code_messages(
+        r#"
+const sym = Symbol();
+const obj: { [key: number]: string } = { [sym]: "hello" };
+"#,
+    );
+    let ts2353 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE);
+    let Some((_, msg)) = ts2353 else {
+        panic!(
+            "expected TS2353 for symbol key against number index signature, got: {diagnostics:?}"
+        );
+    };
+    assert!(
+        msg.contains("'[sym]'"),
+        "computed symbol excess-property diagnostics should display the source key, got: {msg:?}",
+    );
+    assert!(
+        !msg.contains("__unique_"),
+        "computed symbol excess-property diagnostics must not leak synthetic symbol keys, got: {msg:?}",
+    );
+}
+
+#[test]
+fn ts7053_branded_string_union_index_display_omits_alias_parentheses() {
+    let diagnostics = check_source_code_messages(
+        r#"
+type Tag1 = { __tag1__: void };
+type Tag2 = { __tag2__: void };
+type TaggedString1 = string & Tag1;
+type TaggedString2 = string & Tag2;
+
+declare let key: TaggedString1 | TaggedString2;
+interface Box { [key: TaggedString1]: string }
+declare let boxy: Box;
+boxy[key];
+"#,
+    );
+    let ts7053 = diagnostics.iter().find(|(code, _)| {
+        *code
+            == diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN
+    });
+    let Some((_, msg)) = ts7053 else {
+        panic!("expected TS7053 for incompatible branded-string union key, got: {diagnostics:?}");
+    };
+    assert!(
+        msg.contains("expression of type 'TaggedString1 | TaggedString2'"),
+        "TS7053 should preserve the union of branded aliases without member parentheses, got: {msg:?}",
+    );
+    assert!(
+        !msg.contains("(TaggedString1) | (TaggedString2)"),
+        "TS7053 should not parenthesize branded alias union members, got: {msg:?}",
     );
 }
 
@@ -772,11 +931,10 @@ const _v: number = ({} as V);
 
 #[test]
 fn object_literal_well_known_symbol_property_access_key_still_resolves_named_member() {
-    // `Symbol.iterator`-style property-access keys must continue to produce
-    // canonical `[Symbol.xxx]` named members. The wide-symbol bypass is
-    // gated on bare-identifier expressions, so a property access never
-    // triggers it. The target's symbol index signature still rejects the
-    // mismatched value via TS2418 — proving the named-member path is intact.
+    // Unique-symbol property-access keys must continue to produce canonical
+    // named members. Plain-symbol property-access keys can use the symbol-index
+    // path, but a structurally declared `unique symbol` member must keep the
+    // named-member path intact.
     let codes = diagnostic_codes_for_ts(
         r#"
 declare const Symbol: { readonly iterator: unique symbol };

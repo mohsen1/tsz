@@ -1,6 +1,7 @@
 //! Compound type formatting methods for `TypeFormatter`.
 
 mod object_parts;
+mod object_with_index;
 
 use super::TypeFormatter;
 use super::needs_property_name_quotes;
@@ -422,93 +423,6 @@ impl<'a> TypeFormatter<'a> {
             }
             _ => false,
         }
-    }
-
-    pub(super) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
-        let mut parts = Vec::new();
-        let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
-
-        if let Some(ref idx) = shape.string_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "x".to_owned());
-            let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type);
-            let value_str = self.format_index_signature_value(idx.value_type);
-            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
-        }
-        if let Some(ref idx) = shape.number_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.atom(a).to_string())
-                .unwrap_or_else(|| "x".to_owned());
-            let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type);
-            let value_str = self.format_index_signature_value(idx.value_type);
-            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
-        }
-        // Sort properties by declaration_order for display (preserves source order)
-        let mut display_props = self.visible_object_properties(shape.properties.as_slice());
-        let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
-        if has_decl_order {
-            display_props.sort_by_key(|p| p.declaration_order);
-        }
-        for prop in display_props {
-            if use_array_to_locale_display && self.atom(prop.name).as_ref() == "toLocaleString" {
-                parts.push(
-                    "toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"
-                        .to_string(),
-                );
-            } else {
-                parts.push(self.format_property(prop));
-            }
-        }
-        if use_array_to_locale_display
-            && !parts
-                .iter()
-                .any(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."))
-            && parts.len() >= 22
-        {
-            let original_len = parts.len();
-            let insert_at = parts.len() - 1;
-            parts.insert(
-                insert_at,
-                "readonly [Symbol.unscopables]: { ...; }".to_string(),
-            );
-            if original_len >= 22 {
-                parts.insert(
-                    insert_at,
-                    "[Symbol.iterator]: () => ArrayIterator<any>".to_string(),
-                );
-            }
-        }
-
-        self.format_object_parts(parts)
-    }
-
-    fn should_expand_array_to_locale_string_display(&mut self, shape: &ObjectShape) -> bool {
-        shape.number_index.is_some()
-            && shape
-                .properties
-                .iter()
-                .any(|prop| self.atom(prop.name).as_ref() == "toString")
-            && shape
-                .properties
-                .iter()
-                .any(|prop| self.atom(prop.name).as_ref() == "toLocaleString")
-            && shape
-                .properties
-                .iter()
-                .any(|prop| self.atom(prop.name).as_ref() == "includes")
-    }
-
-    fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
-        let previous_skip = self.skip_intersection_display_alias;
-        self.skip_intersection_display_alias = true;
-        let result = self.format(value_type).into_owned();
-        self.skip_intersection_display_alias = previous_skip;
-        result
     }
 
     pub(super) fn format_union(&mut self, members: &[TypeId]) -> String {
@@ -1236,7 +1150,10 @@ impl<'a> TypeFormatter<'a> {
 
         let formatted = self.format(id);
         let needs_parens = match self.interner.lookup(id) {
-            Some(TypeData::Intersection(_)) => !formatted.starts_with("NonNullable<"),
+            Some(TypeData::Intersection(_)) => {
+                !formatted.starts_with("NonNullable<")
+                    && contains_top_level_intersection_separator(&formatted)
+            }
             Some(TypeData::Function(_)) => true,
             Some(TypeData::Callable(_)) => {
                 formatted.starts_with('(')

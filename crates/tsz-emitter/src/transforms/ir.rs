@@ -531,6 +531,12 @@ pub enum IRNode {
     /// Sequence of statements/nodes
     Sequence(Vec<Self>),
 
+    /// `with (expression) { ... }`
+    WithStatement {
+        expression: Box<Self>,
+        body: Box<Self>,
+    },
+
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
 
@@ -540,6 +546,10 @@ pub enum IRNode {
         node: NodeIndex,
         generator_this: Cow<'static, str>,
     },
+
+    /// Reference to an original ES5 class expression whose heritage expression
+    /// should be evaluated in a captured constructor receiver context.
+    ASTRefWithCapturedClassHeritageThis(NodeIndex),
 
     /// Reference to an original AST node with constrained source range.
     /// Used when the parser's node.end extends into a parent block's closing brace.
@@ -733,6 +743,10 @@ pub struct IRSwitchCase {
 pub struct IRCatchClause {
     pub param: Option<Cow<'static, str>>,
     pub body: Vec<IRNode>,
+    /// Emit the catch body on a single line (`catch (e) { stmt; }`) instead of
+    /// the default multi-line block. Matches `tsc`'s downlevel-iteration
+    /// `for-of` error-handling shape.
+    pub single_line: bool,
 }
 
 /// Property descriptor for Object.defineProperty
@@ -1179,6 +1193,9 @@ impl IRNode {
                     || export_name.as_ref() == name
                     || value.contains_identifier(name)
             }
+            Self::WithStatement { expression, body } => {
+                expression.contains_identifier(name) || body.contains_identifier(name)
+            }
             Self::NumericLiteral(_)
             | Self::StringLiteral(_)
             | Self::RawStringLiteral(_)
@@ -1202,6 +1219,7 @@ impl IRNode {
             | Self::TrailingComment(_)
             | Self::ASTRef(_)
             | Self::ASTRefWithGeneratorThis { .. }
+            | Self::ASTRefWithCapturedClassHeritageThis(_)
             | Self::ASTRefRange(..)
             | Self::UseStrict
             | Self::EsesModuleMarker => false,

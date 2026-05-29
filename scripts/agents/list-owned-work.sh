@@ -13,11 +13,12 @@ AGENTS=(
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/list-owned-work.sh [AgentName|--all]
+usage: scripts/agents/list-owned-work.sh [--pr-state] [AgentName|--all]
 
 Examples:
   scripts/agents/list-owned-work.sh M1-A
   scripts/agents/list-owned-work.sh --all
+  scripts/agents/list-owned-work.sh --pr-state Studio-F
 USAGE
 }
 
@@ -26,15 +27,38 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -gt 1 ]]; then
-  echo "Unknown option: $2 (try --help)" >&2
+WITH_PR_STATE=false
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pr-state|--with-pr-state)
+      WITH_PR_STATE=true
+      shift
+      ;;
+    --all)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1 (try --help)" >&2
+      exit 2
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#POSITIONAL[@]} -gt 1 ]]; then
+  echo "Unknown option: ${POSITIONAL[1]} (try --help)" >&2
   exit 2
 fi
 
-if [[ $# -eq 0 || "${1:-}" == "--all" ]]; then
+if [[ ${#POSITIONAL[@]} -eq 0 || "${POSITIONAL[0]:-}" == "--all" ]]; then
   SELECTED=("${AGENTS[@]}")
 else
-  SELECTED=("$1")
+  SELECTED=("${POSITIONAL[0]}")
 fi
 
 REPOSITORY="${GITHUB_REPOSITORY:-mohsen1/tsz}"
@@ -83,12 +107,37 @@ for agent in "${SELECTED[@]}"; do
   echo "## $label"
   echo ""
   echo "PRs:"
-  prs="$(
-    gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url \
-      --jq '.[] | "#\(.number) " + (if .isDraft then "draft" else "ready" end) + " " + .title + " " + .url' \
-      2>/dev/null ||
-      list_owned_items_rest "$label" pr
-  )"
+  if [[ "$WITH_PR_STATE" == true ]]; then
+    prs="$(
+      gh pr list --state open --limit 100 --label "$label" \
+        --json number,title,isDraft,url,mergeStateStatus,mergeable,autoMergeRequest,statusCheckRollup \
+        --jq '
+          def queue_state:
+            ([.statusCheckRollup[]? | select((.__typename == "StatusContext" and .context == "Queue Tested") or .name == "Queue Tested")] | first) as $queue |
+            if $queue == null then "queue=none"
+            elif $queue.__typename == "StatusContext" then "queue=\(($queue.state // "unknown") | ascii_downcase)"
+            else "queue=\((($queue.conclusion // $queue.status // "unknown")) | ascii_downcase)"
+            end;
+          .[] |
+            "#\(.number) " +
+            (if .isDraft then "draft" else "ready" end) +
+            " merge=\(.mergeStateStatus // "UNKNOWN")" +
+            " mergeable=\(.mergeable // "UNKNOWN")" +
+            " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
+            " " + queue_state +
+            " " + .title + " " + .url
+        ' \
+        2>/dev/null ||
+        list_owned_items_rest "$label" pr
+    )"
+  else
+    prs="$(
+      gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url \
+        --jq '.[] | "#\(.number) " + (if .isDraft then "draft" else "ready" end) + " " + .title + " " + .url' \
+        2>/dev/null ||
+        list_owned_items_rest "$label" pr
+    )"
+  fi
   if [[ -n "$prs" ]]; then
     printf '%s\n' "$prs"
   else

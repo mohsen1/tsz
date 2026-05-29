@@ -137,3 +137,15 @@ pub(crate) fn is_literal_for_alias_display(db: &dyn TypeDatabase, type_id: TypeI
     tsz_solver::type_queries::is_literal_or_literal_union_type(db, type_id)
         || common::is_template_literal_type(db, type_id)
 }
+
+/// A deferred string-mapping intrinsic (`Uppercase`/`Lowercase`/`Capitalize`/
+/// `Uncapitalize` over a non-literal argument). tsc always renders these in
+/// their structural `Intrinsic<arg>` form in assignability diagnostics, never
+/// via a type-alias name, so the declared-annotation source rewrite must not
+/// repaint such a source with its alias name.
+pub(crate) fn is_string_intrinsic_for_alias_display(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    common::is_string_intrinsic_type(db, type_id)
+}

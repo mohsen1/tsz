@@ -4,8 +4,8 @@
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
+use crate::objects::PropertyCollectionResult;
 use crate::objects::apparent::literal_value_intrinsic_kind;
-use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
@@ -32,9 +32,10 @@ use super::super::evaluate::{
 /// - Symbol-keyed signature: contributes `symbol`.
 /// - String-keyed signature: contributes `string | number` (string indexes
 ///   are implicitly numeric-key-compatible in TS).
-/// - Number-keyed signature (only when no string-slot signature is present):
-///   contributes `number`, except for enum namespace types where tsc excludes
-///   the implicit `[index: number]: string` from `keyof typeof E`.
+/// - Number-keyed signature contributes `number` when no string-slot signature
+///   already contributed numeric keyspace, except for enum namespace types
+///   where tsc excludes the implicit `[index: number]: string` from
+///   `keyof typeof E`.
 fn index_signature_key_includes_symbol(interner: &dyn TypeDatabase, key_type: TypeId) -> bool {
     if key_type == TypeId::SYMBOL {
         return true;
@@ -48,6 +49,50 @@ fn index_signature_key_includes_symbol(interner: &dyn TypeDatabase, key_type: Ty
     }
 }
 
+fn extend_keyof_with_index_signature_key_type(
+    interner: &dyn TypeDatabase,
+    key_types: &mut Vec<TypeId>,
+    key_type: TypeId,
+) -> bool {
+    match interner.lookup(key_type) {
+        Some(TypeData::Union(members)) => {
+            let mut contributed_number = false;
+            for &member in interner.type_list(members).iter() {
+                contributed_number |=
+                    extend_keyof_with_index_signature_key_type(interner, key_types, member);
+            }
+            contributed_number
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::String)) => {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+            true
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::Number)) => {
+            key_types.push(TypeId::NUMBER);
+            true
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::Symbol)) => {
+            key_types.push(TypeId::SYMBOL);
+            false
+        }
+        Some(TypeData::TemplateLiteral(_))
+        | Some(TypeData::StringIntrinsic { .. })
+        | Some(TypeData::Literal(LiteralValue::String(_))) => {
+            key_types.push(key_type);
+            false
+        }
+        _ => {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+            if index_signature_key_includes_symbol(interner, key_type) {
+                key_types.push(TypeId::SYMBOL);
+            }
+            true
+        }
+    }
+}
+
 fn extend_keyof_with_index_signature_keys(
     interner: &dyn TypeDatabase,
     key_types: &mut Vec<TypeId>,
@@ -55,17 +100,13 @@ fn extend_keyof_with_index_signature_keys(
     number_index: Option<&IndexSignature>,
     is_enum_namespace: bool,
 ) {
-    if let Some(idx) = string_or_symbol_index {
-        if idx.key_type == TypeId::SYMBOL {
-            key_types.push(TypeId::SYMBOL);
-        } else {
-            key_types.push(TypeId::STRING);
-            key_types.push(TypeId::NUMBER);
-            if index_signature_key_includes_symbol(interner, idx.key_type) {
-                key_types.push(TypeId::SYMBOL);
-            }
-        }
-    } else if number_index.is_some() && !is_enum_namespace {
+    let string_slot_contributed_number = if let Some(idx) = string_or_symbol_index {
+        extend_keyof_with_index_signature_key_type(interner, key_types, idx.key_type)
+    } else {
+        false
+    };
+
+    if number_index.is_some() && !is_enum_namespace && !string_slot_contributed_number {
         key_types.push(TypeId::NUMBER);
     }
 }
@@ -207,7 +248,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(source) = constraint_source {
             let resolved_source = self.evaluate(source);
-            match collect_properties(resolved_source, self.interner(), self.resolver()) {
+            match crate::objects::collect_properties_cached(
+                resolved_source,
+                self.interner(),
+                self.resolver(),
+                self.query_db(),
+            ) {
                 PropertyCollectionResult::Properties {
                     properties,
                     string_index,

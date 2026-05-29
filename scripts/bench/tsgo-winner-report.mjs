@@ -11,6 +11,10 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function toPortablePath(file) {
+  return file.split(path.sep).join("/");
+}
+
 function asNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -126,7 +130,64 @@ function measurementProfileStatus(input) {
   };
 }
 
-function pickAttributionArtifact(row) {
+function inferDominantSubsystemFromPerfSnapshot(snapshot) {
+  const delegateMisses = asNumber(snapshot?.delegate?.misses) ?? 0;
+  const parentCache = asNumber(snapshot?.checker?.with_parent_cache_constructed) ?? 0;
+  if (delegateMisses > 0 || parentCache > 10) {
+    return "checker:cross-arena-delegation";
+  }
+
+  if (Array.isArray(snapshot?.slow_check_file_timings) && snapshot.slow_check_file_timings.length > 0) {
+    return "checker:semantic-check";
+  }
+
+  const internerCalls = asNumber(snapshot?.interner?.intern_calls) ?? 0;
+  if (internerCalls > 0) {
+    return "solver:type-interning";
+  }
+
+  return null;
+}
+
+function sidecarPerfPath(inputPath) {
+  if (typeof inputPath !== "string" || !inputPath.endsWith(".json")) return null;
+  return inputPath.replace(/\.json$/, ".perf.json");
+}
+
+function singleRowSidecarAttribution(rows, inputPath) {
+  if (rows.length !== 1) return new Map();
+
+  const perfPath = sidecarPerfPath(inputPath);
+  if (!perfPath || !fs.existsSync(perfPath)) return new Map();
+
+  let snapshot;
+  try {
+    snapshot = readJson(perfPath);
+  } catch {
+    return new Map();
+  }
+
+  const row = rows[0];
+  const relativePath = toPortablePath(path.relative(process.cwd(), perfPath));
+  const mode = snapshot.mode ?? null;
+  const isAttributionMode = mode === "attribution";
+  return new Map([
+    [
+      row.name,
+      {
+        path: relativePath,
+        generated_at: fs.statSync(perfPath).mtime.toISOString(),
+        mode,
+        dominant_subsystem: isAttributionMode
+          ? inferDominantSubsystemFromPerfSnapshot(snapshot)
+          : null,
+        warning: isAttributionMode ? null : "sidecar perf snapshot mode is not attribution",
+      },
+    ],
+  ]);
+}
+
+function pickAttributionArtifact(row, fallbackArtifact = null) {
   return (
     row?.attribution_artifact ??
     row?.performance_attribution ??
@@ -134,12 +195,13 @@ function pickAttributionArtifact(row) {
     row?.compatibility?.attribution_artifact ??
     row?.compatibility?.performance_attribution ??
     row?.compatibility?.attribution ??
+    fallbackArtifact ??
     null
   );
 }
 
-function attributionStatusForRow(row) {
-  const artifact = pickAttributionArtifact(row);
+function attributionStatusForRow(row, fallbackArtifact = null) {
+  const artifact = pickAttributionArtifact(row, fallbackArtifact);
   if (!artifact) {
     return {
       present: false,
@@ -167,6 +229,7 @@ function attributionStatusForRow(row) {
   const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
   const urlValue = artifact.url ?? null;
   const dominantSubsystem = artifact.dominant_subsystem ?? artifact.dominantSubsystem ?? null;
+  const warningValue = artifact.warning ?? null;
   return {
     present: true,
     path: pathValue,
@@ -174,12 +237,12 @@ function attributionStatusForRow(row) {
     generated_at: artifact.generated_at ?? artifact.generatedAt ?? null,
     mode: artifact.mode ?? null,
     dominant_subsystem: dominantSubsystem,
-    warning: dominantSubsystem ? null : "attribution dominant_subsystem missing",
+    warning: warningValue ?? (dominantSubsystem ? null : "attribution dominant_subsystem missing"),
   };
 }
 
 function hasCompleteAttribution(status) {
-  return Boolean(status?.present && status?.dominant_subsystem);
+  return Boolean(status?.present && status?.dominant_subsystem && !status?.warning);
 }
 
 function targetGapFactor(speedup) {
@@ -235,6 +298,7 @@ function duplicateProjectRows(rows) {
 
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
+  const sidecarAttribution = singleRowSidecarAttribution(rows, inputPath);
   const duplicateRows = duplicateProjectRows(rows);
   const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
@@ -259,12 +323,16 @@ export function createTsgoWinnerReport(input, inputPath) {
         exit_class: row.compatibility?.exit_class ?? null,
         semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
         loss_closure: lossClosureForRow(row),
-        attribution_status: attributionStatusForRow(row),
+        attribution_status: attributionStatusForRow(row, sidecarAttribution.get(row.name)),
       };
     });
   const targetGapRows = eligibleRows
     .filter((row) => row.tsz_speedup_vs_tsgo == null || row.tsz_speedup_vs_tsgo < TARGET_TSZ_SPEEDUP)
     .sort(compareTargetGaps);
+  const missingTargetGapAttributionRows = targetGapRows
+    .filter((row) => !hasCompleteAttribution(row.attribution_status))
+    .map((row) => row.name)
+    .sort();
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
@@ -281,7 +349,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
-      attribution_status: attributionStatusForRow(row),
+      attribution_status: attributionStatusForRow(row, sidecarAttribution.get(row.name)),
     }))
     .sort(compareWinnersByFactorDesc);
 
@@ -335,6 +403,8 @@ export function createTsgoWinnerReport(input, inputPath) {
       rows_meeting_target: eligibleRows.length - targetGapRows.length,
       rows_below_target: targetGapRows.length,
       project_rows_below_target: targetGapRows.filter((row) => row.semantic_owner_family).length,
+      rows_with_attribution: targetGapRows.length - missingTargetGapAttributionRows.length,
+      missing_attribution_rows: missingTargetGapAttributionRows,
       worst_gap: targetGapRows[0] ?? null,
     },
     measurement_profile: measurementProfileStatus(input),
@@ -367,6 +437,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `green tsgo winners: ${report.totals.green_tsgo_winners}`,
       `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
       `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
+      `2x target gaps with attribution: ${report.two_x_target.rows_with_attribution}/${report.two_x_target.rows_below_target}`,
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );

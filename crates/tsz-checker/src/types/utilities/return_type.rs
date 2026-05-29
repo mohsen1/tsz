@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
             if let Some((base, args)) =
                 return_type_queries::application_info(self.ctx.types, member)
                 && args.len() == 1
-                && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+                && self.return_context_application_base_is_lib_promise_like(base)
                 && return_type_queries::array_element_type(self.ctx.types, args[0]).is_some()
             {
                 saw_promise_wrapped_array = true;

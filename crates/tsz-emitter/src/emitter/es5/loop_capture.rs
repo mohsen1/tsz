@@ -329,22 +329,19 @@ impl<'a> Printer<'a> {
         &mut self,
         _node: &Node,
         loop_stmt: &tsz_parser::parser::node::LoopData,
-        capture_info: &LoopCaptureInfo,
+        _capture_info: &LoopCaptureInfo,
         init_vars: &[String],
         body_info: &LoopBodyVarInfo,
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
 
-        // Only initializer let/const vars are passed as IIFE parameters.
-        // Body-scoped let/const vars get fresh scope inside the IIFE automatically.
-        let init_var_set: std::collections::HashSet<&str> =
-            init_vars.iter().map(String::as_str).collect();
-        let param_vars: Vec<String> = capture_info
-            .captured_vars
-            .iter()
-            .filter(|v| init_var_set.contains(v.as_str()))
-            .cloned()
-            .collect();
+        // Once a loop is converted, ALL of the loop's own block-scoped binding
+        // variables become `_loop_N` parameters so each iteration receives a
+        // fresh copy of its iteration variable — regardless of whether a given
+        // binding is the one actually captured by a closure. Body-scoped
+        // let/const vars get fresh scope inside the IIFE automatically and are
+        // not threaded as parameters.
+        let param_vars: Vec<String> = init_vars.to_vec();
 
         self.emit_loop_function(
             &loop_fn_name,
@@ -464,6 +461,17 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         let block_scoped_temp_anchor = self.capture_hoist_anchor();
 
+        // The loop IIFE is a function body for the purpose of spread-call
+        // receiver temps: a `(_a = recv).m.apply(_a, ...)` capture emitted
+        // directly inside the loop body belongs to this body, not the enclosing
+        // function. Isolate a pending list for those temps so each (possibly
+        // nested) IIFE flushes only its own `var _a;` at its body top. Other
+        // hoisted temps (e.g. optional-chaining) keep targeting the enclosing
+        // source function scope, matching tsc's transform ordering.
+        let saved_loop_iife_pending_hoisted_temps =
+            std::mem::take(&mut self.loop_iife_pending_hoisted_temps);
+        self.loop_iife_body_depth += 1;
+
         // Emit the body statements inside the IIFE
         self.ctx.block_scope_state.enter_function_scope();
         for var in &outer_shadowed_body_vars {
@@ -488,6 +496,24 @@ impl<'a> Printer<'a> {
         self.lexical_block_missing_initializer_is_loop_body =
             prev_lexical_block_missing_initializer_is_loop_body;
         self.ctx.block_scope_state.exit_scope();
+
+        // Flush this IIFE's own spread-receiver hoist temps (`var _a;`) at its
+        // body top, then restore the enclosing pending list.
+        self.loop_iife_body_depth -= 1;
+        let iife_pending_hoisted_temps = std::mem::replace(
+            &mut self.loop_iife_pending_hoisted_temps,
+            saved_loop_iife_pending_hoisted_temps,
+        );
+        if !iife_pending_hoisted_temps.is_empty() {
+            let indent = self
+                .writer
+                .indent_string_at(block_scoped_temp_anchor.indent_level);
+            self.writer.insert_line_at(
+                block_scoped_temp_anchor.byte_offset,
+                block_scoped_temp_anchor.line_no,
+                &format!("{indent}var {};", iife_pending_hoisted_temps.join(", ")),
+            );
+        }
 
         if !self.block_scoped_private_temps.is_empty() {
             let indent = self
@@ -1116,6 +1142,166 @@ for (let x; ;) {\n\
         assert!(
             output.contains("var _loop_3 = function (x) {\n    ({ set foo(v) { x; } });\n};"),
             "Object literal setters should trigger loop capture.\nOutput:\n{output}"
+        );
+    }
+
+    // A closure that captures an OUTER for-of loop variable from inside a nested
+    // for-of body must convert the outer loop too. Capture analysis must descend
+    // into nested for-of statements (not only `for`/`while`/`do`). Renaming the
+    // loop variables must not change the result — capture is by binding, not by
+    // a hardcoded name.
+    #[test]
+    fn nested_for_of_outer_loop_var_capture_converts_outer_loop() {
+        for (outer_var, inner_var) in [("outer", "inner"), ("p", "q")] {
+            let source = format!(
+                "function f(xs: any[], ys: any[]) {{\n\
+                    for (const {outer_var} of xs)\n\
+                        for (const {inner_var} of ys)\n\
+                            (() => {outer_var} + {inner_var});\n\
+                }}\n"
+            );
+
+            let output = emit_es5(&source);
+
+            assert!(
+                output.contains(&format!("var _loop_1 = function ({outer_var}) {{")),
+                "Outer loop must convert with its own var as the helper parameter.\nOutput:\n{output}"
+            );
+            assert!(
+                output.contains(&format!("var _loop_2 = function ({inner_var}) {{")),
+                "Inner loop must convert with its own var as the helper parameter.\nOutput:\n{output}"
+            );
+            assert!(
+                output.contains(&format!("_loop_1({outer_var});")),
+                "Outer converted loop must be invoked with its iteration variable.\nOutput:\n{output}"
+            );
+        }
+    }
+
+    // When a nested loop re-binds the same name as an enclosing loop variable, a
+    // closure referencing that name inside the nested loop captures the INNER
+    // binding, so the OUTER loop must NOT convert. This holds for any name.
+    #[test]
+    fn nested_loop_shadowing_same_name_does_not_convert_outer_loop() {
+        for var_name in ["v", "z"] {
+            let source = format!(
+                "function f(xs: any[], ys: any[]) {{\n\
+                    for (const {var_name} of xs)\n\
+                        for (const {var_name} of ys)\n\
+                            (() => {var_name});\n\
+                }}\n"
+            );
+
+            let output = emit_es5(&source);
+
+            assert!(
+                output.contains("var _loop_1 = function"),
+                "The inner loop (whose own binding is captured) must convert.\nOutput:\n{output}"
+            );
+            assert!(
+                !output.contains("var _loop_2 = function"),
+                "The outer loop must stay a plain for-loop because its binding is shadowed.\nOutput:\n{output}"
+            );
+        }
+    }
+
+    // Once a for-of loop is converted (because a BODY binding is captured), all
+    // of the loop's own binding variables — including destructured names that
+    // are NOT themselves captured — are threaded as helper parameters so each
+    // iteration receives a fresh copy.
+    #[test]
+    fn converted_for_of_threads_all_binding_vars_even_when_uncaptured() {
+        for (a, b) in [("value", "i"), ("first", "second")] {
+            let source = format!(
+                "declare function pairs(): any[];\n\
+                function f() {{\n\
+                    for (const [{a}, {b}] of pairs()) {{\n\
+                        const bar: any = [];\n\
+                        (() => bar);\n\
+                    }}\n\
+                }}\n"
+            );
+
+            let output = emit_es5(&source);
+
+            assert!(
+                output.contains(&format!("var _loop_1 = function ({a}, {b}) {{")),
+                "Both for-of binding vars must be helper parameters, even though only `bar` is captured.\nOutput:\n{output}"
+            );
+            assert!(
+                output.contains(&format!("_loop_1({a}, {b});")),
+                "The converted loop call must pass both binding vars.\nOutput:\n{output}"
+            );
+        }
+    }
+
+    // A spread method call whose receiver is a non-simple expression captures the
+    // receiver once into a hoisted temp to avoid double evaluation. Inside a
+    // converted-loop IIFE body, that `var _a;` belongs to the IIFE body.
+    #[test]
+    fn converted_loop_spread_method_call_captures_non_simple_receiver_in_iife_temp() {
+        for fn_var in ["value", "k"] {
+            let source = format!(
+                "declare function pairs(): any[];\n\
+                function f(set: any) {{\n\
+                    for (const {fn_var} of pairs()) {{\n\
+                        const bar: any = [];\n\
+                        (() => bar);\n\
+                        set.values.push(...[]);\n\
+                    }}\n\
+                }}\n"
+            );
+
+            let output = emit_es5(&source);
+
+            // Receiver captured once and reused; never evaluated twice.
+            assert!(
+                output.contains(").push.apply("),
+                "Spread method call should lower to `.push.apply(...)`.\nOutput:\n{output}"
+            );
+            assert!(
+                !output.contains("set.values.push.apply(set.values"),
+                "Non-simple receiver must not be emitted twice in the apply call.\nOutput:\n{output}"
+            );
+            // The hoisted receiver temp declaration lives inside the IIFE body,
+            // not at the enclosing function top.
+            assert!(
+                output.contains("var _loop_1 = function ("),
+                "Loop must convert because `bar` is captured.\nOutput:\n{output}"
+            );
+            let iife_start = output.find("var _loop_1 = function (").unwrap();
+            let iife_prefix = &output[..iife_start];
+            assert!(
+                !iife_prefix.contains("var _a;") && !iife_prefix.contains("var _b;"),
+                "Receiver temp must not leak to the enclosing function before the IIFE.\nOutput:\n{output}"
+            );
+        }
+    }
+
+    // Non-loop spread method call with a non-simple receiver also captures into a
+    // hoisted temp at the enclosing function body top (the rule is general, not
+    // loop-specific).
+    #[test]
+    fn non_loop_spread_method_call_captures_non_simple_receiver() {
+        let source = "function f(set: any) {\n\
+            set.values.push(...[]);\n\
+        }\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("var _a;"),
+            "Receiver temp should be hoisted at the function body top.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = set.values).push.apply(_a, [])"),
+            "Non-simple receiver should be captured once and reused.\nOutput:\n{output}"
+        );
+        // A simple identifier receiver needs no temp.
+        let simple = emit_es5("function g(arr: any[]) {\n    arr.push(...[1]);\n}\n");
+        assert!(
+            simple.contains("arr.push.apply(arr, [1])"),
+            "Simple identifier receiver must not be captured into a temp.\nOutput:\n{simple}"
         );
     }
 }

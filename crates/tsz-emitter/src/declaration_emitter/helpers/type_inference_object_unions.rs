@@ -6,7 +6,294 @@
 
 use super::super::DeclarationEmitter;
 
+pub(in crate::declaration_emitter) type NestedObjectMemberArmsByProperty =
+    Vec<(String, Vec<(usize, Vec<ObjectTypeLiteralArm>)>)>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::declaration_emitter) enum ObjectTypeLiteralEntry {
+    Raw(String),
+    Member(ObjectTypeLiteralMember),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::declaration_emitter) struct ObjectTypeLiteralMember {
+    name: String,
+    prefix: String,
+    type_text: Option<String>,
+    raw_text: String,
+}
+
+impl ObjectTypeLiteralMember {
+    pub(in crate::declaration_emitter) fn typed(
+        name: String,
+        prefix: String,
+        type_text: String,
+    ) -> Self {
+        let raw_text = format!("{prefix}: {type_text}");
+        Self {
+            name,
+            prefix,
+            type_text: Some(type_text),
+            raw_text,
+        }
+    }
+
+    pub(in crate::declaration_emitter) const fn raw(name: String, raw_text: String) -> Self {
+        Self {
+            name,
+            prefix: String::new(),
+            type_text: None,
+            raw_text,
+        }
+    }
+
+    fn optional_undefined(name: String) -> Self {
+        Self::typed(name.clone(), format!("{name}?"), "undefined".to_string())
+    }
+
+    pub(in crate::declaration_emitter) fn render(&self) -> String {
+        if let Some(type_text) = &self.type_text {
+            format!("{}: {type_text}", self.prefix)
+        } else {
+            self.raw_text.clone()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::declaration_emitter) struct ObjectTypeLiteralArm {
+    entries: Vec<ObjectTypeLiteralEntry>,
+    depth: u32,
+}
+
+impl ObjectTypeLiteralArm {
+    pub(in crate::declaration_emitter) const fn empty(depth: u32) -> Self {
+        Self {
+            entries: Vec::new(),
+            depth,
+        }
+    }
+
+    pub(in crate::declaration_emitter) const fn from_entries(
+        entries: Vec<ObjectTypeLiteralEntry>,
+        depth: u32,
+    ) -> Self {
+        Self { entries, depth }
+    }
+
+    fn member_names(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ObjectTypeLiteralEntry::Member(member) => Some(member.name.clone()),
+                ObjectTypeLiteralEntry::Raw(_) => None,
+            })
+            .collect()
+    }
+
+    fn member_mut(&mut self, name: &str) -> Option<&mut ObjectTypeLiteralMember> {
+        self.entries.iter_mut().find_map(|entry| match entry {
+            ObjectTypeLiteralEntry::Member(member) if member.name == name => Some(member),
+            _ => None,
+        })
+    }
+
+    fn insert_optional_undefined_members(&mut self, missing_names: &[String]) {
+        if missing_names.is_empty() {
+            return;
+        }
+
+        let insert_at = self
+            .entries
+            .iter()
+            .position(|entry| match entry {
+                ObjectTypeLiteralEntry::Member(member) => {
+                    member.prefix.ends_with('?') && member.type_text.as_deref() == Some("undefined")
+                }
+                ObjectTypeLiteralEntry::Raw(_) => false,
+            })
+            .unwrap_or(self.entries.len());
+        let missing = missing_names
+            .iter()
+            .cloned()
+            .map(|name| {
+                ObjectTypeLiteralEntry::Member(ObjectTypeLiteralMember::optional_undefined(name))
+            })
+            .collect::<Vec<_>>();
+        self.entries.splice(insert_at..insert_at, missing);
+    }
+
+    pub(in crate::declaration_emitter) fn widen_primitive_literal_members(&mut self) {
+        for entry in &mut self.entries {
+            let ObjectTypeLiteralEntry::Member(member) = entry else {
+                continue;
+            };
+            let Some(type_text) = member.type_text.as_deref() else {
+                continue;
+            };
+            let Some(widened_type) =
+                DeclarationEmitter::primitive_literal_member_widened_type(type_text)
+            else {
+                continue;
+            };
+            member.type_text = Some(widened_type.to_string());
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn render(&self) -> String {
+        if self.entries.is_empty() {
+            return "{}".to_string();
+        }
+
+        let member_indent = "    ".repeat((self.depth + 1) as usize);
+        let closing_indent = "    ".repeat(self.depth as usize);
+        let formatted_members = self
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                ObjectTypeLiteralEntry::Raw(text) => {
+                    DeclarationEmitter::format_object_member_entry(&member_indent, text)
+                }
+                ObjectTypeLiteralEntry::Member(member) => {
+                    DeclarationEmitter::format_object_member_entry(&member_indent, &member.render())
+                }
+            })
+            .collect::<Vec<_>>();
+        format!("{{\n{}\n{closing_indent}}}", formatted_members.join("\n"))
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn normalized_object_literal_union_arm_text(
+        arms: Vec<ObjectTypeLiteralArm>,
+        nested_member_arms_by_property: NestedObjectMemberArmsByProperty,
+    ) -> Option<String> {
+        let distinct =
+            Self::normalized_object_literal_union_arms(arms, nested_member_arms_by_property);
+        (!distinct.is_empty()).then(|| {
+            distinct
+                .iter()
+                .map(ObjectTypeLiteralArm::render)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn normalized_object_literal_union_arms(
+        arms: Vec<ObjectTypeLiteralArm>,
+        nested_member_arms_by_property: NestedObjectMemberArmsByProperty,
+    ) -> Vec<ObjectTypeLiteralArm> {
+        let mut distinct = Vec::<ObjectTypeLiteralArm>::new();
+        for arm in arms {
+            if !distinct.iter().any(|existing| existing == &arm) {
+                distinct.push(arm);
+            }
+        }
+        Self::expand_source_object_union_arms_from_sibling_properties(&mut distinct);
+        Self::expand_source_nested_object_union_member_properties(
+            &mut distinct,
+            nested_member_arms_by_property,
+        );
+        distinct
+    }
+
+    fn expand_source_object_union_arms_from_sibling_properties(arms: &mut [ObjectTypeLiteralArm]) {
+        if arms.len() <= 1 {
+            return;
+        }
+
+        let mut property_names = Vec::<String>::new();
+        for arm in arms.iter() {
+            for name in arm.member_names() {
+                if !property_names.iter().any(|existing| existing == &name) {
+                    property_names.push(name);
+                }
+            }
+        }
+
+        if property_names.is_empty() {
+            return;
+        }
+
+        Self::expand_source_object_arms_with_property_names(arms, &property_names);
+    }
+
+    fn expand_source_object_arms_with_property_names(
+        arms: &mut [ObjectTypeLiteralArm],
+        property_names: &[String],
+    ) {
+        for arm in arms {
+            let present_names = arm.member_names();
+            let missing_names = property_names
+                .iter()
+                .filter(|name| !present_names.iter().any(|present| present == *name))
+                .cloned()
+                .collect::<Vec<_>>();
+            arm.insert_optional_undefined_members(&missing_names);
+        }
+    }
+
+    fn expand_source_nested_object_union_member_properties(
+        arms: &mut [ObjectTypeLiteralArm],
+        nested_member_arms_by_property: NestedObjectMemberArmsByProperty,
+    ) {
+        if arms.len() <= 1 || nested_member_arms_by_property.is_empty() {
+            return;
+        }
+
+        for (property_name, nested_arms_by_outer) in nested_member_arms_by_property {
+            let mut all_nested_arms = Vec::<ObjectTypeLiteralArm>::new();
+            let mut replacements = Vec::<(usize, Vec<ObjectTypeLiteralArm>)>::new();
+
+            for (outer_idx, mut nested_arms) in nested_arms_by_outer {
+                for arm in &mut nested_arms {
+                    arm.widen_primitive_literal_members();
+                    if !all_nested_arms.iter().any(|existing| existing == arm) {
+                        all_nested_arms.push(arm.clone());
+                    }
+                }
+                replacements.push((outer_idx, nested_arms));
+            }
+
+            if replacements.len() <= 1 || all_nested_arms.len() <= 1 {
+                continue;
+            }
+
+            let sibling_names = all_nested_arms
+                .iter()
+                .flat_map(ObjectTypeLiteralArm::member_names)
+                .fold(Vec::<String>::new(), |mut names, name| {
+                    if !names.iter().any(|existing| existing == &name) {
+                        names.push(name);
+                    }
+                    names
+                });
+            if sibling_names.is_empty() {
+                continue;
+            }
+
+            for (outer_idx, mut nested_arms) in replacements {
+                Self::expand_source_object_arms_with_property_names(
+                    &mut nested_arms,
+                    &sibling_names,
+                );
+                let Some(member) = arms
+                    .get_mut(outer_idx)
+                    .and_then(|arm| arm.member_mut(&property_name))
+                else {
+                    continue;
+                };
+                member.type_text = Some(
+                    nested_arms
+                        .iter()
+                        .map(ObjectTypeLiteralArm::render)
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
+            }
+        }
+    }
+
     /// Drop function-type union arms whose only difference from another arm
     /// is that one or more parameters were marked optional. tsc's array
     /// element type formation applies UnionReduction.Subtype which removes
@@ -217,6 +504,27 @@ impl<'a> DeclarationEmitter<'a> {
                 *ty = Self::append_optional_undefined_members(ty, &missing_names);
             }
         }
+    }
+
+    fn primitive_literal_member_widened_type(type_text: &str) -> Option<&'static str> {
+        let trimmed = type_text.trim();
+        if matches!(trimmed, "true" | "false") {
+            return Some("boolean");
+        }
+        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        {
+            return Some("string");
+        }
+        if !trimmed.is_empty()
+            && trimmed
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'-' | b'.'))
+            && trimmed.parse::<f64>().is_ok()
+        {
+            return Some("number");
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn append_optional_undefined_members(

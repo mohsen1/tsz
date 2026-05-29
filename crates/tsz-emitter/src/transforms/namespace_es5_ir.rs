@@ -577,6 +577,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                         IRNode::BooleanLiteral(true),
                     )),
                 ],
+                single_line: false,
             }),
             finally_block: Some(Box::new(IRNode::Block(vec![IRNode::expr_stmt(
                 IRNode::CallExpr {

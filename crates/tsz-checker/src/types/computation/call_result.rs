@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let param_union = self.ctx.types.factory().union(param_types);
-        if !self.diagnostic_relation_boolean_guard(actual, param_union) {
+        if !self.assign_relation_outcome(actual, param_union).related {
             return None;
         }
 
@@ -94,12 +94,14 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         };
-        // Eagerly evaluate monomorphic TypeApplications to avoid nested return
-        // chains, but keep Promise-like applications wrapped for await handling.
-        let return_type = if common::is_generic_application(self.ctx.types, return_type)
-            && !self.contains_type_parameters_cached(return_type)
-            && !self.is_promise_type(return_type)
-        {
+        // Eagerly evaluate monomorphic `TypeApplications` and conditionals to avoid
+        // nested return chains, but keep Promise-like applications wrapped for await handling.
+        let is_monomorphic_application =
+            common::is_generic_application(self.ctx.types, return_type)
+                && !self.contains_type_parameters_cached(return_type);
+        let is_conditional_return = common::is_conditional_type(self.ctx.types, return_type);
+        let is_monomorphic_meta_return = is_monomorphic_application || is_conditional_return;
+        let return_type = if is_monomorphic_meta_return && !self.is_promise_type(return_type) {
             self.evaluate_type_with_env(return_type)
         } else {
             return_type
@@ -218,7 +220,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.diagnostic_relation_boolean_guard(arg_types[2], target) {
+        if self.assign_relation_outcome(arg_types[2], target).related {
             return false;
         }
         self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
@@ -254,6 +256,7 @@ impl<'a> CheckerState<'a> {
                 self.finite_mapped_parameter_display_type(param_type)
                     .map(|display_type| self.format_type_for_assignability_message(display_type))
             })
+            .or_else(|| self.noinfer_call_parameter_mismatch_display(param_type, arg_type))
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
         if target_display.contains("Array<") {
             target_display = Self::normalize_array_generic_to_shorthand(&target_display);
@@ -964,10 +967,9 @@ impl<'a> CheckerState<'a> {
                     let normalized_rest_expected =
                         self.rest_argument_element_type_with_env(expected);
                     if normalized_rest_expected != expected
-                        && self.diagnostic_relation_boolean_guard_with_env(
-                            actual,
-                            normalized_rest_expected,
-                        )
+                        && self
+                            .assign_relation_outcome_with_env(actual, normalized_rest_expected)
+                            .related
                     {
                         return if fallback_return != TypeId::ERROR {
                             fallback_return
@@ -1579,6 +1581,16 @@ impl<'a> CheckerState<'a> {
         // Defer callable mismatches only when a callable has its own generic signatures
         // (higher-order inference may still resolve them), not for outer-scope type params.
         if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
+            // Do not defer when the actual is a same-arity generic function with all type
+            // parameters constrained but the expected has none constrained. That is a
+            // structural constraint-strictness mismatch — inference cannot resolve it.
+            if assign_query::generic_arg_constraint_mismatch_is_structural(
+                self.ctx.types,
+                actual,
+                expected,
+            ) {
+                return false;
+            }
             return true;
         }
         if !callable_mismatch

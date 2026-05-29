@@ -263,12 +263,15 @@ impl<'a> CheckerState<'a> {
                 .union_preserve_members(vec![when_true, when_false]);
         }
 
-        // Use Solver API for type computation (Solver-First architecture)
-        expr_ops::compute_conditional_expression_type(
+        // Use Solver API for type computation (Solver-First architecture).
+        // Thread the checker's resolver so subtype reduction of the branch union
+        // can see through alias/application wrappers (e.g. `Record<string, unknown>`).
+        expr_ops::compute_conditional_expression_type_with_resolver(
             self.ctx.types,
             condition_type,
             when_true,
             when_false,
+            Some(&self.ctx),
         )
     }
 
@@ -1086,11 +1089,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        self.ctx
-            .arena
-            .get_identifier_text(access.expression)
-            .is_some_and(|name| name == "Symbol")
-            && !self.known_global_value_has_local_shadow(access.expression, "Symbol")
+        self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             && self
                 .ctx
                 .arena

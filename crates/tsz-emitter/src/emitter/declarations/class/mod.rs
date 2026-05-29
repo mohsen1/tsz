@@ -4,6 +4,7 @@ mod decorators;
 mod emit_declaration;
 mod emit_es6;
 mod helpers;
+mod private_method_defs;
 
 use super::super::core::PropertyNameEmit;
 use tsz_parser::parser::NodeIndex;

@@ -109,7 +109,7 @@ fn test_optional_parameter_property_emits_undefined_in_constructor_and_property(
 }
 
 #[test]
-fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined() {
+fn test_optional_parenthesized_parameter_property_strips_annotation_parens() {
     let output = emit_dts(
         r#"
     export class C {
@@ -118,14 +118,14 @@ fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined()
     "#,
     );
 
-    // tsc 6.0.2 preserves user-written parens verbatim in .d.ts output.
+    // tsc preserves user-written parens from annotation positions verbatim.
     assert!(
         output.contains("x?: (string | undefined);"),
-        "Expected optional parameter property to preserve source parens: {output}"
+        "Expected optional parameter property annotation parens preserved: {output}"
     );
     assert!(
         output.contains("constructor(x?: (string | undefined));"),
-        "Expected constructor parameter to preserve source parens: {output}"
+        "Expected constructor parameter annotation parens preserved: {output}"
     );
     assert!(
         !output.contains("(string | undefined) | undefined"),
@@ -641,6 +641,52 @@ fn js_export_const_class_expr_synthesizes_class_decl() {
     assert!(
         !output.contains("export const C: {"),
         "JS class expression export should not emit a constructor object type: {output}"
+    );
+}
+
+#[test]
+fn js_exports_class_expression_static_alias_elides_recursive_constructor_returns() {
+    let output = emit_js_dts(
+        r#"
+exports.Root = class {
+    static make() {
+        return new exports.Root();
+    }
+};
+exports.RootAlias = exports.Root;
+"#,
+    );
+
+    assert!(
+        output.contains("export var RootAlias: {"),
+        "Expected exports.* class expression alias to emit a constructor object type: {output}"
+    );
+    assert!(
+        output.contains("make(): /*elided*/ any;"),
+        "Expected static recursive constructor return to be elided in the member surface: {output}"
+    );
+}
+
+#[test]
+fn js_exports_class_expression_alias_elides_recursive_constructor_returns() {
+    let output = emit_js_dts(
+        r#"
+exports.Box = class {
+    clone() {
+        return new exports.Box();
+    }
+};
+exports.BoxAlias = exports.Box;
+"#,
+    );
+
+    assert!(
+        output.contains("export var BoxAlias: {"),
+        "Expected exports.* class expression alias to emit a constructor object type: {output}"
+    );
+    assert!(
+        output.contains("clone(): /*elided*/ any;"),
+        "Expected renamed recursive constructor return to be elided in the member surface: {output}"
     );
 }
 

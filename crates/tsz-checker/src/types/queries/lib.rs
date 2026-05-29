@@ -8,7 +8,7 @@ use super::lib_resolution::{
     lib_def_id_from_node_in_lib_contexts, no_value_resolver, resolve_lib_context_fallback_arena,
     resolve_lib_node_in_lib_contexts,
 };
-use crate::state::{CheckerState, MemberAccessLevel};
+use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{
     entity_name_text_in_arena, property_access_chain_text_in_arena,
@@ -18,9 +18,9 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 use tsz_solver::TypeParamInfo;
 use tsz_solver::computation::TypeResolver;
-use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
@@ -83,6 +83,7 @@ impl<'a> CheckerState<'a> {
 
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
+            && !self.ctx.emit_declarations()
             && !self.lib_name_has_local_augmentation(name)
             && let Some(ty) = TypeResolver::get_array_base_type(&self.ctx.types)
         {
@@ -116,6 +117,7 @@ impl<'a> CheckerState<'a> {
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
+        let mut symbol_has_interface = false;
         // Track canonical TypeIds for the first definition's type parameters.
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
@@ -124,6 +126,7 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
+                symbol_has_interface |= symbol.has_any_flags(symbol_flags::INTERFACE);
                 // Multi-arena setup: Get the fallback arena
                 let fallback_arena: &NodeArena = resolve_lib_context_fallback_arena(
                     &lib_ctx.binder,
@@ -189,49 +192,63 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if !symbol.declarations.is_empty() {
-                    // Use lower_merged_interface_declarations for proper multi-arena support
-                    let (ty, params) =
-                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    // Type aliases (e.g. `type ElementTagNameMap = HTMLElementTagNameMap & ...`,
+                    // `type SVGMatrix = DOMMatrix`) must NOT go through interface lowering:
+                    // `lower_merged_interface_declarations` treats a type-alias declaration node
+                    // as an interface with no members and returns a non-ERROR empty object `{}`,
+                    // which then shadows the real alias body. `resolve_lib_type_by_name` already
+                    // guards this the same way; keep both lib resolution paths consistent.
+                    let is_type_alias = symbol.has_any_flags(symbol_flags::TYPE_ALIAS);
 
-                    // If interface lowering succeeded (not ERROR), use the result
-                    if ty != TypeId::ERROR {
-                        // For the first definition, record canonical type parameter TypeIds
-                        if first_params.is_none() && !params.is_empty() {
-                            first_params = Some(params.clone());
-                            // Compute TypeIds for these canonical params (reuse outer factory)
-                            canonical_param_type_ids =
-                                params.iter().map(|p| factory.type_param(*p)).collect();
+                    if !is_type_alias {
+                        // Use lower_merged_interface_declarations for proper multi-arena support
+                        let (ty, params) =
+                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
 
-                            // Cache type parameters for Application expansion.
-                            // Use the canonical (merged-binder) SymbolId so the DefId
-                            // matches what type reference resolution produces.
-                            self.ctx
-                                .cache_canonical_lib_type_params(name, sym_id, params.clone());
+                        // If interface lowering succeeded (not ERROR), use the result
+                        if ty != TypeId::ERROR {
+                            // For the first definition, record canonical type parameter TypeIds
+                            if first_params.is_none() && !params.is_empty() {
+                                first_params = Some(params.clone());
+                                // Compute TypeIds for these canonical params (reuse outer factory)
+                                canonical_param_type_ids =
+                                    params.iter().map(|p| factory.type_param(*p)).collect();
 
-                            lib_types.push(ty);
-                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
-                            // For subsequent definitions with type params, substitute them
-                            // with the canonical TypeIds to ensure consistency.
-                            // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
-                            let mut subst = TypeSubstitution::new();
-                            for (i, p) in params.iter().enumerate() {
-                                if i < canonical_param_type_ids.len() {
-                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                                // Cache type parameters for Application expansion.
+                                // Use the canonical (merged-binder) SymbolId so the DefId
+                                // matches what type reference resolution produces.
+                                self.ctx.cache_canonical_lib_type_params(
+                                    name,
+                                    sym_id,
+                                    params.clone(),
+                                );
+
+                                lib_types.push(ty);
+                            } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                                // For subsequent definitions with type params, substitute them
+                                // with the canonical TypeIds to ensure consistency.
+                                // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
+                                let mut subst = TypeSubstitution::new();
+                                for (i, p) in params.iter().enumerate() {
+                                    if i < canonical_param_type_ids.len() {
+                                        subst.insert(p.name, canonical_param_type_ids[i]);
+                                    }
                                 }
-                            }
-                            if !subst.is_empty() {
-                                let substituted_ty = instantiate_type(self.ctx.types, ty, &subst);
-                                lib_types.push(substituted_ty);
+                                if !subst.is_empty() {
+                                    let substituted_ty =
+                                        instantiate_type(self.ctx.types, ty, &subst);
+                                    lib_types.push(substituted_ty);
+                                } else {
+                                    lib_types.push(ty);
+                                }
                             } else {
                                 lib_types.push(ty);
                             }
-                        } else {
-                            lib_types.push(ty);
+                            continue;
                         }
-                        continue;
                     }
 
-                    // Interface lowering returned ERROR - try as type alias
+                    // Type alias, or interface lowering returned ERROR - lower as type alias
                     for (decl_idx, decl_arena) in &decls_with_arenas {
                         if let Some(node) = decl_arena.get(*decl_idx)
                             && let Some(alias) = decl_arena.get_type_alias(node)
@@ -274,7 +291,11 @@ impl<'a> CheckerState<'a> {
             n if n > 1 => {
                 let mut merged = lib_types[0];
                 for &ty in &lib_types[1..] {
-                    merged = factory.intersection2(merged, ty);
+                    merged = if symbol_has_interface && self.ctx.emit_declarations() {
+                        self.merge_interface_types(merged, ty)
+                    } else {
+                        factory.intersection2(merged, ty)
+                    };
                 }
                 Some(merged)
             }
@@ -297,428 +318,6 @@ impl<'a> CheckerState<'a> {
         }
 
         (lib_type_id, first_params.unwrap_or_default())
-    }
-
-    /// Resolve an alias symbol to its target symbol.
-    ///
-    /// This function follows alias chains to find the ultimate target symbol.
-    /// Aliases are created by:
-    /// - ES6 imports: `import { foo } from 'bar'`
-    /// - Import equals: `import foo = require('bar')`
-    /// - Re-exports: `export { foo } from 'bar'`
-    ///
-    /// ## Alias Resolution:
-    /// - Follows re-export chains recursively
-    /// - Uses binder's `resolve_import_symbol` for ES6 imports
-    /// - Falls back to `module_exports` lookup
-    /// - Handles circular references with `visited_aliases` tracking
-    ///
-    /// ## Re-export Chains:
-    /// ```typescript
-    /// // a.ts exports { x } from 'b.ts'
-    /// // b.ts exports { x } from 'c.ts'
-    /// // c.ts exports { x }
-    /// // resolve_alias_symbol('x' in a.ts) → 'x' in c.ts
-    /// ```
-    ///
-    /// ## Returns:
-    /// - `Some(SymbolId)` - The resolved target symbol
-    /// - `None` - If circular reference detected or resolution failed
-    pub(crate) fn resolve_alias_symbol(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-        visited_aliases: &mut AliasCycleTracker,
-    ) -> Option<tsz_binder::SymbolId> {
-        if crate::checkers_domain::stack_overflow_tripped() {
-            return None;
-        }
-        if crate::checkers_domain::should_probe_stack()
-            && stacker::remaining_stack().unwrap_or(usize::MAX) < 512 * 1024
-        {
-            crate::checkers_domain::trip_stack_overflow();
-            return None;
-        }
-        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
-            self.resolve_alias_symbol_inner(sym_id, visited_aliases)
-        })
-    }
-
-    /// Look up the `export =` target for a require-style consumer of a module,
-    /// preferring an explicit `"export="` binding and falling back to a
-    /// `"module.exports"` binding when the current file's `require`-style
-    /// import of an ESM module under Node20/NodeNext should treat
-    /// `export { X as "module.exports" }` as the CommonJS `module.exports = X`
-    /// value.
-    fn export_equals_target_for_require_consumer(
-        &self,
-        exports: &tsz_binder::SymbolTable,
-        module_specifier: &str,
-    ) -> Option<tsz_binder::SymbolId> {
-        if let Some(target_sym_id) = exports.get("export=") {
-            return Some(target_sym_id);
-        }
-        if self.current_file_uses_module_exports_require_interop(module_specifier) {
-            return exports.get("module.exports");
-        }
-        None
-    }
-
-    fn resolve_alias_symbol_inner(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-        visited_aliases: &mut AliasCycleTracker,
-    ) -> Option<tsz_binder::SymbolId> {
-        // Prevent stack overflow from long alias chains
-        const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
-        if visited_aliases.len() >= MAX_ALIAS_RESOLUTION_DEPTH {
-            return None;
-        }
-
-        // Use get_symbol_with_libs to properly handle symbols from lib files
-        let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        // Defensive: Verify symbol is valid before accessing fields
-        // This prevents crashes when symbol IDs reference non-existent symbols
-        if !symbol.has_any_flags(symbol_flags::ALIAS) {
-            return Some(sym_id);
-        }
-        if visited_aliases.contains(&sym_id) {
-            return None;
-        }
-        visited_aliases.push(sym_id);
-        // First, try using the binder's resolve_import_symbol which follows re-export chains
-        // This handles both named re-exports (`export { foo } from 'bar'`) and wildcard
-        // re-exports (`export * from 'bar'`), properly following chains like:
-        // a.ts exports { x } from 'b.ts'
-        // b.ts exports { x } from 'c.ts'
-        // c.ts exports { x }
-        if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
-            // Prevent infinite loops in re-export chains
-            if !visited_aliases.contains(&resolved_sym_id) {
-                let mut preferred_target = resolved_sym_id;
-                if let Some(module_name) = symbol.import_module.as_ref() {
-                    let export_name = symbol
-                        .import_name
-                        .as_deref()
-                        .unwrap_or(symbol.escaped_name.as_str());
-                    if export_name != "*"
-                        && self.symbol_is_namespace_only_tracked(resolved_sym_id, visited_aliases)
-                        && let Some(member_sym_id) = self
-                            .resolve_named_export_via_export_equals_tracked(
-                                module_name,
-                                export_name,
-                                visited_aliases,
-                            )
-                    {
-                        preferred_target = member_sym_id;
-                    }
-                }
-                return self.resolve_alias_symbol(preferred_target, visited_aliases);
-            }
-        }
-
-        // Fallback to direct module_exports lookup for backward compatibility
-        // Handle ES6 imports: import { X } from 'module' or import X from 'module'
-        // The binder sets import_module and import_name for these
-        if let Some(ref module_name) = symbol.import_module {
-            let export_name = symbol
-                .import_name
-                .as_deref()
-                .unwrap_or(&symbol.escaped_name);
-            if export_name == "default"
-                && self.ctx.compiler_options.module.is_node_module()
-                && self.ctx.file_is_esm == Some(true)
-                && !self.module_is_esm(module_name)
-            {
-                return Some(sym_id);
-            }
-            let source_file_idx = self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .unwrap_or(self.ctx.current_file_idx);
-            // Look up the exported symbol in module_exports.
-            // Only do this for named/default imports (import_name is Some).
-            // For namespace/require imports (`import X = require("m")`),
-            // import_name is None and escaped_name could accidentally match
-            // a specific export, resolving the alias to that export instead
-            // of the module namespace.
-            if symbol.import_name.is_some() {
-                let export_equals_member = self.resolve_named_export_via_export_equals_tracked(
-                    module_name,
-                    export_name,
-                    visited_aliases,
-                );
-                if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
-                    module_name,
-                    export_name,
-                    Some(source_file_idx),
-                ) {
-                    let resolved_target =
-                        if self.symbol_is_namespace_only_tracked(target_sym_id, visited_aliases) {
-                            export_equals_member.unwrap_or(target_sym_id)
-                        } else {
-                            target_sym_id
-                        };
-                    if let Some(target_file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id)
-                    {
-                        // Keep the alias itself pinned to the owning file so later
-                        // type computation doesn't re-read a colliding local symbol
-                        // with the same raw SymbolId.
-                        self.ctx
-                            .register_symbol_file_target(sym_id, target_file_idx);
-                    }
-                    return Some(resolved_target);
-                }
-                if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
-                    && let Some(target_sym_id) = exports.get(export_name)
-                {
-                    let resolved_target =
-                        if self.symbol_is_namespace_only_tracked(target_sym_id, visited_aliases) {
-                            export_equals_member.unwrap_or(target_sym_id)
-                        } else {
-                            target_sym_id
-                        };
-                    // Recursively resolve if the target is also an alias
-                    return self.resolve_alias_symbol(resolved_target, visited_aliases);
-                }
-                if let Some(all_binders) = &self.ctx.all_binders {
-                    if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
-                        for &file_idx in file_indices {
-                            if let Some(binder) = all_binders.get(file_idx)
-                                && let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get(export_name)
-                            {
-                                let resolved_target = if self.symbol_is_namespace_only_tracked(
-                                    target_sym_id,
-                                    visited_aliases,
-                                ) {
-                                    export_equals_member.unwrap_or(target_sym_id)
-                                } else {
-                                    target_sym_id
-                                };
-                                return self.resolve_alias_symbol(resolved_target, visited_aliases);
-                            }
-                        }
-                    } else {
-                        for binder in all_binders.iter() {
-                            if let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get(export_name)
-                            {
-                                let resolved_target = if self.symbol_is_namespace_only_tracked(
-                                    target_sym_id,
-                                    visited_aliases,
-                                ) {
-                                    export_equals_member.unwrap_or(target_sym_id)
-                                } else {
-                                    target_sym_id
-                                };
-                                return self.resolve_alias_symbol(resolved_target, visited_aliases);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if symbol.import_name.is_some()
-                && let Some(target_sym_id) = self.resolve_named_export_via_export_equals_tracked(
-                    module_name,
-                    export_name,
-                    visited_aliases,
-                )
-            {
-                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-            }
-
-            // For namespace/require imports (`import X = require("m")` and
-            // `import * as X from "m"`), import_name is `None` or `"*"` and the
-            // symbol's escaped_name won't match any module export. Try the
-            // module's `export =` value (key `"export="`), falling back to
-            // `"module.exports"` for Node20/NodeNext CJS-of-ESM consumers —
-            // see `export_equals_target_for_require_consumer`.
-            if symbol.import_name.is_none() {
-                let lookup = |binder: &tsz_binder::BinderState| {
-                    binder.module_exports.get(module_name).and_then(|exports| {
-                        self.export_equals_target_for_require_consumer(exports, module_name)
-                    })
-                };
-                if let Some(target_sym_id) = lookup(self.ctx.binder) {
-                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                }
-                if let Some(all_binders) = &self.ctx.all_binders {
-                    if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
-                        for &file_idx in file_indices {
-                            if let Some(binder) = all_binders.get(file_idx)
-                                && let Some(target_sym_id) = lookup(binder)
-                            {
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                            }
-                        }
-                    } else {
-                        for binder in all_binders.iter() {
-                            if let Some(target_sym_id) = lookup(binder) {
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                            }
-                        }
-                    }
-                }
-            }
-            // Cross-file fallback: the module specifier is relative to the
-            // declaring file, not the current file.  Use resolve_symbol_file_index
-            // to find the source file and resolve_import_target_from_file to
-            // convert the relative specifier into a target file index.
-            let source_file_idx = self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .unwrap_or(self.ctx.current_file_idx);
-            if let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file(source_file_idx, module_name)
-                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
-            {
-                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-                if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name) {
-                    // Namespace imports (`import * as X` / `export * as X`)
-                    // resolve to the module symbol rather than a specific export.
-                    // The symbol itself acts as the namespace container; record
-                    // all target exports for cross-file member resolution.
-                    let is_namespace_import = export_name == "*"
-                        || (symbol.import_name.is_none() && symbol.escaped_name != "default");
-                    if is_namespace_import {
-                        if let Some(exports) =
-                            self.ctx.module_exports_for_module(target_binder, file_name)
-                        {
-                            if let Some(export_equals_sym_id) =
-                                self.export_equals_target_for_require_consumer(exports, module_name)
-                            {
-                                self.ctx
-                                    .register_symbol_file_target(export_equals_sym_id, target_idx);
-                                return Some(export_equals_sym_id);
-                            }
-                            for (_, &sid) in exports.iter() {
-                                self.ctx.register_symbol_file_target(sid, target_idx);
-                            }
-                        }
-                        // Keep the namespace import alias owned by the current file.
-                        // Only the exported target symbols belong to the imported module.
-                        // Rebinding the alias itself to the target file causes raw
-                        // SymbolId collisions to overwrite local import aliases with
-                        // unrelated module-local symbols from the target binder.
-                        // Return the alias symbol itself — the caller
-                        // resolves members through resolve_symbol_export
-                        // which follows import_module re-exports.
-                        return Some(sym_id);
-                    }
-                    if let Some(exports) =
-                        self.ctx.module_exports_for_module(target_binder, file_name)
-                    {
-                        if let Some(target_sym_id) = exports.get(export_name) {
-                            self.ctx
-                                .register_symbol_file_target(target_sym_id, target_idx);
-                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                        }
-                        // For require imports, also try "export=" — and the
-                        // Node20/NodeNext CJS-of-ESM `"module.exports"` fallback
-                        // when applicable (see
-                        // `export_equals_target_for_require_consumer`).
-                        if symbol.import_name.is_none()
-                            && let Some(target_sym_id) =
-                                self.export_equals_target_for_require_consumer(exports, module_name)
-                        {
-                            self.ctx
-                                .register_symbol_file_target(target_sym_id, target_idx);
-                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                        }
-                    }
-
-                    // Follow named re-exports: `export { A } from './other'`
-                    if let Some(file_reexports) =
-                        self.ctx.reexports_for_file(target_binder, file_name)
-                        && let Some((source_module, original_name)) =
-                            file_reexports.get(export_name)
-                    {
-                        let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
-                        if let Some(reexport_target_idx) = self
-                            .ctx
-                            .resolve_import_target_from_file(target_idx, source_module)
-                            && let Some(reexport_binder) =
-                                self.ctx.get_binder_for_file(reexport_target_idx)
-                        {
-                            let reexport_arena =
-                                self.ctx.get_arena_for_file(reexport_target_idx as u32);
-                            if let Some(reexport_file) =
-                                reexport_arena.source_files.first().map(|f| &f.file_name)
-                                && let Some(re_exports) =
-                                    reexport_binder.module_exports.get(reexport_file)
-                                && let Some(target_sym_id) = re_exports.get(name_to_lookup)
-                            {
-                                self.ctx.register_symbol_file_target(
-                                    target_sym_id,
-                                    reexport_target_idx,
-                                );
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                            }
-                        }
-                    }
-
-                    // Follow wildcard re-exports: `export * from './other'`
-                    // This resolves imports through chains like:
-                    //   g.ts: import { A } from './f'
-                    //   f.ts: export * from './e'  (where e.ts exports A)
-                    if let Some(source_modules) = self
-                        .ctx
-                        .wildcard_reexports_for_file(target_binder, file_name)
-                    {
-                        let source_modules = source_modules.clone();
-                        for source_module in &source_modules {
-                            if let Some(wc_target_idx) = self
-                                .ctx
-                                .resolve_import_target_from_file(target_idx, source_module)
-                                && let Some(wc_binder) = self.ctx.get_binder_for_file(wc_target_idx)
-                            {
-                                let wc_arena = self.ctx.get_arena_for_file(wc_target_idx as u32);
-                                if let Some(wc_file) =
-                                    wc_arena.source_files.first().map(|f| &f.file_name)
-                                    && let Some(wc_exports) = wc_binder.module_exports.get(wc_file)
-                                    && let Some(target_sym_id) = wc_exports.get(export_name)
-                                {
-                                    self.ctx
-                                        .register_symbol_file_target(target_sym_id, wc_target_idx);
-                                    return self
-                                        .resolve_alias_symbol(target_sym_id, visited_aliases);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // For ES6 imports, if we can't find the export, return the alias symbol itself
-            // This allows the type checker to use the symbol reference
-            return Some(sym_id);
-        }
-
-        let decl_idx = symbol.primary_declaration()?;
-        let decl_node = self.ctx.arena.get(decl_idx)?;
-        if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-            let import = self.ctx.arena.get_import_decl(decl_node)?;
-            // Track resolution depth to prevent stack overflow
-            let depth = visited_aliases.len();
-            if depth >= 128 {
-                return None; // Prevent stack overflow
-            }
-            if let Some(target) =
-                self.resolve_qualified_symbol_inner(import.module_specifier, visited_aliases, depth)
-            {
-                return Some(target);
-            }
-            return self
-                .resolve_require_call_symbol(import.module_specifier, Some(visited_aliases));
-        }
-        if symbol.import_module.is_none() {
-            return Some(sym_id);
-        }
-        // For other alias symbols (not ES6 imports or import equals), return None
-        // to indicate we couldn't resolve the alias
-        None
     }
 
     /// Get the text representation of a heritage clause name.
@@ -1524,532 +1123,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    // Section 47: Node Predicate Utilities
-    // ------------------------------------
-
-    /// Check if a variable declaration is a catch clause variable.
-    ///
-    /// This function determines if a given variable declaration node is
-    /// the variable declaration of a catch clause (try/catch statement).
-    ///
-    /// ## Catch Clause Variables:
-    /// - Catch clause variables have special scoping rules
-    /// - They are block-scoped to the catch block
-    /// - They shadow variables with the same name in outer scopes
-    /// - They cannot be accessed before declaration (TDZ applies)
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// try {
-    ///   throw new Error("error");
-    /// } catch (e) {
-    ///   // e is a catch clause variable
-    ///   console.log(e.message);
-    /// }
-    /// // is_catch_clause_variable_declaration(e_node) → true
-    ///
-    /// const x = 5;
-    /// // is_catch_clause_variable_declaration(x_node) → false
-    /// ```
-    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
-            return false;
-        }
-        let Some(catch) = self.ctx.arena.get_catch_clause(parent_node) else {
-            return false;
-        };
-        catch.variable_declaration == var_decl_idx
-    }
-
-    /// Check if a variable declaration is in a `for...in` statement.
-    /// For-in loop variables are always typed as `string`.
-    ///
-    /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement`
-    pub(crate) fn is_for_in_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        // VariableDeclaration → parent (VariableDeclarationList)
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let vdl_idx = ext.parent;
-        if vdl_idx.is_none() {
-            return false;
-        }
-        // VariableDeclarationList → parent (ForInStatement?)
-        let Some(vdl_ext) = self.ctx.arena.get_extended(vdl_idx) else {
-            return false;
-        };
-        let for_in_idx = vdl_ext.parent;
-        if for_in_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(for_in_idx) else {
-            return false;
-        };
-        parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-    }
-
-    /// Check if a variable declaration is in a `for...in` or `for...of` statement.
-    /// These loop variables get their type from the iterable expression, not from
-    /// the variable declaration itself.
-    ///
-    /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement`/`ForOfStatement`
-    pub(crate) fn is_for_in_or_of_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let vdl_idx = ext.parent;
-        if vdl_idx.is_none() {
-            return false;
-        }
-        let Some(vdl_ext) = self.ctx.arena.get_extended(vdl_idx) else {
-            return false;
-        };
-        let parent_idx = vdl_ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-            || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-    }
-
-    // Section 48: Type Predicate Utilities
-    // -------------------------------------
-
-    /// Get the target of a type predicate from a parameter name node.
-    ///
-    /// Type predicates are used in function signatures to narrow types
-    /// based on runtime checks. The target can be either `this` or an
-    /// identifier parameter name.
-    ///
-    /// ## Type Predicate Targets:
-    /// - **This**: `asserts this is T` - Used in methods to narrow the receiver type
-    /// - **Identifier**: `argName is T` - Used to narrow a parameter's type
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// // This type predicate
-    /// function assertIsString(this: unknown): asserts this is string {
-    ///   if (typeof this === 'string') {
-    ///     return; // this is narrowed to string
-    ///   }
-    ///   throw new Error('Not a string');
-    /// }
-    /// // type_predicate_target(thisKeywordNode) → TypePredicateTarget::This
-    ///
-    /// // Identifier type predicate
-    /// function isString(val: unknown): val is string {
-    ///   return typeof val === 'string';
-    /// }
-    /// // type_predicate_target(valIdentifierNode) → TypePredicateTarget::Identifier("val")
-    /// ```
-    pub(crate) fn type_predicate_target(
-        &self,
-        param_name: NodeIndex,
-    ) -> Option<TypePredicateTarget> {
-        let node = self.ctx.arena.get(param_name)?;
-        if node.kind == SyntaxKind::ThisKeyword as u16 || node.kind == syntax_kind_ext::THIS_TYPE {
-            return Some(TypePredicateTarget::This);
-        }
-
-        self.ctx.arena.get_identifier(node).map(|ident| {
-            TypePredicateTarget::Identifier(self.ctx.types.intern_string(&ident.escaped_text))
-        })
-    }
-
-    // Section 49: Constructor Accessibility Utilities
-    // -----------------------------------------------
-
-    /// Convert a constructor access level to its string representation.
-    ///
-    /// This function is used for error messages to display the accessibility
-    /// level of a constructor (private, protected, or public).
-    ///
-    /// ## Constructor Accessibility:
-    /// - **Private**: `private constructor()` - Only accessible within the class
-    /// - **Protected**: `protected constructor()` - Accessible within class and subclasses
-    /// - **Public**: `constructor()` or `public constructor()` - Accessible everywhere
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// class Singleton {
-    ///   private constructor() {} // Only accessible within Singleton
-    /// }
-    /// // constructor_access_name(Some(Private)) → "private"
-    ///
-    /// class Base {
-    ///   protected constructor() {} // Accessible in Base and subclasses
-    /// }
-    /// // constructor_access_name(Some(Protected)) → "protected"
-    ///
-    /// class Public {
-    ///   constructor() {} // Public by default
-    /// }
-    /// // constructor_access_name(None) → "public"
-    /// ```
-    pub(crate) const fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
-        match level {
-            Some(MemberAccessLevel::Private) => "private",
-            Some(MemberAccessLevel::Protected) => "protected",
-            None => "public",
-        }
-    }
-
-    /// Get the numeric rank of a constructor access level.
-    ///
-    /// This function assigns a numeric value to access levels for comparison:
-    /// - Private (2) > Protected (1) > Public (0)
-    ///
-    /// Higher ranks indicate more restrictive access levels. This is used
-    /// to determine if a constructor accessibility mismatch exists between
-    /// source and target types.
-    ///
-    /// ## Rank Ordering:
-    /// ```typescript
-    /// Private (2)   - Most restrictive
-    /// Protected (1) - Medium restrictiveness
-    /// Public (0)    - Least restrictive
-    /// ```
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// constructor_access_rank(Some(Private))    // → 2
-    /// constructor_access_rank(Some(Protected)) // → 1
-    /// constructor_access_rank(None)            // → 0 (Public)
-    /// ```
-    pub(crate) const fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
-        match level {
-            Some(MemberAccessLevel::Private) => 2,
-            Some(MemberAccessLevel::Protected) => 1,
-            None => 0,
-        }
-    }
-
-    /// Get the excluded symbol flags for a given symbol.
-    ///
-    /// Each symbol type (function, class, interface, etc.) has specific
-    /// flags that represent incompatible symbols that cannot share the same name.
-    /// This function returns those exclusion flags.
-    ///
-    /// ## Symbol Exclusion Rules:
-    /// - Functions exclude other functions with the same name
-    /// - Classes exclude interfaces with the same name (unless merging)
-    /// - Variables exclude other variables with the same name in the same scope
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// // Function exclusions
-    /// function foo() {}
-    /// function foo() {} // ERROR: Duplicate function declaration
-    ///
-    /// // Class/Interface merging (allowed)
-    /// interface Foo {}
-    /// class Foo {} // Allowed: interface and class can merge
-    ///
-    /// // Variable exclusions
-    /// let x = 1;
-    /// let x = 2; // ERROR: Duplicate variable declaration
-    /// ```
-    const fn excluded_symbol_flags(flags: u32) -> u32 {
-        if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0 {
-            return symbol_flags::FUNCTION_SCOPED_VARIABLE_EXCLUDES;
-        }
-        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
-            return symbol_flags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
-        }
-        if (flags & symbol_flags::FUNCTION) != 0 {
-            return symbol_flags::CLASS;
-        }
-        if (flags & symbol_flags::CLASS) != 0 {
-            return symbol_flags::FUNCTION;
-        }
-        if (flags & symbol_flags::INTERFACE) != 0 {
-            return symbol_flags::INTERFACE_EXCLUDES;
-        }
-        if (flags & symbol_flags::TYPE_ALIAS) != 0 {
-            return symbol_flags::TYPE_ALIAS_EXCLUDES;
-        }
-        if (flags & symbol_flags::REGULAR_ENUM) != 0 {
-            return symbol_flags::REGULAR_ENUM_EXCLUDES;
-        }
-        if (flags & symbol_flags::CONST_ENUM) != 0 {
-            return symbol_flags::CONST_ENUM_EXCLUDES;
-        }
-        // Check NAMESPACE_MODULE before VALUE_MODULE since namespaces have both flags
-        // and NAMESPACE_MODULE_EXCLUDES (NONE) allows more merging than VALUE_MODULE_EXCLUDES
-        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
-            return symbol_flags::NAMESPACE_MODULE_EXCLUDES;
-        }
-        if (flags & symbol_flags::VALUE_MODULE) != 0 {
-            return symbol_flags::VALUE_MODULE_EXCLUDES;
-        }
-        if (flags & symbol_flags::GET_ACCESSOR) != 0 {
-            return symbol_flags::GET_ACCESSOR_EXCLUDES;
-        }
-        if (flags & symbol_flags::SET_ACCESSOR) != 0 {
-            return symbol_flags::SET_ACCESSOR_EXCLUDES;
-        }
-        if (flags & symbol_flags::METHOD) != 0 {
-            return symbol_flags::METHOD_EXCLUDES;
-        }
-        if (flags & symbol_flags::ALIAS) != 0 {
-            return symbol_flags::ALIAS_EXCLUDES;
-        }
-        symbol_flags::NONE
-    }
-
-    /// Check if two declarations conflict based on their symbol flags.
-    ///
-    /// This function determines whether two symbols with the given flags
-    /// can coexist in the same scope without conflict.
-    ///
-    /// ## Conflict Rules:
-    /// - **Static vs Instance**: Static and instance members with the same name don't conflict
-    /// - **Exclusion Flags**: If either declaration excludes the other's flags, they conflict
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// class Example {
-    ///   static x = 1;  // Static member
-    ///   x = 2;         // Instance member - no conflict
-    /// }
-    ///
-    /// class Conflict {
-    ///   foo() {}      // Method
-    ///   foo: number;  // Property - CONFLICT!
-    /// }
-    ///
-    /// interface Merge {
-    ///   foo(): void;
-    /// }
-    /// interface Merge {
-    ///   bar(): void;  // No conflict - different members
-    /// }
-    /// ```
-    pub(crate) const fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
-        // Static and instance members with the same name don't conflict
-        let a_is_static = (flags_a & symbol_flags::STATIC) != 0;
-        let b_is_static = (flags_b & symbol_flags::STATIC) != 0;
-        if a_is_static != b_is_static {
-            return false;
-        }
-
-        let excludes_a = Self::excluded_symbol_flags(flags_a);
-        let excludes_b = Self::excluded_symbol_flags(flags_b);
-        (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
-    }
-
-    // Section 51: Literal Type Utilities
-    // ----------------------------------
-
-    /// Infer a literal type from an initializer expression.
-    ///
-    /// This function attempts to infer the most specific literal type from an
-    /// expression, enabling const declarations to have literal types.
-    ///
-    /// **Literal Type Inference:**
-    /// - **String literals**: `"hello"` → `"hello"` (string literal type)
-    /// - **Numeric literals**: `42` → `42` (numeric literal type)
-    /// - **Boolean literals**: `true` → `true`, `false` → `false`
-    /// - **Null literal**: `null` → null type
-    /// - **Unary expressions**: `-42` → `-42`, `+42` → `42`
-    ///
-    /// **Non-Literal Expressions:**
-    /// - Complex expressions return None (not a literal)
-    /// - Function calls, object literals, etc. return None
-    ///
-    /// **Const Declarations:**
-    /// - `const x = "hello"` infers type `"hello"` (not `string`)
-    /// - `let y = "hello"` infers type `string` (widened)
-    /// - This function enables the const behavior
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// // String literal
-    /// const greeting = "hello";  // Type: "hello"
-    /// literal_type_from_initializer(greeting_node) → Some("hello")
-    ///
-    /// // Numeric literal
-    /// const count = 42;  // Type: 42
-    /// literal_type_from_initializer(count_node) → Some(42)
-    ///
-    /// // Negative number
-    /// const temp = -42;  // Type: -42
-    /// literal_type_from_initializer(temp_node) → Some(-42)
-    ///
-    /// // Boolean
-    /// const flag = true;  // Type: true
-    /// literal_type_from_initializer(flag_node) → Some(true)
-    ///
-    /// // Non-literal
-    /// const arr = [1, 2, 3];  // Type: number[]
-    /// literal_type_from_initializer(arr_node) → None
-    /// ```
-    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
-        let node = self.ctx.arena.get(idx)?;
-
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.ctx.arena.get_literal(node)?;
-                Some(self.ctx.types.literal_string(&lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => {
-                let lit = self.ctx.arena.get_literal(node)?;
-                lit.value.map(|value| self.ctx.types.literal_number(value))
-            }
-            k if k == SyntaxKind::BigIntLiteral as u16 => {
-                let lit = self.ctx.arena.get_literal(node)?;
-                let text = lit.text.strip_suffix('n').unwrap_or(&lit.text);
-                Some(self.ctx.types.literal_bigint(text))
-            }
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => {
-                Some(self.ctx.types.literal_boolean(false))
-            }
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            // `undefined` in expression position is parsed as an Identifier with
-            // text "undefined".  Treat it as a unit literal for discriminant narrowing.
-            k if k == SyntaxKind::Identifier as u16 => {
-                let ident = self.ctx.arena.get_identifier(node)?;
-                if ident.escaped_text == "undefined" {
-                    Some(TypeId::UNDEFINED)
-                } else {
-                    None
-                }
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                let unary = self.ctx.arena.get_unary_expr(node)?;
-                let op = unary.operator;
-                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
-                    return None;
-                }
-                let operand = unary.operand;
-                let operand_node = self.ctx.arena.get(operand)?;
-                if operand_node.kind == SyntaxKind::BigIntLiteral as u16 {
-                    let lit = self.ctx.arena.get_literal(operand_node)?;
-                    let text = lit.text.strip_suffix('n').unwrap_or(&lit.text);
-                    let negative = op == SyntaxKind::MinusToken as u16;
-                    return Some(self.ctx.types.literal_bigint_with_sign(negative, text));
-                }
-                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
-                    return None;
-                }
-                let lit = self.ctx.arena.get_literal(operand_node)?;
-                let value = lit.value?;
-                let value = if op == SyntaxKind::MinusToken as u16 {
-                    -value
-                } else {
-                    value
-                };
-                Some(self.ctx.types.literal_number(value))
-            }
-            k if k == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION => {
-                let binary = self.ctx.arena.get_binary_expr(node)?;
-                if binary.operator_token == tsz_scanner::SyntaxKind::CommaToken as u16 {
-                    return self.literal_type_from_initializer(binary.right);
-                }
-                if binary.operator_token == tsz_scanner::SyntaxKind::AmpersandAmpersandToken as u16
-                {
-                    let left_ty = self.literal_type_from_initializer(binary.left);
-                    let right_ty = self.literal_type_from_initializer(binary.right);
-                    if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
-                            self.ctx.types,
-                        );
-                        if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
-                            evaluator.evaluate(l, r, "&&")
-                        {
-                            return Some(res);
-                        }
-                    }
-                }
-                if binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16 {
-                    let left_ty = self.literal_type_from_initializer(binary.left);
-                    let right_ty = self.literal_type_from_initializer(binary.right);
-                    if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
-                            self.ctx.types,
-                        );
-                        if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
-                            evaluator.evaluate(l, r, "||")
-                        {
-                            return Some(res);
-                        }
-                    }
-                }
-                None
-            }
-            k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if self.paren_has_jsdoc_type_cast(idx) {
-                    return None;
-                }
-                let paren = self.ctx.arena.get_parenthesized(node)?;
-                self.literal_type_from_initializer(paren.expression)
-            }
-            k if k == tsz_parser::parser::syntax_kind_ext::AS_EXPRESSION
-                || k == tsz_parser::parser::syntax_kind_ext::TYPE_ASSERTION =>
-            {
-                let assertion = self.ctx.arena.get_type_assertion(node)?;
-                if self.is_const_assertion_type_node(assertion.type_node) {
-                    self.literal_type_from_initializer(assertion.expression)
-                } else {
-                    None
-                }
-            }
-            k if k == tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION => {
-                let template = self.ctx.arena.get_template_expr(node)?;
-                // Get the head text (text before the first ${})
-                let head_text = self
-                    .ctx
-                    .arena
-                    .get(template.head)
-                    .and_then(|n| self.ctx.arena.get_literal(n))
-                    .map(|lit| lit.text.clone())
-                    .unwrap_or_default();
-                let mut result = head_text;
-                // For each span, try to evaluate the expression to a string literal
-                for &span_idx in &template.template_spans.nodes {
-                    let span_node = self.ctx.arena.get(span_idx)?;
-                    let span = self.ctx.arena.get_template_span(span_node)?;
-                    // Recursively evaluate the expression inside ${}
-                    let expr_type = self.literal_type_from_initializer(span.expression)?;
-                    // Stringify the literal type (handles string, number, bigint,
-                    // boolean, null, undefined — not just string literals)
-                    let expr_str = crate::query_boundaries::common::stringify_literal_type(
-                        self.ctx.types,
-                        expr_type,
-                    )?;
-                    result.push_str(&expr_str);
-                    // Get the text after this expression (middle or tail)
-                    let tail_text = self
-                        .ctx
-                        .arena
-                        .get(span.literal)
-                        .and_then(|n| self.ctx.arena.get_literal(n))
-                        .map(|lit| lit.text.clone())
-                        .unwrap_or_default();
-                    result.push_str(&tail_text);
-                }
-                Some(self.ctx.types.literal_string(&result))
-            }
-            _ => None,
-        }
     }
 
     pub(crate) fn resolve_umd_namespace_name_for_module(

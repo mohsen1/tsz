@@ -199,6 +199,11 @@ impl<'a> Printer<'a> {
             // Emit modifiers (static, async only for JavaScript)
             self.emit_method_modifiers_js(&method.modifiers);
         }
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         // Emit generator asterisk (skip for async generators being lowered)
         if has_generator_asterisk && !needs_async_generator_lowering {
@@ -361,6 +366,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_method_modifiers_js(&method.modifiers);
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if method.asterisk_token {
             self.write("*");
@@ -419,181 +429,6 @@ impl<'a> Printer<'a> {
                 .is_some_and(|lit| lit.text == "constructor")
     }
 
-    /// Emit async method body lowered to __awaiter + function* for ES2015 target
-    fn emit_method_async_lowered_body(&mut self, body: NodeIndex, params: &[NodeIndex]) {
-        let move_params_to_generator =
-            !self.ctx.target_es5 && self.async_params_need_generator_forwarding(params);
-
-        let body_is_empty_single_line = self
-            .arena
-            .get(body)
-            .and_then(|n| {
-                let block = self.arena.get_block(n)?;
-                if block.statements.nodes.is_empty() {
-                    Some(self.is_single_line(n))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(false);
-
-        // Issue #3759: Emit `super` capture before entering the generator. tsc
-        // pre-binds each referenced `super.<name>` via an `Object.create` block so
-        // the generator body can reach captured aliases — `super` is not
-        // lexically valid inside a nested generator function.
-        let super_capture = if body_is_empty_single_line {
-            crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
-        } else {
-            crate::transforms::emit_utils::collect_async_method_super_capture(self.arena, body)
-        };
-        let source_text = self.source_text.unwrap_or_default();
-        let super_alias_text = if super_capture.property_names.is_empty() {
-            None
-        } else {
-            Some(crate::transforms::emit_utils::hygienic_temp_name(
-                "_super",
-                source_text,
-            ))
-        };
-        let super_index_alias_text = if super_capture.needs_element_index {
-            Some(crate::transforms::emit_utils::hygienic_temp_name(
-                "_superIndex",
-                source_text,
-            ))
-        } else {
-            None
-        };
-        let super_alias = super_alias_text.as_deref().map(std::sync::Arc::<str>::from);
-        let super_index_alias = super_index_alias_text
-            .as_deref()
-            .map(std::sync::Arc::<str>::from);
-
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        if let Some(index_alias) = super_index_alias_text.as_deref() {
-            self.write("const ");
-            self.write(index_alias);
-            if super_capture.needs_writable_element_index {
-                self.write(" = (function (geti, seti) {");
-                self.write_line();
-                self.increase_indent();
-                self.write("const cache = Object.create(null);");
-                self.write_line();
-                self.write("return name => cache[name] || (cache[name] = { get value() { return geti(name); }, set value(v) { seti(name, v); } });");
-                self.write_line();
-                self.decrease_indent();
-                self.write("})(name => super[name], (name, value) => super[name] = value);");
-            } else {
-                self.write(" = name => super[name];");
-            }
-            self.write_line();
-        }
-        if let Some(super_alias_name) = super_alias_text.as_deref() {
-            self.write("const ");
-            self.write(super_alias_name);
-            self.write(" = Object.create(null, {");
-            self.write_line();
-            self.increase_indent();
-            for (i, name) in super_capture.property_names.iter().enumerate() {
-                self.write(name);
-                self.write(": { get: () => super.");
-                self.write(name);
-                if super_capture.writable_property_names.contains(name) {
-                    self.write(", set: v => super.");
-                    self.write(name);
-                    self.write(" = v");
-                }
-                self.write(" }");
-                if i + 1 < super_capture.property_names.len() {
-                    self.write(",");
-                }
-                self.write_line();
-            }
-            self.decrease_indent();
-            self.write("});");
-            self.write_line();
-        }
-
-        self.write("return ");
-        self.write_helper("__awaiter");
-        self.write("(this");
-        if move_params_to_generator {
-            self.write(", arguments, void 0, function* (");
-            let saved = self.ctx.emit_await_as_yield;
-            self.ctx.emit_await_as_yield = true;
-            self.emit_function_parameters_js(params);
-            self.ctx.emit_await_as_yield = saved;
-            if body_is_empty_single_line {
-                self.write(") { });");
-            } else {
-                self.write(") {");
-            }
-        } else if body_is_empty_single_line {
-            self.write(", void 0, void 0, function* () { });");
-        } else {
-            self.write(", void 0, void 0, function* () {");
-        }
-
-        if body_is_empty_single_line {
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
-            return;
-        }
-
-        self.write_line();
-        self.increase_indent();
-
-        // Emit function body with await→yield substitution and (issue #3759)
-        // an active `_super` capture alias when the body references super.
-        let saved_yield = self.ctx.emit_await_as_yield;
-        self.ctx.emit_await_as_yield = true;
-        let prev_super_alias = self.scoped_static_super_base_alias.take();
-        let prev_super_direct = self.scoped_static_super_direct_access;
-        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
-        let prev_super_index_value = self.scoped_static_super_index_value_access;
-        let prev_function_scope_depth = self.function_scope_depth;
-        if let Some(alias) = super_alias {
-            self.scoped_static_super_base_alias = Some(alias);
-            self.scoped_static_super_direct_access = true;
-        }
-        if let Some(alias) = super_index_alias {
-            self.scoped_static_super_index_alias = Some(alias);
-            self.scoped_static_super_index_value_access =
-                super_capture.needs_writable_element_index;
-        }
-        self.function_scope_depth += 1;
-        if let Some(body_node) = self.arena.get(body)
-            && let Some(block) = self.arena.get_block(body_node)
-        {
-            let statements = block.statements.clone();
-            if !self.emit_statement_list_with_using_scope(&statements) {
-                for &stmt in &statements.nodes {
-                    if let Some(stmt_node) = self.arena.get(stmt) {
-                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                        self.emit_comments_before_pos(actual_start);
-                    }
-                    self.emit(stmt);
-                    self.write_line();
-                }
-            }
-        }
-        self.function_scope_depth = prev_function_scope_depth;
-        self.scoped_static_super_base_alias = prev_super_alias;
-        self.scoped_static_super_direct_access = prev_super_direct;
-        self.scoped_static_super_index_alias = prev_super_index_alias;
-        self.scoped_static_super_index_value_access = prev_super_index_value;
-        self.ctx.emit_await_as_yield = saved_yield;
-
-        self.decrease_indent();
-        self.write("});");
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
-    }
-
     /// Emit method modifiers for JavaScript (static, async, and ES decorators)
     pub(in crate::emitter) fn emit_method_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
@@ -613,6 +448,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         // ES decorators are emitted verbatim when not using legacy
                         // (experimental) decorator lowering via __decorate.
@@ -756,6 +594,11 @@ impl<'a> Printer<'a> {
 
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
+        if self.should_preserve_native_decorator_comments(&prop.modifiers)
+            && let Some(name_node) = self.arena.get(prop.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if prop.initializer.is_some()
             && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
@@ -764,6 +607,21 @@ impl<'a> Printer<'a> {
             if name_node.is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME) {
                 if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
                 {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit_class_member_name_preserving_class_expression_name(prop.name);
+                        self.write(" = ");
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_with_tc39_class_expression_name(
+                                prop.initializer,
+                                name,
+                                false,
+                            );
+                        });
+                        self.write_semicolon();
+                        return;
+                    }
                     self.write("[");
                     let name_expr =
                         self.emit_tc39_named_class_computed_property_name(computed.expression);
@@ -839,6 +697,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         if !self.ctx.options.legacy_decorators {
                             self.emit(mod_idx);
@@ -862,6 +723,21 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    pub(in crate::emitter) fn should_preserve_native_decorator_comments(
+        &self,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        self.ctx.options.target == ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     pub(in crate::emitter) fn emit_constructor_declaration(&mut self, node: &Node) {
@@ -1246,21 +1122,7 @@ impl<'a> Printer<'a> {
                             .arena
                             .get_expression_statement(stmt_node)
                             .is_some_and(|expr_stmt| {
-                                self.arena
-                                    .get(expr_stmt.expression)
-                                    .is_some_and(|expr_node| {
-                                        expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                            && self.arena.get_call_expr(expr_node).is_some_and(
-                                                |call| {
-                                                    self.arena.get(call.expression).is_some_and(
-                                                        |callee| {
-                                                            callee.kind
-                                                == tsz_scanner::SyntaxKind::SuperKeyword as u16
-                                                        },
-                                                    )
-                                                },
-                                            )
-                                    })
+                                self.is_constructor_root_super_call(expr_stmt.expression)
                             })
                 })
             })
@@ -1344,6 +1206,27 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn is_constructor_root_super_call(&self, expression: NodeIndex) -> bool {
+        let mut current = expression;
+        while let Some(node) = self.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return false;
+                };
+                current = paren.expression;
+                continue;
+            }
+
+            return node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && self.arena.get_call_expr(node).is_some_and(|call| {
+                    self.arena
+                        .get(call.expression)
+                        .is_some_and(|callee| callee.kind == SyntaxKind::SuperKeyword as u16)
+                });
+        }
+        false
     }
 
     /// Emit parameter property and field initializer assignments (constructor prologue).
@@ -1519,6 +1402,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("get ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
@@ -1550,6 +1438,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("set ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
@@ -1625,14 +1518,21 @@ impl<'a> Printer<'a> {
                 let is_static = self.has_effective_static_modifier_js(&accessor.modifiers);
                 let prev_es5_super_home_depth = self.es5_super_home_function_depth;
                 let prev_es5_super_home_static = self.es5_super_home_is_static;
+                let prev_es5_super_home_object_literal = self.es5_super_home_is_object_literal;
                 self.function_scope_depth += 1;
                 if self.ctx.target_es5 {
                     self.es5_super_home_function_depth = Some(self.function_scope_depth);
                     self.es5_super_home_is_static = is_static;
+                    // See `emit_accessor_body`: ES5 class accessors are lowered
+                    // via the class IR pipeline, so an accessor reaching this
+                    // direct-printer path is an object-literal accessor whose
+                    // `super` home is not prototype-qualified.
+                    self.es5_super_home_is_object_literal = self.class_member_emit_depth == 0;
                 }
                 self.emit_block_with_param_prologue(accessor.body, &transforms);
                 self.es5_super_home_function_depth = prev_es5_super_home_depth;
                 self.es5_super_home_is_static = prev_es5_super_home_static;
+                self.es5_super_home_is_object_literal = prev_es5_super_home_object_literal;
                 self.function_scope_depth -= 1;
             } else {
                 let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
@@ -1662,9 +1562,16 @@ impl<'a> Printer<'a> {
             self.function_scope_depth += 1;
             let prev_es5_super_home_depth = self.es5_super_home_function_depth;
             let prev_es5_super_home_static = self.es5_super_home_is_static;
+            let prev_es5_super_home_object_literal = self.es5_super_home_is_object_literal;
             if self.ctx.target_es5 {
                 self.es5_super_home_function_depth = Some(self.function_scope_depth);
                 self.es5_super_home_is_static = is_static;
+                // At ES5, class accessor bodies are lowered through the class IR
+                // pipeline and never reach this direct-printer path, so any
+                // accessor emitted here is an object-literal accessor. Its
+                // `super` home binds to the literal's `__proto__` and must emit
+                // `_super.X`, not `_super.prototype.X`.
+                self.es5_super_home_is_object_literal = self.class_member_emit_depth == 0;
             }
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
@@ -1678,6 +1585,7 @@ impl<'a> Printer<'a> {
             self.ctx.block_scope_state.exit_scope();
             self.es5_super_home_function_depth = prev_es5_super_home_depth;
             self.es5_super_home_is_static = prev_es5_super_home_static;
+            self.es5_super_home_is_object_literal = prev_es5_super_home_object_literal;
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {

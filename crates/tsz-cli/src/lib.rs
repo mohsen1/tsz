@@ -43,6 +43,9 @@ mod driver_tests_ts2307;
 #[path = "../tests/fs_tests.rs"]
 mod fs_tests;
 #[cfg(test)]
+#[path = "../tests/lib_shadow_cli_tests.rs"]
+mod lib_shadow_cli_tests;
+#[cfg(test)]
 #[path = "../tests/reporter_tests.rs"]
 mod reporter_tests;
 #[cfg(test)]

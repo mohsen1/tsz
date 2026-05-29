@@ -263,11 +263,11 @@ impl<'a> CheckerState<'a> {
                         if aggregate_rest_mismatch {
                             let evaluated_param = self.evaluate_type_with_env(param.type_id);
                             let aggregate_assignable = self
-                                .diagnostic_relation_boolean_guard_with_env(actual, expected)
-                                || self.diagnostic_relation_boolean_guard_with_env(
-                                    actual,
-                                    evaluated_param,
-                                );
+                                .assign_relation_outcome_with_env(actual, expected)
+                                .related
+                                || self
+                                    .assign_relation_outcome_with_env(actual, evaluated_param)
+                                    .related;
                             if aggregate_assignable {
                                 recovered_argument_mismatch = true;
                                 (
@@ -364,7 +364,8 @@ impl<'a> CheckerState<'a> {
                                 })
                                 .unwrap_or(TypeId::UNKNOWN);
                             let fresh_assignable = self
-                                .is_assignable_to_with_env(arg_type, expected_param)
+                                .assign_relation_outcome_with_env(arg_type, expected_param)
+                                .related
                                 || self.is_assignable_via_contextual_signatures(
                                     arg_type,
                                     expected_param,
@@ -400,6 +401,32 @@ impl<'a> CheckerState<'a> {
                                                         index,
                                                         args,
                                                     );
+                                            }
+                                            // When expected_param resolved to a concrete constraint
+                                            // (not a bare type param), check excess properties
+                                            // against it. tsc reports TS2353 for a fresh object
+                                            // literal passed to `T extends C` when it has
+                                            // properties not in C, rather than TS2345 at the arg.
+                                            if !is_type_parameter_type(
+                                                self.ctx.types,
+                                                expected_param,
+                                            ) && !self
+                                                .contextual_type_is_unresolved_for_argument_refresh(
+                                                    expected_param,
+                                                )
+                                            {
+                                                let excess_snap = self.ctx.snapshot_diagnostics();
+                                                self.check_object_literal_excess_properties(
+                                                    arg_type,
+                                                    expected_param,
+                                                    arg_idx,
+                                                );
+                                                if self
+                                                    .ctx
+                                                    .has_speculative_diagnostics(&excess_snap)
+                                                {
+                                                    return true;
+                                                }
                                             }
                                             return false;
                                         }

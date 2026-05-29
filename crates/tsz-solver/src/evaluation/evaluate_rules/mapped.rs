@@ -1,16 +1,17 @@
 //! Mapped type evaluation.
-//!
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
+mod display_order;
 mod key_types;
+mod keyof_constraint;
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving,
     instantiate_type_preserving_with_declared,
 };
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
 use crate::types::{
@@ -25,7 +26,6 @@ use super::super::evaluate::TypeEvaluator;
 
 #[cfg(test)]
 mod mapped_tests;
-
 #[cfg(test)]
 mod tests;
 pub(crate) use key_types::{MappedKey, MappedKeys};
@@ -106,7 +106,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // NOTE: This helper is now only used for index signatures.
         // Direct property modifiers are handled via the memoized map in evaluate_mapped.
         let source_mods = if let Some(source_obj) = source_object {
-            match collect_properties(source_obj, self.interner(), self.resolver()) {
+            match crate::objects::collect_properties_cached(
+                source_obj,
+                self.interner(),
+                self.resolver(),
+                self.query_db(),
+            ) {
                 PropertyCollectionResult::Properties { properties, .. } => properties
                     .iter()
                     .find(|p| p.name == key_name)
@@ -223,7 +228,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = if constraint == TypeId::ANY
+        let mut key_set = if constraint == TypeId::ANY
             && mapped.name_type.is_none()
             && mapped.template == TypeId::NEVER
         {
@@ -343,6 +348,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This avoids repeated O(N) collect_properties calls inside the loop.
         // Also capture resolved_source once to avoid double evaluate(source) calls.
         let mut source_prop_map = FxHashMap::default();
+        let mut source_symbol_prop_names = FxHashMap::default();
         let mut source_decl_order = Vec::new();
         let mut resolved_source_id = None;
         if let Some(source) = source_object {
@@ -353,15 +359,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved_source = self.evaluate(source);
             resolved_source_id = Some(resolved_source);
 
-            // When a homomorphic mapped type has `any` as its source, the normal
-            // key expansion path handles it correctly: `keyof any` = `string | number | symbol`,
-            // which produces an object with string+number index signatures.
-            // This matches tsc's behavior for both `Objectish<any>` and non-identity
-            // homomorphic types like `{ [K in keyof T]: string }` with T=any.
-            //
-            // Previously this returned TypeId::ANY, which was incorrect for the
-            // `Objectish<any>` case and required a checker-local workaround.
-            let source_props = {
+            // Homomorphic `any` sources still expand through the normal key path.
+            let mut source_props = {
                 let ordered = crate::type_queries::collect_homomorphic_source_property_infos(
                     self.interner(),
                     source,
@@ -369,12 +368,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !ordered.is_empty() {
                     ordered
                 } else {
-                    match collect_properties(resolved_source, self.interner(), self.resolver()) {
+                    match crate::objects::collect_properties_cached(
+                        resolved_source,
+                        self.interner(),
+                        self.resolver(),
+                        self.query_db(),
+                    ) {
                         PropertyCollectionResult::Properties { properties, .. } => properties,
                         _ => Vec::new(),
                     }
                 }
             };
+            self.sort_homomorphic_source_properties_for_display(
+                source,
+                resolved_source,
+                &mut source_props,
+            );
+            if mapped.name_type.is_some() {
+                let mut seen_string_keys: FxHashSet<Atom> =
+                    key_set.keys.iter().map(|key| key.name).collect();
+                let mut seen_symbol_keys: FxHashSet<TypeId> =
+                    key_set.symbol_keys.iter().copied().collect();
+                for prop in &source_props {
+                    if prop.is_symbol_named {
+                        if let Some(sym_ref) =
+                            self.unique_symbol_ref_from_symbol_named_atom(prop.name)
+                        {
+                            source_symbol_prop_names.insert(sym_ref, prop.name);
+                            let symbol_key = self.interner().unique_symbol(sym_ref);
+                            if seen_symbol_keys.insert(symbol_key) {
+                                key_set.symbol_keys.push(symbol_key);
+                            }
+                        }
+                    } else {
+                        let mapped_key = self.mapped_key_from_property(prop);
+                        if seen_string_keys.insert(mapped_key.name) {
+                            key_set.keys.push(mapped_key);
+                        }
+                    }
+                }
+            }
             source_prop_map.reserve(source_props.len());
             source_decl_order.reserve(source_props.len());
             for prop in source_props {
@@ -393,13 +426,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        // For homomorphic mapped types, capture the source object's property declaration
-        // order. tsc preserves declaration order in mapped type results (e.g., Required<Foo>
-        // lists properties in the same order as Foo). Our key extraction sorts by Atom ID
-        // which can differ from declaration order. We fix this by re-sorting the output
-        // properties to match the source's declaration order. For array sources, the
-        // helper above instantiates the registered `Array<T>` base type so remapped
-        // object displays preserve lib.d.ts member order.
+        // Non-homomorphic mapped types do not inherit source declaration order.
         if !is_homomorphic {
             source_decl_order.clear();
         }
@@ -671,9 +698,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             else {
                 continue;
             };
-            let source_atom = self
-                .interner()
-                .intern_string(&format!("__unique_{}", source_sym_ref.0));
+            let source_atom = source_symbol_prop_names
+                .get(&source_sym_ref)
+                .copied()
+                .unwrap_or_else(|| {
+                    self.interner()
+                        .intern_string(&format!("__unique_{}", source_sym_ref.0))
+                });
             let source_info = source_prop_map.get(&source_atom);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
@@ -753,16 +784,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        // For homomorphic mapped types, restore source declaration order.
-        // The key extraction and dedup may have reordered properties.
-        if !source_decl_order.is_empty() {
-            let order_map: FxHashMap<Atom, usize> = source_decl_order
-                .iter()
-                .enumerate()
-                .map(|(i, &name)| (name, i))
-                .collect();
-            properties.sort_by_key(|p| order_map.get(&p.name).copied().unwrap_or(usize::MAX));
-        }
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
+
+        self.sort_mapped_properties_for_display(
+            source_object,
+            resolved_source_id,
+            &source_decl_order,
+            &mut properties,
+        );
 
         let empty_atom = self.interner().intern_string("");
 
@@ -973,6 +1002,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
         }
+
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
 
         Some(self.interner().object(properties))
     }
@@ -1239,117 +1270,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Evaluate a keyof or constraint type for mapped type iteration.
-    ///
-    /// Wrapped with `stacker::maybe_grow()` to handle deeply nested union/intersection
-    /// constraint chains without overflowing the default thread stack.
-    ///
-    /// All intermediate types in the evaluation chain remain entered in the
-    /// `keyof_constraint_guard` until the chain terminates. This ensures that
-    /// a cycle like `Lazy(A) → Lazy(B) → Lazy(A)` is detected when `A` is
-    /// re-entered while it is still in the guard's visited set. The depth cap
-    /// (`TypeEvaluation` profile: depth 100) also limits the chain length.
-    fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
-        let mut current = constraint;
-        let mut entered: Vec<TypeId> = Vec::new();
-
-        let result = loop {
-            match self.keyof_constraint_guard.enter(current) {
-                crate::recursion::RecursionResult::Entered => {
-                    entered.push(current);
-                }
-                _ => break current,
-            }
-
-            let step = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-                self.evaluate_keyof_or_constraint_inner(current)
-            });
-
-            if step != current
-                && matches!(
-                    self.interner().lookup(step),
-                    Some(
-                        TypeData::Union(_)
-                            | TypeData::Intersection(_)
-                            | TypeData::KeyOf(_)
-                            | TypeData::Conditional(_)
-                            | TypeData::Lazy(_)
-                            | TypeData::Application(_)
-                    )
-                )
-            {
-                current = step;
-                continue;
-            }
-            break step;
-        };
-
-        for &id in entered.iter().rev() {
-            self.keyof_constraint_guard.leave(id);
-        }
-        result
-    }
-
-    fn evaluate_keyof_or_constraint_inner(&mut self, constraint: TypeId) -> TypeId {
-        // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
-        let members = match self.interner().lookup(constraint) {
-            Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner().get_conditional(cond_id);
-                return self.evaluate_conditional(&cond);
-            }
-            Some(TypeData::Literal(LiteralValue::String(_))) => {
-                return constraint;
-            }
-            Some(TypeData::KeyOf(operand)) => {
-                return self.evaluate_keyof(operand);
-            }
-            Some(TypeData::Union(members)) => Some(members),
-            _ => None,
-        };
-
-        // Union: recursively evaluate each member. This handles the distributed form
-        // where `(keyof T & keyof U)` after T is inferred becomes
-        // `Union(Intersection("x", keyof U), Intersection("y", keyof U))` due to
-        // the interner's intersection-over-union distribution. Each Union member
-        // (which may be an Intersection) gets recursively simplified.
-        if let Some(members) = members {
-            let member_list = self.interner().type_list(members);
-            let mut evaluated_members = Vec::with_capacity(member_list.len());
-            let mut any_changed = false;
-            for &member in member_list.iter() {
-                let evaluated = self.evaluate_keyof_or_constraint(member);
-                if evaluated != member {
-                    any_changed = true;
-                }
-                evaluated_members.push(evaluated);
-            }
-            if any_changed {
-                return self.interner().union(evaluated_members);
-            }
-            return constraint;
-        }
-
-        // Intersection: evaluate each member to get its key set, then compute
-        // their intersection. Handles both pre-distribution `keyof T & keyof U`
-        // and post-distribution `"x" & keyof U` forms.
-        if let Some(TypeData::Intersection(members)) = self.interner().lookup(constraint) {
-            let member_list = self.interner().type_list(members);
-            let mut key_sets = Vec::with_capacity(member_list.len());
-            for &member in member_list.iter() {
-                key_sets.push(self.evaluate_keyof_or_constraint(member));
-            }
-            if let Some(result) = self.intersect_keyof_sets(&key_sets) {
-                return result;
-            }
-            // If intersection computation failed, fall through to general evaluation
-        }
-
-        // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
-        // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
-        // constraint that must be evaluated to get the concrete union `"a" | "b"`.
-        self.evaluate(constraint)
-    }
-
     /// Build a `MappedKey` from a literal `TypeId`. Returns `None` if the
     /// type is not a single string or numeric literal.
     fn mapped_key_from_literal(&self, type_id: TypeId) -> Option<MappedKey> {
@@ -1458,7 +1378,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 // NORTH STAR: Use collect_properties to extract keys from KeyOf operand.
                 // This handles interfaces, classes, intersections, and type parameters.
-                let prop_result = collect_properties(operand, self.interner(), self.resolver());
+                let prop_result = crate::objects::collect_properties_cached(
+                    operand,
+                    self.interner(),
+                    self.resolver(),
+                    self.query_db(),
+                );
                 tracing::trace!(
                     operand = operand.0,
                     prop_result = ?std::mem::discriminant(&prop_result),
@@ -1494,8 +1419,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Application). Evaluate it first, then retry collect_properties.
                         let evaluated = self.evaluate(operand);
                         if evaluated != operand {
-                            let retry_result =
-                                collect_properties(evaluated, self.interner(), self.resolver());
+                            let retry_result = crate::objects::collect_properties_cached(
+                                evaluated,
+                                self.interner(),
+                                self.resolver(),
+                                self.query_db(),
+                            );
                             match retry_result {
                                 PropertyCollectionResult::Properties {
                                     properties,
@@ -1561,8 +1490,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                if let Some(db) = self.query_db() {
+                    checker = checker.with_query_db(db);
+                }
 
-                match collect_properties(object_type, self.interner(), self.resolver()) {
+                match crate::objects::collect_properties_cached(
+                    object_type,
+                    self.interner(),
+                    self.resolver(),
+                    self.query_db(),
+                ) {
                     PropertyCollectionResult::Properties {
                         properties,
                         string_index,

@@ -2,22 +2,12 @@ use super::super::Printer;
 use super::system_legacy_class_decorators::split_system_class_static_tail;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
+use crate::transforms::ClassES5Emitter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-
-fn push_system_reexport_name(
-    reexported_name_lists: &mut FxHashMap<String, Vec<String>>,
-    local_name: String,
-    export_name: String,
-) {
-    let names = reexported_name_lists.entry(local_name).or_default();
-    if !names.contains(&export_name) {
-        names.push(export_name);
-    }
-}
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_system_setters(
@@ -35,61 +25,72 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
         for (idx, dep) in dependencies.iter().enumerate() {
-            let Some(dep_var) = dep_vars.get(dep) else {
+            let actions = system_plan.actions.get(dep);
+            let dep_var = actions.and_then(|_| dep_vars.get(dep));
+            if actions.is_some() && dep_var.is_none() {
                 continue;
-            };
-            let Some(actions) = system_plan.actions.get(dep) else {
-                continue;
-            };
+            }
             self.write("function (");
-            self.write(dep_var);
-            self.write("_1) {");
+            if let Some(dep_var) = dep_var {
+                self.write(dep_var);
+                self.write("_1");
+            } else {
+                self.write("_1");
+            }
+            self.write(") {");
             self.write_line();
             self.increase_indent();
-            for action in actions {
-                match action {
-                    SystemDependencyAction::Assign(local_name) => {
-                        self.write(local_name);
-                        self.write(" = ");
-                        self.write(dep_var);
-                        self.write("_1;");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::ExportStar => {
-                        self.write("exportStar_1(");
-                        self.write(dep_var);
-                        self.write("_1);");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::NamedExports(exports) => {
-                        self.write("exports_1({");
-                        self.write_line();
-                        self.increase_indent();
-                        for (export_idx, (export_name, import_name)) in exports.iter().enumerate() {
-                            self.write("\"");
-                            self.write(export_name);
-                            self.write("\": ");
-                            let setter_arg = format!("{dep_var}_1");
-                            self.write(&setter_arg);
-                            self.write("[\"");
-                            self.write(import_name);
-                            self.write("\"]");
-                            if export_idx + 1 != exports.len() {
-                                self.write(",");
-                            }
+            if let Some(actions) = actions {
+                let Some(dep_var) = dep_var else {
+                    continue;
+                };
+                for action in actions {
+                    match action {
+                        SystemDependencyAction::Assign(local_name) => {
+                            self.write(local_name);
+                            self.write(" = ");
+                            self.write(dep_var);
+                            self.write("_1;");
                             self.write_line();
                         }
-                        self.decrease_indent();
-                        self.write("});");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::NamespaceExport(export_name) => {
-                        self.write("exports_1(\"");
-                        self.write(export_name);
-                        self.write("\", ");
-                        self.write(dep_var);
-                        self.write("_1);");
-                        self.write_line();
+                        SystemDependencyAction::ExportStar => {
+                            self.write("exportStar_1(");
+                            self.write(dep_var);
+                            self.write("_1);");
+                            self.write_line();
+                        }
+                        SystemDependencyAction::NamedExports(exports) => {
+                            self.write("exports_1({");
+                            self.write_line();
+                            self.increase_indent();
+                            for (export_idx, (export_name, import_name)) in
+                                exports.iter().enumerate()
+                            {
+                                self.write("\"");
+                                self.write(export_name);
+                                self.write("\": ");
+                                let setter_arg = format!("{dep_var}_1");
+                                self.write(&setter_arg);
+                                self.write("[\"");
+                                self.write(import_name);
+                                self.write("\"]");
+                                if export_idx + 1 != exports.len() {
+                                    self.write(",");
+                                }
+                                self.write_line();
+                            }
+                            self.decrease_indent();
+                            self.write("});");
+                            self.write_line();
+                        }
+                        SystemDependencyAction::NamespaceExport(export_name) => {
+                            self.write("exports_1(\"");
+                            self.write(export_name);
+                            self.write("\", ");
+                            self.write(dep_var);
+                            self.write("_1);");
+                            self.write_line();
+                        }
                     }
                 }
             }
@@ -169,49 +170,6 @@ impl<'a> Printer<'a> {
         self.write_line();
     }
 
-    fn collect_system_export_star_excluded_names(
-        &self,
-        source: &tsz_parser::parser::node::SourceFileData,
-    ) -> (Vec<String>, bool) {
-        let type_only_nodes = rustc_hash::FxHashSet::default();
-        let mut names = crate::transforms::module_commonjs::collect_export_names_with_options(
-            self.arena,
-            &source.statements.nodes,
-            self.ctx.options.preserve_const_enums,
-            &type_only_nodes,
-        );
-        let has_explicit_export_name = !names.is_empty();
-        names.retain(|name| name != "default");
-        let needs_empty_map = has_explicit_export_name
-            || self.source_has_system_hoisted_default_function_export(source);
-        (names, needs_empty_map)
-    }
-
-    fn source_has_system_hoisted_default_function_export(
-        &self,
-        source: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        source.statements.nodes.iter().any(|&stmt_idx| {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                return false;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                return false;
-            }
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                return false;
-            };
-            if !export_decl.is_default_export {
-                return false;
-            }
-            self.arena
-                .get(export_decl.export_clause)
-                .is_some_and(|clause_node| {
-                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                })
-        })
-    }
-
     pub(super) fn register_system_import_substitutions(
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
@@ -274,7 +232,7 @@ impl<'a> Printer<'a> {
 
             if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 let local_name = self.get_identifier_text_idx(named_imports.name);
-                if !local_name.is_empty() {
+                if !local_name.is_empty() && clause.name.is_none() {
                     self.commonjs_named_import_substitutions
                         .insert(local_name, dep_var.clone());
                 }
@@ -342,81 +300,7 @@ impl<'a> Printer<'a> {
         }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
-        let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
-        let mut reexported_name_lists: FxHashMap<String, Vec<String>> = FxHashMap::default();
-        for &stmt_idx in &source.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                && let Some(var_stmt) = self.arena.get_variable(stmt_node)
-                && self
-                    .arena
-                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-            {
-                for name in self.collect_variable_names(&var_stmt.declarations) {
-                    if !name.is_empty() {
-                        reexported_names
-                            .entry(name.clone())
-                            .or_insert_with(|| name.clone());
-                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
-                    }
-                }
-                continue;
-            }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if export_decl.module_specifier.is_some() || export_decl.is_default_export {
-                continue;
-            }
-            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
-                continue;
-            };
-            if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                && let Some(var_stmt) = self.arena.get_variable(clause_node)
-            {
-                for name in self.collect_variable_names(&var_stmt.declarations) {
-                    if !name.is_empty() {
-                        reexported_names
-                            .entry(name.clone())
-                            .or_insert_with(|| name.clone());
-                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
-                    }
-                }
-                continue;
-            }
-            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-                continue;
-            }
-            let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
-                continue;
-            };
-            for &spec_idx in &named_exports.elements.nodes {
-                if let Some(spec) = self.arena.get_specifier_at(spec_idx) {
-                    let local_name = if spec.property_name.is_some() {
-                        self.get_specifier_name_text(spec.property_name)
-                    } else {
-                        self.get_specifier_name_text(spec.name)
-                    }
-                    .unwrap_or_default();
-                    let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
-                    if !local_name.is_empty() && !export_name.is_empty() {
-                        reexported_names.insert(local_name.clone(), export_name.clone());
-                        push_system_reexport_name(
-                            &mut reexported_name_lists,
-                            local_name,
-                            export_name,
-                        );
-                    }
-                }
-            }
-        }
-        self.system_reexported_names = reexported_names;
-        self.system_reexported_name_lists = reexported_name_lists;
+        self.install_system_local_export_bindings(source);
         self.system_folded_export_names.clear();
 
         if let Some(first_using_idx) = source.statements.nodes.iter().position(|&stmt_idx| {
@@ -452,6 +336,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.emit_system_import_binding_exports(source, system_plan);
 
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
@@ -508,6 +393,9 @@ impl<'a> Printer<'a> {
                 && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                 && export_decl.module_specifier.is_some()
             {
+                continue;
+            }
+            if self.is_erased_statement(stmt_node) {
                 continue;
             }
             let before_len = self.writer.len();
@@ -919,6 +807,55 @@ impl<'a> Printer<'a> {
                                 .and_then(|class| self.get_identifier_text_opt(class.name))
                         };
                         if let Some(export_name) = export_name {
+                            // When a legacy-decorated ES5 class with value-position self-references
+                            // is inside a System module's top-level `using` try block, tsc uses the
+                            // outer-alias pattern (C_1) and emits two separate exports_1 calls:
+                            //   exports_1("C", C = C_1 = /** @class */ (...));
+                            //   exports_1("C", C = C_1 = __decorate([dec], C_1));
+                            // The generic emit_top_level_using_class_assignment path uses the
+                            // inline-alias pattern instead, producing a structural mismatch.
+                            if !export.is_default_export
+                                && self.ctx.options.legacy_decorators
+                                && self.ctx.target_es5
+                                && self.in_top_level_using_scope
+                                && !self.in_system_top_level_using_prelude
+                            {
+                                let class_data =
+                                    self.arena.get_class(clause_node).map(|class_decl| {
+                                        let decorators =
+                                            self.collect_class_decorators(&class_decl.modifiers);
+                                        let class_name =
+                                            self.get_identifier_text_idx(class_decl.name);
+                                        let members: Vec<NodeIndex> =
+                                            class_decl.members.nodes.clone();
+                                        (class_name, decorators, members)
+                                    });
+                                if let Some((class_name, decorators, members)) = class_data {
+                                    let has_decorators = !decorators.is_empty()
+                                        || !self
+                                            .collect_constructor_param_decorators(&members)
+                                            .is_empty();
+                                    if has_decorators {
+                                        let alias_name = self.system_legacy_decorated_class_alias(
+                                            export.export_clause,
+                                            &class_name,
+                                            &members,
+                                        );
+                                        if alias_name.is_some() {
+                                            self.emit_system_using_legacy_decorated_es5_class_export(
+                                                clause_node,
+                                                export.export_clause,
+                                                &export_name,
+                                                &class_name,
+                                                &decorators,
+                                                &members,
+                                                alias_name.as_deref(),
+                                            );
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
                             self.emit_top_level_using_class_assignment(
                                 clause_node,
                                 export.export_clause,
@@ -980,6 +917,75 @@ impl<'a> Printer<'a> {
                 true
             }
         }
+    }
+
+    /// Emit a legacy-decorated ES5 class with value-position self-references inside
+    /// a System module's top-level `using` try block, using the outer-alias pattern:
+    ///
+    /// ```text
+    /// exports_1("C", C = C_1 = /** @class */ (function () { … return C; }()));
+    /// exports_1("C", C = C_1 = __decorate([dec], C_1));
+    /// ```
+    ///
+    /// The outer-alias pattern (`C_1`) is what `tsc` produces. The generic
+    /// `emit_top_level_using_class_assignment` path would instead use the inline
+    /// self-capture pattern (`C_2 = C; var C_2;` inside the IIFE), which diverges.
+    fn emit_system_using_legacy_decorated_es5_class_export(
+        &mut self,
+        _class_node: &tsz_parser::parser::node::Node,
+        class_idx: NodeIndex,
+        export_name: &str,
+        class_name: &str,
+        decorators: &[NodeIndex],
+        members: &[NodeIndex],
+        alias_name: Option<&str>,
+    ) {
+        // Build an ES5 class emitter WITHOUT decorator info so that __decorate
+        // is NOT inlined into the IIFE body. The outer-alias pattern that tsc
+        // produces requires two separate export calls:
+        //   exports_1("C", C = C_1 = /** @class */ (function () { … }()));
+        //   exports_1("C", C = C_1 = __decorate([dec], C_1));
+        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+        es5_emitter.set_indent_level(self.writer.indent_level());
+        es5_emitter.set_transforms(self.transforms.clone());
+        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+        if let Some(text) = self.source_text_for_map() {
+            es5_emitter.set_source_text(text);
+        }
+        if let Some(alias) = alias_name {
+            es5_emitter.set_class_self_reference_alias(alias.to_string());
+        }
+
+        let (iife_expr, _computed_decls, _computed_inits) =
+            es5_emitter.emit_class_as_iife_expr(class_idx, class_name);
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
+
+        self.write("exports_1(\"");
+        self.write(export_name);
+        self.write("\", ");
+        self.write(class_name);
+        self.write(" = ");
+        if let Some(alias) = alias_name {
+            self.write(alias);
+            self.write(" = ");
+        }
+        self.write(&iife_expr);
+        self.write(");");
+        self.write_line();
+        self.emit_system_legacy_class_decorator_export(
+            export_name,
+            class_name,
+            decorators,
+            members,
+            alias_name,
+        );
     }
 
     fn emit_system_top_level_using_variable_statement(
@@ -1383,6 +1389,12 @@ impl<'a> Printer<'a> {
         if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_decl) = self.arena.get_class(clause_node)
         {
+            if self
+                .arena
+                .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                return true;
+            }
             let class_name = self.get_identifier_text_idx(class_decl.name);
             if class_name.is_empty() {
                 return false;
@@ -1442,6 +1454,34 @@ impl<'a> Printer<'a> {
                 );
                 if !deferred.is_empty() {
                     self.emit_static_block_iifes(deferred);
+                }
+                return true;
+            }
+
+            if !self.ctx.target_es5 {
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &class_name,
+                    None,
+                );
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"");
+                self.write(&class_name);
+                self.write("\", ");
+                self.write(&class_name);
+                self.write(");");
+                if !static_tail.trim().is_empty() {
+                    self.write_line();
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
                 }
                 return true;
             }
@@ -1535,6 +1575,9 @@ impl<'a> Printer<'a> {
                 {
                     subst.clone()
                 } else {
+                    if self.system_local_var_export_has_initializer(&local_name) == Some(false) {
+                        continue;
+                    }
                     local_name
                 };
                 if emitted_any {
@@ -1551,6 +1594,46 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+
+    fn system_local_var_export_has_initializer(&self, local_name: &str) -> Option<bool> {
+        let mut found_uninitialized = false;
+        for stmt_idx in self.scope_statements_for_runtime_lookup(None) {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    if names.iter().any(|name| name == local_name) {
+                        if decl.initializer.is_some() {
+                            return Some(true);
+                        }
+                        found_uninitialized = true;
+                    }
+                }
+            }
+        }
+        found_uninitialized.then_some(false)
     }
 
     fn emit_system_enum_with_export_fold(
@@ -1588,19 +1671,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn system_export_names_for_local(&self, local_name: &str) -> Vec<String> {
-        if let Some(export_names) = self.system_reexported_name_lists.get(local_name)
-            && !export_names.is_empty()
-        {
-            return export_names.clone();
-        }
-        self.system_reexported_names
-            .get(local_name)
-            .cloned()
-            .map(|export_name| vec![export_name])
-            .unwrap_or_default()
-    }
-
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
         if specifier.is_none() {
             return None;
@@ -1621,6 +1691,12 @@ impl<'a> Printer<'a> {
             self.emit(idx);
             return;
         };
+        if self
+            .arena
+            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return;
+        }
         let class_name = self.get_identifier_text_idx(class_decl.name);
         if class_name.is_empty() {
             self.emit(idx);
@@ -1905,7 +1981,11 @@ impl<'a> Printer<'a> {
             }
             self.write(name);
             self.write(" = ");
-            self.write(source_name);
+            if source_name.is_empty() && name_paths.len() == 1 {
+                self.emit_expression(decl.initializer);
+            } else {
+                self.write(source_name);
+            }
             self.write(path);
             if is_exported {
                 self.write(")");

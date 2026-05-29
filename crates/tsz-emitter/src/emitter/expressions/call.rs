@@ -45,6 +45,32 @@ impl<'a> Printer<'a> {
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
                 if self.scoped_static_super_direct_access {
+                    if self.has_optional_call_token(node, call.expression, call.arguments.as_ref())
+                    {
+                        let func_temp = self.make_unique_name_hoisted();
+                        self.write("(");
+                        self.write(&func_temp);
+                        self.write(" = ");
+                        self.write(&base_alias);
+                        self.write(".");
+                        self.emit_property_name_without_import_substitution(
+                            access.name_or_argument,
+                        );
+                        self.write(") === null || ");
+                        self.write(&func_temp);
+                        self.write(" === void 0 ? void 0 : ");
+                        self.write(&func_temp);
+                        self.write(".call(");
+                        self.emit_scoped_static_super_receiver();
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
                     self.write(&base_alias);
                     self.write(".");
                     self.emit_property_name_without_import_substitution(access.name_or_argument);
@@ -149,6 +175,12 @@ impl<'a> Printer<'a> {
 
             let has_optional_call_token =
                 self.has_optional_call_token(node, call.expression, call.arguments.as_ref());
+            if has_optional_call_token
+                && self
+                    .emit_optional_private_field_call_expression(call.expression, &call.arguments)
+            {
+                return;
+            }
             if let Some(call_expr) = self.arena.get(call.expression)
                 && (call_expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || call_expr.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
@@ -199,10 +231,14 @@ impl<'a> Printer<'a> {
                 self.write_helper("__classPrivateFieldGet");
                 self.write("(");
                 if let Some(temp) = receiver_temp_str {
+                    self.write("(");
                     self.write(temp);
                     self.write(" = ");
+                    self.emit_private_receiver(expression, &clean_name);
+                    self.write(")");
+                } else {
+                    self.emit_private_receiver(expression, &clean_name);
                 }
-                self.emit_private_receiver(expression, &clean_name);
                 self.write(", ");
                 if let Some(info) = self.private_member_info.get(&clean_name).cloned() {
                     if let Some(ref state_var) = info.state_var {

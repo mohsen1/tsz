@@ -16,11 +16,13 @@ pub(crate) use tsz_solver::type_queries::{
 /// the provided `TypeResolver` to resolve lazy references. This delegates to
 /// `TypeEvaluator::with_resolver` + `evaluate` in a single call.
 pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator =
+        tsz_solver::computation::TypeEvaluator::with_resolver(db.as_type_database(), resolver)
+            .with_query_db(db);
     evaluator.evaluate(type_id)
 }
 
@@ -376,8 +378,12 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
     seed: impl Iterator<Item = (TypeId, TypeId)>,
     has_seed: bool,
     expand_application_display_alias_args: bool,
+    query_db: Option<&dyn QueryDatabase>,
 ) -> EvalWithCacheResult {
     let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
+    if let Some(query_db) = query_db {
+        evaluator = evaluator.with_query_db(query_db);
+    }
     if expand_application_display_alias_args {
         evaluator = evaluator.with_expanded_application_display_alias_args();
     }

@@ -14,6 +14,8 @@ mod property_names;
 // `cargo test --release`. Gate the module on `debug_assertions` so the
 // release-mode test build doesn't try to run (or compile) tests that have
 // nothing to capture.
+#[cfg(test)]
+mod keyof_alias_display_tests;
 #[cfg(all(test, debug_assertions))]
 pub mod test_tracing;
 #[cfg(test)]
@@ -107,6 +109,11 @@ pub struct TypeFormatter<'a> {
     /// should show structural inputs instead of chasing nested application
     /// display aliases.
     skip_application_display_alias_chase: bool,
+    /// Internal guard used while formatting generic application arguments.
+    /// In that context, tsc preserves indexed-access alias spelling such as
+    /// `Partial<T>[keyof T]` instead of simplifying the nested access to
+    /// `T[keyof T] | undefined`.
+    preserve_application_arg_index_alias_surface: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -170,6 +177,25 @@ impl<'a> TypeFormatter<'a> {
             && members.contains(&TypeId::STRING)
             && members.contains(&TypeId::NUMBER)
             && members.contains(&TypeId::SYMBOL)
+    }
+
+    /// True when `key` is a `Union` whose members are all unit types: literal
+    /// values, enum members, or unique symbols. Such a union is exactly what a
+    /// user can spell directly as an annotation (`"a" | "b"`, `0 | 1`), so it
+    /// must be rendered by its members rather than redirected to a shared
+    /// `keyof X` display alias that would repaint unrelated annotations.
+    fn union_is_all_unit_literals(&self, key: &TypeData) -> bool {
+        let TypeData::Union(list_id) = key else {
+            return false;
+        };
+        let members = self.interner.type_list(*list_id);
+        !members.is_empty()
+            && members.iter().all(|&m| {
+                matches!(
+                    self.interner.lookup(m),
+                    Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_))
+                )
+            })
     }
 
     fn scalar_mapped_alias_application_display(
@@ -276,6 +302,25 @@ impl<'a> TypeFormatter<'a> {
     ) -> Option<String> {
         let mapped_id = match self.interner.lookup(obj) {
             Some(TypeData::Mapped(id)) => id,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+                    return None;
+                };
+                let def_store = self.def_store?;
+                let def = def_store.get(def_id)?;
+                let body = def.body?;
+                let instantiated = crate::computation::instantiate_generic(
+                    self.interner,
+                    body,
+                    &def.type_params,
+                    &app.args,
+                );
+                match self.interner.lookup(instantiated) {
+                    Some(TypeData::Mapped(id)) => id,
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         let mapped = self.interner.mapped_type(mapped_id);
@@ -358,6 +403,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -592,6 +638,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -1294,27 +1341,38 @@ impl<'a> TypeFormatter<'a> {
             // operand has a named definition (interface/class/alias) so that
             // anonymous keyof (`keyof { a: string }`) still shows the expanded
             // union form, matching tsc behavior.
-            let use_keyof_alias =
-                if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin) {
-                    self.def_store.is_some_and(|ds| {
-                        ds.find_def_for_type(keyof_operand).is_some()
-                            || matches!(
-                                self.interner.lookup(keyof_operand),
-                                Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
-                            )
-                            || self.interner.get_display_alias(keyof_operand).is_some_and(
-                                |operand_alias| {
-                                    ds.find_def_for_type(operand_alias).is_some()
-                                        || matches!(
-                                            self.interner.lookup(operand_alias),
-                                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
-                                        )
-                                },
-                            )
-                    })
-                } else {
-                    false
-                };
+            let use_keyof_alias = if self.union_is_all_unit_literals(&key) {
+                // A bare union of unit literals (`"a" | "b"`, `0 | 1`, enum
+                // members, unique symbols) is indistinguishable from a
+                // user-written union annotation: the same structural type is
+                // interned once and shared. tsc only spells `keyof X` for an
+                // index type — which tsz preserves as a `KeyOf` node (handled
+                // by the `KeyOf` arm above) — and always renders a bare union
+                // by its members. Following a global `union -> keyof X`
+                // display alias here would repaint unrelated user-written
+                // literal-union annotations, so never do it for this shape.
+                false
+            } else if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin)
+            {
+                self.def_store.is_some_and(|ds| {
+                    ds.find_def_for_type(keyof_operand).is_some()
+                        || matches!(
+                            self.interner.lookup(keyof_operand),
+                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                        )
+                        || self.interner.get_display_alias(keyof_operand).is_some_and(
+                            |operand_alias| {
+                                ds.find_def_for_type(operand_alias).is_some()
+                                    || matches!(
+                                        self.interner.lookup(operand_alias),
+                                        Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                                    )
+                            },
+                        )
+                })
+            } else {
+                false
+            };
 
             // Application aliases: for Union types that expanded from a generic type alias
             // (e.g., `IteratorResult<T>` → `IteratorYieldResult<T> | IteratorReturnResult<TReturn>`),

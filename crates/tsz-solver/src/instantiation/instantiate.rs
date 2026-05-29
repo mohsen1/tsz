@@ -14,8 +14,8 @@ use crate::construction::TypeDatabase;
 use crate::types::*;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, IntrinsicKind,
-    LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo, TypePredicate,
+    LiteralValue, MappedType, ObjectShape, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    TypeParamInfo, TypePredicate,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -405,33 +405,6 @@ impl<'a> TypeInstantiator<'a> {
                     _ => false,
                 }
             })
-    }
-
-    /// Instantiate a slice of properties by substituting type IDs.
-    fn instantiate_properties_if_changed(
-        &mut self,
-        properties: &[PropertyInfo],
-    ) -> Option<Vec<PropertyInfo>> {
-        let mut instantiated: Option<Vec<PropertyInfo>> = None;
-        for (index, property) in properties.iter().enumerate() {
-            let type_id = self.instantiate(property.type_id);
-            let write_type = self.instantiate(property.write_type);
-            if let Some(instantiated) = &mut instantiated {
-                let mut property = property.clone();
-                property.type_id = type_id;
-                property.write_type = write_type;
-                instantiated.push(property);
-            } else if type_id != property.type_id || write_type != property.write_type {
-                let mut changed = Vec::with_capacity(properties.len());
-                changed.extend_from_slice(&properties[..index]);
-                let mut property = property.clone();
-                property.type_id = type_id;
-                property.write_type = write_type;
-                changed.push(property);
-                instantiated = Some(changed);
-            }
-        }
-        instantiated
     }
 
     /// Instantiate an optional index signature.
@@ -952,8 +925,13 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(instantiated) =
                     self.instantiate_properties_if_changed(&shape.properties)
                 {
-                    self.interner
-                        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                    let result = self.interner.object_with_flags_and_symbol(
+                        instantiated,
+                        shape.flags,
+                        shape.symbol,
+                    );
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
@@ -979,13 +957,15 @@ impl<'a> TypeInstantiator<'a> {
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
                 {
-                    self.interner.object_with_index(ObjectShape {
+                    let result = self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
                         symbol: shape.symbol,
-                    })
+                    });
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
@@ -1311,12 +1291,8 @@ impl<'a> TypeInstantiator<'a> {
                 let tp_slice = std::slice::from_ref(&mapped.type_param);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
 
-                // HOMOMORPHIC ARRAY/TUPLE: Check if this is `{ [K in keyof T]: Template }`
-                // where T is being substituted with an array-like type. If so, produce
-                // an array result directly, matching tsc's instantiateMappedArrayType.
-                // This must be done BEFORE standard instantiation because instantiating
-                // `keyof T` eagerly evaluates it to a flat union, losing the homomorphic
-                // structure needed for array/tuple preservation.
+                // Homomorphic array/tuple handling must run before standard
+                // instantiation collapses `keyof T` to a flat union.
                 let has_identity_name_type = mapped.name_type.is_some_and(|name_type| {
                     matches!(
                         self.interner.lookup(name_type),
@@ -1445,15 +1421,12 @@ impl<'a> TypeInstantiator<'a> {
                         self.interner.lookup(mapped.constraint)
                     && let Some(TypeData::TypeParameter(tp_info)) =
                         self.interner.lookup(keyof_source)
-                    && Self::mapped_template_uses_source_index(
-                        self.interner,
-                        mapped.template,
-                        keyof_source,
-                        mapped.type_param.name,
-                    )
                     && !self.is_shadowed(tp_info.name)
                     && let Some(substituted) = self.substitution.get(tp_info.name)
                 {
+                    let template_uses_source_index = Self::mapped_template_uses_source_index(
+                        self.interner, mapped.template, keyof_source, mapped.type_param.name,
+                    );
                     let resolved =
                         crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
 
@@ -1624,16 +1597,19 @@ impl<'a> TypeInstantiator<'a> {
                         };
                     }
 
-                    // PRIMITIVE PASSTHROUGH: tsc's instantiateMappedType returns the
-                    // source type unchanged when it is a primitive (null, undefined,
-                    // string, number, boolean, etc.). This matches the evaluate_application
-                    // passthrough but also covers mapped types that appear nested inside
-                    // unions or other compound types (not just at the top level of a type
-                    // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
-                    // a union evaluates to `{}` instead of `null`.
-                    if Self::is_primitive_or_primitive_union(self.interner, resolved) {
+                    // Primitive homomorphic sources pass through unchanged.
+                    if template_uses_source_index && Self::is_primitive_or_primitive_union(self.interner, resolved) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return resolved;
+                    }
+
+                    if let Some(result) = self.try_expand_substituted_homomorphic_object_mapped(
+                        &mapped,
+                        resolved,
+                        has_identity_name_type,
+                    ) {
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return result;
                     }
                 }
 
@@ -1984,6 +1960,7 @@ impl<'a> TypeInstantiator<'a> {
 
 mod api;
 mod display_properties;
+mod homomorphic;
 
 pub use self::api::*;
 use self::api::{

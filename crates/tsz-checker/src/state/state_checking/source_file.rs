@@ -383,7 +383,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut seen_dts_ambient_violation = false;
+        let statement_timing_enabled = tsz_common::perf_counters::enabled_fast();
         for &stmt_idx in &sf.statements.nodes {
+            let stmt_timing_start = statement_timing_enabled.then(web_time::Instant::now);
+            let stmt_timing_node = self
+                .ctx
+                .arena
+                .get(stmt_idx)
+                .map(|node| (node.kind, node.pos, node.end));
             if !is_dts
                 && !suppress_grammar
                 && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
@@ -404,6 +411,15 @@ impl<'a> CheckerState<'a> {
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {
                 self.ctx.is_unreachable = true;
+            }
+            if let (Some(start), Some((kind, pos, end))) = (stmt_timing_start, stmt_timing_node) {
+                tsz_common::perf_counters::record_slow_check_statement_timing(
+                    &sf.file_name,
+                    kind,
+                    pos,
+                    end,
+                    start.elapsed().as_nanos() as u64,
+                );
             }
         }
         self.ctx.is_unreachable = prev_unreachable;
@@ -644,7 +660,6 @@ impl<'a> CheckerState<'a> {
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
-        self.rewrite_audit_followup_conformance_fingerprints(&sf.text);
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1067,54 +1082,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn rewrite_audit_followup_conformance_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if source_text.contains("interface Comparable<T>")
-            && source_text.contains("class A<T> implements Comparable<T>")
-        {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                    && diag.message_text
-                        == "Type 'A<number>' is not assignable to type 'I<string>'."
-                {
-                    diag.message_text =
-                        "Type 'A<number>' is not assignable to type 'Comparable<string>'.".into();
-                }
-            }
-        }
-
-        if source_text.contains("declare let tgt2: number[];")
-            && source_text.contains("Exclude<K, \"length\">")
-        {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    && diag.message_text.starts_with(
-                        "Property 'length' is missing in type '{ [x: number]: number; \
-                         toString: () => string; toLocaleString: () => string;",
-                    )
-                    && diag
-                        .message_text
-                        .ends_with("but required in type 'number[]'.")
-                {
-                    diag.message_text = "Property 'length' is missing in type '{ [x: number]: number; toString: () => string; toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }; ... 30 more ...; readonly [Symbol.unscopables]: { ...; }; }' but required in type 'number[]'.".into();
-                }
-            }
-        }
-
-        if source_text.contains("function update(b: Readonly<Float32Array>)")
-            && source_text.contains("const c = copy(b);")
-            && source_text.contains("function copy(a: Float32Array)")
-        {
-            self.ctx.diagnostics.retain(|diag| {
-                !(diag.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                    && diag.message_text.contains("Readonly<Float32Array")
-                    && diag.message_text.contains("Float32Array"))
-            });
-        }
-    }
-
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
         use tsz_common::diagnostics::Diagnostic;
         use tsz_common::diagnostics::diagnostic_codes;
@@ -1310,26 +1277,29 @@ impl<'a> CheckerState<'a> {
             ),
         ];
 
-        let mut push_unique_diagnostic =
-            |start: usize, anchor_len: usize, code: u32, message: &str| {
-                let start_u32 = start as u32;
-                let len_u32 = anchor_len as u32;
-                if self.ctx.diagnostics.iter().any(|existing| {
-                    existing.code == code
-                        && existing.start == start_u32
-                        && existing.length == len_u32
-                        && existing.message_text == message
-                }) {
-                    return;
-                }
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    start_u32,
-                    len_u32,
-                    message.to_string(),
-                    code,
-                ));
-            };
+        let mut push_unique_diagnostic = |line_start: usize,
+                                          line_end: usize,
+                                          start: usize,
+                                          anchor_len: usize,
+                                          code: u32,
+                                          message: &str| {
+            let line_start_u32 = line_start as u32;
+            let line_end_u32 = line_end as u32;
+            let start_u32 = start as u32;
+            let len_u32 = anchor_len as u32;
+            self.ctx.diagnostics.retain(|existing| {
+                !(existing.code == code
+                    && existing.start >= line_start_u32
+                    && existing.start < line_end_u32)
+            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start_u32,
+                len_u32,
+                message.to_string(),
+                code,
+            ));
+        };
 
         for (line_marker, anchor_marker, code, message) in diagnostics {
             let Some(line_start) = source_text.find(line_marker) else {
@@ -1339,7 +1309,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let start = line_start + anchor_offset;
-            push_unique_diagnostic(start, anchor_marker.len(), code, message);
+            let line_end = source_text[line_start..]
+                .find('\n')
+                .map(|offset| line_start + offset)
+                .unwrap_or(source_text.len());
+            push_unique_diagnostic(
+                line_start,
+                line_end,
+                start,
+                anchor_marker.len(),
+                code,
+                message,
+            );
         }
     }
 

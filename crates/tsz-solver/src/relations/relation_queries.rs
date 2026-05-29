@@ -12,9 +12,7 @@ use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{
-    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, SymbolRef, TypeId,
-};
+use crate::types::{CachedAnyMode, RelationCacheConfig, RelationFlags, SymbolRef, TypeId};
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,18 +116,27 @@ impl RelationPolicy {
     /// > silently coupled two independent compiler options. See the
     /// > `strict_function_types_does_not_imply_strict_any` regression test.
     pub const fn from_flags(flags: u16) -> Self {
-        let typed_flags = Self::cache_flags_from_packed(flags);
+        let typed_flags = legacy_policy_flags::decode(flags);
+        Self::from_relation_flags(typed_flags)
+    }
+
+    /// Construct a policy from typed relation flags.
+    ///
+    /// Use this when callers already have [`RelationFlags`]. The packed
+    /// [`RelationPolicy::from_flags`] constructor is reserved for compatibility
+    /// edges that still receive checker-style `u16` masks.
+    pub const fn from_relation_flags(flags: RelationFlags) -> Self {
         // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
         // This preserves backward compatibility while allowing specific paths
         // (implements/extends checking) to disable erasure.
-        let erase_generics = !typed_flags.contains(RelationFlags::NO_ERASE_GENERICS);
+        let erase_generics = !flags.contains(RelationFlags::NO_ERASE_GENERICS);
         Self {
-            flags: typed_flags,
-            strict_subtype_checking: false,
-            strict_any_propagation: false,
+            flags,
+            strict_subtype_checking: flags.contains(RelationFlags::STRICT_SUBTYPE_CHECKING),
+            strict_any_propagation: flags.contains(RelationFlags::STRICT_ANY_PROPAGATION),
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
-            skip_weak_type_checks: false,
+            skip_weak_type_checks: flags.contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS),
             erase_generics,
         }
     }
@@ -162,15 +169,6 @@ impl RelationPolicy {
     pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
         self.skip_weak_type_checks = skip;
         self
-    }
-
-    /// Return the packed legacy flags represented by this policy.
-    ///
-    /// This accessor is for compatibility edges and trace payloads that still
-    /// need the historical bit layout. Relation engines and cache keys should
-    /// prefer the typed accessors and [`RelationPolicy::cache_config`].
-    pub const fn legacy_packed_flags(self) -> u16 {
-        self.flags.bits() as u16
     }
 
     /// Whether `null` and `undefined` are distinct types.
@@ -223,6 +221,11 @@ impl RelationPolicy {
             .contains(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY)
     }
 
+    /// Whether the next signature comparison is a callback parameter check.
+    pub const fn in_callback_param_check(self) -> bool {
+        self.flags.contains(RelationFlags::IN_CALLBACK_PARAM_CHECK)
+    }
+
     /// Whether readonly must be treated as identity-significant.
     pub const fn strict_readonly_identity(self) -> bool {
         self.flags.contains(RelationFlags::STRICT_READONLY_IDENTITY)
@@ -232,8 +235,8 @@ impl RelationPolicy {
     ///
     /// This is the single conversion point from the high-level `RelationPolicy`
     /// bundle to the behavior-complete [`RelationCacheConfig`] used as the
-    /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
-    /// on `RelationPolicy` must be reflected here.
+    /// `config` field of a [`crate::types::RelationCacheKey`]. Every
+    /// behavior-affecting field on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
         let mut bits = self.flags;
         if self.strict_subtype_checking {
@@ -264,58 +267,20 @@ impl RelationPolicy {
         };
         RelationCacheConfig::new(bits, any_mode)
     }
+}
 
-    const fn cache_flags_from_packed(flags: u16) -> RelationFlags {
-        let mut bits = RelationFlags::empty();
-        if flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0 {
-            bits = bits.union(RelationFlags::STRICT_NULL_CHECKS);
-        }
-        if flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES != 0 {
-            bits = bits.union(RelationFlags::STRICT_FUNCTION_TYPES);
-        }
-        if flags & RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES != 0 {
-            bits = bits.union(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
-        }
-        if flags & RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS != 0 {
-            bits = bits.union(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
-        }
-        if flags & RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE != 0 {
-            bits = bits.union(RelationFlags::DISABLE_METHOD_BIVARIANCE);
-        }
-        if flags & RelationCacheKey::FLAG_ALLOW_VOID_RETURN != 0 {
-            bits = bits.union(RelationFlags::ALLOW_VOID_RETURN);
-        }
-        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST != 0 {
-            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_REST);
-        }
-        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT != 0 {
-            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
-        }
-        if flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS != 0 {
-            bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
-        }
-        if flags & RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY != 0 {
-            bits = bits.union(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
-        }
-        if flags & RelationFlags::STRICT_SUBTYPE_CHECKING.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
-        }
-        if flags & RelationFlags::STRICT_ANY_PROPAGATION.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
-        }
-        if flags & RelationFlags::SKIP_WEAK_TYPE_CHECKS.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
-        }
-        if flags & RelationFlags::ASSUME_RELATED_ON_CYCLE.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
-        }
-        if flags & RelationFlags::IN_CALLBACK_PARAM_CHECK.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::IN_CALLBACK_PARAM_CHECK);
-        }
-        if flags & RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16 != 0 {
-            bits = bits.union(RelationFlags::STRICT_READONLY_IDENTITY);
-        }
-        bits
+/// Compatibility edge for callers that still receive historical packed `u16`
+/// relation flags.
+///
+/// Keep this module narrow: relation engines and cache keys should consume
+/// typed [`RelationPolicy`](super::RelationPolicy) /
+/// [`RelationFlags`](crate::types::RelationFlags) values after this boundary.
+mod legacy_policy_flags {
+    use crate::types::RelationFlags;
+
+    pub(super) const fn decode(flags: u16) -> RelationFlags {
+        let known_bits = flags as u32 & RelationFlags::all().bits();
+        RelationFlags::from_bits_retain(known_bits)
     }
 }
 
@@ -560,17 +525,20 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.set_strict_function_types(policy.strict_function_types());
     checker.set_exact_optional_property_types(policy.exact_optional_property_types());
     checker.set_no_unchecked_indexed_access(policy.no_unchecked_indexed_access());
+    checker.set_allow_bivariant_rest(policy.allow_bivariant_rest());
 
     checker.subtype.strict_null_checks = policy.strict_null_checks();
     checker.subtype.strict_function_types = policy.strict_function_types();
     checker.subtype.exact_optional_property_types = policy.exact_optional_property_types();
     checker.subtype.no_unchecked_indexed_access = policy.no_unchecked_indexed_access();
+    checker.set_disable_method_bivariance(policy.disable_method_bivariance());
     checker.subtype.disable_method_bivariance = policy.disable_method_bivariance();
     checker.subtype.allow_void_return = policy.allow_void_return();
     checker.subtype.allow_bivariant_rest = policy.allow_bivariant_rest();
     checker.subtype.allow_bivariant_param_count = policy.allow_bivariant_param_count();
     checker.subtype.allow_erased_generic_signature_retry =
         policy.allow_erased_generic_signature_retry();
+    checker.subtype.in_callback_param_check = policy.in_callback_param_check();
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
@@ -588,6 +556,7 @@ const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
     checker.strict_readonly_identity = policy.strict_readonly_identity();
     checker.erase_generics = policy.erase_generics;
     checker.allow_erased_generic_signature_retry = policy.allow_erased_generic_signature_retry();
+    checker.in_callback_param_check = policy.in_callback_param_check();
     checker
 }
 

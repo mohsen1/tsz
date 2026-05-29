@@ -29,7 +29,11 @@
 
 use crate::TypeId;
 use crate::construction::TypeDatabase;
-use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId, TypeData};
+use crate::relations::subtype::{NoopResolver, TypeResolver};
+use crate::types::{
+    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeApplicationId,
+    TypeData,
+};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 
@@ -47,11 +51,12 @@ pub enum IndexKind {
 // =============================================================================
 
 /// Visitor for resolving string index signatures.
-struct StringIndexResolver<'a> {
+struct StringIndexResolver<'a, R: TypeResolver> {
     db: &'a dyn TypeDatabase,
+    resolver: &'a R,
 }
 
-impl<'a> TypeVisitor for StringIndexResolver<'a> {
+impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: crate::types::IntrinsicKind) -> Self::Output {
@@ -105,17 +110,39 @@ impl<'a> TypeVisitor for StringIndexResolver<'a> {
         self.visit_type(self.db, inner_type)
     }
 
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        let type_id = self.db.application(app.base, app.args.clone());
+        let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
+            self.db,
+            self.resolver,
+            type_id,
+        );
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
     fn default_output() -> Self::Output {
         None
     }
 }
 
 /// Visitor for resolving number index signatures.
-struct NumberIndexResolver<'a> {
+struct NumberIndexResolver<'a, R: TypeResolver> {
     db: &'a dyn TypeDatabase,
+    resolver: &'a R,
 }
 
-impl<'a> TypeVisitor for NumberIndexResolver<'a> {
+impl<R: TypeResolver> TypeVisitor for NumberIndexResolver<'_, R> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: crate::types::IntrinsicKind) -> Self::Output {
@@ -156,6 +183,27 @@ impl<'a> TypeVisitor for NumberIndexResolver<'a> {
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         self.visit_type(self.db, inner_type)
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        let type_id = self.db.application(app.base, app.args.clone());
+        let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
+            self.db,
+            self.resolver,
+            type_id,
+        );
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
     }
 
     fn default_output() -> Self::Output {
@@ -378,14 +426,26 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
 ///
 /// This struct provides a unified interface for querying index signatures
 /// across different type representations (`ObjectWithIndex`, Union, etc.).
-pub struct IndexSignatureResolver<'a> {
+pub struct IndexSignatureResolver<'a, R: TypeResolver = NoopResolver> {
     db: &'a dyn TypeDatabase,
+    resolver: &'a R,
 }
 
-impl<'a> IndexSignatureResolver<'a> {
+impl<'a> IndexSignatureResolver<'a, NoopResolver> {
     /// Create a new index signature resolver.
     pub fn new(db: &'a dyn TypeDatabase) -> Self {
-        Self { db }
+        static NOOP: NoopResolver = NoopResolver;
+        Self {
+            db,
+            resolver: &NOOP,
+        }
+    }
+}
+
+impl<'a, R: TypeResolver> IndexSignatureResolver<'a, R> {
+    /// Create a new index signature resolver with a lazy/application resolver.
+    pub fn with_resolver(db: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        Self { db, resolver }
     }
 
     /// Resolve the string index signature type from an object type.
@@ -399,7 +459,10 @@ impl<'a> IndexSignatureResolver<'a> {
     /// - `{ [key: string]: string }` → `Some(TypeId::STRING)`
     /// - `{ a: number }` → `None`
     pub fn resolve_string_index(&self, obj: TypeId) -> Option<TypeId> {
-        let mut visitor = StringIndexResolver { db: self.db };
+        let mut visitor = StringIndexResolver {
+            db: self.db,
+            resolver: self.resolver,
+        };
         visitor.visit_type(self.db, obj)
     }
 
@@ -416,7 +479,10 @@ impl<'a> IndexSignatureResolver<'a> {
     ///
     /// Note: Array and tuple types have implicit numeric index signatures.
     pub fn resolve_number_index(&self, obj: TypeId) -> Option<TypeId> {
-        let mut visitor = NumberIndexResolver { db: self.db };
+        let mut visitor = NumberIndexResolver {
+            db: self.db,
+            resolver: self.resolver,
+        };
         visitor.visit_type(self.db, obj)
     }
 

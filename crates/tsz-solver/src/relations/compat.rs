@@ -234,8 +234,11 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     strict_null_checks: bool,
     no_unchecked_indexed_access: bool,
     exact_optional_property_types: bool,
+    allow_bivariant_rest: bool,
     /// When true, enables additional strict subtype checking rules for lib.d.ts
     strict_subtype_checking: bool,
+    /// When true, disables TypeScript's method parameter bivariance exception.
+    disable_method_bivariance: bool,
     /// When true, skip weak type checks (TS2559) during assignability.
     /// This matches tsc's `isTypeAssignableTo` behavior which does not
     /// include the weak type check. The weak type check is only applied
@@ -279,7 +282,9 @@ impl<'a> CompatChecker<'a, NoopResolver> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
+            allow_bivariant_rest: true,
             strict_subtype_checking: false,
+            disable_method_bivariance: false,
             skip_weak_type_checks: false,
             cache: FxHashMap::default(),
         }
@@ -649,7 +654,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
+            allow_bivariant_rest: true,
             strict_subtype_checking: false,
+            disable_method_bivariance: false,
             skip_weak_type_checks: false,
             cache: FxHashMap::default(),
         }
@@ -705,6 +712,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    pub fn set_allow_bivariant_rest(&mut self, allow: bool) {
+        if self.allow_bivariant_rest != allow {
+            self.allow_bivariant_rest = allow;
+            self.cache.clear();
+        }
+    }
+
     /// Configure strict mode for `any` propagation.
     /// Configure strict subtype checking mode for lib.d.ts type checking.
     ///
@@ -714,6 +728,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_strict_subtype_checking(&mut self, strict: bool) {
         if self.strict_subtype_checking != strict {
             self.strict_subtype_checking = strict;
+            self.cache.clear();
+        }
+    }
+
+    pub fn set_disable_method_bivariance(&mut self, disable: bool) {
+        if self.disable_method_bivariance != disable {
+            self.disable_method_bivariance = disable;
             self.cache.clear();
         }
     }
@@ -768,11 +789,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ///
     /// This is used to configure the `CompatChecker` with settings from
     /// the `CompilerOptions` (passed through `JudgeConfig`).
-    pub fn apply_config(&mut self, config: &crate::judge::JudgeConfig) {
+    pub fn apply_config(&mut self, config: &crate::relations::judge::JudgeConfig) {
         self.strict_function_types = config.strict_function_types;
         self.strict_null_checks = config.strict_null_checks;
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+        self.allow_bivariant_rest = true;
 
         // Propagate to internal SubtypeChecker so explain/failure analysis
         // uses the same strictNullChecks/strictFunctionTypes/exactOptionalPropertyTypes
@@ -1639,21 +1661,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     const fn configure_subtype(&mut self, strict_function_types: bool) {
         self.subtype.strict_function_types = strict_function_types;
         self.subtype.allow_void_return = true;
-        self.subtype.allow_bivariant_rest = true;
+        self.subtype.allow_bivariant_rest = self.allow_bivariant_rest;
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
-        // Propagate weak type enforcement into nested structural comparisons.
-        // This ensures TS2559 is detected not just at the top-level assignment,
-        // but also when comparing nested property types (e.g., { a: { y: string } }
-        // assigned to { a: { x?: number } }).
-        self.subtype.enforce_weak_types = true;
+        // Propagate weak type enforcement into nested structural comparisons
+        // only when this relation policy enables TS2559-style weak checks.
+        // `isTypeAssignableTo`-style callers set `skip_weak_type_checks`, and
+        // that policy must also suppress the structural fallback.
+        self.subtype.enforce_weak_types = !self.skip_weak_type_checks;
         // Any propagation is controlled by the Lawyer's allow_any_suppression flag
         // Standard TypeScript allows any to propagate through arrays/objects regardless
         // of strictFunctionTypes - it only affects function parameter variance
         self.subtype.any_propagation = self.lawyer.any_propagation_mode();
-        // In strict mode, disable method bivariance for soundness
-        self.subtype.disable_method_bivariance = self.strict_subtype_checking;
+        // In strict mode, or when the policy asks explicitly, disable method
+        // bivariance for soundness.
+        self.subtype.disable_method_bivariance =
+            self.strict_subtype_checking || self.disable_method_bivariance;
     }
 
     /// Whether any recursion limit (depth or iteration count) was exceeded.

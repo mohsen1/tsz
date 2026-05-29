@@ -70,3 +70,105 @@ function f<T extends A | B>(x: T) {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn flow_narrowed_indexed_access_identifier_returns_to_declared_indexed_access() {
+    let source = r#"
+class NumBox<T extends number> {
+  private value!: T;
+  get(): T { return this.value; }
+  onlyNum(): void {}
+}
+class StrBox<T extends string> {
+  private value!: T;
+  get(): T { return this.value; }
+  onlyStr(): void {}
+}
+const isNumBox = <Item extends NumBox<number> | StrBox<string>>(
+  item: Item
+): item is Extract<Item, NumBox<any>> => item instanceof NumBox;
+
+type Bag = { [index: string]: NumBox<number> | StrBox<string> };
+class Store<Bags extends { [index: string]: Bag }> {
+  private bags = {} as Bags;
+  get<BagId extends keyof Bags, BagKey extends keyof Bags[BagId]>(
+    bagId: BagId,
+    bagKey: BagKey
+  ): Bags[BagId][BagKey] {
+    let item = this.bags[bagId][bagKey];
+    if (isNumBox(item)) {
+      item.onlyNum();
+    }
+    item.get();
+    return item;
+  }
+}
+"#;
+    let diags = check(source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Flow-narrowed generic indexed-access return should not emit TS2322, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn quickinfo_return_position_conformance_shape_keeps_only_expected_missing_property() {
+    let source = r#"
+class Alpha<T extends number> {
+  private value!: T;
+  get(): T { return this.value; }
+  alpha(): void {}
+}
+class Beta<T extends string> {
+  private value!: T;
+  get(): T { return this.value; }
+  beta(): void {}
+}
+const isAlpha = <Candidate extends Alpha<number> | Beta<string>>(
+  candidate: Candidate
+): candidate is Extract<Candidate, Alpha<any>> => candidate instanceof Alpha;
+
+class Simple<Entries extends { [index: string]: Alpha<number> | Beta<string> }> {
+  private entries = {} as Entries;
+  get<EntryId extends keyof Entries>(entryId: EntryId): Entries[EntryId] {
+    let entry = this.entries[entryId];
+    entry.alpha();
+    if (isAlpha(entry)) {
+      return entry;
+    }
+    return entry;
+  }
+}
+
+type Slice = { [index: string]: Alpha<number> | Beta<string> };
+class Complex<Slices extends { [index: string]: Slice }> {
+  private slices = {} as Slices;
+  get<SliceId extends keyof Slices, SliceKey extends keyof Slices[SliceId]>(
+    sliceId: SliceId,
+    sliceKey: SliceKey
+  ): Slices[SliceId][SliceKey] {
+    let item = this.slices[sliceId][sliceKey];
+    if (isAlpha(item)) {
+      item.alpha();
+    }
+    item.get();
+    return item;
+  }
+}
+"#;
+    let diags = check(source);
+    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![2339],
+        "Expected only TS2339 for the pre-guard missing property, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

@@ -351,14 +351,6 @@ impl<'a> CheckerState<'a> {
 
         self.ctx
             .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
-            .or_else(|| {
-                self.ctx.cached_source_file_symbol_arena_type(
-                    sym_id,
-                    file_idx,
-                    source_cache_scope,
-                    self.ctx.current_file_idx as u32,
-                )
-            })
     }
 
     pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
@@ -407,33 +399,11 @@ impl<'a> CheckerState<'a> {
                 sym_found.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
             if has_type_alias {
                 let symbol = sym_found.expect("has_type_alias guard ensures sym_found is Some");
-                tracing::debug!(
-                    sym_id = sym_id.0,
-                    name = %symbol.escaped_name,
-                    num_decls = symbol.declarations.len(),
-                    arena_len = self.ctx.arena.len(),
-                    "delegate_cross_arena: checking TYPE_ALIAS in current arena"
-                );
-                let has_type_alias_in_current_arena = symbol.declarations.iter().any(|&d| {
-                    self.ctx
-                        .arena
-                        .get(d)
-                        .and_then(|n| {
-                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                                // Verify the name matches to prevent NodeIndex collisions:
-                                // A lib NodeIndex may accidentally map to a different
-                                // TYPE_ALIAS_DECLARATION in the user arena.
-                                let type_alias = self.ctx.arena.get_type_alias(n)?;
-                                let name_node = self.ctx.arena.get(type_alias.name)?;
-                                let ident = self.ctx.arena.get_identifier(name_node)?;
-                                let name = self.ctx.arena.resolve_identifier_text(ident);
-                                Some(name == symbol.escaped_name.as_str())
-                            } else {
-                                Some(false)
-                            }
-                        })
-                        .unwrap_or(false)
-                });
+                // A cross-file alias can collide with an identically-shaped local
+                // alias on raw SymbolId/NodeIndex; the helper confirms genuine
+                // current-file ownership before we resolve it locally.
+                let has_type_alias_in_current_arena =
+                    self.symbol_has_local_type_alias_declaration(symbol, sym_id);
                 tracing::debug!(
                     sym_id = sym_id.0,
                     name = %symbol.escaped_name,
@@ -781,11 +751,13 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
-            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
-                sym_id,
-                direct_target,
-                symbol_type_cache_from_symbol_arena,
-            ) {
+            if let Some(direct_type) = self
+                .direct_source_file_variable_or_function_annotation_result(
+                    sym_id,
+                    direct_target,
+                    true,
+                )
+            {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
@@ -877,6 +849,22 @@ impl<'a> CheckerState<'a> {
                 miss_target_source_file.is_some_and(|source_file| source_file.is_declaration_file),
                 miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
             );
+
+            // Cross-file circular type-alias detection (TS2456): if resolving
+            // this alias re-enters an alias already on the delegation path, mark
+            // every member of the cycle circular so each file's
+            // `check_cross_file_circular_type_aliases` post-pass emits its own
+            // TS2456 (see `cross_file_alias_cycle`). We deliberately do NOT
+            // short-circuit resolution here: the cross-arena depth guard below
+            // terminates the recursion exactly as it does without this marking,
+            // so a legitimately self-referential (non-circular per tsc, e.g. a
+            // recursive lib alias resolved through deferral) type keeps
+            // resolving to the same type main produces instead of collapsing
+            // early to ERROR and cascading spurious assignability errors.
+            let alias_cycle_def_id = self.cross_arena_alias_def_id(sym_id);
+            if let Some(def_id) = alias_cycle_def_id {
+                self.mark_cross_arena_alias_cycle(def_id);
+            }
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
@@ -994,8 +982,16 @@ impl<'a> CheckerState<'a> {
             // so inner DefId→TypeId mappings survive child-checker teardown.
             checker.ctx.ensure_both_envs_have_definition_store();
 
-            // Use get_type_of_symbol to ensure proper cycle detection.
-            let result = checker.get_type_of_symbol(sym_id);
+            // Track this alias on the cross-arena resolution stack so a nested
+            // delegation that comes back to it is recognized as a cross-file
+            // cycle (see the detection above). The guard pops on drop —
+            // including on panic unwind — so a reused worker thread never
+            // inherits a stale entry.
+            let result = {
+                let _alias_guard = alias_cycle_def_id.map(Self::enter_cross_arena_alias);
+                // Use get_type_of_symbol to ensure proper cycle detection.
+                checker.get_type_of_symbol(sym_id)
+            };
             let result_params = checker
                 .ctx
                 .get_existing_def_id(sym_id)
@@ -1153,6 +1149,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self
+            .get_cross_file_symbol(sym_id)?
+            .has_any_flags(symbol_flags::CLASS)
+        {
+            return None;
+        }
+
         // Find the symbol's home arena
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx

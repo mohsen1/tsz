@@ -19,7 +19,7 @@ scripts/agents/show-goal.sh Studio-F
 scripts/agents/disk-preflight.sh Studio-F
 scripts/agents/list-owned-work.sh Studio-F
 python3 scripts/arch/arch_guard.py --json-report /tmp/tsz-arch-guard.json
-python3 scripts/emit/audit-output-surgery.py
+python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json
 ```
 
 ## Current Assignment
@@ -34,19 +34,24 @@ python3 scripts/emit/audit-output-surgery.py
 - Architecture cleanup metric: every cleanup PR must ratchet a named guard
   down, remove an allowlist entry, split a file over a documented ceiling, or
   make a release-gate artifact harder to misread.
-- Current known debt: `python3 scripts/emit/audit-output-surgery.py` reports
-  `4` unallowlisted calls and `1` stale allowlist entry.
+- Current active PR: none. #10511 merged the test-only Clippy suppression
+  cleanup and ratcheted the workspace Clippy suppression cap to the current
+  remaining count.
 - First live command: run the start-cycle commands and inspect guard failures
   before choosing cleanup work.
-- Next concrete step: pick one measurable guardrail or launch-script gap and
-  keep it behavior-preserving unless it directly fixes a release blocker.
+- Next concrete step: with owned PR runway clear, pick the next small
+  launch-infra or guardrail slice that ratchets a measured counter, removes a
+  stale allowlist entry, clarifies lane coordination, or makes cheap evidence
+  harder to misread.
 
 ## Existing Work To Inspect First
 
 - `scripts/emit/audit-output-surgery.py` and
   `scripts/emit/output-surgery-allowlist.txt`.
 - `scripts/arch/arch_guard_shared.py` and `scripts/arch/arch_guard_policy.toml`.
-- Tech-debt issues `#8276`, `#8278`, `#9403`, `#9447`, `#10068`, and `#10079`.
+- Open tech-debt issues `#8276` and `#8278`, plus live GitHub issues labelled
+  `tech-debt` that overlap launch infra, guardrails, output surgery,
+  disk/worktree hygiene, or cheap evidence plumbing.
 - Disk/worktree guidance in `AGENTS.md` and this directory.
 
 ## Non-Overlap Rules

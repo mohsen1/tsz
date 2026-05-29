@@ -5,13 +5,14 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::{GuardSense, TypeGuard, TypeofKind};
+use tsz_solver::narrowing::{TypeGuard, TypeofKind};
 use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{self as flow_query, TypeResolver};
+use crate::types_domain::property_access_type::known_globals;
 
 pub(crate) fn reference_is_in_class_property_initializer(
     arena: &NodeArena,
@@ -578,18 +579,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // The lib.d.ts instance types may be Lazy references that the solver's
                 // is_object_interface/is_function_interface_structural checks don't match.
                 let ctor_expr = self.skip_parens_and_assertions(bin.right);
-                if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
-                    let name = &ident.escaped_text;
-                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
-                        return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
-                    }
-                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
-                        return Some((
-                            TypeGuard::Instanceof(TypeId::FUNCTION, true),
-                            target,
-                            false,
-                        ));
-                    }
+                if self.identifier_resolves_to_unshadowed_global(ctor_expr, "Object") {
+                    return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
+                }
+                if self.identifier_resolves_to_unshadowed_global(ctor_expr, "Function") {
+                    return Some((TypeGuard::Instanceof(TypeId::FUNCTION, true), target, false));
                 }
                 return Some((TypeGuard::Instanceof(instance_type, false), target, false));
             }
@@ -888,10 +882,9 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
 
-        if obj_text != "Array" {
-            return None;
-        }
-        if !self.is_builtin_global_reference(access.expression) {
+        if obj_text != "Array"
+            || !self.identifier_resolves_to_unshadowed_global(access.expression, "Array")
+        {
             return None;
         }
 
@@ -965,10 +958,9 @@ impl<'a> FlowAnalyzer<'a> {
             .get(access.expression)
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
-        if obj_text != "ArrayBuffer" {
-            return None;
-        }
-        if !self.is_builtin_global_reference(access.expression) {
+        if obj_text != "ArrayBuffer"
+            || !self.identifier_resolves_to_unshadowed_global(access.expression, "ArrayBuffer")
+        {
             return None;
         }
 
@@ -1032,10 +1024,28 @@ impl<'a> FlowAnalyzer<'a> {
         ))
     }
 
-    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
-        self.binder
-            .resolve_identifier(self.arena, reference)
-            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
+    fn identifier_resolves_to_unshadowed_global(&self, reference: NodeIndex, name: &str) -> bool {
+        if let Some(ctx) = self.checker_context {
+            return known_globals::identifier_resolves_to_unshadowed_global_in_context(
+                ctx,
+                self.arena,
+                self.binder,
+                reference,
+                name,
+            );
+        }
+
+        let Some(node) = self.arena.get(reference) else {
+            return false;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return false;
+        };
+        ident.escaped_text == name
+            && self
+                .binder
+                .resolve_identifier(self.arena, reference)
+                .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
@@ -1388,7 +1398,7 @@ impl<'a> FlowAnalyzer<'a> {
             false,
             tsz_binder::FlowNodeId::NONE,
         );
-        if !self.is_nullish_only_type(falsy) {
+        if !flow_query::is_nullish_only_type(self.interner, falsy) {
             return None;
         }
 
@@ -1425,19 +1435,6 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             None
         }
-    }
-
-    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
-        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
-            return true;
-        }
-        if let Some(members) = flow_query::union_members_for_type(self.interner, type_id) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
-        }
-        false
     }
 
     fn try_infer_logical_or_type_predicate(
@@ -1740,14 +1737,13 @@ impl<'a> FlowAnalyzer<'a> {
         param_type: TypeId,
         guard: &TypeGuard,
     ) -> TypeId {
-        if let Some(env) = &self.type_environment {
-            let env_borrow = env.borrow();
-            let narrowing = self.make_narrowing_context().with_resolver(&*env_borrow);
-            narrowing.narrow_type(param_type, guard, GuardSense::Positive)
-        } else {
-            self.make_narrowing_context()
-                .narrow_type(param_type, guard, GuardSense::Positive)
-        }
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_inferred_predicate_guard(
+            self.interner,
+            env_borrow.as_deref(),
+            param_type,
+            guard,
+        )
     }
 
     /// Check if a node is a simple reference (identifier or property access).

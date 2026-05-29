@@ -506,9 +506,12 @@ impl<'a> CheckerState<'a> {
             let Some(value_keyof) = self.type_literal_keyof_from_node(sig.type_annotation) else {
                 return false;
             };
-            if !self.diagnostic_relation_boolean_guard(index_for_check, value_keyof)
+            if !self
+                .assign_relation_outcome(index_for_check, value_keyof)
+                .related
                 && !constraint_for_check.is_some_and(|constraint| {
-                    self.diagnostic_relation_boolean_guard(constraint, value_keyof)
+                    self.assign_relation_outcome(constraint, value_keyof)
+                        .related
                 })
             {
                 return false;
@@ -566,7 +569,8 @@ impl<'a> CheckerState<'a> {
         let nested_index_for_check = nested_index_constraint.unwrap_or(nested_index_type);
         let nested_index_for_check = self.evaluate_type_with_env(nested_index_for_check);
 
-        self.diagnostic_relation_boolean_guard(nested_index_for_check, nested_base_keyof)
+        self.assign_relation_outcome(nested_index_for_check, nested_base_keyof)
+            .related
             && self.type_literal_member_values_accept_index(
                 nested.object_type,
                 outer_index_type,
@@ -631,52 +635,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Indexed-access (`(A | B)["k"]`) form of the union restricted-property
+    /// rule. Delegates to the shared
+    /// [`CheckerState::union_restricted_property_is_missing`] so the type-level
+    /// and expression-level (`x.k`) paths stay in lockstep, including the
+    /// intersection-constituent "common declaration" handling.
     pub(super) fn union_restricted_literal_property_is_missing(
         &mut self,
         property_name: &str,
         object_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::state::checking;
-
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
-            return false;
-        };
-        if members.len() < 2 {
-            return false;
-        }
-
-        let is_static = self.is_constructor_type(object_type);
-        let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
-
-        for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            has_other = true;
-                        }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
-                    }
-                }
-                None => has_other = true,
-            }
-        }
-
-        has_restricted && has_other
+        self.union_restricted_property_is_missing(property_name, object_type)
     }
 
     pub(super) fn error_at_index_type_span(
@@ -759,7 +728,7 @@ impl<'a> CheckerState<'a> {
         };
 
         members.iter().all(|&member| {
-            self.diagnostic_relation_boolean_guard(member, keyof_object)
+            self.assign_relation_outcome(member, keyof_object).related
                 || self
                     .get_index_key_kind(member)
                     .is_some_and(|(wants_string, wants_number)| {
@@ -784,7 +753,9 @@ impl<'a> CheckerState<'a> {
         {
             let mapped = self.ctx.types.mapped_type(mapped_id);
             let template_keyof = self.ctx.types.evaluate_keyof(mapped.template);
-            return self.diagnostic_relation_boolean_guard(index_type, template_keyof);
+            return self
+                .assign_relation_outcome(index_type, template_keyof)
+                .related;
         }
 
         let Some(constraint) =
@@ -803,7 +774,9 @@ impl<'a> CheckerState<'a> {
         if matches!(values, TypeId::ERROR | TypeId::UNDEFINED) {
             return false;
         }
-        self.diagnostic_relation_boolean_guard(index_type, self.ctx.types.evaluate_keyof(values))
+        let values_keyof = self.ctx.types.evaluate_keyof(values);
+        self.assign_relation_outcome(index_type, values_keyof)
+            .related
     }
 
     pub(super) fn mapped_object_index_matches_own_key_constraint(
@@ -836,8 +809,12 @@ impl<'a> CheckerState<'a> {
 
         index_type == constraint_type
             || index_type_for_check == constraint_eval
-            || (self.diagnostic_relation_boolean_guard(index_type_for_check, constraint_eval)
-                && self.diagnostic_relation_boolean_guard(constraint_eval, index_type_for_check))
+            || (self
+                .assign_relation_outcome(index_type_for_check, constraint_eval)
+                .related
+                && self
+                    .assign_relation_outcome(constraint_eval, index_type_for_check)
+                    .related)
     }
 
     pub(super) fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
@@ -884,6 +861,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         index_type_for_check: TypeId,
+        index_constraint: Option<TypeId>,
     ) -> bool {
         let has_plain_string_index = self
             .ctx
@@ -895,6 +873,47 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let string_or_number = self.ctx.types.union2(TypeId::STRING, TypeId::NUMBER);
-        self.diagnostic_relation_boolean_guard(index_type_for_check, string_or_number)
+        if self
+            .string_index_candidate_is_string_or_number_key(index_type_for_check, string_or_number)
+        {
+            return true;
+        }
+        if let Some(constraint) = index_constraint {
+            let evaluated_constraint = self.evaluate_type_with_env(constraint);
+            return self
+                .string_index_candidate_is_string_or_number_key(constraint, string_or_number)
+                || self.string_index_candidate_is_string_or_number_key(
+                    evaluated_constraint,
+                    string_or_number,
+                );
+        }
+        false
+    }
+
+    fn string_index_candidate_is_string_or_number_key(
+        &mut self,
+        candidate: TypeId,
+        string_or_number: TypeId,
+    ) -> bool {
+        self.assign_relation_outcome(candidate, string_or_number)
+            .related
+            || self.keyof_candidate_target_is_array_like(candidate)
+    }
+
+    fn keyof_candidate_target_is_array_like(&mut self, candidate: TypeId) -> bool {
+        let Some(target) =
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+        else {
+            return false;
+        };
+        self.type_or_constraint_is_array_like(target)
+    }
+
+    fn type_or_constraint_is_array_like(&mut self, type_id: TypeId) -> bool {
+        if self.indexed_access_type_has_array_like_length(type_id) {
+            return true;
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.indexed_access_type_has_array_like_length(evaluated)
     }
 }

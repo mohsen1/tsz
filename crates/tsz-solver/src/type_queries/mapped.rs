@@ -1308,121 +1308,40 @@ pub const fn compute_mapped_modifiers(
     (optional, readonly)
 }
 
-/// Collect source property info from a homomorphic mapped type's source object.
-///
-/// For a mapped type `{ [K in keyof T]: ... }`, this resolves `T` and collects
-/// its properties into a map of `(optional, readonly, declared_type)` tuples.
-/// This is used by `expand_mapped_type_to_properties` to compute modifiers and
-/// for `-?` to preserve the distinction between implicit and explicit undefined.
-pub fn collect_homomorphic_source_property_infos(
+/// Merge mapped properties whose `as` clause remaps multiple source keys to
+/// the same output key. TypeScript unions all value contributions for a
+/// colliding key instead of letting a later source key overwrite an earlier one.
+pub fn merge_colliding_mapped_properties(
     db: &dyn TypeDatabase,
-    source: TypeId,
-) -> Vec<PropertyInfo> {
-    fn sort_by_display_or_declaration_order(
-        db: &dyn TypeDatabase,
-        source: TypeId,
-        props: &[PropertyInfo],
-    ) -> Vec<PropertyInfo> {
-        let mut ordered = props.to_vec();
-        if let Some(display_props) = db.get_display_properties(source) {
-            let mut display_props = display_props.as_ref().clone();
-            if display_props.iter().any(|prop| prop.declaration_order > 0) {
-                display_props.sort_by_key(|prop| prop.declaration_order);
-            }
-            let order_map: FxHashMap<Atom, usize> = display_props
-                .iter()
-                .enumerate()
-                .map(|(idx, prop)| (prop.name, idx))
-                .collect();
-            ordered.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
-        } else if ordered.iter().any(|prop| prop.declaration_order > 0) {
-            ordered.sort_by_key(|prop| prop.declaration_order);
+    properties: &mut Vec<PropertyInfo>,
+) {
+    if properties.len() < 2 {
+        return;
+    }
+
+    let mut merged = Vec::with_capacity(properties.len());
+    let mut by_name: FxHashMap<Atom, usize> = FxHashMap::default();
+
+    for property in properties.drain(..) {
+        if let Some(&existing_index) = by_name.get(&property.name) {
+            let existing: &mut PropertyInfo = &mut merged[existing_index];
+            existing.type_id = db.union_preserve_members(vec![existing.type_id, property.type_id]);
+            existing.write_type =
+                db.union_preserve_members(vec![existing.write_type, property.write_type]);
+            existing.optional &= property.optional;
+            existing.readonly &= property.readonly;
+            existing.is_method &= property.is_method;
+            existing.is_string_named &= property.is_string_named;
+            existing.is_symbol_named &= property.is_symbol_named;
+            existing.single_quoted_name &= property.single_quoted_name;
+            existing.declaration_order = existing.declaration_order.min(property.declaration_order);
+        } else {
+            by_name.insert(property.name, merged.len());
+            merged.push(property);
         }
-        ordered
     }
 
-    fn collect_array_property_infos(
-        db: &dyn TypeDatabase,
-        element_type: TypeId,
-    ) -> Vec<PropertyInfo> {
-        let Some(array_base) = db
-            .get_array_display_base_type()
-            .or_else(|| db.get_array_base_type())
-        else {
-            return Vec::new();
-        };
-        let mut base_props = collect_homomorphic_source_property_infos(db, array_base);
-        let Some(array_param) = db.get_array_base_type_params().first() else {
-            sort_array_homomorphic_source_properties(db, &mut base_props);
-            return base_props;
-        };
-        let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
-        subst.insert(array_param.name, element_type);
-        let mut props: Vec<_> = base_props
-            .into_iter()
-            .map(|mut prop| {
-                prop.type_id = crate::evaluation::evaluate::evaluate_type(
-                    db,
-                    crate::instantiation::instantiate::instantiate_type(db, prop.type_id, &subst),
-                );
-                prop.write_type = crate::evaluation::evaluate::evaluate_type(
-                    db,
-                    crate::instantiation::instantiate::instantiate_type(
-                        db,
-                        prop.write_type,
-                        &subst,
-                    ),
-                );
-                prop
-            })
-            .collect();
-        sort_array_homomorphic_source_properties(db, &mut props);
-        props
-    }
-
-    fn sort_array_homomorphic_source_properties(db: &dyn TypeDatabase, props: &mut [PropertyInfo]) {
-        fn head_rank(db: &dyn TypeDatabase, prop: &PropertyInfo) -> Option<usize> {
-            match db.resolve_atom_ref(prop.name).as_ref() {
-                "length" => Some(0),
-                "toString" => Some(1),
-                "toLocaleString" => Some(2),
-                _ => None,
-            }
-        }
-
-        props.sort_by(|a, b| match (head_rank(db, a), head_rank(db, b)) {
-            (Some(a_rank), Some(b_rank)) => a_rank.cmp(&b_rank),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => {
-                if a.declaration_order > 0 && b.declaration_order > 0 {
-                    a.declaration_order.cmp(&b.declaration_order)
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            }
-        });
-    }
-
-    if !source.is_intrinsic()
-        && let Some(TypeData::Array(element_type)) = db.lookup(source)
-    {
-        return collect_array_property_infos(db, element_type);
-    }
-
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
-    match db.lookup(evaluated) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
-        }
-        Some(TypeData::Callable(shape_id)) => {
-            let shape = db.callable_shape(shape_id);
-            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
-        }
-        Some(TypeData::Array(element_type)) => collect_array_property_infos(db, element_type),
-        _ => Vec::new(),
-    }
+    *properties = merged;
 }
 
 pub fn collect_homomorphic_source_properties(
@@ -1430,7 +1349,8 @@ pub fn collect_homomorphic_source_properties(
     source: TypeId,
 ) -> FxHashMap<Atom, (bool, bool, TypeId)> {
     let mut props = FxHashMap::default();
-    let source_props = collect_homomorphic_source_property_infos(db, source);
+    let source_props =
+        super::mapped_display_order::collect_homomorphic_source_property_infos(db, source);
     props.reserve(source_props.len());
     for prop in source_props {
         props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
@@ -1543,6 +1463,7 @@ pub fn expand_mapped_type_to_properties(
         }
     }
 
+    merge_colliding_mapped_properties(db, &mut properties);
     properties
 }
 

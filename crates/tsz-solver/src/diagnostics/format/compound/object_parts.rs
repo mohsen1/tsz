@@ -37,9 +37,19 @@ impl<'a> TypeFormatter<'a> {
             && parts
                 .iter()
                 .any(|part| part.starts_with("[Symbol.iterator]"));
+        let is_array_like_index_member_list = parts
+            .first()
+            .is_some_and(|part| part.starts_with("[x: number]:"))
+            && parts.iter().any(|part| part.starts_with("toString:"))
+            && parts.iter().any(|part| part.starts_with("toLocaleString:"))
+            && parts
+                .iter()
+                .any(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."));
         // Keep at most this many leading members before the omitted-count marker.
         let max_head_parts = if is_string_apparent_member_list {
             1
+        } else if is_array_like_index_member_list {
+            3
         } else {
             17
         };

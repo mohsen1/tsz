@@ -918,6 +918,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
     let string_method = interner.function(FunctionShape::new(vec![], TypeId::STRING));
     let number_method = interner.function(FunctionShape::new(vec![], TypeId::NUMBER));
     let any_method = interner.function(FunctionShape::new(vec![], TypeId::ANY));
+    let this_method = interner.function(FunctionShape::new(vec![], interner.this_type()));
     let find_method = interner.function(FunctionShape::new(
         vec![ParamInfo::required(interner.intern_string("value"), t_type)],
         interner.union2(t_type, TypeId::UNDEFINED),
@@ -954,8 +955,8 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
             PropertyInfo::method(interner.intern_string("reduceRight"), any_method),
             PropertyInfo::method(interner.intern_string("find"), find_method),
             PropertyInfo::method(interner.intern_string("findIndex"), number_method),
-            PropertyInfo::method(interner.intern_string("fill"), any_method),
-            PropertyInfo::method(interner.intern_string("copyWithin"), any_method),
+            PropertyInfo::method(interner.intern_string("fill"), this_method),
+            PropertyInfo::method(interner.intern_string("copyWithin"), this_method),
             PropertyInfo::method(interner.intern_string("entries"), any_method),
             PropertyInfo::method(interner.intern_string("keys"), any_method),
             PropertyInfo::method(interner.intern_string("values"), any_method),
@@ -1019,6 +1020,21 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
     assert!(
         !find_display.contains("value: T"),
         "Mapped display should not leak unspecialized Array<T> member types, got: {find_display}"
+    );
+    let fill_prop_type = match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .find(|prop| interner.resolve_atom_ref(prop.name).as_ref() == "fill")
+            .map(|prop| prop.type_id)
+            .expect("expected remapped array result to include fill"),
+        other => panic!("Expected mapped result object, got {other:?}"),
+    };
+    let fill_display = formatter.format(fill_prop_type).into_owned();
+    assert!(
+        fill_display.contains("=> number[]") && !fill_display.contains("=> this"),
+        "Mapped Array<T> members should substitute `this` with the concrete array, got: {fill_display}"
     );
     assert!(
         !formatted.contains("findLastIndex"),

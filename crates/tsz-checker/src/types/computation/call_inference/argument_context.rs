@@ -84,7 +84,9 @@ impl<'a> CheckerState<'a> {
                 && param.rest
             {
                 let rest_array_type = self.evaluate_type_with_env(param.type_id);
-                let is_assignable = self.is_assignable_to_with_env(inner_type, rest_array_type);
+                let is_assignable = self
+                    .assign_relation_outcome_with_env(inner_type, rest_array_type)
+                    .related;
                 if is_assignable {
                     continue;
                 }
@@ -203,7 +205,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let is_assignable = self.is_assignable_to_with_env(actual, expected)
+            let is_assignable = self
+                .assign_relation_outcome_with_env(actual, expected)
+                .related
                 || self.is_assignable_via_contextual_signatures(actual, expected);
 
             if !is_assignable {
@@ -531,6 +535,11 @@ impl<'a> CheckerState<'a> {
         let apply_contextual = (syntax_needs_contextual
             || needs_contextual_signature_instantiation)
             && !skip_generic_callable_context_for_annotated_generic_function;
+        let unresolved_object_literal_context_has_callable_index = expected_context_type
+            .is_some_and(|ty| {
+                self.contextual_callable_string_index_signature_type(ty, 4)
+                    .is_some()
+            });
         let suppress_unresolved_object_literal_context = self
             .ctx
             .arena
@@ -542,7 +551,8 @@ impl<'a> CheckerState<'a> {
                     || common::contains_infer_types(self.ctx.types, ty)
                     || common::contains_type_parameters(self.ctx.types, evaluated)
                     || common::contains_infer_types(self.ctx.types, evaluated)
-            });
+            })
+            && !unresolved_object_literal_context_has_callable_index;
         let _concrete_callback_context = expected_context_type.is_some_and(|ty| {
             ty != TypeId::ANY
                 && ty != TypeId::UNKNOWN

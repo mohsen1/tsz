@@ -3,8 +3,8 @@ use std::path::Path;
 
 const SOURCE_FILE_CHECKING: &str = "src/state/state_checking/source_file.rs";
 
-const MAX_SOURCE_FILE_REWRITE_FINGERPRINT_HELPERS: usize = 9;
-const MAX_SOURCE_FILE_SOURCE_TEXT_CONTAINS_DECISIONS: usize = 36;
+const MAX_SOURCE_FILE_REWRITE_FINGERPRINT_HELPERS: usize = 6;
+const MAX_SOURCE_FILE_SOURCE_TEXT_CONTAINS_DECISIONS: usize = 23;
 const MAX_SOURCE_FILE_RENDERED_MESSAGE_DECISIONS: usize = 15;
 
 #[test]

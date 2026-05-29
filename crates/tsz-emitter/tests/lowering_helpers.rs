@@ -993,3 +993,74 @@ fn test_first_private_op_compound_assign_is_not_write_only() {
         "Compound assignment should not flag write-only first op"
     );
 }
+
+// =============================================================================
+// run_initializers_before_es_decorate (TC39 decorator helper emission order)
+// =============================================================================
+
+fn run_initializers_before_es_decorate(source: &str) -> bool {
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2022);
+    let transforms = LoweringPass::new(&arena, &ctx).run(root);
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.es_decorate,
+        "expected __esDecorate helper for a TC39-decorated class"
+    );
+    helpers.run_initializers_before_es_decorate
+}
+
+#[test]
+fn test_run_initializers_first_for_decorated_method() {
+    // A decorated method requests the method extra-initializers
+    // `__runInitializers` while the element is processed, before the
+    // class-level `__esDecorate`, so tsc emits `__runInitializers` first.
+    assert!(
+        run_initializers_before_es_decorate("declare let dec: any;\nclass C { @dec m() {} }"),
+        "decorated method should put __runInitializers before __esDecorate"
+    );
+}
+
+#[test]
+fn test_run_initializers_first_for_decorated_method_renamed_identifiers() {
+    // Same rule must hold regardless of the chosen decorator/member spelling.
+    assert!(
+        run_initializers_before_es_decorate(
+            "declare let observe: any;\nclass Widget { @observe render() {} }"
+        ),
+        "rule must not be keyed on identifier names"
+    );
+}
+
+#[test]
+fn test_run_initializers_first_for_decorated_getter() {
+    // Getters/setters also contribute method extra-initializers.
+    assert!(
+        run_initializers_before_es_decorate(
+            "declare let dec: any;\nclass C { @dec get value() { return 1; } }"
+        ),
+        "decorated getter should put __runInitializers before __esDecorate"
+    );
+}
+
+#[test]
+fn test_es_decorate_first_for_decorated_auto_accessor_only() {
+    // Auto-accessors do not contribute method extra-initializers, so tsc keeps
+    // `__esDecorate` first. (Witness: staticAutoAccessorsWithDecorators.)
+    assert!(
+        !run_initializers_before_es_decorate(
+            "declare let dec: any;\nclass C { @dec accessor x = 1; }"
+        ),
+        "auto-accessor-only class should keep __esDecorate before __runInitializers"
+    );
+}
+
+#[test]
+fn test_es_decorate_first_for_decorated_field_only() {
+    // A decorated field alone likewise keeps `__esDecorate` first.
+    assert!(
+        !run_initializers_before_es_decorate("declare let dec: any;\nclass C { @dec field = 1; }"),
+        "field-only decorated class should keep __esDecorate before __runInitializers"
+    );
+}

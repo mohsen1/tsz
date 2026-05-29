@@ -102,8 +102,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.diagnostic_relation_boolean_guard(left, right)
-            && self.diagnostic_relation_boolean_guard(right, left)
+        self.assign_relation_outcome(left, right).related
+            && self.assign_relation_outcome(right, left).related
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
@@ -611,7 +611,9 @@ impl<'a> CheckerState<'a> {
                     || branch_type == TypeId::ANY
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(branch_type, target_type)
+                    || self
+                        .assign_relation_outcome(branch_type, target_type)
+                        .related
                 {
                     continue;
                 }
@@ -752,7 +754,9 @@ impl<'a> CheckerState<'a> {
                 if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
                     continue;
                 }
-                if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
+                if self
+                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .related
                     && self.emit_polymorphic_this_property_assignment_error(
                         source_prop_type,
                         target_prop_type,
@@ -990,7 +994,9 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
+                    || self
+                        .assign_relation_outcome(body_type, expected_return_type)
+                        .related
                 {
                     return false;
                 }
@@ -1066,7 +1072,9 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
+                    || self
+                        .assign_relation_outcome(body_type, expected_return_type)
+                        .related
                 {
                     return false;
                 }

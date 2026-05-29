@@ -1,13 +1,15 @@
 ---
 name: tsz-ci-pr
-description: Drive TSZ GitHub PRs through review, CI, and merge. Use when checking PR status, debugging failing GitHub Actions, deciding whether a PR is WIP, marking draft PRs ready, enabling or verifying auto-merge, landing a PR, or interpreting TSZ CI gates.
+description: Drive TSZ GitHub PRs through review, CI, and the merge queue. Use when checking PR status, debugging failing GitHub Actions, deciding whether a PR is WIP, marking draft PRs ready, enqueueing or verifying the queue, landing a PR, or interpreting TSZ CI gates.
 ---
 
 # TSZ CI And PR
 
 Use this skill for TSZ PR operations. The repository uses draft PRs for
-coordination and heavy CI only after ready-for-review. A queued merge is not a
-landed merge; always verify the final PR state.
+coordination and heavy CI only after ready-for-review. TSZ's required
+`Queue Tested` status is produced by the repo-local merge queue after a ready
+PR is labeled `merge-queue`. A queued merge is not a landed merge; always
+verify the final PR state.
 
 ## Ground Rules
 
@@ -18,7 +20,9 @@ landed merge; always verify the final PR state.
 - Do not add `[codex]` to PR titles.
 - Draft PRs run light CI. Ready PRs run conformance, emit, fourslash, WASM, and
   snapshot gates.
-- If the user asks to land a PR, do not stop at enabled auto-merge. Verify
+- `Queue Tested` is queue-owned. It may be missing or pending before enqueue;
+  do not wait for it before labeling an otherwise ready PR `merge-queue`.
+- If the user asks to land a PR, do not stop at an armed queue. Verify
   `state: MERGED` or keep working.
 
 ## Status Commands
@@ -54,25 +58,33 @@ gh run view <run-id> --job <job-id> --log
    gh pr ready <pr>
    ```
 
-5. Use squash merge or squash auto-merge according to branch protection:
+5. Once PR-head checks such as `CI Summary` and `GitGuardian Security Checks`
+   pass for the exact head, enqueue the PR with the durable queue label:
 
    ```bash
-   gh pr merge <pr> --squash --auto
+   gh pr edit <pr> --add-label merge-queue
    ```
 
-6. After checks pass, verify the merge actually happened:
+6. Watch `Queue Tested` only as queue evidence, not as a PR-head prerequisite.
+   The `Poor Man's Merge Queue` workflow synthetic-tests one latest-`main`
+   merge branch and posts `Queue Tested` to the PR head before merging.
+7. After the queue runs, verify the merge actually happened:
 
    ```bash
    gh pr view <pr> --json state,mergedAt,mergedBy,url
    ```
 
-If auto-merge is enabled but the PR remains open after green checks, inspect
-branch protection and merge queue status, then run a direct squash merge when
-allowed.
+If a `merge-queue` labeled PR remains open after green PR-head checks, inspect
+`Queue Tested`, the `Poor Man's Merge Queue` workflow, and any synthetic
+`automation/merge-queue/pr-<n>` CI run. Do not direct-merge around the queue
+unless the user explicitly asks for an emergency admin bypass.
 
 ## CI Failure Triage
 
-- `CI Summary` is the required umbrella status; inspect its prerequisites.
+- `CI Summary` is the required umbrella PR-head status; inspect its
+  prerequisites.
+- `Queue Tested` is the required queue status; inspect the queue workflow and
+  synthetic merge branch when it fails or stays pending.
 - `conformance-aggregate` can fail even when shards pass if accepted-regression
   drift exists. Compare unlisted vs resolved accepted paths.
 - `unit-cloudbuild` often exposes memory, linking, or architecture-contract

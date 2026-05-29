@@ -336,6 +336,21 @@ impl<'a> CheckerState<'a> {
             AsyncIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
             }
+            AsyncIterableTypeKind::Intersection(members) => {
+                // An intersection is async iterable if at least one member is,
+                // mirroring the sync `is_iterable_type` intersection rule.
+                members.iter().any(|&m| self.is_async_iterable_type(m))
+            }
+            AsyncIterableTypeKind::TypeParameter { constraint } => {
+                // `for await ... of` resolves a type parameter to its apparent
+                // type (the constraint). Recurse into the constraint instead of
+                // probing `[Symbol.asyncIterator]` on the bare parameter, which
+                // cannot see through a generic `Application` constraint such as
+                // `AsyncIterableIterator<T>`. An unconstrained parameter is not
+                // async iterable here; the caller still falls back to the sync
+                // iterable check before reporting TS2504.
+                constraint.is_some_and(|c| self.is_async_iterable_type(c))
+            }
             AsyncIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.asyncIterator] method or callable property.
                 // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
@@ -974,7 +989,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(expr_type, expr_idx, false);
+        self.emit_ts2488_not_iterable(expr_type, expr_idx, false, None);
         false
     }
 
@@ -1064,7 +1079,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
+        let literal_display_type = self.literal_type_from_initializer(expr_idx);
+        self.emit_ts2488_not_iterable(spread_type, expr_idx, false, literal_display_type);
         false
     }
 
@@ -1152,7 +1168,12 @@ impl<'a> CheckerState<'a> {
             };
 
             // tsc reports TS2488 before TS2571 for this path.
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+            self.emit_ts2488_not_iterable(
+                pattern_type,
+                pattern_idx,
+                is_assignment_array_target,
+                None,
+            );
             if let Some((start, end)) = ts2571_span {
                 self.error(
                     start,
@@ -1166,7 +1187,12 @@ impl<'a> CheckerState<'a> {
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+            self.emit_ts2488_not_iterable(
+                pattern_type,
+                pattern_idx,
+                is_assignment_array_target,
+                None,
+            );
             return false;
         }
 
@@ -1237,7 +1263,7 @@ impl<'a> CheckerState<'a> {
         // path, and that case is already handled above when `target.is_es5()`.
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target, None);
         false
     }
 
@@ -1509,6 +1535,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         error_node: NodeIndex,
         is_assignment_target: bool,
+        literal_display_type: Option<TypeId>,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
             let evaluated_type = self.evaluate_type_for_assignability(type_id);
@@ -1522,7 +1549,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 evaluated_type
             };
-            let type_str = self.format_type_diagnostic_widened(display_type);
+            let type_str = if let Some(literal_display_type) = literal_display_type {
+                self.format_type(literal_display_type)
+            } else {
+                self.format_type_diagnostic_widened(display_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
@@ -1709,8 +1740,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if the sent type is assignable to the iterator's next type
-        if self.diagnostic_relation_boolean_guard(sent_type, next_type) {
+        // Check if the sent type is assignable to the iterator's next type.
+        if self.assign_relation_outcome(sent_type, next_type).related {
             return true;
         }
 

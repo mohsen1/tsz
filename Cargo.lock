@@ -1456,6 +1456,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "stacker",
  "tracing",
  "tsz-common",
  "tsz-parser",
@@ -1479,6 +1480,7 @@ dependencies = [
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
+ "web-time",
 ]
 
 [[package]]
@@ -1611,6 +1613,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "stacker",
  "tracing",
  "tsz-binder",
  "tsz-checker",

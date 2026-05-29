@@ -439,7 +439,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .types
             .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
-        if self.is_assignable_to(key_type, target) {
+        if self.assign_relation_outcome(key_type, target).related {
             return;
         }
         // Source uses the widened diagnostic form so a fresh literal operand shows its

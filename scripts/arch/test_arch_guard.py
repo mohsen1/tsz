@@ -235,6 +235,79 @@ class ArchGuardBinaryEvaluatorBoundaryTests(unittest.TestCase):
         self.assertEqual(comment_hits, [])
 
 
+class ArchGuardCheckerSemanticProofBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _semantic_proof_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker boundary: semantic proof helpers stay behind query boundaries (#9673)":
+                return pattern, excludes
+        self.fail("checker semantic proof boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._semantic_proof_check()
+
+    def test_rule_flags_checker_local_conditional_and_instantiation_proofs(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "\n".join(
+            [
+                "let components = query::full_conditional_type_components(db, ty);",
+                "let ty = query_boundaries::common::instantiate_generic(db, base, args);",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/checkers/generic_checker/boolean_probe_constraints.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2])
+
+    def test_rule_flags_checker_local_mapped_key_proof_wrappers(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "\n".join(
+            [
+                "fn mapped_key_constraint_filters_current_object_keys(&mut self) -> bool {",
+                "fn generic_index_filters_current_type_param_keys(&mut self) -> bool {",
+                "let candidates = generic::conditional_key_filter_candidates(db, ty);",
+                "let next = generic::instantiate_alias_application_body(db, body, params, args);",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3, 4])
+
+    def test_rule_ignores_query_boundaries_tests_and_comments(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "let components = query::full_conditional_type_components(db, ty);"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/query_boundaries/checkers/generic.rs",
+            excludes,
+        )
+        test_hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/tests/deferred_conditional_identity_extends_tests.rs",
+            excludes,
+        )
+        comment_hits = self.arch_guard.find_matches(
+            "// let components = query::full_conditional_type_components(db, ty);",
+            pattern,
+            "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
+            excludes,
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+        self.assertEqual(comment_hits, [])
+
+
 class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
@@ -410,10 +483,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
     def _generic_call_resolver_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == (
-                "Solver engine boundary: generic call resolver must stay at "
-                "current 3381 LOC baseline (#8209)"
-            ):
+            if "generic call resolver" in name and "#8209" in name:
                 return path, limit
         self.fail(
             "generic call resolver size boundary check is missing from "
@@ -422,7 +492,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._generic_call_resolver_size_check()
-        self.assertEqual(limit, 3381)
+        self.assertEqual(limit, 3378)
         self.assertTrue(
             str(path).endswith(
                 "crates/tsz-solver/src/operations/generic_call/resolve.rs"
@@ -1003,6 +1073,77 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+
+
+class ArchGuardAllFileLimitChecksPassTests(unittest.TestCase):
+    """Generic guard: every FILE_LINE_LIMIT_CHECKS entry must exist on disk
+    and must not exceed its pinned cap.  This catches entries (like
+    async_es5_ir.rs) that have no dedicated per-entry test class."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_all_file_limit_paths_exist(self):
+        for name, path, _limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            self.assertTrue(
+                path.exists(),
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': path {path} does not exist. "
+                "Remove the entry or fix the path.",
+            )
+
+    def test_all_file_limit_caps_are_not_exceeded(self):
+        for name, path, limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            hits = self.arch_guard.scan_file_line_limit(path, limit)
+            self.assertEqual(
+                hits,
+                [],
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': cap {limit} is too tight "
+                f"for the live file ({hits}). Bump the cap or split the file.",
+            )
+
+    def test_no_unguarded_oversized_production_files(self):
+        """Every production .rs file over 2000 lines must appear in FILE_LINE_LIMIT_CHECKS.
+
+        Prevents new monoliths from growing unchecked. When a file legitimately exceeds
+        2000 lines, add a FILE_LINE_LIMIT_CHECKS entry for it in the same PR; ratchet
+        the cap down as the file is split per §19.
+        """
+        arch_guard = self.arch_guard
+        guarded = {
+            pathlib.Path(path).resolve()
+            for _, path, _ in arch_guard.FILE_LINE_LIMIT_CHECKS
+        }
+        limit = 2000
+        unguarded = []
+        crates_root = ROOT / "crates"
+        if not crates_root.exists():
+            return
+        for path in crates_root.rglob("*.rs"):
+            rel = path.relative_to(ROOT).as_posix()
+            rel_parts = set(rel.split("/"))
+            if arch_guard.EXCLUDE_DIRS.intersection(rel_parts):
+                continue
+            if "tests" in rel_parts or "benches" in rel_parts:
+                continue
+            if arch_guard.is_test_file(rel):
+                continue
+            if path.resolve() in guarded:
+                continue
+            try:
+                n = len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except OSError:
+                continue
+            if n > limit:
+                unguarded.append((n, rel))
+        if unguarded:
+            unguarded.sort(reverse=True)
+            lines = "\n".join(f"  {n:5d}  {r}" for n, r in unguarded)
+            self.fail(
+                f"Found {len(unguarded)} production file(s) over {limit} lines with "
+                f"no FILE_LINE_LIMIT_CHECKS guard.\n"
+                f"Add an entry for each file in the same PR that grows it past {limit} "
+                f"lines; ratchet down as submodules land (§19):\n{lines}"
+            )
 
 
 if __name__ == "__main__":

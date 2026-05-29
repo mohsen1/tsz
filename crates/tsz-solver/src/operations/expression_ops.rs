@@ -36,6 +36,28 @@ pub fn compute_conditional_expression_type(
     true_type: TypeId,
     false_type: TypeId,
 ) -> TypeId {
+    compute_conditional_expression_type_with_resolver(
+        interner,
+        condition,
+        true_type,
+        false_type,
+        None::<&crate::relations::subtype::NoopResolver>,
+    )
+}
+
+/// Resolver-aware variant of [`compute_conditional_expression_type`].
+///
+/// A resolver lets subtype-reduction of the branch union see through alias /
+/// application / mapped wrappers (e.g. `Record<string, unknown>` interns as a
+/// `TypeData::Application`). Without it, the index signature that drives
+/// `UnionReduction.Subtype` stays hidden behind the wrapper.
+pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    condition: TypeId,
+    true_type: TypeId,
+    false_type: TypeId,
+    resolver: Option<&R>,
+) -> TypeId {
     // Handle error propagation
     if condition == TypeId::ERROR {
         return TypeId::ERROR;
@@ -50,6 +72,11 @@ pub fn compute_conditional_expression_type(
     // Handle special type constants
     if condition == TypeId::ANY {
         // any ? A : B -> A | B
+        if let Some(reduced) =
+            reduce_fresh_empty_object_branch(interner, true_type, false_type, resolver)
+        {
+            return reduced;
+        }
         return interner.union2(true_type, false_type);
     }
     if condition == TypeId::NEVER {
@@ -85,7 +112,92 @@ pub fn compute_conditional_expression_type(
         return interner.union_preserve_members(vec![true_type, false_type]);
     }
 
+    if let Some(reduced) =
+        reduce_fresh_empty_object_branch(interner, true_type, false_type, resolver)
+    {
+        return reduced;
+    }
+
     interner.union2(true_type, false_type)
+}
+
+/// tsc computes a conditional expression's type as
+/// `getUnionType([trueType, falseType], UnionReduction.Subtype)`. A *fresh*
+/// empty object literal `{}` is a strict subtype of any object type it is
+/// assignable to (e.g. one with a string/number index signature, or with only
+/// optional members), so subtype reduction drops it: `cond ? {} : rec` where
+/// `rec: Record<string, unknown>` has type `Record<string, unknown>`, not
+/// `{} | Record<string, unknown>`.
+///
+/// The freshness requirement mirrors tsc: a *declared* `{}` is the wide
+/// empty-object supertype and survives reduction, so it is intentionally left
+/// untouched here. A sibling that `{}` is not assignable to (e.g. `{ a: number }`,
+/// which has a required property) is also preserved, because the fresh `{}` is
+/// then the supertype rather than the subtype.
+fn reduce_fresh_empty_object_branch<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    true_type: TypeId,
+    false_type: TypeId,
+    resolver: Option<&R>,
+) -> Option<TypeId> {
+    if is_fresh_empty_object_literal(interner, true_type)
+        && !is_fresh_empty_object_literal(interner, false_type)
+        && fresh_empty_is_subtype_of(interner, true_type, false_type, resolver)
+    {
+        return Some(false_type);
+    }
+    if is_fresh_empty_object_literal(interner, false_type)
+        && !is_fresh_empty_object_literal(interner, true_type)
+        && fresh_empty_is_subtype_of(interner, false_type, true_type, resolver)
+    {
+        return Some(true_type);
+    }
+    None
+}
+
+/// Decide whether a fresh empty `{}` is a subtype of `other`. `other` may be an
+/// alias/application/mapped wrapper (e.g. `Record<string, unknown>` interns as a
+/// `TypeData::Application`), so it is evaluated to its structural form first —
+/// otherwise the index signature that makes `{}` a subtype stays hidden behind
+/// the wrapper and the reduction is missed.
+fn fresh_empty_is_subtype_of<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    empty: TypeId,
+    other: TypeId,
+    resolver: Option<&R>,
+) -> bool {
+    match resolver {
+        Some(res) => {
+            let resolved =
+                crate::evaluation::evaluate::evaluate_type_with_resolver(interner, res, other);
+            let mut checker = SubtypeChecker::with_resolver(interner, res);
+            checker.is_subtype_of(empty, resolved)
+        }
+        None => {
+            let resolved = crate::evaluation::evaluate::evaluate_type(interner, other);
+            is_subtype_of(interner, empty, resolved)
+        }
+    }
+}
+
+/// A fresh empty object literal is `{}` written inline (carrying
+/// `ObjectFlags::FRESH_LITERAL`) with no members and no index signatures.
+/// Inspects the interned shape in place rather than cloning it, since this runs
+/// for every conditional expression whose branch is a fresh object literal.
+fn is_fresh_empty_object_literal(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let shape_id = match interner.lookup(type_id) {
+        Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+        _ => return false,
+    };
+    let shape = interner.object_shape(shape_id);
+    shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+        && shape.properties.is_empty()
+        && shape.string_index.is_none()
+        && shape.number_index.is_none()
+        && shape.symbol.is_none()
 }
 
 fn contains_unique_symbol(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {

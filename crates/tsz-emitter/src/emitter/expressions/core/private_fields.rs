@@ -17,7 +17,7 @@ struct PrivateFieldAccess {
 struct PrivateDestructuringTarget {
     target: NodeIndex,
     access: PrivateFieldAccess,
-    receiver_temp: String,
+    receiver_temp: Option<String>,
     setter_value: String,
 }
 
@@ -82,9 +82,94 @@ impl<'a> Printer<'a> {
         if !node.is_identifier() {
             return None;
         }
+        if self.private_static_class_alias_shadow_depth > 0 {
+            return None;
+        }
         let (cls_name, alias) = self.private_static_class_alias.as_ref()?;
         let ident = self.arena.get_identifier(node)?;
         (ident.escaped_text == *cls_name).then_some(alias.as_str())
+    }
+
+    pub(in crate::emitter) fn block_shadows_private_static_class_alias(
+        &self,
+        statements: &[NodeIndex],
+        include_function_params: bool,
+    ) -> bool {
+        let Some((class_name, _)) = self.private_static_class_alias.as_ref() else {
+            return false;
+        };
+
+        if include_function_params {
+            for &param_idx in &self.pending_function_body_parameters {
+                let Some(param) = self.arena.get_parameter_at(param_idx) else {
+                    continue;
+                };
+                if self.binding_name_matches(param.name, class_name) {
+                    return true;
+                }
+            }
+        }
+
+        statements.iter().copied().any(|stmt_idx| {
+            self.statement_declares_private_static_class_alias_name(stmt_idx, class_name)
+        })
+    }
+
+    fn binding_name_matches(&self, name_idx: NodeIndex, needle: &str) -> bool {
+        let mut names = Vec::new();
+        self.collect_binding_names(name_idx, &mut names);
+        names.iter().any(|name| name == needle)
+    }
+
+    fn declaration_name_matches(&self, name_idx: NodeIndex, needle: &str) -> bool {
+        self.arena
+            .get(name_idx)
+            .and_then(|node| self.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text == needle)
+    }
+
+    fn statement_declares_private_static_class_alias_name(
+        &self,
+        stmt_idx: NodeIndex,
+        class_name: &str,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    return false;
+                };
+                var_stmt.declarations.nodes.iter().copied().any(|list_idx| {
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    if let Some(decl) = self.arena.get_variable_declaration(list_node) {
+                        return self.binding_name_matches(decl.name, class_name);
+                    }
+                    let Some(list) = self.arena.get_variable(list_node) else {
+                        return false;
+                    };
+                    list.declarations.nodes.iter().copied().any(|decl_idx| {
+                        self.arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| self.binding_name_matches(decl.name, class_name))
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .is_some_and(|func| self.declaration_name_matches(func.name, class_name)),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .is_some_and(|class| self.declaration_name_matches(class.name, class_name)),
+            _ => false,
+        }
     }
 
     /// Check if a receiver expression is simple enough that it doesn't need
@@ -116,6 +201,59 @@ impl<'a> Printer<'a> {
         node.kind == SyntaxKind::ThisKeyword as u16
             || node.kind == SyntaxKind::SuperKeyword as u16
             || node.is_identifier()
+    }
+
+    /// True when the receiver is a bare identifier (a parameter or local), which
+    /// can be referenced directly without a hoisted temp. `this`/`super`/property
+    /// accesses/calls are not plain identifiers and must be captured into a temp.
+    pub(crate) fn receiver_is_plain_identifier(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| node.is_identifier())
+    }
+
+    pub(in crate::emitter) fn private_destructuring_receiver_needs_temp(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        self.try_extract_private_field_access(idx)
+            .is_some_and(|access| {
+                !self.private_member_is_static(&access.clean_name)
+                    || !self.private_call_receiver_is_simple(access.expression)
+            })
+    }
+
+    fn private_member_is_static(&self, clean_name: &str) -> bool {
+        let Some((_, class_alias)) = self.private_static_class_alias.as_ref() else {
+            return false;
+        };
+        self.private_member_info
+            .get(clean_name)
+            .and_then(|info| info.state_var.as_deref())
+            == Some(class_alias.as_str())
+    }
+
+    fn peek_fresh_temp_name(&self) -> String {
+        let mut counter = self.ctx.destructuring_state.temp_var_counter;
+        loop {
+            let current = counter;
+            counter += 1;
+
+            if current < 26 && (current == 8 || current == 13) {
+                continue;
+            }
+
+            let name = if current < 26 {
+                format!("_{}", (b'a' + current as u8) as char)
+            } else {
+                format!("_{}", current - 26)
+            };
+
+            if !self.file_identifiers.contains(&name)
+                && !self.generated_temp_names.contains(&name)
+                && !self.reserved_nested_temp_names.contains(&name)
+            {
+                return name;
+            }
+        }
     }
 
     fn emit_private_field_set_close(&mut self, clean_name: &str) {
@@ -215,7 +353,11 @@ impl<'a> Printer<'a> {
         self.write(") { ");
         self.write_helper("__classPrivateFieldSet");
         self.write("(");
-        self.write(&target.receiver_temp);
+        if let Some(receiver_temp) = &target.receiver_temp {
+            self.write(receiver_temp);
+        } else {
+            self.emit_private_receiver(target.access.expression, &target.access.clean_name);
+        }
         self.write(", ");
         self.emit_private_state_var(&target.access.weakmap_name, &target.access.clean_name);
         self.write(", ");
@@ -340,21 +482,35 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let targets = raw_targets
+        let mut targets = raw_targets
             .into_iter()
-            .map(|(target, access)| PrivateDestructuringTarget {
-                target,
-                access,
-                receiver_temp: self.make_unique_name_hoisted_assignment(),
-                setter_value: self.make_unique_name_fresh(),
+            .map(|(target, access)| {
+                // Only a non-identifier receiver (`this`, `super`, property access, call,
+                // etc.) needs a hoisted temp so the destructuring setter can reference the
+                // evaluated receiver once. A bare identifier receiver (a parameter or local)
+                // can be referenced directly, so it needs no temp.
+                let receiver_temp = (!self.receiver_is_plain_identifier(access.expression))
+                    .then(|| self.make_unique_name_hoisted_assignment());
+                PrivateDestructuringTarget {
+                    target,
+                    receiver_temp,
+                    setter_value: String::new(),
+                    access,
+                }
             })
             .collect::<Vec<_>>();
+        let setter_value = self.peek_fresh_temp_name();
+        for target in &mut targets {
+            target.setter_value.clone_from(&setter_value);
+        }
 
         for target in &targets {
-            self.write(&target.receiver_temp);
-            self.write(" = ");
-            self.emit_private_receiver(target.access.expression, &target.access.clean_name);
-            self.write(", ");
+            if let Some(receiver_temp) = &target.receiver_temp {
+                self.write(receiver_temp);
+                self.write(" = ");
+                self.emit_private_receiver(target.access.expression, &target.access.clean_name);
+                self.write(", ");
+            }
         }
         self.emit_private_destructuring_pattern(left, &targets);
         self.write(" = ");
@@ -373,7 +529,12 @@ impl<'a> Printer<'a> {
         is_prefix: bool,
         is_statement: bool,
     ) {
-        let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+        let member_kind = self
+            .private_member_info
+            .get(&pfa.clean_name)
+            .map(|info| info.kind);
+        let needs_receiver_temp =
+            member_kind == Some("m") || !self.receiver_is_simple(pfa.expression);
         let op_text = get_operator_text(operator);
         let expression = pfa.expression;
         let weakmap_name = pfa.weakmap_name.clone();
@@ -496,14 +657,29 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_private_field_get_close(&mut self, clean_name: &str) {
+        let info = self.private_member_info.get(clean_name).cloned();
+        let kind = info.as_ref().map_or("f", |i| i.kind);
+        self.write(", \"");
+        self.write(kind);
+        self.write("\"");
+        if let Some(ref i) = info
+            && let Some(ref fn_ref) = i.fn_ref
+        {
+            self.write(", ");
+            self.write(fn_ref);
+        }
+        self.write(")");
+    }
+
     /// Emit either `expr` directly or `_a = expr` for temp assignment.
     fn emit_receiver_or_temp_assign(&mut self, expression: NodeIndex, receiver_temp: Option<&str>) {
         if let Some(temp) = receiver_temp {
             self.write(temp);
             self.write(" = ");
-            self.emit(expression);
+            self.emit_private_receiver(expression, "");
         } else {
-            self.emit(expression);
+            self.emit_private_receiver(expression, "");
         }
     }
 
@@ -531,17 +707,101 @@ impl<'a> Printer<'a> {
         } else {
             self.write(weakmap_name);
         }
-        let kind = info.as_ref().map_or("f", |i| i.kind);
-        self.write(", \"");
-        self.write(kind);
-        self.write("\"");
-        if let Some(ref i) = info
-            && let Some(ref fn_ref) = i.fn_ref
-        {
-            self.write(", ");
-            self.write(fn_ref);
+        self.emit_private_field_get_close(clean_name);
+    }
+
+    pub(in crate::emitter) fn emit_private_field_tagged_template_tag(
+        &mut self,
+        tag: NodeIndex,
+    ) -> bool {
+        let Some(access) = self.try_extract_private_field_access(tag) else {
+            return false;
+        };
+
+        let receiver_temp = if self.private_call_receiver_is_simple(access.expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+        let receiver_temp = receiver_temp.as_deref();
+
+        self.write_helper("__classPrivateFieldGet");
+        self.write("(");
+        if let Some(temp) = receiver_temp {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit_private_receiver(access.expression, &access.clean_name);
+            self.write(")");
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        self.write(", ");
+        self.emit_private_state_var(&access.weakmap_name, &access.clean_name);
+        self.emit_private_field_get_close(&access.clean_name);
+        self.write(".bind(");
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
         }
         self.write(")");
+        true
+    }
+
+    pub(in crate::emitter) fn emit_optional_private_field_call_expression(
+        &mut self,
+        callee: NodeIndex,
+        args: &Option<NodeList>,
+    ) -> bool {
+        let Some(access) = self.try_extract_private_field_access(callee) else {
+            return false;
+        };
+
+        let receiver_temp = if self.private_call_receiver_is_simple(access.expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+        let receiver_temp = receiver_temp.as_deref();
+        let func_temp = self.make_unique_name_hoisted_value();
+
+        self.write("(");
+        self.write(&func_temp);
+        self.write(" = ");
+        self.write_helper("__classPrivateFieldGet");
+        self.write("(");
+        if let Some(temp) = receiver_temp {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit_private_receiver(access.expression, &access.clean_name);
+            self.write(")");
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        self.write(", ");
+        self.emit_private_state_var(&access.weakmap_name, &access.clean_name);
+        self.emit_private_field_get_close(&access.clean_name);
+        self.write(")");
+        self.write(" === null || ");
+        self.write(&func_temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.write(&func_temp);
+        self.write(".call(");
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        if let Some(args) = args
+            && !args.nodes.is_empty()
+        {
+            self.write(", ");
+            self.emit_comma_separated(&args.nodes);
+        }
+        self.write(")");
+        true
     }
 
     pub(in crate::emitter) fn emit_binary_expression(&mut self, node: &Node) {
@@ -712,6 +972,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_assignment(
+            binary.left,
+            binary.operator_token,
+            binary.right,
+        ) {
+            return;
+        }
+
         // ES2015-ES2017: lower object rest assignment patterns.
         // Skip when targeting ES5; the ES5 destructuring lowering below
         // already handles object rest with fully ES5-compatible output.
@@ -811,12 +1079,35 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        if self.is_assignment_operator(binary.operator_token)
+        let left_is_destructuring_pattern = self.arena.get(binary.left).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    | syntax_kind_ext::OBJECT_BINDING_PATTERN
+            )
+        });
+        let left_has_static_super_target = binary.operator_token == SyntaxKind::EqualsToken as u16
+            && left_is_destructuring_pattern
+            && self.pattern_has_scoped_static_super_assignment_target(binary.left);
+        if self.emit_system_live_export_assignment_expression(
+            binary.left,
+            binary.operator_token,
+            binary.right,
+        ) {
+            self.ctx.flags.optional_chain_needs_parens = prev_optional;
+            self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+            self.ctx.flags.in_binary_operand = prev_in_binary;
+            return;
+        } else if self.is_assignment_operator(binary.operator_token)
             && self.emit_commonjs_live_export_assignment_target(binary.left)
         {
             // The live export chain emitted the left-hand side.
         } else if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
             self.write("super.");
+        } else if left_has_static_super_target {
+            self.emit_with_scoped_static_super_assignment_targets(binary.left);
         } else {
             self.emit(binary.left);
         }
@@ -1079,7 +1370,7 @@ impl<'a> Printer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
     }
 
-    const fn is_assignment_operator(&self, op: u16) -> bool {
+    pub(in crate::emitter) const fn is_assignment_operator(&self, op: u16) -> bool {
         op == SyntaxKind::EqualsToken as u16
             || op == SyntaxKind::PlusEqualsToken as u16
             || op == SyntaxKind::MinusEqualsToken as u16
@@ -1114,24 +1405,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_update(unary.operand, unary.operator, true) {
+            return;
+        }
+
         if (unary.operator == SyntaxKind::PlusPlusToken as u16
             || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && let Some(operand_node) = self.arena.get(unary.operand)
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if self.in_system_execute_body {
-                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                    self.write("exports_1(\"");
-                    self.write(&export_name);
-                    self.write("\", ");
-                    self.write(get_operator_text(unary.operator));
-                    self.write(&local_name);
-                    self.write(")");
-                    return;
-                }
-            }
-            if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
+            if self.emit_system_live_export_prefix_unary(&local_name, unary.operator)
+                || self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator)
+            {
                 return;
             }
         }
@@ -1398,6 +1684,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_update(unary.operand, unary.operator, false) {
+            return;
+        }
+
         if (unary.operator == SyntaxKind::PlusPlusToken as u16
             || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && !self.ctx.options.target.supports_es2020()
@@ -1422,7 +1712,13 @@ impl<'a> Printer<'a> {
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
             let is_statement = self.ctx.flags.in_statement_expression;
-            if self.emit_cjs_live_export_postfix_unary(&local_name, unary.operator, is_statement) {
+            if self.emit_system_live_export_postfix_unary(&local_name, unary.operator, is_statement)
+                || self.emit_cjs_live_export_postfix_unary(
+                    &local_name,
+                    unary.operator,
+                    is_statement,
+                )
+            {
                 return;
             }
         }

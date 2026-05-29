@@ -216,7 +216,18 @@ impl Server {
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
-            if category == DiagnosticCategory::Error && file.file_name == file_path {
+            // Only run the checker for the file we need diagnostics from.
+            // Other files are already bound into ProgramContext so their
+            // symbols are available for cross-file type resolution; running
+            // check_source_file on them is pure overhead that scales with
+            // the number of open files (e.g. node_modules declaration files
+            // opened by a fourslash test can each take several seconds when
+            // they contain circular namespace/interface declarations).
+            if file.file_name != file_path {
+                continue;
+            }
+
+            if category == DiagnosticCategory::Error {
                 diagnostics.extend(file.parse_diagnostics.iter().map(|diag| {
                     tsz::checker::diagnostics::Diagnostic::error(
                         file.file_name.clone(),
@@ -233,25 +244,31 @@ impl Server {
                 &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
-                checker_options.clone(),
+                checker_options,
             );
 
+            checker.ctx.report_unresolved_imports = true;
             program_context.apply_to(&mut checker.ctx);
+            // The server never populates resolved_module_request_paths, so the
+            // ProgramContext default propagates an empty Arc into the checker.
+            // Reset it to None so resolve_import_target_from_file_for_request
+            // falls through to the file-based resolver (the same path it takes
+            // when resolved_module_request_paths is absent entirely).
+            checker.ctx.resolved_module_request_paths = None;
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(file.source_file);
 
-            if file.file_name == file_path {
-                diagnostics.extend(
-                    checker
-                        .ctx
-                        .diagnostics
-                        .into_iter()
-                        .filter(|diag| diag.category == category),
-                );
-            }
+            diagnostics.extend(
+                checker
+                    .ctx
+                    .diagnostics
+                    .into_iter()
+                    .filter(|diag| diag.category == category),
+            );
+            break;
         }
 
         if category == DiagnosticCategory::Error {
@@ -503,6 +520,10 @@ impl Server {
             );
 
             program_context.apply_to(&mut checker.ctx);
+            // See get_diagnostics_by_category: reset to None so the resolver
+            // falls through to the file-based path rather than looking up in
+            // an empty request-path map that blocks dynamic-import resolution.
+            checker.ctx.resolved_module_request_paths = None;
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
@@ -571,7 +592,35 @@ impl Server {
         &mut self,
         options: &CheckOptions,
     ) -> Result<Vec<Arc<LibFile>>> {
-        let mut lib_names = self.determine_libs(options);
+        if options.no_lib {
+            return Ok(vec![]);
+        }
+        // Resolve lib names using the same strategy as load_libs_for_binding:
+        // resolve_default_lib_files_from_dir / resolve_lib_files_from_dir use
+        // build_lib_map which includes source-tree aliases like "lib" → es5.full.
+        // determine_libs returns bare logical names ("lib", "es6") that
+        // load_lib_recursive cannot resolve when lib.d.ts / lib.es6.d.ts don't
+        // exist in the source-tree lib directory.
+        let mut lib_names: Vec<String> = if let Some(ref libs) = options.lib {
+            match resolve_lib_files_from_dir(libs, &self.lib_dir) {
+                Ok(paths) => paths
+                    .into_iter()
+                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+                    .collect(),
+                Err(_) => self.determine_libs(options),
+            }
+        } else {
+            match resolve_default_lib_files_from_dir(
+                Self::parse_target(&options.target),
+                &self.lib_dir,
+            ) {
+                Ok(paths) => paths
+                    .into_iter()
+                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+                    .collect(),
+                Err(_) => self.determine_libs(options),
+            }
+        };
         if lib_names.is_empty() {
             return Ok(vec![]);
         }
@@ -697,11 +746,20 @@ impl Server {
             return Ok(());
         }
 
-        let candidates = [
-            self.lib_dir.join(format!("{normalized}.d.ts")),
-            self.lib_dir.join(format!("lib.{normalized}.d.ts")),
-            self.tests_lib_dir.join(format!("{normalized}.d.ts")),
-        ];
+        let candidates: [std::path::PathBuf; 3] = if normalized.ends_with(".d.ts") {
+            // Already a full filename — do not append another .d.ts extension.
+            [
+                self.lib_dir.join(&normalized),
+                self.lib_dir.join(format!("lib.{normalized}")),
+                self.tests_lib_dir.join(&normalized),
+            ]
+        } else {
+            [
+                self.lib_dir.join(format!("{normalized}.d.ts")),
+                self.lib_dir.join(format!("lib.{normalized}.d.ts")),
+                self.tests_lib_dir.join(format!("{normalized}.d.ts")),
+            ]
+        };
 
         for candidate in &candidates {
             if candidate.exists() {

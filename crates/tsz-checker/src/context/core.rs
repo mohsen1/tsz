@@ -93,6 +93,12 @@ impl TypeCache {
         self.def_to_name.extend(other.def_to_name);
         self.def_types.extend(other.def_types);
         self.def_type_params.extend(other.def_type_params);
+        self.well_known_symbol_names
+            .extend(other.well_known_symbol_names);
+        self.boxed_types.extend(other.boxed_types);
+        for (kind, def_ids) in other.boxed_def_ids {
+            self.boxed_def_ids.entry(kind).or_default().extend(def_ids);
+        }
     }
 }
 
@@ -1370,10 +1376,12 @@ impl<'a> CheckerContext<'a> {
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {
         let type_env = self.type_environment.into_inner();
+        let boxed_types = type_env.snapshot_boxed_types();
+        let boxed_def_ids = type_env.snapshot_boxed_def_ids();
         let def_to_symbol = self.def_to_symbol.into_inner();
         // Build def_to_name from DefinitionStore so the emitter can print lib
         // symbol names (e.g., "Promise") without needing the lib binder arena.
-        let def_to_name: FxHashMap<_, _> = def_to_symbol
+        let mut def_to_name: FxHashMap<_, _> = def_to_symbol
             .keys()
             .filter_map(|&def_id| {
                 self.definition_store
@@ -1381,6 +1389,14 @@ impl<'a> CheckerContext<'a> {
                     .map(|info| (def_id, self.types.resolve_atom(info.name)))
             })
             .collect();
+        for (def_id, name_path) in self.definition_store.all_definition_names() {
+            let name = name_path
+                .iter()
+                .map(|&atom| self.types.resolve_atom(atom))
+                .collect::<Vec<_>>()
+                .join(".");
+            def_to_name.entry(def_id).or_insert(name);
+        }
         TypeCache {
             symbol_types: self.symbol_types,
             symbol_instance_types: self.symbol_instance_types,
@@ -1390,6 +1406,9 @@ impl<'a> CheckerContext<'a> {
             def_to_name,
             def_types: type_env.snapshot_def_types(),
             def_type_params: type_env.snapshot_def_type_params(),
+            boxed_types,
+            boxed_def_ids,
+            well_known_symbol_names: type_env.snapshot_well_known_symbol_names(),
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
@@ -1409,6 +1428,7 @@ impl<'a> CheckerContext<'a> {
             || code == 18048
             || code == 18049
             || code == 2322
+            || code == 2339
             || code == 2374
             || code == 2411
             || code == 2413
@@ -1806,11 +1826,17 @@ impl<'a> CheckerContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::TypeCache;
+    use super::{CheckerContext, TypeCache};
     use rustc_hash::{FxHashMap, FxHashSet};
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
     use tsz_binder::SymbolId;
+    use tsz_common::checker_options::CheckerOptions;
     use tsz_parser::parser::NodeIndex;
+    use tsz_parser::parser::node::NodeArena;
     use tsz_solver::TypeId;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::{DefinitionInfo, DefinitionStore};
 
     fn empty_cache() -> TypeCache {
         TypeCache {
@@ -1822,6 +1848,9 @@ mod tests {
             def_to_name: FxHashMap::default(),
             def_types: FxHashMap::default(),
             def_type_params: FxHashMap::default(),
+            boxed_types: FxHashMap::default(),
+            boxed_def_ids: FxHashMap::default(),
+            well_known_symbol_names: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
@@ -1892,6 +1921,32 @@ mod tests {
         assert!(cache.class_instance_type_cache.is_empty());
         assert!(cache.class_constructor_type_cache.is_empty());
         assert!(cache.class_instance_type_to_decl.is_empty());
+    }
+
+    #[test]
+    fn extract_cache_keeps_definition_names_without_symbol_mapping() {
+        let arena = NodeArena::new();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let name = types.intern_string("ConcatArray");
+        let def_id = store.register(DefinitionInfo::interface(name, Vec::new(), Vec::new()));
+
+        let ctx = CheckerContext::new_with_shared_def_store(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+            store,
+        );
+
+        let cache = ctx.extract_cache();
+
+        assert_eq!(
+            cache.def_to_name.get(&def_id).map(String::as_str),
+            Some("ConcatArray")
+        );
     }
 }
 

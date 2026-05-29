@@ -138,6 +138,37 @@ fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
 }
 
 #[test]
+fn type_alias_reference_algebra_still_reports_nested_missing_name() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Wrap<T> = T;\ntype Alias<T> = Wrap<T | MissingAlpha>;",
+    );
+
+    assert!(codes.contains(&2304), "expected TS2304, got {codes:?}");
+}
+
+#[test]
+fn type_alias_indexed_reference_algebra_still_reports_missing_name() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Wrap<T> = T;\ntype Alias<U> = Wrap<U & MissingBeta['field']>;",
+    );
+
+    assert!(codes.contains(&2304), "expected TS2304, got {codes:?}");
+}
+
+#[test]
+fn type_alias_conditional_fallback_still_checks_missing_names() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Alias<T> = T extends MissingGamma ? T : MissingDelta;",
+    );
+    let missing_name_count = codes.iter().filter(|&&code| code == 2304).count();
+
+    assert!(
+        missing_name_count >= 2,
+        "expected both conditional branches to report TS2304, got {codes:?}"
+    );
+}
+
+#[test]
 fn local_ambient_value_shadows_dom_interface_in_value_position() {
     let diagnostics = check_with_lib(
         r#"
@@ -597,6 +628,23 @@ function A(): (x: B) => C {
         ts2304_errors.len(),
         2,
         "Should have TS2304 for both 'B' and 'C', got: {ts2304_errors:?}"
+    );
+}
+
+#[test]
+fn unconstrained_generic_type_arg_still_reports_missing_name() {
+    let source = r#"
+type Box<T> = T;
+type Alias = Box<MissingType>;
+"#;
+    let diagnostics = check_without_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+
+    assert!(
+        ts2304_errors
+            .iter()
+            .any(|d| diagnostic_contains(d, "'MissingType'")),
+        "Expected TS2304 for MissingType inside unconstrained type argument, got: {ts2304_errors:?}",
     );
 }
 

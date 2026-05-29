@@ -50,6 +50,13 @@ impl<'a> AsyncES5Transformer<'a> {
             {
                 current_statements.push(Self::generator_break_statement(loop_control.break_label));
             }
+            k if k == syntax_kind_ext::BREAK_STATEMENT => {
+                if let Some(target) = self.labeled_break_target(idx) {
+                    current_statements.push(Self::generator_break_statement(target));
+                } else {
+                    self.process_async_statement(idx, cases, current_statements, current_label);
+                }
+            }
             k if k == syntax_kind_ext::CONTINUE_STATEMENT
                 && self.jump_statement_is_unlabeled_loop_local(idx) =>
             {
@@ -131,6 +138,20 @@ impl<'a> AsyncES5Transformer<'a> {
                 .arena
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
+
+        if !has_else
+            && !then_has_await
+            && then_has_loop_control
+            && let Some(then_branch) =
+                self.statement_to_ir_with_loop_control(if_stmt.then_statement, loop_control)
+        {
+            current_statements.push(IRNode::IfStatement {
+                condition: Box::new(self.expression_to_ir(if_stmt.expression)),
+                then_branch: Box::new(then_branch),
+                else_branch: None,
+            });
+            return;
+        }
 
         let delayed_else_label = has_else && then_has_await;
         let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
@@ -220,6 +241,46 @@ impl<'a> AsyncES5Transformer<'a> {
         )
     }
 
+    pub(super) fn contains_labeled_continue(&self, idx: NodeIndex, label: &str) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || self.statement_starts_inner_loop_or_function(node.kind)
+        {
+            return false;
+        }
+        match node.kind {
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
+                let Some(jump) = self.arena.get_jump_data(node) else {
+                    return false;
+                };
+                let Some(jump_label) = jump.label.into_option() else {
+                    return false;
+                };
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, jump_label)
+                    == label
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                self.arena.get_block(node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .any(|&stmt| self.contains_labeled_continue(stmt, label))
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.arena.get_if_statement(node).is_some_and(|if_stmt| {
+                    self.contains_labeled_continue(if_stmt.then_statement, label)
+                        || self.contains_labeled_continue(if_stmt.else_statement, label)
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn contains_unlabeled_loop_local_control_kind(
         &self,
         idx: NodeIndex,
@@ -238,7 +299,8 @@ impl<'a> AsyncES5Transformer<'a> {
             k if (k == syntax_kind_ext::BREAK_STATEMENT
                 || k == syntax_kind_ext::CONTINUE_STATEMENT)
                 && expected_kind.is_none_or(|expected_kind| k == expected_kind)
-                && self.jump_statement_is_unlabeled_loop_local(idx) =>
+                && (self.jump_statement_is_unlabeled_loop_local(idx)
+                    || self.labeled_loop_control_target(idx).is_some()) =>
             {
                 true
             }
@@ -282,6 +344,97 @@ impl<'a> AsyncES5Transformer<'a> {
             .iter()
             .rev()
             .find_map(|(candidate, target)| (candidate == &label).then_some(*target))
+    }
+
+    fn labeled_break_target(&self, idx: NodeIndex) -> Option<u32> {
+        let jump = self
+            .arena
+            .get(idx)
+            .and_then(|node| self.arena.get_jump_data(node))?;
+        let label = jump.label.into_option()?;
+        let label = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, label);
+        self.labeled_break_targets
+            .iter()
+            .rev()
+            .find_map(|(candidate, target)| (candidate == &label).then_some(*target))
+    }
+
+    fn labeled_loop_control_target(&self, idx: NodeIndex) -> Option<u32> {
+        let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::CONTINUE_STATEMENT {
+            return self.labeled_continue_target(idx);
+        }
+        if node.kind == syntax_kind_ext::BREAK_STATEMENT {
+            return self.labeled_break_target(idx);
+        }
+        None
+    }
+
+    fn statement_to_ir_with_loop_control(
+        &self,
+        idx: NodeIndex,
+        loop_control: AsyncLoopControlTargets,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::BREAK_STATEMENT
+                && self.jump_statement_is_unlabeled_loop_local(idx) =>
+            {
+                Some(Self::generator_break_statement(loop_control.break_label))
+            }
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT
+                && self.jump_statement_is_unlabeled_loop_local(idx) =>
+            {
+                Some(Self::generator_break_statement(loop_control.continue_label))
+            }
+            k if k == syntax_kind_ext::BREAK_STATEMENT => self
+                .labeled_break_target(idx)
+                .map(Self::generator_break_statement),
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => self
+                .labeled_continue_target(idx)
+                .map(Self::generator_break_statement),
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                let block = self.arena.get_block(node)?;
+                let mut changed = false;
+                let statements = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&stmt| {
+                        if let Some(rewritten) =
+                            self.statement_to_ir_with_loop_control(stmt, loop_control)
+                        {
+                            changed = true;
+                            rewritten
+                        } else {
+                            self.statement_to_ir(stmt)
+                        }
+                    })
+                    .collect();
+                changed.then_some(IRNode::Block(statements))
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                let if_stmt = self.arena.get_if_statement(node)?;
+                let then_branch =
+                    self.statement_to_ir_with_loop_control(if_stmt.then_statement, loop_control);
+                let else_statement = if_stmt.else_statement.into_option();
+                let else_branch = else_statement
+                    .and_then(|stmt| self.statement_to_ir_with_loop_control(stmt, loop_control));
+                if then_branch.is_none() && else_branch.is_none() {
+                    return None;
+                }
+                Some(IRNode::IfStatement {
+                    condition: Box::new(self.expression_to_ir(if_stmt.expression)),
+                    then_branch: Box::new(
+                        then_branch.unwrap_or_else(|| self.statement_to_ir(if_stmt.then_statement)),
+                    ),
+                    else_branch: else_statement.map(|stmt| {
+                        Box::new(else_branch.unwrap_or_else(|| self.statement_to_ir(stmt)))
+                    }),
+                })
+            }
+            _ => None,
+        }
     }
 
     fn statement_to_ir_with_labeled_continue(&self, idx: NodeIndex) -> Option<IRNode> {
@@ -378,6 +531,15 @@ impl<'a> AsyncES5Transformer<'a> {
             || kind == syntax_kind_ext::LABELED_STATEMENT
     }
 
+    pub(super) const fn loop_statements_end_control_flow(statements: &[IRNode]) -> bool {
+        matches!(
+            statements.last(),
+            Some(
+                IRNode::ReturnStatement(_) | IRNode::ThrowStatement(_) | IRNode::BreakStatement(_)
+            )
+        )
+    }
+
     pub(super) fn patch_if_break_target(
         cases: &mut [IRGeneratorCase],
         placeholder_label: u32,
@@ -432,6 +594,21 @@ impl<'a> AsyncES5Transformer<'a> {
                     Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
                 }
             }
+            return;
+        }
+        if let IRNode::IfStatement {
+            then_branch,
+            else_branch,
+            ..
+        } = node
+        {
+            Self::patch_if_break_target_in_node(then_branch, placeholder_label, target_label);
+            if let Some(else_branch) = else_branch {
+                Self::patch_if_break_target_in_node(else_branch, placeholder_label, target_label);
+            }
+        }
+        if let IRNode::WithStatement { body, .. } = node {
+            Self::patch_if_break_target_in_node(body, placeholder_label, target_label);
         }
     }
 }

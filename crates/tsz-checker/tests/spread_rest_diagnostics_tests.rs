@@ -570,6 +570,166 @@ var c: MyNumberArray = [...strs];
 }
 
 #[test]
+fn test_array_spread_ts2488_preserves_literal_operand_display() {
+    let source = r#"
+const a = [...5];
+const b = [...true];
+const c = [...{ value: 1 }];
+declare let n: number;
+const d = [...n];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let messages = diagnostic_messages_with_code(&diagnostics, 2488);
+
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type '5' must have")),
+        "numeric spread literal should stay literal in TS2488; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type 'true' must have")),
+        "boolean spread literal should stay literal in TS2488; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type '{ value: number; }' must have")),
+        "object spread operand should keep widened property display; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type 'number' must have")),
+        "non-literal number spread operand should still display number; got {messages:?}"
+    );
+}
+
+// =============================================================================
+// Deferred IndexAccess in object spread — tsc `InstantiableNonPrimitive` rule
+//
+// `{ ...x }` where the operand `x: T[K]` is a deferred indexed access on
+// generic type parameters must NOT emit TS2698. tsc's `isValidSpreadType`
+// passes deferred IndexAccess via the `InstantiableNonPrimitive` flag
+// when no useful base constraint can be computed; tsz must mirror that
+// behavior at the solver query layer (not by spelling/file/identifier
+// heuristics).
+// =============================================================================
+
+#[test]
+fn test_no_ts2698_for_spread_of_unconstrained_index_access() {
+    let source = r#"
+function f<T, K>(x: T[K]) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 must not fire for `{{ ...x }}` where x is a deferred T[K]; got: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2698)
+    );
+}
+
+#[test]
+fn test_no_ts2698_for_spread_of_renamed_index_access() {
+    // Same structural rule with renamed type parameters — pins that the fix
+    // does not depend on the spelling `T`/`K`.
+    let source = r#"
+function f<Alpha, Beta>(x: Alpha[Beta]) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 must not fire for renamed generic indexed access spread; got: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2698)
+    );
+}
+
+#[test]
+fn test_no_ts2698_for_spread_of_index_access_with_object_constraint() {
+    let source = r#"
+function f<T extends object, K extends keyof T>(x: T[K]) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 must not fire for spread of T[K] where T extends object; got: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2698)
+    );
+}
+
+#[test]
+fn test_ts2698_still_fires_for_spread_of_keyof_t() {
+    // Negative case: `keyof T` is structurally a property-key primitive,
+    // even when deferred. Spread must still error.
+    let source = r#"
+function f<T>(x: keyof T) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert!(
+        ts2698 >= 1,
+        "TS2698 should still fire for spread of `keyof T`; got: {:?}",
+        diagnostic_codes(&diagnostics)
+    );
+}
+
+#[test]
+fn test_no_ts2698_for_spread_of_deferred_conditional() {
+    // tsc treats a deferred `T extends … ? … : …` as `InstantiableNonPrimitive`
+    // when no useful base constraint can be computed. tsz already accepts
+    // these through the catch-all arm in `is_valid_spread_type_impl`; this
+    // test pins that behavior so it doesn't drift while the IndexAccess
+    // and KeyOf arms move around.
+    let source = r#"
+function f<T>(x: T extends string ? { s: string } : { n: number }) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 must not fire for spread of a deferred conditional; got: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2698)
+    );
+}
+
+#[test]
+fn test_ts2698_still_fires_for_spread_of_t_extends_string() {
+    // Negative case: `T extends string` reduces to a primitive constraint,
+    // which is not spreadable.
+    let source = r#"
+function f<T extends string>(x: T) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert!(
+        ts2698 >= 1,
+        "TS2698 should still fire for spread of T extends string; got: {:?}",
+        diagnostic_codes(&diagnostics)
+    );
+}
+
+#[test]
 fn test_destructuring_index_signature_only_emits_ts2488_in_es2015() {
     // Pinned by `destructuringArrayBindingPatternAndAssignment2.ts`. tsc emits
     // TS2488 for `var [c4, c5, c6] = foo(1)` when `foo` returns an interface

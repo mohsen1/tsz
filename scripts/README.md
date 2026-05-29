@@ -48,13 +48,14 @@ scripts/
 ### README Progress Refresh
 | Script | Purpose |
 |--------|---------|
-| `scripts/refresh-readme.py` | Update README progress bars from artifact JSON files |
-| `scripts/refresh-readme.py --write` | Apply changes (default is dry-run) |
+| `scripts/refresh-readme.py` | Update README generated blocks from artifact JSON files and published benchmark data |
+| `scripts/refresh-readme.py --write` | Apply README changes and regenerate the light/dark performance PNGs (default is dry-run) |
 
 ### Benchmarking
 | Script | Purpose |
 |--------|---------|
 | `scripts/bench/bench-vs-tsgo.sh` | Comparative benchmark (tsz vs tsgo) |
+| `scripts/bench/readme-perf-svg.mjs` | Render the README performance chart SVG or light/dark PNGs from a benchmark artifact |
 | `scripts/bench/perf-hotspots.sh` | Targeted hotspot profiling |
 | `scripts/bench/precommit-microbench.sh` | Pre-commit regression gate |
 | `scripts/ci/bench-compare.sh` | PR benchmark comparison (CI) |

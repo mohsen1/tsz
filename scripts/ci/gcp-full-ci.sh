@@ -113,6 +113,29 @@ publish_latest_metric() {
   fi
 }
 
+write_emit_metric() {
+  local out="$1"
+  local js_passed="$2" js_total="$3" js_skipped="$4" js_timeouts="$5"
+  local dts_passed="$6" dts_total="$7" dts_skipped="$8"
+
+  local js_rate dts_rate
+  js_rate="$(awk -v p="$js_passed" -v t="$js_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  dts_rate="$(awk -v p="$dts_passed" -v t="$dts_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "emit" \
+    --arg js_pass_rate "$js_rate" \
+    --argjson js_passed "$js_passed" \
+    --argjson js_total "$js_total" \
+    --argjson js_skipped "$js_skipped" \
+    --argjson js_timeouts "$js_timeouts" \
+    --arg dts_pass_rate "$dts_rate" \
+    --argjson dts_passed "$dts_passed" \
+    --argjson dts_total "$dts_total" \
+    --argjson dts_skipped "$dts_skipped" \
+    '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, js_skipped:$js_skipped, js_timeouts:$js_timeouts, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, dts_skipped:$dts_skipped}' \
+    > "$out"
+}
+
 suite_needs_group() {
   ci_suite_needs_group "$@"
 }
@@ -375,9 +398,12 @@ run_lint() {
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?
+  node scripts/bench/test-readme-perf-svg.mjs || return $?
   node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
+  node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
@@ -387,11 +413,18 @@ run_lint() {
   node scripts/ci/test-pr-ready-state.mjs || return $?
   node scripts/ci/test-refresh-green-prs.mjs || return $?
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
+  node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  for test_file in scripts/agents/test_*.py scripts/setup/test_*.py; do
+    [[ -f "$test_file" ]] || continue
+    python3 "$test_file" || return $?
+  done
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/ci/test_gcp_full_ci_emit_metrics.py || return $?
+  python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
@@ -1552,6 +1585,10 @@ run_emit_shard() {
   if [[ "$shard_count" -eq 1 ]]; then
     ci_section "Emit aggregate"
     validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1
+    write_emit_metric "$METRICS_DIR/emit.json" \
+      "$js_p" "$js_t" "$js_s" "$js_to" \
+      "$dts_p" "$dts_t" "$dts_s"
+    publish_latest_metric emit "$METRICS_DIR/emit.json"
   fi
   return 0
 }
@@ -1597,6 +1634,10 @@ run_emit_aggregate() {
 
   validate_emit_aggregate_counts "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
     "$dts_passed" "$dts_total" "$dts_skipped" "$files_count" "$expected_shards"
+  write_emit_metric "$METRICS_DIR/emit.json" \
+    "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
+    "$dts_passed" "$dts_total" "$dts_skipped"
+  publish_latest_metric emit "$METRICS_DIR/emit.json"
 }
 
 run_fourslash_shard() {
@@ -1819,21 +1860,9 @@ aggregate_emit() {
     return 1
   fi
 
-  js_rate="$(awk -v p="$js_passed" -v t="$js_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
-  dts_rate="$(awk -v p="$dts_passed" -v t="$dts_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
-  jq -n \
-    --arg suite "emit" \
-    --arg js_pass_rate "$js_rate" \
-    --argjson js_passed "$js_passed" \
-    --argjson js_total "$js_total" \
-    --argjson js_skipped "$js_skipped" \
-    --argjson js_timeouts "$js_timeouts" \
-    --arg dts_pass_rate "$dts_rate" \
-    --argjson dts_passed "$dts_passed" \
-    --argjson dts_total "$dts_total" \
-    --argjson dts_skipped "$dts_skipped" \
-    '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, js_skipped:$js_skipped, js_timeouts:$js_timeouts, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, dts_skipped:$dts_skipped}' \
-    > "$METRICS_DIR/emit.json"
+  write_emit_metric "$METRICS_DIR/emit.json" \
+    "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
+    "$dts_passed" "$dts_total" "$dts_skipped"
 
   base_js="$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json)"
   base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"

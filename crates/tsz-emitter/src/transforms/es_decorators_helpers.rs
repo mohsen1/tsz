@@ -7,7 +7,7 @@ use tsz_scanner::SyntaxKind;
 /// Strip TypeScript type annotations from function/setter parameters in source text.
 /// Handles `(value: number)` → `(value)`.
 pub(super) fn strip_param_types(text: &str) -> String {
-    let brace_pos = text.find('{').unwrap_or(text.len());
+    let brace_pos = find_member_body_start(text).unwrap_or(text.len());
     let param_region = &text[..brace_pos];
     let Some(paren_open) = param_region.rfind('(') else {
         return text.to_string();
@@ -38,6 +38,141 @@ pub(super) fn strip_param_types(text: &str) -> String {
         &text[..paren_open],
         cleaned.join(", "),
         &text[paren_close + 1..]
+    )
+}
+
+/// Strip TypeScript annotations from member text copied from source.
+pub(super) fn strip_member_type_annotations(text: &str) -> String {
+    let text = strip_param_types(text);
+    strip_method_return_type(&text)
+}
+
+fn strip_method_return_type(text: &str) -> String {
+    let Some(body_start) = find_member_body_start(text) else {
+        return text.to_string();
+    };
+    let header = &text[..body_start];
+    let Some(paren_close) = header.rfind(')') else {
+        return text.to_string();
+    };
+    let after_params = &header[paren_close + 1..];
+    let Some(colon_rel) = after_params.find(':') else {
+        return text.to_string();
+    };
+    if !after_params[..colon_rel].trim().is_empty() {
+        return text.to_string();
+    }
+
+    format!(
+        "{} {}",
+        text[..paren_close + 1].trim_end(),
+        &text[body_start..]
+    )
+}
+
+fn find_member_body_start(text: &str) -> Option<usize> {
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut type_brace_depth = 0usize;
+    let mut in_return_type = false;
+    let mut prev_sig = '\0';
+    let mut chars = text.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        match ch {
+            '"' | '\'' => {
+                let quote = ch;
+                while let Some((_, next)) = chars.next() {
+                    if next == '\\' {
+                        chars.next();
+                    } else if next == quote {
+                        break;
+                    }
+                }
+                continue;
+            }
+            '`' => {
+                while let Some((_, next)) = chars.next() {
+                    if next == '\\' {
+                        chars.next();
+                    } else if next == '`' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            '/' if chars.peek().is_some_and(|(_, next)| *next == '/') => {
+                chars.next();
+                for (_, next) in chars.by_ref() {
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            '/' if chars.peek().is_some_and(|(_, next)| *next == '*') => {
+                chars.next();
+                let mut prev = '\0';
+                for (_, next) in chars.by_ref() {
+                    if prev == '*' && next == '/' {
+                        break;
+                    }
+                    prev = next;
+                }
+                continue;
+            }
+            '(' => paren_depth += 1,
+            ')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                if paren_depth == 0 {
+                    prev_sig = ')';
+                }
+            }
+            '[' => bracket_depth += 1,
+            ']' => {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                if bracket_depth == 0 {
+                    prev_sig = ']';
+                }
+            }
+            ':' if paren_depth == 0 && bracket_depth == 0 && type_brace_depth == 0 => {
+                in_return_type = true;
+                prev_sig = ':';
+            }
+            '{' if paren_depth == 0 && bracket_depth == 0 && type_brace_depth == 0 => {
+                if in_return_type && starts_type_literal(prev_sig) {
+                    type_brace_depth += 1;
+                    prev_sig = '{';
+                } else {
+                    return Some(idx);
+                }
+            }
+            '{' if in_return_type => {
+                type_brace_depth += 1;
+                prev_sig = '{';
+            }
+            '}' if type_brace_depth > 0 => {
+                type_brace_depth -= 1;
+                prev_sig = '}';
+            }
+            ch if !ch.is_whitespace()
+                && paren_depth == 0
+                && bracket_depth == 0
+                && type_brace_depth == 0 =>
+            {
+                prev_sig = ch;
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+const fn starts_type_literal(prev_sig: char) -> bool {
+    matches!(
+        prev_sig,
+        '\0' | ':' | '|' | '&' | '<' | ',' | '(' | '[' | '=' | '?' | '{'
     )
 }
 
@@ -107,6 +242,8 @@ pub(super) struct DecoratedMember {
     pub(super) is_private: bool,
     /// Decorator expression texts (e.g. ["dec(1)"])
     pub(super) decorator_exprs: Vec<String>,
+    /// Decorator expression texts for generated static/IIFE application sites.
+    pub(super) captured_decorator_exprs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,12 +292,33 @@ pub(super) struct DecoratedAutoAccessorInfo {
 
 pub(super) struct ClassDecoratorStaticPrivateMethodInfo {
     pub(super) member_idx: NodeIndex,
+    pub(super) kind: MemberKind,
+    pub(super) is_decorated: bool,
     pub(super) member_name: String,
     pub(super) needs_wrapper: bool,
     pub(super) temp_var: String,
     pub(super) function_name: String,
+    pub(super) descriptor_var: Option<String>,
     pub(super) params: String,
     pub(super) body: String,
+}
+
+pub(super) struct ClassDecoratorAutoAccessorInfo {
+    pub(super) member: DecoratedMember,
+    pub(super) is_decorated: bool,
+    pub(super) storage_name: String,
+    pub(super) getter_temp_var: Option<String>,
+    pub(super) setter_temp_var: Option<String>,
+    pub(super) initializer_idx: NodeIndex,
+    pub(super) initializer_text: String,
+}
+
+pub(super) struct ClassDecoratorStaticPrivateFieldInfo {
+    pub(super) member_idx: NodeIndex,
+    pub(super) is_decorated: bool,
+    pub(super) member_name: String,
+    pub(super) storage_name: String,
+    pub(super) initializer_text: String,
 }
 
 pub(super) fn indent_str(level: usize) -> String {

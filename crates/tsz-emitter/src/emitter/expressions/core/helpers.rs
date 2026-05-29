@@ -1,4 +1,4 @@
-use super::super::super::Printer;
+use super::super::super::{Printer, ScriptTarget};
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -309,6 +309,19 @@ impl<'a> Printer<'a> {
             // `/** ... */ (x)` with a space before the paren.
         }
         self.write("(");
+        let suppress_inner_comments_for_transformed_decorated_class = !(self.ctx.options.target
+            == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields)
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression);
+        let break_after_open_for_decorated_class = self.ctx.options.target == ScriptTarget::ESNext
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression)
+            && self
+                .arena
+                .get(paren.expression)
+                .is_none_or(|inner_node| !self.has_pending_comment_before(inner_node.pos));
+        if break_after_open_for_decorated_class {
+            self.write_line();
+        }
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
         // Preserve whether the first inner comment started on the `(` line.
@@ -316,6 +329,7 @@ impl<'a> Printer<'a> {
         // comment already on the following source line gets a printed newline.
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
+            && !suppress_inner_comments_for_transformed_decorated_class
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
@@ -389,7 +403,31 @@ impl<'a> Printer<'a> {
         let close_paren_end = self.find_token_end_before_trivia(node.pos, node.end);
         let trailing_comment_end =
             self.parenthesized_same_line_trailing_comment_end(close_paren_end);
-        self.emit_parenthesized_same_line_trailing_comments(close_paren_end, trailing_comment_end);
+        if self.parenthesized_trailing_comment_precedes_source_semicolon(trailing_comment_end) {
+            self.emit_parenthesized_same_line_trailing_comments(
+                close_paren_end,
+                trailing_comment_end,
+            );
+        }
+    }
+
+    fn parenthesized_inner_is_decorated_class_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_class(node)
+            .and_then(|class| class.modifiers.as_ref())
+            .is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|mod_node| mod_node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     fn parenthesized_same_line_trailing_comment_end(&self, start: u32) -> u32 {
@@ -430,6 +468,18 @@ impl<'a> Printer<'a> {
         }
 
         end as u32
+    }
+
+    fn parenthesized_trailing_comment_precedes_source_semicolon(&self, end: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(end as usize, bytes.len());
+        while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
+            pos += 1;
+        }
+        bytes.get(pos).is_some_and(|byte| *byte == b';')
     }
 
     fn emit_parenthesized_same_line_trailing_comments(&mut self, start: u32, end: u32) {
@@ -684,6 +734,8 @@ impl<'a> Printer<'a> {
         // multiline ternary formatting (tsc preserves these line breaks).
         let (newline_before_question, newline_before_colon) =
             self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
+        let missing_false_after_recovered_jsx_true =
+            self.missing_false_after_recovered_jsx_true(cond.when_true, cond.when_false);
 
         // When lowering optional chains or nullish coalescing in the condition
         // (e.g., `o?.b ? 1 : 0` → `(o === null ... : o.b) ? 1 : 0`,
@@ -701,12 +753,25 @@ impl<'a> Printer<'a> {
         // because the ternary operator has very low precedence.
         self.ctx.flags.in_binary_operand = false;
 
+        let (question_pos, colon_pos) =
+            self.conditional_operator_positions(cond.condition, cond.when_true, cond.when_false);
+
         if newline_before_question {
             // Check if `?` is on the condition line (Case A) or the next line (Case B).
             // Case A: `a ?\n    b` → `?` before newline → emit `a ?` then newline + indent
             // Case B: `a\n    ? b` → `?` after newline → emit `a` then newline + indent + `?`
             let question_on_condition_line =
                 self.question_on_condition_line(cond.condition, cond.when_true);
+            let question_comment_starts_new_line = !question_on_condition_line
+                && self.conditional_comments_before_question_start_new_line(
+                    cond.condition,
+                    question_pos,
+                );
+            if question_comment_starts_new_line {
+                self.increase_indent();
+            }
+            let question_comment_emitted_line =
+                self.emit_conditional_comments_before_question(cond.condition, question_pos);
             if question_on_condition_line {
                 // Case A: `?` trails on condition line — e.g.:
                 //   var v = a ?
@@ -739,12 +804,20 @@ impl<'a> Printer<'a> {
                 //   var v = a
                 //       ? b
                 //       : c;
-                self.write_line();
-                self.increase_indent();
+                if !question_comment_emitted_line {
+                    self.write_line();
+                }
+                if !question_comment_starts_new_line {
+                    self.increase_indent();
+                }
                 self.write("? ");
                 self.emit(cond.when_true);
                 if newline_before_colon {
-                    self.write_line();
+                    let colon_comment_emitted_line =
+                        self.emit_conditional_comments_before_colon(cond.when_true, colon_pos);
+                    if !colon_comment_emitted_line {
+                        self.write_line();
+                    }
                     self.write(": ");
                 } else {
                     self.write(" : ");
@@ -755,25 +828,38 @@ impl<'a> Printer<'a> {
         } else if newline_before_colon {
             self.write(" ? ");
             self.emit(cond.when_true);
-            let colon_on_new_line = !self.colon_on_true_line(cond.when_true, cond.when_false);
-            if colon_on_new_line {
-                // Newline before `:` — e.g.:
-                //   var v = a ? b
-                //       : c;
+            if missing_false_after_recovered_jsx_true {
                 self.write_line();
-                self.increase_indent();
-                self.write(": ");
-                self.emit(cond.when_false);
-                self.decrease_indent();
+                self.write(":");
+                self.write_line();
+                self.ctx
+                    .flags
+                    .recovered_jsx_missing_false_tail_break_pending = true;
             } else {
-                // `:` trailing on same line, alternate on next — e.g.:
-                //   var v = a ? b :
-                //       c;
-                self.write(" :");
-                self.write_line();
-                self.increase_indent();
-                self.emit(cond.when_false);
-                self.decrease_indent();
+                let colon_on_new_line = !self.colon_on_true_line(cond.when_true, cond.when_false);
+                let colon_comment_emitted_line =
+                    self.emit_conditional_comments_before_colon(cond.when_true, colon_pos);
+                if colon_on_new_line {
+                    // Newline before `:` — e.g.:
+                    //   var v = a ? b
+                    //       : c;
+                    if !colon_comment_emitted_line {
+                        self.write_line();
+                    }
+                    self.increase_indent();
+                    self.write(": ");
+                    self.emit(cond.when_false);
+                    self.decrease_indent();
+                } else {
+                    // `:` trailing on same line, alternate on next — e.g.:
+                    //   var v = a ? b :
+                    //       c;
+                    self.write(" :");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit(cond.when_false);
+                    self.decrease_indent();
+                }
             }
         } else {
             self.write(" ? ");
@@ -783,6 +869,126 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.flags.in_binary_operand = prev;
+    }
+
+    fn conditional_comments_before_question_start_new_line(
+        &self,
+        condition: NodeIndex,
+        question_pos: Option<u32>,
+    ) -> bool {
+        let (Some(question_pos), Some(condition_node)) = (question_pos, self.arena.get(condition))
+        else {
+            return false;
+        };
+        let condition_end = self.find_token_end_before_trivia(condition_node.pos, question_pos);
+        self.conditional_comments_between_start_new_line(condition_end, question_pos)
+    }
+
+    fn conditional_comments_between_start_new_line(&self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        self.all_comments
+            .iter()
+            .skip(self.comment_emit_idx)
+            .find(|comment| comment.pos >= from_pos && comment.end <= to_pos)
+            .is_some_and(|comment| self.source_range_has_newline(from_pos, comment.pos))
+    }
+
+    fn conditional_operator_positions(
+        &self,
+        condition: NodeIndex,
+        when_true: NodeIndex,
+        when_false: NodeIndex,
+    ) -> (Option<u32>, Option<u32>) {
+        let Some(text) = self.source_text else {
+            return (None, None);
+        };
+        let (Some(condition_node), Some(true_node), Some(false_node)) = (
+            self.arena.get(condition),
+            self.arena.get(when_true),
+            self.arena.get(when_false),
+        ) else {
+            return (None, None);
+        };
+
+        let bytes = text.as_bytes();
+        let question_pos = self.find_byte_backward(
+            bytes,
+            condition_node.pos as usize,
+            true_node.pos as usize,
+            b'?',
+        );
+        let colon_pos =
+            self.find_byte_backward(bytes, true_node.pos as usize, false_node.pos as usize, b':');
+
+        (question_pos, colon_pos)
+    }
+
+    fn find_byte_backward(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        needle: u8,
+    ) -> Option<u32> {
+        let start = start.min(bytes.len());
+        let mut cursor = end.min(bytes.len());
+        while cursor > start {
+            cursor -= 1;
+            if bytes[cursor] == needle {
+                return Some(cursor as u32);
+            }
+        }
+        None
+    }
+
+    fn emit_conditional_comments_before_question(
+        &mut self,
+        condition: NodeIndex,
+        question_pos: Option<u32>,
+    ) -> bool {
+        let (Some(question_pos), Some(condition_node)) = (question_pos, self.arena.get(condition))
+        else {
+            return false;
+        };
+        let condition_end = self.find_token_end_before_trivia(condition_node.pos, question_pos);
+        self.emit_conditional_comments_between(condition_end, question_pos)
+    }
+
+    fn emit_conditional_comments_before_colon(
+        &mut self,
+        when_true: NodeIndex,
+        colon_pos: Option<u32>,
+    ) -> bool {
+        let (Some(colon_pos), Some(true_node)) = (colon_pos, self.arena.get(when_true)) else {
+            return false;
+        };
+        let true_end = self.find_token_end_before_trivia(true_node.pos, colon_pos);
+        self.emit_conditional_comments_between(true_end, colon_pos)
+    }
+
+    fn emit_conditional_comments_between(&mut self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+
+        let Some(first_comment_pos) = self
+            .all_comments
+            .iter()
+            .skip(self.comment_emit_idx)
+            .find(|comment| comment.pos >= from_pos && comment.end <= to_pos)
+            .map(|comment| comment.pos)
+        else {
+            return false;
+        };
+
+        if self.source_range_has_newline(from_pos, first_comment_pos) {
+            self.write_line();
+        } else {
+            self.write_space();
+        }
+        self.emit_unemitted_comments_between(from_pos, to_pos)
     }
 
     /// Detect whether the source text has newlines between the parts of a
@@ -844,6 +1050,9 @@ impl<'a> Printer<'a> {
         let false_node = self.arena.get(_when_false);
         let newline_before_colon = match (true_node, false_node) {
             (Some(t), Some(f)) => {
+                if self.missing_false_after_recovered_jsx_true(when_true, _when_false) {
+                    return (newline_before_question, true);
+                }
                 let bytes = text.as_bytes();
                 let f_pos = std::cmp::min(f.pos as usize, bytes.len());
                 // Find `:` scanning backward from when_false.pos
@@ -869,6 +1078,26 @@ impl<'a> Printer<'a> {
         };
 
         (newline_before_question, newline_before_colon)
+    }
+
+    fn missing_false_after_recovered_jsx_true(
+        &self,
+        when_true: NodeIndex,
+        when_false: NodeIndex,
+    ) -> bool {
+        if !self.arena.is_missing_recovery_identifier(when_false) {
+            return false;
+        }
+        let Some(true_node) = self.arena.get(when_true) else {
+            return false;
+        };
+        if true_node.kind != syntax_kind_ext::JSX_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_FRAGMENT
+        {
+            return false;
+        }
+        true
     }
 
     /// Check whether the `?` token in a conditional expression is on the

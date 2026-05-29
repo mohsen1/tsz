@@ -133,6 +133,34 @@ def print_summary(snap: dict) -> None:
         f"  compute_type_of_symbol  calls={fmt_int(cot_calls)}  "
         f"hits={fmt_int(cot_hits)}  hit%={cot_hit_pct:.2f}"
     )
+    slow_files = snap.get("slow_check_file_timings") or []
+    if slow_files:
+        print("  slowest semantic check files:")
+        for row in slow_files[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"diags={fmt_int(row.get('diagnostics', 0)):>4}  {row['file']}"
+            )
+    slow_statements = snap.get("slow_check_statement_timings") or []
+    if slow_statements:
+        print("  slowest semantic check statements:")
+        for row in slow_statements[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"kind={fmt_int(row.get('kind')):>4}  "
+                f"span={fmt_int(row.get('pos'))}..{fmt_int(row.get('end'))}  "
+                f"{row['file']}"
+            )
+    slow_alias_phases = snap.get("slow_type_alias_check_timings") or []
+    if slow_alias_phases:
+        print("  slowest type alias check phases:")
+        for row in slow_alias_phases[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"phase={row.get('phase', '<unknown>'):<24}  "
+                f"span={fmt_int(row.get('pos'))}..{fmt_int(row.get('end'))}  "
+                f"{row.get('name', '<anonymous>')}  {row['file']}"
+            )
     print()
     print("overlay copy:")
     print(
@@ -244,6 +272,48 @@ def print_diff(post: dict, base: dict) -> None:
         "compute_type_of_symbol_cache_hits",
     ):
         print(f"  {delta(post['checker'], base['checker'], k)}")
+    post_slow = post.get("slow_check_file_timings") or []
+    base_slow = base.get("slow_check_file_timings") or []
+    if post_slow or base_slow:
+        print("  slowest semantic check file:")
+        if base_slow:
+            b = base_slow[0]
+            print(f"    baseline {b['elapsed_ms']:.2f} ms  {b['file']}")
+        if post_slow:
+            a = post_slow[0]
+            print(f"    current  {a['elapsed_ms']:.2f} ms  {a['file']}")
+    post_stmt = post.get("slow_check_statement_timings") or []
+    base_stmt = base.get("slow_check_statement_timings") or []
+    if post_stmt or base_stmt:
+        print("  slowest semantic check statement:")
+        if base_stmt:
+            b = base_stmt[0]
+            print(
+                f"    baseline {b['elapsed_ms']:.2f} ms  "
+                f"kind={b.get('kind')} span={b.get('pos')}..{b.get('end')} {b['file']}"
+            )
+        if post_stmt:
+            a = post_stmt[0]
+            print(
+                f"    current  {a['elapsed_ms']:.2f} ms  "
+                f"kind={a.get('kind')} span={a.get('pos')}..{a.get('end')} {a['file']}"
+            )
+    post_alias = post.get("slow_type_alias_check_timings") or []
+    base_alias = base.get("slow_type_alias_check_timings") or []
+    if post_alias or base_alias:
+        print("  slowest type alias check phase:")
+        if base_alias:
+            b = base_alias[0]
+            print(
+                f"    baseline {b['elapsed_ms']:.2f} ms  "
+                f"phase={b.get('phase')} {b.get('name')} {b['file']}"
+            )
+        if post_alias:
+            a = post_alias[0]
+            print(
+                f"    current  {a['elapsed_ms']:.2f} ms  "
+                f"phase={a.get('phase')} {a.get('name')} {a['file']}"
+            )
     print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}
     base_rows = {r["reason"]: r for r in by_reason_rows(base, optional=True)}

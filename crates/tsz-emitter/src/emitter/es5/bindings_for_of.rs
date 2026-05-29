@@ -175,12 +175,12 @@ impl<'a> Printer<'a> {
         };
 
         // For assignment-pattern for-of with object/array literals, tsc allocates
-        // destructuring temps before choosing the array temp in the loop header.
-        // Reserve those temps now so later lowering reuses them in order.
-        let reserve_count = self.estimate_for_of_assignment_temp_reserve(for_in_of.initializer);
-        if reserve_count > 0 {
-            self.preallocate_temp_names(reserve_count);
-        }
+        // the destructuring source/nested temps before any for-of loop-control
+        // (index/array) temp, in source order across all sibling statements. That
+        // ordering is reserved up front by
+        // `preallocate_for_of_assignment_destructure_temps_for_statements`, which
+        // fills `preallocated_assignment_temps`; the body destructuring below
+        // replays those names. No per-loop reservation is needed here.
         if using_info.is_some() {
             let resource_temp_count =
                 self.count_es5_resource_expression_hoisted_temps(for_in_of.expression);
@@ -238,22 +238,30 @@ impl<'a> Printer<'a> {
             let body_info =
                 super::loop_capture::collect_loop_body_vars(self.arena, for_in_of.statement);
             if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
-                && let Some(capture_info) = super::loop_capture::check_loop_needs_capture(
+                && super::loop_capture::check_loop_needs_capture(
                     self.arena,
                     for_in_of.statement,
                     &init_vars,
                     &body_info.block_scoped_vars,
                 )
+                .is_some()
             {
-                let init_var_set: std::collections::HashSet<&str> =
-                    init_vars.iter().map(String::as_str).collect();
-                let param_vars: Vec<String> = capture_info
-                    .captured_vars
-                    .iter()
-                    .filter(|v| init_var_set.contains(v.as_str()))
-                    .cloned()
-                    .collect();
+                // Once a for-of loop is converted, all of its own block-scoped
+                // binding variables (the for-of binding, including destructured
+                // names) are threaded as `_loop_N` parameters so each iteration
+                // gets a fresh copy — not just the subset captured by a closure.
+                let param_vars: Vec<String> = init_vars.to_vec();
                 let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
+                // The per-iteration binding's destructuring source temp (e.g.
+                // `_b` in `var _b = _a[_i], value = _b[0], i = _b[1]`) is emitted
+                // in the loop header, after the loop function. tsc allocates that
+                // temp before any temp produced inside the loop body, so reserve
+                // it now to keep the global temp numbering aligned.
+                let binding_temp_count =
+                    self.count_for_of_binding_destructure_temps(for_in_of.initializer);
+                if binding_temp_count > 0 {
+                    self.preallocate_temp_names(binding_temp_count);
+                }
                 let body_temp_count =
                     self.count_downlevel_expression_hoisted_temps(for_in_of.statement);
                 if body_temp_count > 0 {
@@ -567,50 +575,62 @@ impl<'a> Printer<'a> {
             || self.arena.get_class(node).is_some()
     }
 
-    pub(in crate::emitter) fn estimate_for_of_assignment_temp_reserve(
+    /// Count the destructuring source temps that the array-indexed for-of value
+    /// binding will allocate for a `let`/`const`/`var` binding pattern. This
+    /// mirrors the temp-allocating branches of
+    /// `emit_for_of_value_binding_array_es5` so the converted-loop path can
+    /// reserve them in tsc's order. Single-binding patterns that inline the
+    /// element expression allocate no temp.
+    pub(in crate::emitter) fn count_for_of_binding_destructure_temps(
         &self,
         initializer: NodeIndex,
     ) -> usize {
         let Some(init_node) = self.arena.get(initializer) else {
             return 0;
         };
-        match init_node.kind {
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp + per-property default temps.
-                    let mut defaults = 0usize;
-                    for &elem_idx in &lit.elements.nodes {
-                        let Some(elem_node) = self.arena.get(elem_idx) else {
-                            continue;
-                        };
-                        if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                            && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                            && let Some(value_node) = self.arena.get(prop.initializer)
-                            && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                            && let Some(bin) = self.arena.get_binary_expr(value_node)
-                            && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        {
-                            defaults += 1;
-                        }
-                    }
-                    return 1 + defaults;
-                }
-                0
-            }
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp. Additional nested/default temps are emitted
-                    // later and use normal allocation.
-                    return 1;
-                }
-                0
-            }
-            _ => 0,
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return 0;
         }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return 0;
+        };
+        // for-of allows a single declarator; only the first is processed.
+        let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+            return 0;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return 0;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return 0;
+        };
+        if !self.is_binding_pattern(decl.name) {
+            return 0;
+        }
+        let Some(pattern_node) = self.arena.get(decl.name) else {
+            return 0;
+        };
+        if self.binding_pattern_is_empty(decl.name) {
+            // Empty pattern: one temp holds the advanced element value.
+            return 1;
+        }
+        if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            let (obj_count, obj_rest) = self.count_effective_bindings(pattern_node);
+            // Single-property object patterns inline; multi/rest extract a temp.
+            return usize::from(obj_count > 1 || obj_rest);
+        }
+        // Array binding pattern.
+        let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
+        if effective_count == 1 && !has_rest {
+            // Single element at index 0 inlines as `name = arr[idx][0]`.
+            return 0;
+        }
+        if effective_count == 0 && has_rest {
+            // Rest-only inlines as `name = arr[idx].slice(0)`.
+            return 0;
+        }
+        // Multi-binding or complex array pattern extracts a source temp.
+        1
     }
 
     /// Emit the for-of loop body (common logic for both array and iterator modes)
@@ -1097,68 +1117,81 @@ impl<'a> Printer<'a> {
         {
             // Assignment destructuring pattern in for-of: {name: nameA} or [, nameA]
             // Lower to: nameA = element_expr.name or nameA = element_expr[1]
-            let mut first = true;
-            match init_node.kind {
-                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
-                        let elem_count = lit.elements.nodes.len();
-                        if elem_count > 1 {
-                            // Multi-element: need temp
-                            let temp = self.make_unique_name_hoisted_assignment();
-                            self.write(&temp);
-                            self.write(" = ");
-                            self.write(&element_expr);
-                            first = false;
-                            self.emit_assignment_array_destructuring(
-                                &lit.elements.nodes,
-                                &temp,
-                                &mut first,
-                                None,
-                            );
-                        } else {
-                            // Single element: inline
-                            self.emit_assignment_array_destructuring(
-                                &lit.elements.nodes,
-                                &element_expr,
-                                &mut first,
-                                None,
-                            );
-                        }
-                    }
-                }
-                _ => {
-                    // Object pattern
-                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
-                        let elem_count = lit.elements.nodes.len();
-                        if elem_count > 1 {
-                            let temp = self.make_unique_name_hoisted_assignment();
-                            self.write(&temp);
-                            self.write(" = ");
-                            self.write(&element_expr);
-                            first = false;
-                            self.emit_assignment_object_destructuring(
-                                &lit.elements.nodes,
-                                &temp,
-                                &mut first,
-                                None,
-                            );
-                        } else {
-                            self.emit_assignment_object_destructuring(
-                                &lit.elements.nodes,
-                                &element_expr,
-                                &mut first,
-                                None,
-                            );
-                        }
-                    }
-                }
-            }
+            self.emit_for_of_assignment_target_destructuring_es5(init_node, &element_expr);
             self.write_semicolon();
         } else {
             self.emit_expression(initializer);
             self.write(" = ");
             self.write(&element_expr);
             self.write_semicolon();
+        }
+    }
+
+    /// Lower an assignment-target destructuring pattern used as the for-of
+    /// initializer (`for ([..] of x)` / `for ({..} of x)`) against the
+    /// `element_expr` (`array[index]`). The single shared lowering used by both
+    /// the real emit and the temp-allocation pre-pass, so they allocate the
+    /// hoisted destructuring temps in identical order.
+    pub(in crate::emitter) fn emit_for_of_assignment_target_destructuring_es5(
+        &mut self,
+        init_node: &Node,
+        element_expr: &str,
+    ) {
+        let mut first = true;
+        match init_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(init_node) {
+                    let elem_count = lit.elements.nodes.len();
+                    if elem_count > 1 {
+                        // Multi-element: need temp
+                        let temp = self.make_unique_name_hoisted_assignment();
+                        self.write(&temp);
+                        self.write(" = ");
+                        self.write(element_expr);
+                        first = false;
+                        self.emit_assignment_array_destructuring(
+                            &lit.elements.nodes,
+                            &temp,
+                            &mut first,
+                            None,
+                        );
+                    } else {
+                        // Single element: inline
+                        self.emit_assignment_array_destructuring(
+                            &lit.elements.nodes,
+                            element_expr,
+                            &mut first,
+                            None,
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Object pattern
+                if let Some(lit) = self.arena.get_literal_expr(init_node) {
+                    let elem_count = lit.elements.nodes.len();
+                    if elem_count > 1 {
+                        let temp = self.make_unique_name_hoisted_assignment();
+                        self.write(&temp);
+                        self.write(" = ");
+                        self.write(element_expr);
+                        first = false;
+                        self.emit_assignment_object_destructuring(
+                            &lit.elements.nodes,
+                            &temp,
+                            &mut first,
+                            None,
+                        );
+                    } else {
+                        self.emit_assignment_object_destructuring(
+                            &lit.elements.nodes,
+                            element_expr,
+                            &mut first,
+                            None,
+                        );
+                    }
+                }
+            }
         }
     }
 }

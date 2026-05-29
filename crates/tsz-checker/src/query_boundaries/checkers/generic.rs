@@ -1,5 +1,6 @@
-use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{DefinitionStore, TypeId};
+use crate::state::CheckerState;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -216,6 +217,280 @@ pub(crate) fn full_conditional_type_components(
         cond.true_type,
         cond.false_type,
     ))
+}
+
+pub(crate) fn application_alias_def_and_args(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(tsz_solver::def::DefId, Vec<TypeId>)> {
+    let (base, args) = application_base_and_args(db, type_id)?;
+    let def_id = lazy_def_id(db, base)?;
+    Some((def_id, args))
+}
+
+pub(crate) fn instantiated_alias_body_has_parameterized_conditional(
+    db: &dyn QueryDatabase,
+    body: TypeId,
+    params: &[TypeParamInfo],
+    args: &[TypeId],
+) -> bool {
+    if params.len() != args.len() {
+        return false;
+    }
+    let type_db = db.as_type_database();
+    let instantiated = crate::query_boundaries::common::instantiate_generic(db, body, params, args);
+    full_conditional_type_components(type_db, instantiated).is_some_and(
+        |(check, extends, true_type, false_type)| {
+            [check, extends, true_type, false_type]
+                .into_iter()
+                .any(|ty| contains_type_parameters(type_db, ty))
+        },
+    )
+}
+
+pub(crate) fn conditional_key_filter_candidates(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<[TypeId; 3]> {
+    let (check_type, _extends_type, true_type, false_type) =
+        full_conditional_type_components(db, type_id)?;
+    Some([check_type, true_type, false_type])
+}
+
+pub(crate) fn instantiate_alias_application_body(
+    db: &dyn QueryDatabase,
+    body: TypeId,
+    params: &[TypeParamInfo],
+    args: &[TypeId],
+) -> Option<TypeId> {
+    if params.len() != args.len() {
+        return None;
+    }
+    let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+        db.as_type_database(),
+        params,
+        args,
+    );
+    Some(crate::query_boundaries::common::instantiate_type(
+        db, body, &subst,
+    ))
+}
+
+pub(crate) fn mapped_key_constraint_semantically_filters_current_object_keys(
+    checker: &mut CheckerState<'_>,
+    constraint_type: TypeId,
+    object_type: TypeId,
+    object_type_for_check: TypeId,
+) -> bool {
+    let constraint_eval = checker.evaluate_type_with_env(constraint_type);
+    let keyof_object_param = checker.ctx.types.factory().keyof(object_type);
+    if checker
+        .assign_relation_outcome(constraint_eval, keyof_object_param)
+        .related
+    {
+        return true;
+    }
+
+    if checker.is_keyof_for_current_object(constraint_eval, object_type, object_type_for_check)
+        || checker.is_keyof_for_current_object(constraint_type, object_type, object_type_for_check)
+        || mapped_key_constraint_filters_current_object_keys(
+            checker,
+            constraint_type,
+            object_type,
+            object_type_for_check,
+        )
+    {
+        return true;
+    }
+
+    let mut chain = constraint_type;
+    for _ in 0..4 {
+        let Some(next) =
+            crate::query_boundaries::common::type_parameter_constraint(checker.ctx.types, chain)
+        else {
+            break;
+        };
+        let next_eval = checker.evaluate_type_with_env(next);
+        if checker.is_keyof_for_current_object(next_eval, object_type, object_type_for_check)
+            || checker.is_keyof_for_current_object(next, object_type, object_type_for_check)
+        {
+            return true;
+        }
+        if checker
+            .assign_relation_outcome(next_eval, keyof_object_param)
+            .related
+        {
+            return true;
+        }
+        if !crate::query_boundaries::common::is_type_parameter_like(checker.ctx.types, next_eval) {
+            break;
+        }
+        chain = next_eval;
+    }
+
+    false
+}
+
+fn mapped_key_constraint_filters_current_object_keys(
+    checker: &mut CheckerState<'_>,
+    mut constraint_type: TypeId,
+    object_type: TypeId,
+    object_type_for_check: TypeId,
+) -> bool {
+    let mut seen = rustc_hash::FxHashSet::default();
+    for _ in 0..8 {
+        if !seen.insert(constraint_type) {
+            return false;
+        }
+
+        if let Some(candidates) =
+            conditional_key_filter_candidates(checker.ctx.types.as_type_database(), constraint_type)
+        {
+            let keyof_object = checker.ctx.types.factory().keyof(object_type);
+            return candidates
+                .into_iter()
+                .filter(|&candidate| candidate != TypeId::NEVER)
+                .any(|candidate| {
+                    let evaluated = checker.evaluate_type_with_env(candidate);
+                    checker.is_keyof_for_current_object(
+                        candidate,
+                        object_type,
+                        object_type_for_check,
+                    ) || checker.is_keyof_for_current_object(
+                        evaluated,
+                        object_type,
+                        object_type_for_check,
+                    ) || checker
+                        .assign_relation_outcome(evaluated, keyof_object)
+                        .related
+                });
+        }
+
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(checker.ctx.types, constraint_type)
+            && let Some(constraint) = param_info.constraint
+        {
+            constraint_type = constraint;
+            continue;
+        }
+
+        if let Some(name_atom) =
+            type_parameter_name(checker.ctx.types.as_type_database(), constraint_type)
+        {
+            let name = checker.ctx.types.resolve_atom(name_atom);
+            if let Some(scoped_type_id) = checker.ctx.type_parameter_scope.get(&name).copied()
+                && scoped_type_id != constraint_type
+                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+                    checker.ctx.types,
+                    scoped_type_id,
+                )
+            {
+                constraint_type = constraint;
+                continue;
+            }
+        }
+
+        let Some(app) =
+            crate::query_boundaries::common::type_application(checker.ctx.types, constraint_type)
+        else {
+            let evaluated = checker.evaluate_type_with_env(constraint_type);
+            if evaluated == constraint_type {
+                return false;
+            }
+            constraint_type = evaluated;
+            continue;
+        };
+        let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(checker.ctx.types, app.base)
+        else {
+            return false;
+        };
+        let body_and_params = checker
+            .ctx
+            .definition_store
+            .get(def_id)
+            .and_then(|def| {
+                (def.kind == tsz_solver::def::DefKind::TypeAlias)
+                    .then_some((def.body?, def.type_params))
+            })
+            .or_else(|| {
+                let body = checker
+                    .ctx
+                    .type_env
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| env.get_def(def_id))?;
+                let params = checker.ctx.get_def_type_params(def_id)?;
+                Some((body, params))
+            });
+        let Some((body, params)) = body_and_params else {
+            return false;
+        };
+        let Some(instantiated) =
+            instantiate_alias_application_body(checker.ctx.types, body, &params, &app.args)
+        else {
+            return false;
+        };
+        if instantiated == constraint_type {
+            return false;
+        }
+        constraint_type = checker.resolve_lazy_type(instantiated);
+    }
+    false
+}
+
+pub(crate) fn homomorphic_mapped_application_should_defer_constraint(
+    checker: &mut CheckerState<'_>,
+    mut type_arg: TypeId,
+) -> bool {
+    let mut seen = rustc_hash::FxHashSet::default();
+    for _ in 0..8 {
+        if !seen.insert(type_arg) {
+            return false;
+        }
+
+        if let Some(source) = crate::query_boundaries::common::homomorphic_mapped_source(
+            checker.ctx.types.as_type_database(),
+            type_arg,
+        ) {
+            return contains_free_type_parameters(checker.ctx.types, source);
+        }
+
+        let Some(app) =
+            crate::query_boundaries::common::type_application(checker.ctx.types, type_arg)
+        else {
+            return false;
+        };
+        let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(checker.ctx.types, app.base)
+        else {
+            return false;
+        };
+        let Some(def) = checker.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias
+            || def.type_params.len() != app.args.len()
+        {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(instantiated) = instantiate_alias_application_body(
+            checker.ctx.types,
+            body,
+            &def.type_params,
+            &app.args,
+        ) else {
+            return false;
+        };
+        if instantiated == type_arg {
+            return false;
+        }
+        type_arg = checker.resolve_lazy_type(instantiated);
+    }
+    false
 }
 
 // =========================================================================
@@ -573,5 +848,24 @@ mod tests {
         db.store_display_alias(evaluated, keyof);
 
         assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
+
+    #[test]
+    fn mapped_key_constraint_filtering_uses_relation_outcome_boundary() {
+        let source = include_str!("generic.rs");
+        let legacy = concat!("diagnostic_relation", "_boolean_guard(");
+
+        assert!(
+            source.contains(".assign_relation_outcome(constraint_eval, keyof_object_param)")
+                && source.contains(".assign_relation_outcome(next_eval, keyof_object_param)")
+                && source.contains(".assign_relation_outcome(evaluated, keyof_object)"),
+            "mapped-key constraint filtering should route relation probes through \
+             the shared relation outcome boundary"
+        );
+        assert!(
+            !source.contains(legacy),
+            "generic query-boundary helpers should not use raw diagnostic relation \
+             boolean guards"
+        );
     }
 }

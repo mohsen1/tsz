@@ -5,7 +5,7 @@
 //! (Object contract, generic index access).
 
 use crate::def::resolver::TypeResolver;
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
@@ -19,6 +19,11 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    pub(crate) const fn allows_bivariant_param_count(&self, is_method_like: bool) -> bool {
+        self.allow_bivariant_param_count
+            && (!self.strict_function_types || (is_method_like && !self.disable_method_bivariance))
+    }
+
     pub(crate) fn resolved_type_param_info(
         &self,
         type_id: TypeId,
@@ -162,9 +167,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return cached;
         }
 
-        use crate::objects::{PropertyCollectionResult, collect_properties};
+        use crate::objects::collect_properties_cached;
 
-        let result = match collect_properties(target_intersection, self.interner, self.resolver) {
+        let result = match collect_properties_cached(
+            target_intersection,
+            self.interner,
+            self.resolver,
+            self.query_db,
+        ) {
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,
@@ -564,7 +574,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn collect_keyof_index_value_union(&mut self, object_type: TypeId) -> Option<TypeId> {
-        let collected = match collect_properties(object_type, self.interner, self.resolver) {
+        let collected = match crate::objects::collect_properties_cached(
+            object_type,
+            self.interner,
+            self.resolver,
+            self.query_db,
+        ) {
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,
@@ -576,7 +591,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if evaluated == object_type {
                     return None;
                 }
-                match collect_properties(evaluated, self.interner, self.resolver) {
+                match crate::objects::collect_properties_cached(
+                    evaluated,
+                    self.interner,
+                    self.resolver,
+                    self.query_db,
+                ) {
                     PropertyCollectionResult::Properties {
                         properties,
                         string_index,

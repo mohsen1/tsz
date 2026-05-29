@@ -130,6 +130,7 @@ type JsStaticMethodAugmentationEntry = (
     Vec<(NodeIndex, NodeIndex)>,
 );
 
+#[derive(Clone)]
 pub(in crate::declaration_emitter) struct JsdocTypeAliasDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_params: Vec<String>,
@@ -218,6 +219,10 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
         self.cache.def_type_params.get(&def_id.0).cloned()
     }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<tsz_solver::types::SymbolRef> {
+        self.cache.well_known_symbol_names.get(name).copied()
+    }
 }
 
 impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
@@ -243,6 +248,10 @@ impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
     ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
         self.cache.def_type_params.get(&def_id.0).cloned()
     }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<tsz_solver::types::SymbolRef> {
+        self.cache.well_known_symbol_names.get(name).copied()
+    }
 }
 
 mod comments_source;
@@ -252,7 +261,11 @@ mod default_import_alias_rewrite;
 mod emit_node;
 mod function_analysis;
 mod generic_call_literal;
+mod generic_call_mapped_inference;
+mod generic_call_variadic_tuple;
 mod js_exports;
+mod js_exports_local;
+mod js_exports_namespace;
 mod jsdoc;
 mod jsdoc_function_signature;
 mod late_bound_function_analysis;
@@ -286,10 +299,13 @@ mod type_inference_object_unions;
 mod type_inference_package_matching;
 mod type_inference_portable_mapped_objects;
 mod type_inference_public_packages;
+mod type_inference_return_guards;
 mod type_inference_return_normalization;
+mod type_inference_return_surface;
 mod type_inference_return_unions;
 mod type_inference_source_call;
 mod type_inference_source_callables;
+mod type_inference_source_object_args;
 mod type_inference_source_text;
 mod type_inference_truncation_expansion;
 mod type_inference_type_annotations;

@@ -417,6 +417,77 @@ mod tests {
     }
 
     #[test]
+    fn conditional_preserves_operand_comments_before_question_and_colon() {
+        let source = r#"function f(x: string | number | boolean) {
+    return typeof x !== "string"
+        && (typeof x !== "number" // number | boolean
+        ? x // boolean
+        : x === 10);
+}
+"#;
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("typeof x !== \"number\" // number | boolean\n            ? x // boolean\n            : x === 10"),
+            "Conditional operand comments should stay before `?` and `:`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn conditional_comment_line_before_question_keeps_continuation_indent() {
+        let source = r#"function f(x: string | number | boolean) {
+    return typeof x !== "string"
+        && (typeof x === "number"
+        // change value
+        ? ((x = 10) && x.toString())
+        : x);
+}
+"#;
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "typeof x === \"number\"\n            // change value\n            ? ((x = 10)"
+            ),
+            "Comment-only lines before `?` should align with the continuation operator.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_return_comment_waits_for_inserted_semicolon() {
+        let source = r#"function f(x: string | number | boolean) {
+    return (typeof x !== "number"
+        ? x
+        : x === 10) // number
+}
+"#;
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(": x === 10); // number"),
+            "Inserted return semicolon should precede the trailing line comment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn binary_continuation_operator_preserves_left_line_comment() {
         let source = r#"function foo(x: string | number | boolean) {
     return typeof x !== "string" // string | number | boolean

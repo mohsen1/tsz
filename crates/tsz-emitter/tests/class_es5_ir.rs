@@ -1130,6 +1130,78 @@ fn derived_constructor_presuper_statement_uses_this_capture() {
 }
 
 #[test]
+fn derived_constructor_presuper_work_predeclares_materialized_this_capture() {
+    let source = r#"class Derived extends Base {
+            prop = true;
+            constructor() {
+                function beforeSuper() {
+                    return this;
+                }
+                super();
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains(
+            "var _this = this;\n        function beforeSuper() {\n            return this;\n        }\n        _this = _super.call(this) || this;"
+        ),
+        "Pre-super work should reserve `_this` before nested receiver scopes, then assign it at super().\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _this = _super.call(this) || this;"),
+        "The super call should assign an already declared `_this` capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn derived_constructor_presuper_variable_initializer_predeclares_materialized_this_capture() {
+    let source = r#"class Derived extends Base {
+            prop = true;
+            constructor() {
+                const obj = {
+                    getProp() {
+                        return this;
+                    },
+                };
+                super();
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains(
+            "var _this = this;\n        var obj = {\n            getProp: function () {\n                return this;\n            },\n        };\n        _this = _super.call(this) || this;"
+        ),
+        "Pre-super initialized variable statements should reserve `_this` before object receiver scopes.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn derived_constructor_presuper_string_prologue_keeps_super_capture_inline() {
+    let source = r#"class Derived extends Base {
+            prop = true;
+            constructor() {
+                "directive";
+                super();
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("\"directive\";\n        var _this = _super.call(this) || this;"),
+        "String prologues before super() should not force an early `_this = this` capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _this = this;\n        \"directive\";"),
+        "The directive prologue should stay before the materialized super capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn derived_constructor_nested_super_schedules_properties_before_body() {
     let source = r#"class Derived extends Base {
             prop = 1;

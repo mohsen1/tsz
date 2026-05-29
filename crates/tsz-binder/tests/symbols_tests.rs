@@ -550,13 +550,14 @@ mod symbol_arena_tests {
 // Symbol Flag Composite Tests
 // =============================================================================
 
-#[allow(clippy::assertions_on_constants)]
 mod symbol_flags_tests {
     use super::*;
 
     #[test]
     fn none_is_zero() {
-        assert_eq!(symbol_flags::NONE, 0);
+        const {
+            assert!(symbol_flags::NONE == 0);
+        }
     }
 
     #[test]
@@ -567,30 +568,32 @@ mod symbol_flags_tests {
         const {
             assert!(symbol_flags::VARIABLE & symbol_flags::BLOCK_SCOPED_VARIABLE != 0);
         }
-        assert_eq!(
-            symbol_flags::VARIABLE,
-            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE
-        );
+        const {
+            assert!(
+                symbol_flags::VARIABLE
+                    == symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE
+            );
+        }
     }
 
     #[test]
     fn enum_composite_includes_regular_and_const() {
         const { assert!(symbol_flags::ENUM & symbol_flags::REGULAR_ENUM != 0) }
         const { assert!(symbol_flags::ENUM & symbol_flags::CONST_ENUM != 0) }
-        assert_eq!(
-            symbol_flags::ENUM,
-            symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM
-        );
+        const {
+            assert!(symbol_flags::ENUM == symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM);
+        }
     }
 
     #[test]
     fn accessor_composite_includes_get_and_set() {
         const { assert!(symbol_flags::ACCESSOR & symbol_flags::GET_ACCESSOR != 0) }
         const { assert!(symbol_flags::ACCESSOR & symbol_flags::SET_ACCESSOR != 0) }
-        assert_eq!(
-            symbol_flags::ACCESSOR,
-            symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR
-        );
+        const {
+            assert!(
+                symbol_flags::ACCESSOR == symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR
+            );
+        }
     }
 
     #[test]

@@ -17,16 +17,24 @@ use tsz_solver::{TypeId, Visibility};
 use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
 
+struct ObjectLiteralRequestFacts {
+    contextual_type: Option<TypeId>,
+    original_contextual_type: Option<TypeId>,
+    all_properties_context_sensitive: bool,
+    obj_getter_names: rustc_hash::FxHashSet<String>,
+    marker_this_type: Option<TypeId>,
+    contextual_receiver_this_type: Option<TypeId>,
+    base_request: TypingRequest,
+    partial_initializer_stack_index: Option<usize>,
+}
+
 impl<'a> CheckerState<'a> {
-    pub(crate) fn get_type_of_object_literal_with_request(
+    fn collect_object_literal_request_facts(
         &mut self,
         idx: NodeIndex,
         request: &TypingRequest,
-    ) -> TypeId {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use rustc_hash::FxHashMap;
-        use tsz_common::interner::Atom;
-        use tsz_solver::{IndexSignature, PropertyInfo};
+        obj_elements: &[NodeIndex],
+    ) -> ObjectLiteralRequestFacts {
         let mut contextual_type = request.contextual_type;
 
         // Strip nullish types from contextual type for object literals.
@@ -51,14 +59,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
-            return TypeId::ERROR; // Missing object literal data - propagate error
-        };
-
         if let Some(ctx_ty) = contextual_type {
             // Keep the last real contextual object target we saw for this literal.
             // The same node can be recomputed later under TypingRequest::NONE during
@@ -77,10 +77,8 @@ impl<'a> CheckerState<'a> {
             "get_type_of_object_literal: entry"
         );
 
-        // Collect properties from the object literal (later entries override earlier ones)
-        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let all_properties_context_sensitive = !obj.elements.nodes.is_empty()
-            && obj.elements.nodes.iter().all(|&element_idx| {
+        let all_properties_context_sensitive = !obj_elements.is_empty()
+            && obj_elements.iter().all(|&element_idx| {
                 let Some(element) = self.ctx.arena.get(element_idx) else {
                     return false;
                 };
@@ -99,53 +97,10 @@ impl<'a> CheckerState<'a> {
                 element.kind == syntax_kind_ext::GET_ACCESSOR
                     || element.kind == syntax_kind_ext::SET_ACCESSOR
             });
-        // Track pre-widened (display) types for freshness model.
-        // Maps property name → original literal TypeId before widening.
-        // Only populated when a property's type was actually widened.
-        let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
-        let mut string_index_types: Vec<TypeId> = Vec::new();
-        let mut number_index_types: Vec<TypeId> = Vec::new();
-        // Wide `symbol`-typed computed keys (see `symbol_key_routing`).
-        let mut symbol_index_types: Vec<TypeId> = Vec::new();
-        // Index signatures inherited from spread sources (kept separate because
-        // they should only be included when the literal has no explicit properties —
-        // tsc drops spread index signatures when explicit properties exist).
-        let mut spread_string_index_signatures: Vec<IndexSignature> = Vec::new();
-        let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
-        let mut has_spread = false;
-        let mut has_any_spread = false;
-        let mut has_union_spread = false;
-        let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
-        // Track type-parameter-containing spread types for intersection creation.
-        // When a type parameter (or type containing type parameters) is spread
-        // alongside other properties, we create an intersection of the type parameter
-        // with the explicit properties, preserving generic identity for instantiation.
-        let mut generic_spread_types: Vec<TypeId> = Vec::new();
-        // Track getter/setter names to allow getter+setter pairs with the same name
-        let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
-        let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
-        let mut explicit_property_names: rustc_hash::FxHashSet<Atom> =
-            rustc_hash::FxHashSet::default();
-        // Track which named properties came from explicit assignments (not spreads)
-        // so we can emit TS2783 when a later spread overwrites them.
-        // Maps property name atom -> (node_idx for error, property display name)
-        let mut named_property_nodes: FxHashMap<Atom, (NodeIndex, String)> = FxHashMap::default();
-
-        // Skip duplicate property checks for destructuring assignment targets.
-        // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
-        let skip_duplicate_check = self.ctx.in_destructuring_target;
-        let mut prop_order: u32 = 1;
-        let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
-
-        let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
-        let circular_return_method_sites =
-            self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
         // Pre-scan: collect getter property names so setter TS7006 checks can
         // detect paired getters regardless of declaration order.
-        let obj_getter_names: rustc_hash::FxHashSet<String> = obj
-            .elements
-            .nodes
+        let obj_getter_names: rustc_hash::FxHashSet<String> = obj_elements
             .iter()
             .filter_map(|&elem_idx| {
                 let elem_node = self.ctx.arena.get(elem_idx)?;
@@ -165,10 +120,8 @@ impl<'a> CheckerState<'a> {
         // primitive members like `string` in `string | FullRule`).
         let original_contextual_type = contextual_type;
         if let Some(ctx_type) = contextual_type {
-            let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
-                ctx_type,
-                &obj.elements.nodes,
-            );
+            let narrowed = self
+                .narrow_contextual_union_via_object_literal_discriminants(ctx_type, obj_elements);
             if narrowed != ctx_type {
                 contextual_type = Some(narrowed);
             }
@@ -224,6 +177,91 @@ impl<'a> CheckerState<'a> {
                     .push(PartialObjectLiteralInitializer::new(variable_symbol, idx));
                 self.ctx.object_literal_tracking.partial_initializers.len() - 1
             });
+
+        ObjectLiteralRequestFacts {
+            contextual_type,
+            original_contextual_type,
+            all_properties_context_sensitive,
+            obj_getter_names,
+            marker_this_type,
+            contextual_receiver_this_type,
+            base_request,
+            partial_initializer_stack_index,
+        }
+    }
+
+    pub(crate) fn get_type_of_object_literal_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use rustc_hash::FxHashMap;
+        use tsz_common::interner::Atom;
+        use tsz_solver::{IndexSignature, PropertyInfo};
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return TypeId::ERROR; // Missing object literal data - propagate error
+        };
+
+        let ObjectLiteralRequestFacts {
+            contextual_type,
+            original_contextual_type,
+            all_properties_context_sensitive,
+            obj_getter_names,
+            marker_this_type,
+            contextual_receiver_this_type,
+            base_request,
+            partial_initializer_stack_index,
+        } = self.collect_object_literal_request_facts(idx, request, &obj.elements.nodes);
+
+        // Collect properties from the object literal (later entries override earlier ones)
+        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        // Track pre-widened (display) types for freshness model.
+        // Maps property name → original literal TypeId before widening.
+        // Only populated when a property's type was actually widened.
+        let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        let mut string_index_types: Vec<TypeId> = Vec::new();
+        let mut number_index_types: Vec<TypeId> = Vec::new();
+        // Wide `symbol`-typed computed keys (see `symbol_key_routing`).
+        let mut symbol_index_types: Vec<TypeId> = Vec::new();
+        // Index signatures inherited from spread sources (kept separate because
+        // they should only be included when the literal has no explicit properties —
+        // tsc drops spread index signatures when explicit properties exist).
+        let mut spread_string_index_signatures: Vec<IndexSignature> = Vec::new();
+        let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
+        let mut has_spread = false;
+        let mut has_any_spread = false;
+        let mut has_union_spread = false;
+        let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
+        // Track type-parameter-containing spread types for intersection creation.
+        // When a type parameter (or type containing type parameters) is spread
+        // alongside other properties, we create an intersection of the type parameter
+        // with the explicit properties, preserving generic identity for instantiation.
+        let mut generic_spread_types: Vec<TypeId> = Vec::new();
+        // Track getter/setter names to allow getter+setter pairs with the same name
+        let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
+        let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
+        let mut explicit_property_names: rustc_hash::FxHashSet<Atom> =
+            rustc_hash::FxHashSet::default();
+        // Track which named properties came from explicit assignments (not spreads)
+        // so we can emit TS2783 when a later spread overwrites them.
+        // Maps property name atom -> (node_idx for error, property display name)
+        let mut named_property_nodes: FxHashMap<Atom, (NodeIndex, String)> = FxHashMap::default();
+
+        // Skip duplicate property checks for destructuring assignment targets.
+        // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
+        let skip_duplicate_check = self.ctx.in_destructuring_target;
+        let mut prop_order: u32 = 1;
+        let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
+
+        let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
+        let circular_return_method_sites =
+            self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -691,7 +729,6 @@ impl<'a> CheckerState<'a> {
                             && value_type != TypeId::ANY
                             && check_target != TypeId::ERROR
                             && check_target != TypeId::ANY
-                            && !self.is_assignable_to(value_type, check_target)
                         {
                             let _ = self.check_assignable_or_report_at_exact_anchor(
                                 value_type,
@@ -988,6 +1025,14 @@ impl<'a> CheckerState<'a> {
                         value_type = literal_type;
                     }
 
+                    if prop_name_type == TypeId::SYMBOL {
+                        self.report_contextual_symbol_index_value_mismatch(
+                            prop.name,
+                            Some(prop.initializer),
+                            value_type,
+                            contextual_type,
+                        );
+                    }
                     self.route_computed_member_value_to_index_signature(
                         prop_name_type,
                         value_type,
@@ -1190,13 +1235,13 @@ impl<'a> CheckerState<'a> {
                             })
                             .map(|_| TypeId::UNDEFINED)
                             .unwrap_or(value_type);
-                        if !self.is_assignable_to(check_value_type, declared_type) {
-                            self.error_type_not_assignable_at_with_anchor(
+                        let _ = self
+                            .check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                                 check_value_type,
                                 declared_type,
                                 elem_idx,
+                                elem_idx,
                             );
-                        }
                         declared_type
                     } else {
                         // Apply bidirectional type inference and widen (same as named properties)
@@ -1450,8 +1495,14 @@ impl<'a> CheckerState<'a> {
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
                         self.request_has_concrete_contextual_type(&method_request);
-                    if has_concrete_method_context {
-                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                    if method_request.contextual_type.is_some()
+                        && method_request.contextual_type != Some(TypeId::NEVER)
+                    {
+                        let spans = if has_concrete_method_context {
+                            self.function_like_param_spans_for_node(elem_idx)
+                        } else {
+                            self.contextually_typed_param_spans_for_node(elem_idx)
+                        };
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
                             &pre_refresh_snap,
@@ -1719,14 +1770,28 @@ impl<'a> CheckerState<'a> {
                     );
                     let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
-                    if self.request_has_concrete_contextual_type(&method_request) {
-                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                    if method_request.contextual_type.is_some()
+                        && method_request.contextual_type != Some(TypeId::NEVER)
+                    {
+                        let spans = if self.request_has_concrete_contextual_type(&method_request) {
+                            self.function_like_param_spans_for_node(elem_idx)
+                        } else {
+                            self.contextually_typed_param_spans_for_node(elem_idx)
+                        };
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
                             &pre_refresh_snap,
                         );
                     }
 
+                    if prop_name_type == TypeId::SYMBOL {
+                        self.report_contextual_symbol_index_value_mismatch(
+                            method.name,
+                            None,
+                            method_type,
+                            contextual_type,
+                        );
+                    }
                     self.route_computed_member_value_to_index_signature(
                         prop_name_type,
                         method_type,

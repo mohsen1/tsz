@@ -1,5 +1,8 @@
 name: Poor Man's Merge Queue
 
+# Official TSZ merge queue for this user-owned repository. It uses the
+# required `Queue Tested` status as the final latest-main merge gate.
+
 on:
   push:
     branches: [main]
@@ -32,7 +35,7 @@ permissions:
   pull-requests: write
   checks: read
   statuses: write
-  actions: read
+  actions: write
 
 concurrency:
   group: poor-mans-merge-queue-${{ github.repository }}
@@ -53,6 +56,7 @@ jobs:
           GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
           HAS_AUTOMATION_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN != '' }}
           REPOSITORY: ${{ github.repository }}
+          CI_WORKFLOW: ci.yml
           DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           INVALIDATE_OPEN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.invalidate_open || github.event_name == 'push' }}
           MAX_PRS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_prs || 200 }}
@@ -72,6 +76,7 @@ jobs:
           args=(
             --repository "${REPOSITORY}"
             --base main
+            --ci-workflow "${CI_WORKFLOW}"
             --max-prs "${MAX_PRS_INPUT}"
           )
           if [[ "${dry_run}" == "true" ]]; then
@@ -84,7 +89,7 @@ jobs:
           if [[ "${PR_EVENT_ACTION}" == "closed" && -n "${PR_NUMBER}" ]]; then
             echo "Closed PR event only wakes the queue; no status invalidation needed."
           elif [[ -n "${PR_NUMBER}" ]]; then
-            args=(--repository "${REPOSITORY}" --base main --invalidate-pr "${PR_NUMBER}")
+            args=(--repository "${REPOSITORY}" --base main --ci-workflow "${CI_WORKFLOW}" --invalidate-pr "${PR_NUMBER}")
             if [[ "${dry_run}" == "true" ]]; then
               args+=(--dry-run)
             fi

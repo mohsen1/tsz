@@ -54,12 +54,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if local_alias_symbol.is_none()
-            && let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
-            && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
-            self.ctx.leave_recursion();
-            return result;
+            if let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+                self.ctx.leave_recursion();
+                return result;
+            }
+            if let Some((result, _)) =
+                self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)
+            {
+                self.ctx.leave_recursion();
+                return result;
+            }
         }
 
         if let Some((ref name, flags, ref declarations, _)) = symbol_meta
@@ -417,7 +424,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         structural_type,
                     ) {
-                    let evaluated = self.evaluate_type_with_resolution(structural_type);
+                    let evaluated = self.evaluate_type_with_env(structural_type);
                     if matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
                         structural_type
                     } else {
@@ -1149,11 +1156,17 @@ impl<'a> CheckerState<'a> {
             .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
 
         if local_alias_symbol.is_none()
-            && let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
-            && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
-            return result;
+            if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+                return result;
+            }
+            if let Some(result) =
+                self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)
+            {
+                return result;
+            }
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -1630,9 +1643,17 @@ impl<'a> CheckerState<'a> {
                 let mut merged =
                     self.merge_interface_heritage_types(&symbol.declarations, interface_type);
                 // If standard merge didn't propagate lib-arena heritage, fall
-                // back to the lib-aware heritage merge.
+                // back to the lib-aware heritage merge. Namespaced lib interfaces
+                // (e.g. `Temporal.RoundingOptionsWithLargestUnit`) resolve their
+                // own symbol and their base interfaces through the enclosing
+                // namespace, so the lib-aware merge needs the qualified name; the
+                // bare name fails to resolve the namespaced symbol and drops every
+                // inherited member.
                 if merged == interface_type {
-                    let name = symbol.escaped_name.clone();
+                    let name = match &namespace_prefix {
+                        Some(prefix) => format!("{prefix}.{}", symbol.escaped_name),
+                        None => symbol.escaped_name.clone(),
+                    };
                     merged = self.merge_lib_interface_heritage(merged, &name);
                 }
                 self.pop_type_parameters(updates);

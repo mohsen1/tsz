@@ -159,7 +159,7 @@ impl<'a> CheckerState<'a> {
             );
             let param_str = self.format_type_for_diagnostic_role(
                 param_type,
-                DiagnosticTypeDisplayRole::CallParameter {
+                DiagnosticTypeDisplayRole::WeakCallParameter {
                     argument: arg_type,
                     argument_idx: idx,
                 },

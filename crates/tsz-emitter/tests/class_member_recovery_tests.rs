@@ -212,8 +212,14 @@ fn lowered_class_expression_field_arrow_initializer_keeps_trailing_comment_after
     );
 }
 
+/// Under `useDefineForClassFields` (target < ES2022) a no-initializer field is
+/// NOT erased: tsc materializes it as a defined field and hoists its non-literal
+/// computed name to a temp, exactly as for an initialized computed field. See the
+/// tsc baseline `staticPropertyNameConflicts(target=es2015,usedefineforclassfields=true)`,
+/// where `[FunctionPropertyNames.name]: number;` emits
+/// `Object.defineProperty(this, _b, { ... value: void 0 })` + `_b = FunctionPropertyNames.name`.
 #[test]
-fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
+fn downlevel_define_type_only_computed_property_hoists_temp() {
     let output = print_with_printer_options(
         "class C {\n    [side.effect]: string;\n}\n",
         PrinterOptions {
@@ -224,8 +230,45 @@ fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
     );
 
     assert!(
+        output.contains("Object.defineProperty(this, _a, {"),
+        "No-init computed field under define semantics must materialize through the hoisted temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: void 0"),
+        "No-init defined field uses `value: void 0`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = side.effect;"),
+        "Computed name expression must be hoisted to the temp after the class body.\nOutput:\n{output}"
+    );
+    // The name must NOT be inlined as a literal property key.
+    assert!(
+        !output.contains("Object.defineProperty(this, \"side.effect\""),
+        "Computed name must not be inlined as a literal property name.\nOutput:\n{output}"
+    );
+}
+
+/// Without `useDefineForClassFields`, a no-initializer typed-only computed
+/// property has no runtime field, so no temp is allocated; only the side-effect
+/// of evaluating the name expression is emitted.
+#[test]
+fn downlevel_no_define_type_only_computed_property_does_not_allocate_temp() {
+    let output = print_with_printer_options(
+        "class C {\n    [side.effect]: string;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
         !output.contains("_a = side.effect"),
-        "Type-only computed property should not allocate an unused temp.\nOutput:\n{output}"
+        "Without define semantics, type-only computed property should not allocate a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty(this, _a"),
+        "Without define semantics, type-only computed property must not be materialized.\nOutput:\n{output}"
     );
     assert!(
         output.contains("}\nside.effect;"),

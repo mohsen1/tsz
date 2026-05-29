@@ -27,11 +27,40 @@ smallvec = { workspace = true }
 serde_json = { workspace = true }
 globset = { workspace = true }
 dashmap = { workspace = true }
+web-time = { workspace = true }
 stacker = "0.1.23"
+
+[[test]]
+name = "closure_boundary_property_narrowing_tests"
+path = "tests/closure_boundary_property_narrowing_tests.rs"
+
+[[test]]
+name = "union_protected_intersection_property_tests"
+path = "tests/union_protected_intersection_property_tests.rs"
+
+[[test]]
+name = "tuple_element_mismatch_tests"
+path = "tests/tuple_element_mismatch_tests.rs"
+
+[[test]]
+name = "for_await_type_parameter_iterability_tests"
+path = "tests/for_await_type_parameter_iterability_tests.rs"
 
 [[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
+
+[[test]]
+name = "homomorphic_mapped_keyof_modifier_tests"
+path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
+
+[[test]]
+name = "homomorphic_mapped_index_display_tests"
+path = "tests/homomorphic_mapped_index_display_tests.rs"
+
+[[test]]
+name = "array_declaration_display_summary_tests"
+path = "tests/array_declaration_display_summary_tests.rs"
 
 [[test]]
 name = "ts2371_binding_pattern_default_tests"
@@ -48,6 +77,10 @@ path = "tests/extract_alias_distributive_mapped_tests.rs"
 [[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
+
+[[test]]
+name = "issue_9757_reduce_accumulator_context_tests"
+path = "tests/issue_9757_reduce_accumulator_context_tests.rs"
 
 [[test]]
 name = "abstract_constructor_argument_tests"
@@ -68,6 +101,10 @@ path = "tests/ts2513_abstract_super_access_tests.rs"
 [[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
+
+[[test]]
+name = "generic_default_branch_independence_tests"
+path = "tests/generic_default_branch_independence_tests.rs"
 
 [[test]]
 name = "generic_return_fingerprint_tests"
@@ -94,6 +131,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "async_return_promise_identity_tests"
+path = "tests/async_return_promise_identity_tests.rs"
+
+[[test]]
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
@@ -106,8 +147,16 @@ name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
 [[test]]
+name = "optional_chain_indexed_unknown_tests"
+path = "tests/optional_chain_indexed_unknown_tests.rs"
+
+[[test]]
 name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
+
+[[test]]
+name = "noinfer_diagnostic_display_tests"
+path = "tests/noinfer_diagnostic_display_tests.rs"
 
 [[test]]
 name = "array_generic_shorthand_canonical_tests"
@@ -120,6 +169,18 @@ path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
+name = "variadic_tuple_recursive_zip_tests"
+path = "tests/variadic_tuple_recursive_zip_tests.rs"
+
+[[test]]
+name = "recursive_conditional_alias_index_tests"
+path = "tests/recursive_conditional_alias_index_tests.rs"
+
+[[test]]
+name = "recursive_conditional_infer_depth_tests"
+path = "tests/recursive_conditional_infer_depth_tests.rs"
 
 [[test]]
 name = "reverse_mapped_inference_tests"
@@ -306,6 +367,10 @@ name = "ts2304_tests"
 path = "tests/ts2304_tests.rs"
 
 [[test]]
+name = "missing_name_type_parameter_reference_tests"
+path = "tests/missing_name_type_parameter_reference_tests.rs"
+
+[[test]]
 name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
@@ -346,12 +411,20 @@ name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 
 [[test]]
+name = "recursive_value_call_return_tests"
+path = "tests/recursive_value_call_return_tests.rs"
+
+[[test]]
 name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
 
 [[test]]
 name = "lib_merge_indexed_access_no_cascade_tests"
 path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
+
+[[test]]
+name = "lib_type_alias_to_interface_resolution_tests"
+path = "tests/lib_type_alias_to_interface_resolution_tests.rs"
 
 [[test]]
 name = "readonly_tuple_source_display_tests"
@@ -368,6 +441,10 @@ path = "tests/module_augmentation_isolation_tests.rs"
 [[test]]
 name = "ambient_module_renamed_export_ts2460_tests"
 path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
+
+[[test]]
+name = "ambient_module_value_export_tests"
+path = "tests/ambient_module_value_export_tests.rs"
 
 [[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
@@ -400,6 +477,10 @@ path = "tests/interface_heritage_display_tests.rs"
 [[test]]
 name = "ts2430_tests"
 path = "tests/ts2430_tests.rs"
+
+[[test]]
+name = "ts2430_cross_file_generic_heritage_tests"
+path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
 
 [[test]]
 name = "ts2540_readonly_tests"
@@ -456,6 +537,10 @@ path = "tests/conditional_extends_readonly_identity_tests.rs"
 [[test]]
 name = "conditional_extends_readonly_variance_tests"
 path = "tests/conditional_extends_readonly_variance_tests.rs"
+
+[[test]]
+name = "deferred_conditional_identity_extends_tests"
+path = "tests/deferred_conditional_identity_extends_tests.rs"
 
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
@@ -574,6 +659,10 @@ name = "ts2352_merged_type_alias_const_tests"
 path = "tests/ts2352_merged_type_alias_const_tests.rs"
 
 [[test]]
+name = "ts2352_nested_literal_overlap_tests"
+path = "tests/ts2352_nested_literal_overlap_tests.rs"
+
+[[test]]
 name = "ts2683_tests"
 path = "tests/ts2683_tests.rs"
 
@@ -622,6 +711,10 @@ name = "keyof_well_known_symbol_key_tests"
 path = "tests/keyof_well_known_symbol_key_tests.rs"
 
 [[test]]
+name = "keyof_class_unique_symbol_key_tests"
+path = "tests/keyof_class_unique_symbol_key_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 
@@ -652,6 +745,18 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+
+[[test]]
+name = "inline_conditional_infer_return_tests"
+path = "tests/inline_conditional_infer_return_tests.rs"
+
+[[test]]
+name = "inline_conditional_generic_ref_infer_false_branch_tests"
+path = "tests/inline_conditional_generic_ref_infer_false_branch_tests.rs"
+
+[[test]]
+name = "conditional_alias_lib_application_tests"
+path = "tests/conditional_alias_lib_application_tests.rs"
 
 [[test]]
 name = "recursive_conditional_mapped_infer_tests"
@@ -738,6 +843,10 @@ name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 
 [[test]]
+name = "inline_mapped_array_return_tests"
+path = "tests/inline_mapped_array_return_tests.rs"
+
+[[test]]
 name = "overload_inference_literal_preservation_tests"
 path = "tests/overload_inference_literal_preservation_tests.rs"
 
@@ -748,6 +857,10 @@ path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 [[test]]
 name = "issue_7653_parameterless_lambda_inference_tests"
 path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
+
+[[test]]
+name = "issue_9692_function_candidate_inference"
+path = "tests/issue_9692_function_candidate_inference.rs"
 
 [[test]]
 name = "issue_9780_typeof_generic_call_callback_param"
@@ -890,12 +1003,20 @@ name = "ts2344_literal_type_message"
 path = "tests/ts2344_literal_type_message.rs"
 
 [[test]]
+name = "ts4112_cross_file_override_heritage_tests"
+path = "tests/ts4112_cross_file_override_heritage_tests.rs"
+
+[[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
 [[test]]
 name = "ts2344_keyof_constraint_display_tests"
 path = "tests/ts2344_keyof_constraint_display_tests.rs"
+
+[[test]]
+name = "keyof_call_parameter_display_tests"
+path = "tests/keyof_call_parameter_display_tests.rs"
 
 [[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
@@ -974,6 +1095,10 @@ name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 
 [[test]]
+name = "contextual_method_index_signature_tests"
+path = "tests/contextual_method_index_signature_tests.rs"
+
+[[test]]
 name = "contextual_literal_keyof_lib_tests"
 path = "tests/contextual_literal_keyof_lib_tests.rs"
 
@@ -984,6 +1109,10 @@ path = "tests/convert_keywords_yes_tests.rs"
 [[test]]
 name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
+
+[[test]]
+name = "infer_constraint_whole_candidate_tests"
+path = "tests/infer_constraint_whole_candidate_tests.rs"
 
 [[test]]
 name = "fresh_intersection_display_tests"
@@ -1146,6 +1275,10 @@ name = "ts2339_union_narrow_display_tests"
 path = "tests/ts2339_union_narrow_display_tests.rs"
 
 [[test]]
+name = "ts2339_user_defined_predicate_primitive_or_object_tests"
+path = "tests/ts2339_user_defined_predicate_primitive_or_object_tests.rs"
+
+[[test]]
 name = "ts2345_instanceof_narrowed_union_display_tests"
 path = "tests/ts2345_instanceof_narrowed_union_display_tests.rs"
 
@@ -1176,6 +1309,10 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 [[test]]
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
+
+[[test]]
+name = "jsx_generic_spread_deferred_conditional_tests"
+path = "tests/jsx_generic_spread_deferred_conditional_tests.rs"
 
 [[test]]
 name = "jsx_multi_construct_overload_tests"
@@ -1260,6 +1397,10 @@ path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
 [[test]]
 name = "union_index_access_function_application_param_tests"
 path = "tests/union_index_access_function_application_param_tests.rs"
+
+[[test]]
+name = "union_index_annotation_missing_key_tests"
+path = "tests/union_index_annotation_missing_key_tests.rs"
 
 [[test]]
 name = "indexed_access_resolved_union_property_tests"
@@ -1446,12 +1587,24 @@ name = "generic_property_mismatch_display_tests"
 path = "tests/generic_property_mismatch_display_tests.rs"
 
 [[test]]
+name = "object_literal_property_target_display_tests"
+path = "tests/object_literal_property_target_display_tests.rs"
+
+[[test]]
 name = "nominal_application_call_suppression_tests"
 path = "tests/nominal_application_call_suppression_tests.rs"
 
 [[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
+
+[[test]]
+name = "string_mapping_alias_display_tests"
+path = "tests/string_mapping_alias_display_tests.rs"
+
+[[test]]
+name = "class_field_mapped_type_indexed_access_tests"
+path = "tests/class_field_mapped_type_indexed_access_tests.rs"
 
 [[test]]
 name = "class_arrow_property_type_inference_tests"
@@ -1474,6 +1627,10 @@ name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
 [[test]]
+name = "class_implements_overloaded_method_ts2416_tests"
+path = "tests/class_implements_overloaded_method_ts2416_tests.rs"
+
+[[test]]
 name = "dynamic_names_ts2720_tests"
 path = "tests/dynamic_names_ts2720_tests.rs"
 
@@ -1494,6 +1651,10 @@ name = "template_literal_record_key_tests"
 path = "tests/template_literal_record_key_tests.rs"
 
 [[test]]
+name = "keyof_template_index_signature_tests"
+path = "tests/keyof_template_index_signature_tests.rs"
+
+[[test]]
 name = "template_literal_generic_call_indexed_keyof_constraint_tests"
 path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"
 
@@ -1502,8 +1663,20 @@ name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
+name = "ts7053_record_constrained_type_param_index_tests"
+path = "tests/ts7053_record_constrained_type_param_index_tests.rs"
+
+[[test]]
 name = "ts7053_unconstrained_type_param_index_tests"
 path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
+
+[[test]]
+name = "ts7053_intersection_record_constrained_param_tests"
+path = "tests/ts7053_intersection_record_constrained_param_tests.rs"
+
+[[test]]
+name = "ts7053_record_constraint_index_tests"
+path = "tests/ts7053_record_constraint_index_tests.rs"
 
 [[test]]
 name = "tuple_union_contextual_typing_tests"
@@ -1516,6 +1689,10 @@ path = "tests/string_iterable_overload_matching_tests.rs"
 [[test]]
 name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
+
+[[test]]
+name = "generic_method_override_constraint_ts2416_tests"
+path = "tests/generic_method_override_constraint_ts2416_tests.rs"
 
 [[test]]
 name = "override_accessor_property_kind_mismatch_ts2416_tests"
@@ -1564,6 +1741,10 @@ path = "tests/issue_9730_readonly_array_element_inference_repro.rs"
 [[test]]
 name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
+
+[[test]]
+name = "satisfies_elaboration_chain_tests"
+path = "tests/satisfies_elaboration_chain_tests.rs"
 
 [[test]]
 name = "nested_infer_extends_scope_tests"
@@ -1626,6 +1807,10 @@ name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
 
 [[test]]
+name = "object_assign_identity_tests"
+path = "tests/object_assign_identity_tests.rs"
+
+[[test]]
 name = "ts2536_keyof_string_index_signature_tests"
 path = "tests/ts2536_keyof_string_index_signature_tests.rs"
 
@@ -1658,6 +1843,10 @@ name = "deeply_nested_conditional_mapped_recursion_tests"
 path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 
 [[test]]
+name = "infer_match_recursive_wrapper_termination_tests"
+path = "tests/infer_match_recursive_wrapper_termination_tests.rs"
+
+[[test]]
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 
@@ -1676,6 +1865,10 @@ path = "tests/optional_chain_continuation_undefined_tests.rs"
 [[test]]
 name = "structural_dispatch_void_tests"
 path = "tests/structural_dispatch_void_tests.rs"
+
+[[test]]
+name = "optional_property_required_elaboration_tests"
+path = "tests/optional_property_required_elaboration_tests.rs"
 
 [lints]
 workspace = true

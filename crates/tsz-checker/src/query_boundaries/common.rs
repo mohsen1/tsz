@@ -7,11 +7,11 @@ use tsz_solver::{
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::construction::TypeInterner;
 pub(crate) use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
+pub(crate) use tsz_solver::relations::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,

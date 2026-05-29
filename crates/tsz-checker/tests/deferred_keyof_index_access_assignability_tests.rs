@@ -317,6 +317,256 @@ class Holder<{p1} extends keyof Things, {p2} extends keyof Things> {{
     }
 }
 
+/// Large-object stress check that mirrors the `JSX.IntrinsicElements` shape
+/// from `errorInfoForRelatedIndexTypesNoConstraintElaboration.ts` without
+/// pulling in the react16/lib.dom corpus.
+///
+/// Before the fix, `O[T]` where T is a generic type parameter constrained by
+/// `keyof O` would eagerly evaluate to the per-key value-type union of O. For
+/// large interfaces with complex generic value types, that expansion is
+/// quadratic in `|keyof O|` and erases the per-call-site type-parameter
+/// identity needed for the TS2322 + TS5075 elaboration. The fix defers the
+/// evaluation, matching tsc's `getIndexedAccessType` behavior on generic
+/// indexes. Without the fix this test ran for >120 seconds; with it, the same
+/// shape completes in milliseconds.
+#[test]
+fn large_object_with_generic_value_types_does_not_blow_up_indexed_access_relation() {
+    use std::time::Instant;
+
+    // Build a `Things` interface with 80 keys, each mapped to an alias
+    // application that itself expands to an intersection of generic
+    // interfaces — the same overall shape `DetailedHTMLProps<HTMLAttributes<T>, T>`
+    // takes in react16's JSX.IntrinsicElements. The body is sized so the
+    // pre-fix quadratic path would take seconds even at -O3; with the fix it
+    // resolves in well under a second because `Things[T1]` and `Things[T2]`
+    // stay deferred and the pre-evaluation key-identity rejection fires.
+    let mut things_body = String::new();
+    for i in 0..80 {
+        things_body.push_str(&format!("    k{i}: Detailed<Att{}<E{i}>, E{i}>;\n", i % 20));
+    }
+    let mut elements_body = String::new();
+    for i in 0..80 {
+        elements_body.push_str(&format!("interface E{i} {{}}\n"));
+    }
+    let mut refinements_body = String::new();
+    for j in 0..20 {
+        let mut props = String::new();
+        for k in 0..25 {
+            props.push_str(&format!("    refined{j}_{k}?: string;\n"));
+        }
+        refinements_body.push_str(&format!(
+            "interface Att{j}<T> extends Base<T> {{\n{props}}}\n"
+        ));
+    }
+    let mut base_props = String::new();
+    for k in 0..40 {
+        base_props.push_str(&format!("    base{k}?: string;\n"));
+    }
+    let source = format!(
+        r#"
+interface DomAttr<T> {{ onSomething?: (e: T) => void; }}
+interface Base<T> extends DomAttr<T> {{
+{base_props}}}
+interface ClassAttr<T> {{ ref?: T; }}
+type Detailed<E extends Base<T>, T> = ClassAttr<T> & E;
+
+{refinements_body}{elements_body}interface Things {{
+{things_body}}}
+
+class Holder<T1 extends keyof Things, T2 extends keyof Things> {{
+    M() {{
+        let c1: Things[T1] = {{}};
+        const c2: Things[T2] = c1;
+    }}
+}}
+"#
+    );
+
+    let start = Instant::now();
+    let diags = check_source_diagnostics(&source);
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 10,
+        "Things[T1] -> Things[T2] with a JSX.IntrinsicElements-scale shape must complete \
+         in well under the 90s conformance timeout; actual = {elapsed:?}"
+    );
+
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'Things[T1]' is not assignable to type 'Things[T2]'.")
+        }),
+        "Expected TS2322 with the canonical IndexAccess type-parameter mismatch message; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Renaming the bound type parameters must not change the rule (anti-hardcoding
+/// directive §25): the structural rule is "for `O[A] -> O[B]` with A != B both
+/// generic type parameters constrained by `keyof O`, emit TS2322 with the
+/// stable elaboration." A name-bound fix would silently regress when callers
+/// pick a different spelling. Uses 80 keys — above the large-object deferral
+/// threshold — so the deferral path is exercised across name choices.
+#[test]
+fn large_object_with_generic_value_types_two_names() {
+    for (p1, p2) in [("T1", "T2"), ("Key1", "Key2"), ("Alpha", "Beta")] {
+        let mut things_body = String::new();
+        for i in 0..80 {
+            things_body.push_str(&format!("    k{i}: Detailed<Base<E{i}>, E{i}>;\n"));
+        }
+        let mut elements_body = String::new();
+        for i in 0..80 {
+            elements_body.push_str(&format!("interface E{i} {{}}\n"));
+        }
+        let source = format!(
+            r#"
+interface Base<T> {{ id?: string; ref?: T; }}
+interface ClassAttr<T> {{ refClass?: T; }}
+type Detailed<E extends Base<T>, T> = ClassAttr<T> & E;
+
+{elements_body}interface Things {{
+{things_body}}}
+
+class Holder<{p1} extends keyof Things, {p2} extends keyof Things> {{
+    M() {{
+        let c1: Things[{p1}] = {{}};
+        const c2: Things[{p2}] = c1;
+    }}
+}}
+"#
+        );
+
+        let diags = check_source_diagnostics(&source);
+        assert!(
+            diags.iter().any(|d| {
+                d.code == 2322
+                    && d.message_text.contains(&format!(
+                        "Type 'Things[{p1}]' is not assignable to type 'Things[{p2}]'."
+                    ))
+            }),
+            "Renamed type parameters {p1}/{p2}: missing TS2322 with structural elaboration"
+        );
+    }
+}
+
+/// Negative companion: same shape but the source and target use the *same*
+/// type-parameter identity — `Things[T] -> Things[T]` is identity, must not
+/// emit TS2322 regardless of how many keys `Things` has. Sized above the
+/// large-object deferral threshold to verify the deferral does not reject
+/// the identity case.
+#[test]
+fn large_object_same_key_param_identity_accepts() {
+    let mut things_body = String::new();
+    for i in 0..80 {
+        things_body.push_str(&format!("    k{i}: {{ id?: string }};\n"));
+    }
+    let source = format!(
+        r#"
+interface Things {{
+{things_body}}}
+
+class Holder<K extends keyof Things> {{
+    M(arg: Things[K]) {{
+        const c2: Things[K] = arg;
+    }}
+}}
+"#
+    );
+    let diags = check_source_diagnostics(&source);
+    assert_eq!(
+        count(&diags, 2322),
+        0,
+        "Things[K] -> Things[K] (identity) must not emit TS2322; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Negative companion: `{} -> Things[K]` must still detect rejection when at
+/// least one key's value type has a required property, even at large scale.
+/// The fix targets evaluation deferral, not the rejection rule itself.
+/// Sized above the large-object deferral threshold.
+#[test]
+fn large_object_with_required_member_still_rejects_empty_object() {
+    let mut things_body = String::new();
+    for i in 0..79 {
+        things_body.push_str(&format!("    k{i}: {{ a?: string }};\n"));
+    }
+    // One key with a REQUIRED prop; the rule must still fire.
+    things_body.push_str("    kReq: { required: string };\n");
+
+    let source = format!(
+        r#"
+interface Things {{
+{things_body}}}
+
+class Holder<K extends keyof Things> {{
+    M() {{
+        let c1: Things[K] = {{}};
+    }}
+}}
+"#
+    );
+    let diags = check_source_diagnostics(&source);
+    let assignability_errors = count(&diags, 2322) + count(&diags, 2741);
+    assert!(
+        assignability_errors >= 1,
+        "Even with 80 keys, the one required-prop value must reject {{}}; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Coverage for the second deferral site: `visit_object_with_index` (object
+/// types that carry an index signature `[k: string]: V` alongside named
+/// properties). Without the gating, `Things[T]` for a 100-key object with a
+/// string-index signature would still expand the per-key value-type union.
+/// With the gating, `Things[T1]` and `Things[T2]` stay deferred and the
+/// pre-evaluation key-identity rejection emits TS2322 directly.
+#[test]
+fn large_object_with_index_signature_distinct_keys_still_reject() {
+    let mut things_body = String::new();
+    for i in 0..80 {
+        things_body.push_str(&format!("    k{i}: {{ tag: 'k{i}'; value?: string }};\n"));
+    }
+    let source = format!(
+        r#"
+interface Things {{
+    [arbitrary: string]: {{ tag: string; value?: string }};
+{things_body}}}
+
+class Holder<T1 extends keyof Things, T2 extends keyof Things> {{
+    M() {{
+        const c1: Things[T1] = (null as any) as Things[T1];
+        const c2: Things[T2] = c1;
+    }}
+}}
+"#
+    );
+    let diags = check_source_diagnostics(&source);
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'Things[T1]' is not assignable to type 'Things[T2]'.")
+        }),
+        "object-with-index Things[T1] -> Things[T2] must emit TS2322; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn distinct_key_params_reject_assignment_between_deferred_indexed_accesses() {
     let source = r#"

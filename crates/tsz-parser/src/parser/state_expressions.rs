@@ -1090,6 +1090,10 @@ impl ParserState {
                         let rescanned = self.scanner.re_scan_hash_token();
                         self.current_token = rescanned;
                     }
+                    if self.is_token(SyntaxKind::Unknown) {
+                        let rescanned = self.scanner.re_scan_unknown_token_as_identifier_name();
+                        self.current_token = rescanned;
+                    }
                     let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
                     let is_optional_chain_continuation =
                         is_private_identifier && self.is_optional_chain_expression(expr);

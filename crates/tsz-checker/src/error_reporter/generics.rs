@@ -10,6 +10,7 @@ use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::{CallSignature, CallableShape};
@@ -746,10 +747,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
-            if !self.diagnostic_relation_boolean_guard(prop_value, resolved_constraint)
-                && !self.diagnostic_relation_boolean_guard(prop.type_id, constraint)
-                && !self.diagnostic_relation_boolean_guard(prop_value, constraint)
-                && !self.diagnostic_relation_boolean_guard(prop.type_id, resolved_constraint)
+            if !self
+                .assign_relation_outcome(prop_value, resolved_constraint)
+                .related
+                && !self
+                    .assign_relation_outcome(prop.type_id, constraint)
+                    .related
+                && !self.assign_relation_outcome(prop_value, constraint).related
+                && !self
+                    .assign_relation_outcome(prop.type_id, resolved_constraint)
+                    .related
             {
                 return false;
             }
@@ -818,6 +825,12 @@ impl<'a> CheckerState<'a> {
         &self,
         base_expr_idx: NodeIndex,
     ) -> Option<String> {
+        if let Some(display) =
+            self.source_constructor_annotation_display_for_instantiation_expression(base_expr_idx)
+        {
+            return Some(display);
+        }
+
         let sym_id = self
             .ctx
             .binder
@@ -842,6 +855,67 @@ impl<'a> CheckerState<'a> {
             .trim()
             .replace(',', ";");
         Some(format!("{{ {inner}; }}"))
+    }
+
+    fn source_constructor_annotation_display_for_instantiation_expression(
+        &self,
+        base_expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, base_expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = symbol.value_declaration;
+        let arenas = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl))
+            .into_iter()
+            .flat_map(|arenas| arenas.iter().map(|arena| arena.as_ref()))
+            .chain(std::iter::once(self.ctx.arena));
+
+        for arena in arenas {
+            if let Some(display) = self.constructor_annotation_display_from_arena(arena, decl) {
+                return Some(display);
+            }
+        }
+        None
+    }
+
+    fn constructor_annotation_display_from_arena(
+        &self,
+        arena: &NodeArena,
+        decl: NodeIndex,
+    ) -> Option<String> {
+        let decl_node = arena.get(decl)?;
+        let variable = arena.get_variable_declaration(decl_node)?;
+        let annotation = variable.type_annotation.into_option()?;
+        let annotation_node = arena.get(annotation)?;
+        if annotation_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = arena.get_type_ref(annotation_node)?;
+        let name = arena.get_identifier_text(type_ref.type_name)?;
+        if !name.ends_with("Constructor") {
+            return None;
+        }
+        let sym_id = crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+            name,
+            self.ctx.binder,
+            self.ctx.global_file_locals_index.as_deref(),
+            self.ctx
+                .all_binders
+                .as_ref()
+                .map(|binders| binders.as_ref().as_slice()),
+            &self.ctx.lib_contexts,
+        )?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        (symbol.escaped_name == name
+            && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id)))
+        .then(|| name.to_string())
     }
 
     /// Report TS2559: Type has no properties in common with constraint.

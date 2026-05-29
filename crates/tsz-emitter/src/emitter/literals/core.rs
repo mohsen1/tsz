@@ -29,6 +29,7 @@ impl<'a> Printer<'a> {
         }
 
         if !self.suppress_ns_qualification
+            && self.private_static_class_alias_shadow_depth == 0
             && let Some((class_name, class_alias)) = self.scoped_class_expression_self_alias.clone()
             && original_text == class_name.as_ref()
         {

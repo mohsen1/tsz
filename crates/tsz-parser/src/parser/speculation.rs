@@ -33,6 +33,7 @@ pub(crate) struct ParserCheckpoint {
     in_import_type_options_context: bool,
     import_attribute_tail_recovered: bool,
     suppress_object_literal_comma_once: bool,
+    abort_object_literal_recovery_once: bool,
     suppress_next_missing_close_paren_error_once: bool,
     saw_arrow_parameter_recovery: bool,
 }
@@ -56,6 +57,7 @@ impl ParserState {
             in_import_type_options_context: self.in_import_type_options_context,
             import_attribute_tail_recovered: self.import_attribute_tail_recovered,
             suppress_object_literal_comma_once: self.suppress_object_literal_comma_once,
+            abort_object_literal_recovery_once: self.abort_object_literal_recovery_once,
             suppress_next_missing_close_paren_error_once: self
                 .suppress_next_missing_close_paren_error_once,
             saw_arrow_parameter_recovery: self.saw_arrow_parameter_recovery,
@@ -78,6 +80,7 @@ impl ParserState {
             in_import_type_options_context,
             import_attribute_tail_recovered,
             suppress_object_literal_comma_once,
+            abort_object_literal_recovery_once,
             suppress_next_missing_close_paren_error_once,
             saw_arrow_parameter_recovery,
         } = checkpoint;
@@ -95,6 +98,7 @@ impl ParserState {
         self.in_import_type_options_context = in_import_type_options_context;
         self.import_attribute_tail_recovered = import_attribute_tail_recovered;
         self.suppress_object_literal_comma_once = suppress_object_literal_comma_once;
+        self.abort_object_literal_recovery_once = abort_object_literal_recovery_once;
         self.suppress_next_missing_close_paren_error_once =
             suppress_next_missing_close_paren_error_once;
         self.saw_arrow_parameter_recovery = saw_arrow_parameter_recovery;
@@ -166,6 +170,7 @@ mod tests {
             p.in_import_type_options_context = true;
             p.import_attribute_tail_recovered = true;
             p.suppress_object_literal_comma_once = true;
+            p.abort_object_literal_recovery_once = true;
             p.suppress_next_missing_close_paren_error_once = true;
             p.parse_error_at_current_token("synthetic", 9999);
         });
@@ -181,6 +186,7 @@ mod tests {
         assert!(!parser.in_import_type_options_context);
         assert!(!parser.import_attribute_tail_recovered);
         assert!(!parser.suppress_object_literal_comma_once);
+        assert!(!parser.abort_object_literal_recovery_once);
         assert!(!parser.suppress_next_missing_close_paren_error_once);
         assert_eq!(parser.parse_diagnostics.len(), 0);
     }

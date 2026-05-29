@@ -40,11 +40,33 @@ pub(crate) fn classify_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> Inde
     tsz_solver::type_queries::classify_index_key(db, type_id)
 }
 
-pub(crate) fn classify_element_indexable(
+/// Resolver-aware element-indexability classification.
+///
+/// The checker always calls this variant. It threads a [`TypeResolver`] —
+/// typically the [`CheckerContext`] acting as a `TypeEnvironment` — through to
+/// the solver so that `Application(Lazy(DefId), args)` shapes (`Record<K, V>`,
+/// user mapped aliases, `Partial<T>`, `Readonly<T>`, …) expand to their
+/// structural mapped/object form before classification. Without a resolver
+/// those wrappers stay opaque, the classifier returns `Other`, and the
+/// checker emits false TS7053 diagnostics for type-parameter constraints
+/// that mention them (including intersection constraints such as
+/// `T extends { a: number } & Record<string, V>`).
+///
+/// There is intentionally no non-resolver-aware wrapper exposed here.
+/// Indexability decisions made without a resolver have produced regressions
+/// (see #10726); making this the only entry point keeps that mistake out of
+/// the checker tree.
+///
+/// [`TypeResolver`]: tsz_solver::relations::subtype::TypeResolver
+/// [`CheckerContext`]: crate::context::CheckerContext
+pub(crate) fn classify_element_indexable_with_resolver<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
 ) -> ElementIndexableKind {
-    tsz_solver::type_queries::classify_element_indexable(db, type_id)
+    tsz_solver::type_queries::classify_element_indexable_with_resolver(db, resolver, type_id)
 }
 
 pub(crate) fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryKind {

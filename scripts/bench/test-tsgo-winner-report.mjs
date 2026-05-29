@@ -162,6 +162,8 @@ withTempDir((dir) => {
     rows_meeting_target: 1,
     rows_below_target: 3,
     project_rows_below_target: 2,
+    rows_with_attribution: 1,
+    missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
     worst_gap: report.target_gaps[0],
   });
   assert.deepEqual(
@@ -276,6 +278,11 @@ withTempDir((dir) => {
     ["BCT candidates=200", "200 classes"],
   );
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, [
+    "200 classes",
+    "BCT candidates=200",
+  ]);
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
@@ -368,6 +375,8 @@ withTempDir((dir) => {
   assert.deepEqual(report.totals.missing_attribution_rows, ["complete-project", "single-file-win"]);
   assert.equal(report.two_x_target.eligible_green_rows, 2);
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["complete-project", "single-file-win"]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
     ["complete-project", "single-file-win"],
@@ -406,6 +415,8 @@ withTempDir((dir) => {
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.two_x_target.rows_meeting_target, 1);
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["target-short", "tsgo-win"]);
   assert.deepEqual(
     report.target_gaps.map((row) => [row.name, row.tsz_speedup_vs_tsgo]),
     [
@@ -413,6 +424,114 @@ withTempDir((dir) => {
       ["target-short", 15 / 10],
     ],
   );
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const perfPath = path.join(dir, "bench.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsz",
+        factor: 1.1,
+        tsz_ms: 100,
+        tsgo_ms: 110,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "attribution",
+    delegate: { misses: 0 },
+    checker: { with_parent_cache_constructed: 2 },
+    slow_check_file_timings: [
+      { file: "ts-essentials/lib/xor/index.ts", elapsed_ms: 150, diagnostics: 0 },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 1\/1/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_below_target, 1);
+  assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, []);
+  assert.deepEqual(report.target_gaps[0].attribution_status, {
+    present: true,
+    path: path.relative(ROOT, perfPath).split(path.sep).join("/"),
+    url: null,
+    generated_at: report.target_gaps[0].attribution_status.generated_at,
+    mode: "attribution",
+    dominant_subsystem: "checker:semantic-check",
+    warning: null,
+  });
+  assert.match(report.target_gaps[0].attribution_status.generated_at, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const perfPath = path.join(dir, "bench.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsz",
+        factor: 1.1,
+        tsz_ms: 100,
+        tsgo_ms: 110,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "timing",
+    delegate: { misses: 0 },
+    checker: { with_parent_cache_constructed: 2 },
+    slow_check_file_timings: [
+      { file: "ts-essentials/lib/xor/index.ts", elapsed_ms: 150, diagnostics: 0 },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 0\/1/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_below_target, 1);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["ts-essentials-project"]);
+  assert.deepEqual(report.target_gaps[0].attribution_status, {
+    present: true,
+    path: path.relative(ROOT, perfPath).split(path.sep).join("/"),
+    url: null,
+    generated_at: report.target_gaps[0].attribution_status.generated_at,
+    mode: "timing",
+    dominant_subsystem: null,
+    warning: "sidecar perf snapshot mode is not attribution",
+  });
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
@@ -475,6 +594,41 @@ assert.match(
   /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
   "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
 );
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfSvg\(benchmarkData\)/,
+  "website should render the README performance SVG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfPng\(benchmarkData\)/,
+  "website should render the README performance PNG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfPng\(benchmarkData, \{ theme: "dark" \}\)/,
+  "website should render a dark-mode README performance PNG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf\.svg"/,
+  "website should publish the README performance SVG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf\.png"/,
+  "website should publish the README performance PNG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf-light\.png"/,
+  "website should publish the light-mode README performance PNG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf-dark\.png"/,
+  "website should publish the dark-mode README performance PNG beside benchmark-data/latest.json",
+);
 
 withTempDir((dir) => {
   const script = [
@@ -492,11 +646,26 @@ withTempDir((dir) => {
     "});",
     "assert.ok(passthrough.some((copy) => copy['bench-snapshot.json'] === 'benchmark-data/latest.json'));",
     "fs.mkdirSync(process.env.TSZ_TEST_DIST, { recursive: true });",
-    "for (const callback of callbacks) callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
+    "for (const callback of callbacks) await callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
     "const reportPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'latest.tsgo-winners.json');",
     "const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));",
     "assert.equal(report.worst.name, 'ts-toolbelt-project');",
     "assert.equal(report.totals.green_tsgo_winners, 6);",
+    "const svgPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf.svg');",
+    "const svg = fs.readFileSync(svgPath, 'utf8');",
+    "assert.doesNotMatch(svg, />Latest benchmark snapshot</);",
+    "assert.doesNotMatch(svg, />successful micro rows</);",
+    "assert.match(svg, /#cf222e/);",
+    "const pngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf.png');",
+    "const png = fs.readFileSync(pngPath);",
+    "assert.equal(png.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "const lightPngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf-light.png');",
+    "const darkPngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf-dark.png');",
+    "const lightPng = fs.readFileSync(lightPngPath);",
+    "const darkPng = fs.readFileSync(darkPngPath);",
+    "assert.equal(lightPng.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "assert.equal(darkPng.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "assert.notEqual(lightPng.toString('base64'), darkPng.toString('base64'));",
     "",
   ].join("\n");
 

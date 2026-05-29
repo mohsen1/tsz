@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   BENCH_RUNNER_EXCLUDED_ROWS,
   COMPILE_GUARD_EXCLUDED_ROWS,
+  appendStepSummary,
   computeCoverage,
   extractBenchRunnerRows,
   extractCompileGuardFallbackRows,
@@ -135,6 +139,28 @@ function baseSurfaces() {
   );
 }
 
+// Row in fixture source that is not defined in project-rows.mjs.
+{
+  const surfaces = baseSurfaces();
+  surfaces.fixtureSourceRows = [...surfaces.fixtureSourceRows, "fixture-ghost-row"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("fixture-ghost-row") && d.includes("scripts/bench/project-fixtures.sh") && d.includes("not defined")),
+    `Expected fixture source orphan drift for fixture-ghost-row, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
+// Row in compatibility corpus that is not defined in project-rows.mjs.
+{
+  const surfaces = baseSurfaces();
+  surfaces.compatCorpusRows = [...surfaces.compatCorpusRows, "compat-ghost-row"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("compat-ghost-row") && d.includes("COMPATIBILITY_CORPUS_ROWS") && d.includes("not defined")),
+    `Expected compatibility corpus orphan drift for compat-ghost-row, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
 // Row has pinned repo/ref but missing from fixture source.
 {
   const surfaces = baseSurfaces();
@@ -246,6 +272,18 @@ function baseSurfaces() {
   assert.ok(text.includes(cleanSummary), "plain text missing clean summary");
 }
 
+// Step summary appends markdown regardless of the selected stdout format.
+{
+  const coverage = computeCoverage(baseSurfaces());
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "project-row-summary-"));
+  const summaryPath = path.join(dir, "summary.md");
+  appendStepSummary(coverage, summaryPath);
+  const summary = fs.readFileSync(summaryPath, "utf8");
+  assert.ok(summary.includes("## Project Row Coverage"), "step summary missing markdown heading");
+  assert.ok(summary.includes(`All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`), "step summary missing clean summary");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 // Extractor: bench runner rows from shell snippet.
 {
   const snippet = `
@@ -260,16 +298,28 @@ run_project_benchmark "alpha" "$tsconfig" "$src"
 // Extractor: compile guard rows from shell snippet — both literal and case-arm forms.
 {
   const snippet = `
-check_project "alpha" "$tsconfig" "$src"
-check_project "beta" "$tsconfig" "$src"
-    gamma|delta)
+check_project "alpha-project" "$tsconfig" "$src"
+check_project "beta-project" "$tsconfig" "$src"
+  124|137)
+  required)
+run_project_row() {
+  case "$name" in
+    gamma-project|delta-project)
 check_project "$name" "$tsconfig" "$src"
+  epsilon-project)
+\tzeta-project)
+  esac
+}
 `;
   const rows = extractCompileGuardRows(snippet);
-  assert.ok(rows.includes("alpha"), "missing alpha");
-  assert.ok(rows.includes("beta"), "missing beta");
-  assert.ok(rows.includes("gamma"), "missing gamma from case arm");
-  assert.ok(rows.includes("delta"), "missing delta from case arm");
+  assert.ok(rows.includes("alpha-project"), "missing alpha-project");
+  assert.ok(rows.includes("beta-project"), "missing beta-project");
+  assert.ok(rows.includes("gamma-project"), "missing gamma-project from case arm");
+  assert.ok(rows.includes("delta-project"), "missing delta-project from case arm");
+  assert.ok(rows.includes("epsilon-project"), "missing epsilon-project from two-space case arm");
+  assert.ok(rows.includes("zeta-project"), "missing zeta-project from tab-indented case arm");
+  assert.ok(!rows.includes("124"), "numeric case arms must not be treated as project rows");
+  assert.ok(!rows.includes("required"), "mode case arms must not be treated as project rows");
   assert.ok(!rows.includes("$name"), "$name must be filtered out");
 }
 
@@ -293,15 +343,19 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
 // Extractor: fixture source rows from project-fixtures.sh case-arm format.
 {
   const snippet = `
-    alpha|beta)
+tsz_project_fixture_sources() {
+  case "$1" in
+    alpha-project|beta-project)
       setup_alpha
     ;;
-    gamma)
+    gamma-project)
       setup_gamma
     ;;
+  esac
+}
 `;
   const rows = extractFixtureSourceRows(snippet);
-  assert.deepEqual(rows, ["alpha", "beta", "gamma"]);
+  assert.deepEqual(rows, ["alpha-project", "beta-project", "gamma-project"]);
 }
 
 console.log("test-project-row-summary: all tests passed");

@@ -152,3 +152,31 @@ fn array_destructuring_without_nested_keeps_single_pass_layout() {
         "Without nested patterns, element 1's read should still come after element 0's decl.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn param_nested_array_with_multiple_bindings_materializes_source_once() {
+    let output = parse_lower_emit(
+        "function foo([name, [primary, secondary]]: any) { console.log(name); }\n",
+        es5_opts(),
+    );
+
+    assert!(
+        output.contains(
+            "function foo(_a) {\n    var name = _a[0], _b = _a[1], primary = _b[0], secondary = _b[1];"
+        ),
+        "Nested array parameter patterns with multiple bindings should materialize the nested source once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn param_nested_array_with_single_binding_keeps_direct_source_path() {
+    let output = parse_lower_emit(
+        "function foo([name, [primary]]: any) { console.log(name); }\n",
+        es5_opts(),
+    );
+
+    assert!(
+        output.contains("function foo(_a) {\n    var name = _a[0], primary = _a[1][0];"),
+        "Nested array parameter patterns with one binding should keep the direct source path.\nOutput:\n{output}"
+    );
+}

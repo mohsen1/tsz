@@ -1,7 +1,7 @@
 use super::{ParamTransformPlan, Printer};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_new_target_reference;
 
 impl<'a> Printer<'a> {
@@ -294,9 +294,8 @@ impl<'a> Printer<'a> {
         &mut self,
         initializer: String,
     ) -> Option<String> {
-        let previous = self
-            .current_new_target_substitution
-            .replace("_newTarget".into());
+        let previous = self.current_new_target_substitution.take();
+        self.current_new_target_substitution = Some("_newTarget".into());
         self.pending_new_target_capture_initializer = Some(initializer);
         previous
     }
@@ -416,13 +415,21 @@ impl<'a> Printer<'a> {
         self.emit_param_prologue(transforms);
         let hoist_anchor = is_function_body_block.then(|| self.capture_hoist_anchor());
 
-        for &stmt_idx in &block.statements.nodes {
-            let before_len = self.writer.len();
-            self.emit(stmt_idx);
-            if self.writer.len() > before_len {
-                self.write_line();
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
             }
-        }
+        };
+        self.emit_block_statement_list_with_comments(
+            &stmts,
+            0,
+            block_close_pos,
+            is_function_body_block,
+        );
 
         self.ctx.block_scope_state.exit_scope();
         if let Some(anchor) = hoist_anchor {
@@ -430,6 +437,44 @@ impl<'a> Printer<'a> {
         }
         self.decrease_indent();
         self.write("}");
+    }
+
+    /// Emit the statements of a downleveled async body block (the body that
+    /// becomes `__awaiter(this, ..., function* () { ... })`) through the shared
+    /// comment-aware per-statement loop.
+    ///
+    /// The naive `self.emit(stmt); self.write_line();` loops that previously
+    /// drove these wrappers dropped same-line trailing comments on body
+    /// statements (e.g. `const req = yield foo; // ONE`). Routing them through
+    /// `emit_block_statement_list_with_comments` preserves leading/trailing
+    /// comment handling and `comment_emit_idx` advancement exactly as the
+    /// canonical `emit_block` loop does.
+    ///
+    /// `block_idx` is the original async body block node. Directive prologues
+    /// (e.g. `"use strict"`) are not re-emitted here because the awaiter body
+    /// itself is not a fresh module/function-source boundary that introduces
+    /// one; any leading string-literal statement is emitted as an ordinary
+    /// statement, matching tsc.
+    pub(in crate::emitter) fn emit_async_body_block_statements(&mut self, block_idx: NodeIndex) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        // Position of the body block's closing `}`, used as the upper bound for
+        // trailing-comment scanning on the final statement (so the awaiter's own
+        // synthetic `})` does not steal the comment).
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
+            }
+        };
+        self.emit_block_statement_list_with_comments(&stmts, 0, block_close_pos, true);
     }
 
     fn skip_block_opening_line_comments(
@@ -571,8 +616,14 @@ impl<'a> Printer<'a> {
                     }
                 }
 
+                let preserves_native_parameter_decorators =
+                    self.should_preserve_native_parameter_decorators(param);
                 if !first {
-                    self.write(", ");
+                    if preserves_native_parameter_decorators {
+                        self.write(",");
+                    } else {
+                        self.write(", ");
+                    }
                 }
                 first = false;
 
@@ -584,6 +635,9 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 self.emit_comments_before_pos(param_node.pos);
+                if preserves_native_parameter_decorators {
+                    self.emit_native_parameter_decorators(param.modifiers.as_ref());
+                }
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
@@ -786,6 +840,40 @@ impl<'a> Printer<'a> {
         // scanning from name_node.end would place these comments INSIDE the
         // parameter list. The caller (statement-level comment emission) handles
         // trailing comments after the whole function declaration.
+    }
+
+    fn should_preserve_native_parameter_decorators(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        self.ctx.options.target == tsz_common::ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && param.modifiers.as_ref().is_some_and(|modifiers| {
+                modifiers.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+    }
+
+    fn emit_native_parameter_decorators(&mut self, modifiers: Option<&NodeList>) {
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                continue;
+            };
+            if mod_node.kind != syntax_kind_ext::DECORATOR {
+                continue;
+            }
+            self.emit_decorator(mod_node);
+            self.write_line();
+        }
     }
 
     fn pending_parameter_leading_comment_starts_line(&self, pos: u32) -> bool {
