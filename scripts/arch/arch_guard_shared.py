@@ -296,6 +296,7 @@ FILE_LINE_LIMIT_CHECKS = [
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
     # target lowering, ...) are extracted into sibling submodules.
+    # Ratcheted 5150→4918 after submodule extraction reduced the core engine.
     (
         "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
         ROOT
@@ -304,7 +305,14 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "transforms"
         / "async_es5_ir.rs",
-        5150,
+        4918,
+    ),
+    # Emitter ES decorators: PR #10778 tracks sharding into 7 focused submodules.
+    # Ratchet down as submodules land.
+    (
+        "Emitter boundary: es_decorators monolith size ratchet (#10778)",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "es_decorators.rs",
+        5755,
     ),
     # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
     # splitting into option-domain submodules. Ratchet down as each domain lands.
@@ -510,6 +518,400 @@ FILE_LINE_LIMIT_CHECKS = [
         / "expressions"
         / "access.rs",
         2554,
+    ),
+    # --- Blanket coverage batch: all production files > 2000 lines per §19 ---
+    # These entries pin the current baseline and prevent silent growth.
+    # Each file is a candidate for splitting; ratchet down as submodules land.
+    (
+        "Checker boundary: types/property_access_type/resolve.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "property_access_type"
+        / "resolve.rs",
+        3152,
+    ),
+    (
+        "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "type_checking"
+        / "duplicate_identifiers_helpers.rs",
+        3150,
+    ),
+    (
+        "Checker boundary: error_reporter/properties.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "error_reporter" / "properties.rs",
+        3107,
+    ),
+    (
+        "Checker boundary: declarations/import/declaration.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "declarations"
+        / "import"
+        / "declaration.rs",
+        3066,
+    ),
+    (
+        "Checker boundary: state/state_checking/property.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "state_checking"
+        / "property.rs",
+        3036,
+    ),
+    (
+        "Parser boundary: parser/state_expressions_literals.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-parser"
+        / "src"
+        / "parser"
+        / "state_expressions_literals.rs",
+        3027,
+    ),
+    (
+        "Checker boundary: jsdoc/params.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "params.rs",
+        2941,
+    ),
+    (
+        "Checker boundary: types/type_checking/duplicate_identifiers.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "type_checking"
+        / "duplicate_identifiers.rs",
+        2916,
+    ),
+    (
+        "Checker boundary: flow/control_flow/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "flow"
+        / "control_flow"
+        / "core.rs",
+        2886,
+    ),
+    (
+        "Solver boundary: type_queries/flow.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "type_queries" / "flow.rs",
+        2874,
+    ),
+    (
+        "Checker boundary: types/utilities/core.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "utilities" / "core.rs",
+        2779,
+    ),
+    (
+        "Checker boundary: state/type_analysis/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_analysis"
+        / "core.rs",
+        2764,
+    ),
+    (
+        "CLI boundary: driver/tests.rs size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "tests.rs",
+        2736,
+    ),
+    (
+        "Checker boundary: types/class_type/constructor.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "types"
+        / "class_type"
+        / "constructor.rs",
+        2688,
+    ),
+    (
+        "Solver boundary: diagnostics/format/compound.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "diagnostics"
+        / "format"
+        / "compound.rs",
+        2602,
+    ),
+    (
+        "Checker boundary: assignability/assignability_diagnostics.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "assignability"
+        / "assignability_diagnostics.rs",
+        2600,
+    ),
+    (
+        "Checker boundary: state/type_resolution/module.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_resolution"
+        / "module.rs",
+        2596,
+    ),
+    (
+        "Parser boundary: parser/state_statements_class_members.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-parser"
+        / "src"
+        / "parser"
+        / "state_statements_class_members.rs",
+        2587,
+    ),
+    (
+        "Checker boundary: state/type_environment/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "type_environment"
+        / "core.rs",
+        2568,
+    ),
+    (
+        "Conformance boundary: conformance runner size ratchet",
+        ROOT / "crates" / "conformance" / "src" / "runner.rs",
+        2485,
+    ),
+    (
+        "Emitter boundary: emitter/module_emission/core/mod.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "module_emission"
+        / "core"
+        / "mod.rs",
+        2484,
+    ),
+    (
+        "Emitter boundary: emitter/source_file/emit.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "emit.rs",
+        2462,
+    ),
+    (
+        "Checker boundary: jsdoc/diagnostics.rs size ratchet",
+        ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "diagnostics.rs",
+        2437,
+    ),
+    (
+        "Checker boundary: state/variable_checking/destructuring.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "variable_checking"
+        / "destructuring.rs",
+        2250,
+    ),
+    (
+        "Checker boundary: state/state_checking_members/interface_checks.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "state_checking_members"
+        / "interface_checks.rs",
+        2250,
+    ),
+    (
+        "Solver boundary: operations/constraints/walker.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "constraints"
+        / "walker.rs",
+        2230,
+    ),
+    (
+        "Emitter boundary: emitter/es5/helpers_async.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "es5"
+        / "helpers_async.rs",
+        2224,
+    ),
+    (
+        "Checker boundary: state/variable_checking/core.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "state"
+        / "variable_checking"
+        / "core.rs",
+        2207,
+    ),
+    (
+        "Emitter boundary: emitter/helpers.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "helpers.rs",
+        2202,
+    ),
+    (
+        "Emitter boundary: declaration_emitter/usage_analyzer.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "usage_analyzer.rs",
+        2154,
+    ),
+    (
+        "Emitter boundary: emitter/transform_dispatch.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "transform_dispatch.rs",
+        2124,
+    ),
+    (
+        "Solver boundary: visitors/visitor_predicates.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "visitors"
+        / "visitor_predicates.rs",
+        2123,
+    ),
+    (
+        "Solver boundary: operations/call_args.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "operations" / "call_args.rs",
+        2122,
+    ),
+    (
+        "LSP boundary: navigation/definition.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "navigation" / "definition.rs",
+        2121,
+    ),
+    (
+        "Solver boundary: relations/subtype/rules/functions/checking.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "relations"
+        / "subtype"
+        / "rules"
+        / "functions"
+        / "checking.rs",
+        2118,
+    ),
+    (
+        "LSP boundary: completions/member.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "completions" / "member.rs",
+        2117,
+    ),
+    (
+        "Emitter boundary: emitter/module_wrapper/system_emit.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "module_wrapper"
+        / "system_emit.rs",
+        2093,
+    ),
+    (
+        "LSP boundary: hierarchy/call_hierarchy.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "hierarchy" / "call_hierarchy.rs",
+        2091,
+    ),
+    (
+        "Solver boundary: intern/core/interner.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "intern" / "core" / "interner.rs",
+        2086,
+    ),
+    (
+        "CLI boundary: bin/tsz_server/tests_navigation.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "tests_navigation.rs",
+        2044,
+    ),
+    (
+        "Solver boundary: operations/core/call_resolution.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "core"
+        / "call_resolution.rs",
+        2031,
+    ),
+    (
+        "LSP boundary: hover/core.rs size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "hover" / "core.rs",
+        2029,
+    ),
+    (
+        "Emitter boundary: emitter/statements/control_flow.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "statements"
+        / "control_flow.rs",
+        2029,
+    ),
+    (
+        "Solver boundary: evaluation/evaluate.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "evaluation" / "evaluate.rs",
+        2019,
+    ),
+    (
+        "Emitter boundary: transforms/module_commonjs.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "module_commonjs.rs",
+        2016,
     ),
 ]
 
