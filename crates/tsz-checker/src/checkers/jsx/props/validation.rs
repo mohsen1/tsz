@@ -1414,6 +1414,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::IS_DECLARED_HERE,
                         &[&prop_name],
                     ),
+                    depth: 0,
                 });
             }
             self.emit_render_request_at_anchor(

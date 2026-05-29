@@ -242,6 +242,7 @@ impl<'a> CheckerState<'a> {
                 message_text: detail,
                 category: DiagnosticCategory::Message,
                 code: diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                depth: 0,
             });
             diag
         } else {
@@ -409,6 +410,7 @@ impl<'a> CheckerState<'a> {
                 message_text: detail,
                 category: DiagnosticCategory::Message,
                 code: reason.diagnostic_code(),
+                depth: 0,
             });
         }
         diag
@@ -468,6 +470,7 @@ impl<'a> CheckerState<'a> {
                     message_text: nested_diag.message_text,
                     category: DiagnosticCategory::Message,
                     code: nested_diag.code,
+                    depth: 0,
                 });
             } else {
                 let ret_source_str = self.format_type_diagnostic(source_return);
@@ -482,6 +485,7 @@ impl<'a> CheckerState<'a> {
                     message_text: ret_msg,
                     category: DiagnosticCategory::Message,
                     code: reason.diagnostic_code(),
+                    depth: 0,
                 });
             }
 
@@ -511,6 +515,7 @@ impl<'a> CheckerState<'a> {
                     message_text: nested_diag.message_text,
                     category: DiagnosticCategory::Message,
                     code: nested_diag.code,
+                    depth: 0,
                 });
             }
             diag

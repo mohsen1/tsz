@@ -665,13 +665,9 @@ fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> C
                         start: r.start,
                         length: r.length,
                         message_text: r.message_text.clone(),
-                        category: match r.category {
-                            0 => DiagnosticCategory::Warning,
-                            1 => DiagnosticCategory::Error,
-                            2 => DiagnosticCategory::Suggestion,
-                            _ => DiagnosticCategory::Message,
-                        },
+                        category: DiagnosticCategory::from_cache_index(r.category),
                         code: r.code,
+                        depth: 0,
                     })
                     .collect(),
             })

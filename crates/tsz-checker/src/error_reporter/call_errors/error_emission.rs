@@ -1002,6 +1002,7 @@ impl<'a> CheckerState<'a> {
                     message_text: diag.message.clone(),
                     category: DiagnosticCategory::Message,
                     code: diag.code,
+                    depth: 0,
                 });
             }
         }

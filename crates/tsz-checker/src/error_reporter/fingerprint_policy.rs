@@ -402,6 +402,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &src_str, &tgt_str],
                     ),
+                    depth: 0,
                 }]
             }
             SubtypeFailureReason::MissingProperties {
@@ -462,6 +463,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                             &[&src_str, &tgt_str, &names.join(", ")],
                         ),
+                        depth: 0,
                     }]
                 } else {
                     let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
@@ -476,6 +478,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                             &[&src_str, &tgt_str, &shown.join(", "), &more.to_string()],
                         ),
+                                            depth: 0,
                     }]
                 }
             }
@@ -521,6 +524,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                             &[&self.ctx.types.resolve_atom_ref(*property_name)],
                         ),
+                        depth: 0,
                     },
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
@@ -532,6 +536,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
+                        depth: 0,
                     },
                 ]
             }
@@ -563,6 +568,7 @@ impl<'a> CheckerState<'a> {
                             &tgt_str,
                         ],
                     ),
+                    depth: 0,
                 }]
             }
             SubtypeFailureReason::ReturnTypeMismatch {
@@ -608,6 +614,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     ),
+                    depth: 0,
                 }];
                 // Drill into nested reason to produce elaboration diagnostics
                 // (e.g. TS2741 "Property 'x' is missing..." when the return type
@@ -653,6 +660,7 @@ impl<'a> CheckerState<'a> {
                         message_text: format!(
                             "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
                         ),
+                        depth: 0,
                     },
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
@@ -664,6 +672,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
+                        depth: 0,
                     },
                 ]
             }
@@ -695,6 +704,7 @@ impl<'a> CheckerState<'a> {
                         message_text: format!(
                             "Array element type '{source_str}' is not assignable to '{target_str}'."
                         ),
+                        depth: 0,
                     },
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
@@ -706,6 +716,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
+                        depth: 0,
                     },
                 ]
             }
@@ -726,6 +737,7 @@ impl<'a> CheckerState<'a> {
                             ),
                         ],
                     ),
+                    depth: 0,
                 }]
             }
             SubtypeFailureReason::AbstractConstructorAssignment => {
@@ -737,6 +749,7 @@ impl<'a> CheckerState<'a> {
                     length,
                     message_text: diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE
                         .to_string(),
+                                    depth: 0,
                 }]
             }
             _ => return None,
@@ -760,6 +773,7 @@ impl<'a> CheckerState<'a> {
                 start: diag.start,
                 length: diag.length,
                 message_text: diag.message_text.clone(),
+                depth: 0,
             });
         }
 

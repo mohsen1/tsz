@@ -461,6 +461,7 @@ impl<'a> CheckerState<'a> {
                         message_text: detail,
                         category: crate::diagnostics::DiagnosticCategory::Message,
                         code,
+                        depth: 0,
                     });
             }
             return;

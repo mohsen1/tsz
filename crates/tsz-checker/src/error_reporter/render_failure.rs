@@ -532,6 +532,7 @@ impl<'a> CheckerState<'a> {
                         message_text: elab_message,
                         category: DiagnosticCategory::Message,
                         code: elab_code,
+                        depth: 0,
                     });
                     return diag;
                 }
@@ -581,6 +582,7 @@ impl<'a> CheckerState<'a> {
                     message_text: elaboration,
                     category: DiagnosticCategory::Message,
                     code: diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
+                                    depth: 0,
                 });
                 diag
             }
@@ -1163,6 +1165,7 @@ impl<'a> CheckerState<'a> {
             message_text: inner,
             category: DiagnosticCategory::Message,
             code: inner_code,
+            depth: 0,
         });
         if let Some(constraint) = target_constraint {
             let constraint_str = self.format_type_diagnostic(constraint);
@@ -1177,6 +1180,7 @@ impl<'a> CheckerState<'a> {
                 message_text: elaboration,
                 category: DiagnosticCategory::Message,
                 code: diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
+                            depth: 0,
             });
         }
         diag
@@ -1218,6 +1222,7 @@ impl<'a> CheckerState<'a> {
                 .to_string(),
             category: DiagnosticCategory::Message,
             code: diagnostic_codes::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
+                    depth: 0,
         });
         diag
     }

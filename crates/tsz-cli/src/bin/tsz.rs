@@ -3239,9 +3239,7 @@ fn list_files_only_unsupported_js_root_diagnostics(
     files: &[std::path::PathBuf],
     files_from_config: bool,
 ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
-    use tsz::checker::diagnostics::{
-        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    };
+    use tsz::checker::diagnostics::{Diagnostic, diagnostic_codes};
     use tsz_common::file_extensions::is_js_file;
 
     if discovery.allow_js || !discovery.files_explicitly_set {
@@ -3262,32 +3260,27 @@ fn list_files_only_unsupported_js_root_diagnostics(
             );
             diagnostic
                 .related_information
-                .push(DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
-                    file: String::new(),
-                    start: 0,
-                    length: 0,
-                    message_text: "The file is in the program because:".to_string(),
-                });
+                .push(Diagnostic::related_message(
+                    diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                    String::new(),
+                    0,
+                    0,
+                    "The file is in the program because:",
+                ));
+            let (code, message): (u32, &str) = if files_from_config {
+                (
+                    diagnostic_codes::PART_OF_FILES_LIST_IN_TSCONFIG_JSON,
+                    "Part of 'files' list in tsconfig.json",
+                )
+            } else {
+                (
+                    diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
+                    "Root file specified for compilation",
+                )
+            };
             diagnostic
                 .related_information
-                .push(DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Message,
-                    code: if files_from_config {
-                        diagnostic_codes::PART_OF_FILES_LIST_IN_TSCONFIG_JSON
-                    } else {
-                        diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION
-                    },
-                    file: String::new(),
-                    start: 0,
-                    length: 0,
-                    message_text: if files_from_config {
-                        "Part of 'files' list in tsconfig.json".to_string()
-                    } else {
-                        "Root file specified for compilation".to_string()
-                    },
-                });
+                .push(Diagnostic::related_message(code, String::new(), 0, 0, message));
             diagnostic
         })
         .collect()

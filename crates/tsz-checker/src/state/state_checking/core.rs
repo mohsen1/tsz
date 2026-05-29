@@ -245,6 +245,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
                         &[&var_name],
                     ),
+                    depth: 0,
                 };
                 if let Some(last) = self.ctx.diagnostics.last_mut() {
                     last.related_information.push(related);

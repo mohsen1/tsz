@@ -1759,6 +1759,10 @@ name = "satisfies_elaboration_chain_tests"
 path = "tests/satisfies_elaboration_chain_tests.rs"
 
 [[test]]
+name = "property_chain_elaboration_collapse_tests"
+path = "tests/property_chain_elaboration_collapse_tests.rs"
+
+[[test]]
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
 
