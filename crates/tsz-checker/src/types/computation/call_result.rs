@@ -1582,6 +1582,12 @@ impl<'a> CheckerState<'a> {
         // Defer callable mismatches only when a callable has its own generic signatures
         // (higher-order inference may still resolve them), not for outer-scope type params.
         if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
+            // Do not defer when the actual is a same-arity generic function with all type
+            // parameters constrained but the expected has none constrained. That is a
+            // structural constraint-strictness mismatch — inference cannot resolve it.
+            if self.generic_arg_constraint_mismatch_is_structural(actual, expected) {
+                return false;
+            }
             return true;
         }
         if !callable_mismatch

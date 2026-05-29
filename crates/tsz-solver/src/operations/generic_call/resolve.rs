@@ -2965,6 +2965,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         fallback_return: TypeId::ERROR,
                     };
                 }
+                if let Some(expected) = self.check_generic_arg_stricter_constraint_mismatch(
+                    arg_type,
+                    raw_param_type,
+                    &func.type_params,
+                ) {
+                    tracing::debug!(
+                        index = i,
+                        arg_type = arg_type.0,
+                        expected = expected.0,
+                        "check_generic_arg_stricter_constraint_mismatch: returning ArgumentTypeMismatch"
+                    );
+                    return CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected,
+                        actual: arg_type,
+                        fallback_return: TypeId::ERROR,
+                    };
+                }
             }
         }
         let final_args: Vec<TypeId> = arg_types
