@@ -1769,3 +1769,84 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_paramet
         "method-bivariant parameter-count slot must remain intact after the sound-method lookup",
     );
 }
+
+#[test]
+fn subtype_cache_split_accessor_variance_matches_uncached_property_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+    let wide_write = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    let wide_accessor = interner.object(vec![PropertyInfo {
+        write_type: wide_write,
+        ..PropertyInfo::new(value, TypeId::STRING)
+    }]);
+    let narrow_accessor = interner.object(vec![PropertyInfo::new(value, TypeId::STRING)]);
+    let policy = RelationPolicy::unflagged_compatibility();
+    let wide_to_narrow_key =
+        RelationCacheKey::for_subtype(wide_accessor, narrow_accessor, policy.cache_config());
+    let narrow_to_wide_key =
+        RelationCacheKey::for_subtype(narrow_accessor, wide_accessor, policy.cache_config());
+
+    let wide_to_narrow_uncached = query_relation(
+        &interner,
+        wide_accessor,
+        narrow_accessor,
+        RelationKind::Subtype,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let narrow_to_wide_uncached = query_relation(
+        &interner,
+        narrow_accessor,
+        wide_accessor,
+        RelationKind::Subtype,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        wide_to_narrow_uncached,
+        "split accessor with a wider write type should satisfy a uniform property target",
+    );
+    assert!(
+        !narrow_to_wide_uncached,
+        "uniform property write type should not satisfy a wider split-accessor target",
+    );
+
+    let wide_to_narrow_cached =
+        db.is_subtype_of_with_policy(wide_accessor, narrow_accessor, policy);
+    assert_eq!(
+        wide_to_narrow_cached, wide_to_narrow_uncached,
+        "cached split-accessor subtype must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(wide_to_narrow_key),
+        Some(wide_to_narrow_cached),
+        "wide-to-narrow split-accessor result must use its own subtype cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(narrow_to_wide_key),
+        None,
+        "reverse split-accessor lookup must not hit the wide-to-narrow slot",
+    );
+
+    let narrow_to_wide_cached =
+        db.is_subtype_of_with_policy(narrow_accessor, wide_accessor, policy);
+    assert_eq!(
+        narrow_to_wide_cached, narrow_to_wide_uncached,
+        "cached reverse split-accessor subtype must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(narrow_to_wide_key),
+        Some(narrow_to_wide_cached),
+        "reverse split-accessor result must use its own subtype cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(wide_to_narrow_key),
+        Some(wide_to_narrow_cached),
+        "wide-to-narrow split-accessor slot must remain intact after the reverse lookup",
+    );
+}
