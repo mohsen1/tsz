@@ -1,17 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
 import { REQUIRED_PROJECT_ROWS } from "../../../../scripts/bench/project-rows.mjs";
 import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
-
-function readJsonIfExists(p) {
-  try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
-  } catch {
-    return null;
-  }
-}
 
 function sanitizeLegacyBenchmarkResults(data) {
   if (data?.validation?.hyperfine_exit_codes_required === true) {
@@ -77,13 +70,13 @@ function loadBenchmarks() {
     }
   })();
 
-  for (const location of artifactFiles) {
-    const data = readJsonIfExists(location);
-    if (data?.results?.length) return sanitizeLegacyBenchmarkResults(data);
+  const selectedArtifact = selectLatestBenchmarkArtifact([
+    ...artifactFiles,
+    path.join(ROOT, "crates/tsz-website/bench-snapshot.json"),
+  ]);
+  if (selectedArtifact) {
+    return sanitizeLegacyBenchmarkResults(selectedArtifact.data);
   }
-
-  const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
-  if (snapshot?.results?.length) return sanitizeLegacyBenchmarkResults(snapshot);
 
   return [];
 }

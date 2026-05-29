@@ -379,6 +379,7 @@ run_lint() {
   node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
   node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
