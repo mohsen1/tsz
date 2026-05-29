@@ -1220,4 +1220,98 @@ const f = <a-\u{0063}/>;"#;
         assert_eq!(super::decode_jsx_entities("&#xE9;"), "\u{00E9}");
         assert_eq!(super::decode_jsx_entities("&#x2026;"), "\u{2026}");
     }
+
+    /// Emit a `.tsx` source through the full lowering + automatic-runtime
+    /// injection path with the global `jsx` mode set to classic `react`.
+    ///
+    /// This exercises `effective_jsx_emit`: a per-file `@jsxImportSource`
+    /// pragma must upgrade the file to the automatic runtime even though the
+    /// global mode is classic.
+    fn emit_jsx_global_react(source: &str) -> String {
+        let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer =
+            EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    #[test]
+    fn jsx_import_source_pragma_upgrades_classic_global_to_automatic() {
+        // Structural rule: with global `jsx: react` (classic) but a per-file
+        // `@jsxImportSource` pragma, tsc routes the file through the automatic
+        // jsx-runtime import path rather than `React.createElement`.
+        let source = "/* @jsxImportSource preact */\nexport const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("jsx-runtime") && output.contains("preact"),
+            "Automatic runtime import for the pragma source expected.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("React.createElement"),
+            "Classic createElement must not be emitted when @jsxImportSource is present.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_pragma_upgrade_is_not_source_name_specific() {
+        // Same rule, a different (multi-segment) import source. Keying on the
+        // pragma's mere presence — not a hardcoded package name — must drive
+        // the automatic-runtime upgrade.
+        let source = "/* @jsxImportSource @emotion/react */\nexport const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("@emotion/react/jsx-runtime"),
+            "Automatic runtime import for the multi-segment source expected.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("React.createElement"),
+            "Classic createElement must not be emitted for any @jsxImportSource source.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn explicit_jsx_runtime_classic_pragma_overrides_import_source() {
+        // Precedence: an explicit `@jsxRuntime classic` keeps the classic
+        // transform even alongside a `@jsxImportSource` pragma. The explicit
+        // runtime pragma wins.
+        let source = concat!(
+            "/* @jsxRuntime classic */\n",
+            "/* @jsxImportSource preact */\n",
+            "export const Comp = () => <div/>;"
+        );
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("React.createElement"),
+            "Explicit @jsxRuntime classic must keep the classic transform.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("jsx-runtime"),
+            "No automatic jsx-runtime import when @jsxRuntime classic is set.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn classic_global_without_import_source_stays_classic() {
+        // Negative case: classic global mode and no `@jsxImportSource` pragma
+        // must keep the classic `React.createElement` transform.
+        let source = "export const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("React.createElement"),
+            "Classic transform expected without a pragma.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("jsx-runtime"),
+            "No automatic jsx-runtime import without @jsxImportSource.\nOutput:\n{output}"
+        );
+    }
 }
