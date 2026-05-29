@@ -386,6 +386,131 @@ FILE_LINE_LIMIT_CHECKS = [
         / "class_es5_ast_to_ir.rs",
         1869,
     ),
+    # CLI LSP server: completions handler — split by completion kind per §19.
+    (
+        "CLI LSP server: handlers_completions monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_completions.rs",
+        3577,
+    ),
+    # CLI main binary: split by command family per §19.
+    (
+        "CLI boundary: tsz main binary size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "bin" / "tsz.rs",
+        3573,
+    ),
+    # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
+    # as pipeline stages are extracted per §19.
+    (
+        "CLI boundary: driver/core monolith size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
+        3215,
+    ),
+    # CLI LSP server: structure/outline handler — split by request kind per §19.
+    (
+        "CLI LSP server: handlers_structure monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_structure.rs",
+        3075,
+    ),
+    # CLI LSP server: hover/signature/semantic handler — split by feature per §19.
+    (
+        "CLI LSP server: handlers_info monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_info.rs",
+        2881,
+    ),
+    # CLI LSP server: editing/refactor handler — split by action family per §19.
+    (
+        "CLI LSP server: handlers_editing monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_editing.rs",
+        2332,
+    ),
+    # LSP project core: orchestrates multi-file state. Ratchet down as file
+    # management is delegated to ProjectFileSet/CompilationGroup per §19.
+    (
+        "LSP boundary: project/core monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "core.rs",
+        2916,
+    ),
+    # LSP fourslash: language-service test protocol runner. Ratchet down as
+    # test helpers are extracted into focused sub-modules per §19.
+    (
+        "LSP boundary: fourslash test protocol size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "fourslash.rs",
+        2268,
+    ),
+    # Emitter DTS portability resolver: split by portability family per §19.
+    (
+        "Emitter boundary: declaration_emitter/helpers/portability_resolve size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "portability_resolve.rs",
+        3178,
+    ),
+    # Emitter DTS type-inference helper: issue #8276 tracks migrating inference
+    # output to structured declaration summary facts.
+    (
+        "Emitter boundary: declaration_emitter/helpers/type_inference size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "type_inference.rs",
+        2846,
+    ),
+    # Emitter using/disposable region: issue #8276 tracks migrating the 16
+    # output-surgery rewrites to structured resource-region IR.
+    (
+        "Emitter boundary: source_file/top_level_using size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "top_level_using.rs",
+        2537,
+    ),
+    # Emitter property/element access: split by access kind per §19.
+    (
+        "Emitter boundary: emitter/expressions/access size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "access.rs",
+        2554,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
