@@ -1137,7 +1137,23 @@ impl<'a> Printer<'a> {
                 {
                     let comment_end = semi_after.saturating_sub(1);
                     if !last_initializer_has_deferred_arrow_comment {
-                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                        // When the declaration has no source semicolon adjacent to
+                        // its value, the `;` recovered here is a separate
+                        // ASI-elidable empty statement that the parser merged into
+                        // this statement's range. Comments that appear AFTER a line
+                        // break following the declaration value are leading trivia
+                        // of that elided empty statement (e.g. `const x = {}\n// c\n;`),
+                        // and tsc elides them together with the empty statement —
+                        // exactly as it would with no comments at all. Only emit
+                        // comments up to the first line break (genuine same-line
+                        // trailing comments such as `const x = 1 /* c */;`); skip the
+                        // rest so they don't break the statement onto extra lines.
+                        let trailing_comment_end =
+                            self.line_end_after_declaration_value(last_end, comment_end);
+                        self.emit_comments_in_range(last_end, trailing_comment_end, true, false);
+                        if trailing_comment_end < comment_end {
+                            self.skip_comments_in_range(trailing_comment_end, comment_end);
+                        }
                     }
                 }
             }

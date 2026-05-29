@@ -1769,7 +1769,25 @@ impl ParserState {
             // the missing-semicolon error: tsc's `parseErrorAtPosition` dedups
             // only by exact start, so `00.5;` reports TS1121 at col 1 AND
             // TS1005 at col 3.
-            if self.should_report_error() || self.last_error_was_leading_zero_at_other_pos() {
+            //
+            // Also dedup by exact start against a recent diagnostic: tsc emits
+            // the missing-semicolon error via `parseErrorAtPosition`, which drops
+            // it when the previous diagnostic shares its start. A recovered
+            // construct can anchor a diagnostic exactly at this token and leave
+            // the token to reparse (e.g. a mismatched JSX closing fragment
+            // `<>...</div>` reports TS17015 at `div`, then `div` reparses as the
+            // next statement). tsz may push another recovery diagnostic in
+            // between, so scan the most recent few by exact position.
+            let token_pos = self.token_pos();
+            let already_reported_here = self
+                .parse_diagnostics
+                .iter()
+                .rev()
+                .take(4)
+                .any(|diag| diag.start == token_pos);
+            if !already_reported_here
+                && (self.should_report_error() || self.last_error_was_leading_zero_at_other_pos())
+            {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;
