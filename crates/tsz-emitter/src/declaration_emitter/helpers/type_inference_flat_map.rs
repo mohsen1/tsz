@@ -111,15 +111,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn array_type_text_for_element(element_type: &str) -> String {
-        let trimmed = element_type.trim();
-        let needs_parens = trimmed.contains(" | ")
-            || trimmed.contains(" & ")
-            || trimmed.starts_with("keyof ")
-            || trimmed.contains(" extends ");
-        if needs_parens {
-            format!("({trimmed})[]")
-        } else {
-            format!("{trimmed}[]")
-        }
+        format!(
+            "{}[]",
+            Self::parenthesize_type_text_in_array_element_position(element_type)
+        )
     }
 }

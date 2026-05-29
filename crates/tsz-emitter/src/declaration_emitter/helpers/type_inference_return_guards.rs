@@ -132,7 +132,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter(|type_text| !type_text.is_empty())?;
         Some(format!(
             "{}[]",
-            Self::parenthesize_type_text_in_union_position(&return_type)
+            Self::parenthesize_type_text_in_array_element_position(&return_type)
         ))
     }
 
