@@ -233,9 +233,17 @@ jobs:
         continue-on-error: true
 
       - name: Download latest benchmark data from GCS
+        env:
+          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
         run: |
           set -euo pipefail
           BUCKET="thirdface-ai-oauth_cloudbuild"
+
+          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
+            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
+            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
+          fi
           TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
 
           if [[ -z "$TOKEN" ]]; then
@@ -338,8 +346,17 @@ jobs:
         continue-on-error: true
 
       - name: Download latest suite metrics from GCS
+        env:
+          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
         run: |
+          set -euo pipefail
           BUCKET="thirdface-ai-oauth_cloudbuild"
+
+          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
+            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
+            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
+          fi
           TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
 
           if [[ -z "$TOKEN" ]]; then
