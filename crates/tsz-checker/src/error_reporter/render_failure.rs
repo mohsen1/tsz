@@ -611,30 +611,14 @@ impl<'a> CheckerState<'a> {
                 index,
                 source_element,
                 target_element,
-            } => {
-                if depth == 0 {
-                    let (source_str, target_str) =
-                        self.format_top_level_assignability_message_types_at(source, target, idx);
-                    let base = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        base,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
-                } else {
-                    let source_str = self.format_type_diagnostic(*source_element);
-                    let target_str = self.format_type_diagnostic(*target_element);
-                    let message = format!(
-                        "Type of element at index {index} is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                    );
-                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
-                }
-            }
+                nested_reason,
+            } => self.render_tuple_element_type_mismatch(
+                &rctx,
+                *index,
+                *source_element,
+                *target_element,
+                nested_reason.as_deref(),
+            ),
 
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
