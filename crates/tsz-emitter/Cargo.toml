@@ -35,6 +35,10 @@ name = "async_awaiter_body_trailing_comment_tests"
 path = "tests/async_awaiter_body_trailing_comment_tests.rs"
 
 [[test]]
+name = "tc39_decorator_extends_multiline_reindent_tests"
+path = "tests/tc39_decorator_extends_multiline_reindent_tests.rs"
+
+[[test]]
 name = "async_method_super_write_tests"
 path = "tests/async_method_super_write_tests.rs"
 

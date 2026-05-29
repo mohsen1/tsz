@@ -245,6 +245,50 @@ impl<'a> Printer<'a> {
         output
     }
 
+    /// Re-base the continuation lines of a captured block of text.
+    ///
+    /// [`capture_emit`] renders a sub-expression at the writer's current indent
+    /// (`from_level`) and trims the leading whitespace from the first line so the
+    /// caller can splice it after a prefix such as `let _classSuper = `. Any
+    /// continuation lines, however, keep the absolute indentation they were
+    /// emitted at. When the captured text is reinserted at a different indent
+    /// (`to_level`), those continuation lines must be re-based: strip up to
+    /// `from_level` indentation units of leading whitespace (the capture-time
+    /// base indent) and prepend `to_level` units, preserving the block's
+    /// relative interior indentation.
+    ///
+    /// Single-line captured text is returned unchanged (no continuation lines to
+    /// re-base), so this is a no-op for the common identifier/call base case.
+    pub(in crate::emitter) fn reindent_captured_block(
+        &self,
+        text: &str,
+        from_level: u32,
+        to_level: u32,
+    ) -> String {
+        if !text.contains('\n') {
+            return text.to_string();
+        }
+        let unit = self.writer.indent_unit_width().max(1) as usize;
+        let strip = (from_level as usize).saturating_mul(unit);
+        let target_indent = self.writer.indent_string_at(to_level);
+        let mut result = String::with_capacity(text.len());
+        for (i, line) in text.split('\n').enumerate() {
+            if i == 0 {
+                result.push_str(line);
+                continue;
+            }
+            result.push('\n');
+            if line.trim().is_empty() {
+                // Preserve genuinely blank continuation lines as empty.
+                continue;
+            }
+            let stripped = strip_leading_indent(line, strip);
+            result.push_str(&target_indent);
+            result.push_str(stripped);
+        }
+        result
+    }
+
     /// Unwrap `ParenthesizedExpression` wrapping type assertions for `Math.pow()` args.
     ///
     /// When `(<number>--temp) ** 3` is lowered to `Math.pow(...)`, the type assertion
@@ -863,4 +907,20 @@ impl<'a> Printer<'a> {
             _ => "=".to_string(),
         }
     }
+}
+
+/// Strip up to `count` leading space/tab characters from `s`.
+///
+/// Used by [`Printer::reindent_captured_block`] to remove the capture-time base
+/// indentation from a continuation line before re-applying the target indent.
+fn strip_leading_indent(s: &str, count: usize) -> &str {
+    let mut stripped = 0;
+    for &b in s.as_bytes().iter().take(count) {
+        if b == b' ' || b == b'\t' {
+            stripped += 1;
+        } else {
+            break;
+        }
+    }
+    &s[stripped..]
 }

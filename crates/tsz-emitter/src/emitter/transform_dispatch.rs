@@ -1819,6 +1819,15 @@ impl<'a> Printer<'a> {
         let mut output = self.capture_emit(runtime_expr);
         self.pending_tc39_class_expression_name = previous_name;
 
+        // `capture_emit` rendered the base expression at the writer's current
+        // indent and trimmed only its first line. The captured text is spliced
+        // after `let _classSuper = `, which sits one level deeper than the class
+        // being lowered. Re-base any continuation lines to that insertion indent
+        // so multi-line bases (e.g. a class expression with members, or an empty
+        // class body whose `}` lands on its own line) are not left flush-left.
+        let base_level = self.writer.indent_level();
+        output = self.reindent_captured_block(&output, base_level, base_level + 1);
+
         if is_arrow {
             output = format!("({output})");
         }
