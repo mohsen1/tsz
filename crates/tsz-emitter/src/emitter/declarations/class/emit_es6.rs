@@ -1494,6 +1494,10 @@ impl<'a> Printer<'a> {
                 .hoisted_assignment_temps
                 .iter()
                 .any(|name| name == alias)
+            && !self
+                .hoisted_file_level_class_temps
+                .iter()
+                .any(|name| name == alias)
         {
             self.hoisted_assignment_temps.push(alias.clone());
         }
@@ -2886,7 +2890,10 @@ impl<'a> Printer<'a> {
             let instances_ws = self.pending_instances_weakset_add.take();
             let method_defs = std::mem::take(&mut self.pending_private_method_defs);
             let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
-            let weakmap_inits = self.pending_weakmap_inits.clone();
+            // Consume the pending WeakMap inits here so the later post-class
+            // emission path (which re-checks `pending_weakmap_inits`) does not
+            // emit the same `_X = new WeakMap()` lines a second time.
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
             let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
                 .iter()
                 .filter(|a| !a.is_static)
