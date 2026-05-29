@@ -258,6 +258,10 @@ path = "tests/while_loop_body_capture_tests.rs"
 name = "ternary_trailing_comment_tests"
 path = "tests/ternary_trailing_comment_tests.rs"
 
+[[test]]
+name = "wave3_small_emit_fixes_tests"
+path = "tests/wave3_small_emit_fixes_tests.rs"
+
 [lints]
 workspace = true
 

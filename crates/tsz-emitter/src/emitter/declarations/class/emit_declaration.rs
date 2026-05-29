@@ -1039,6 +1039,7 @@ impl<'a> Printer<'a> {
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                 && !auto_accessor_storage_reserved
+                && self.es5_computed_name_needs_temp(name_node)
             {
                 decls.push(format!(
                     "_{class_name}_{}_accessor_storage",
