@@ -750,6 +750,9 @@ mod keyof_function_type_is_never_tests;
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
+#[path = "tests/libtype_structural_name_lookup_arch_tests.rs"]
+mod libtype_structural_name_lookup_arch_tests;
+#[cfg(test)]
 #[path = "../tests/logical_assignment_narrowing_tests.rs"]
 mod logical_assignment_narrowing_tests;
 #[cfg(test)]
@@ -953,6 +956,9 @@ mod type_alias_primitive_display_tests;
 #[cfg(test)]
 #[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
 mod type_param_default_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/typeof_class_name_structural_lookup_arch_tests.rs"]
+mod typeof_class_name_structural_lookup_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;

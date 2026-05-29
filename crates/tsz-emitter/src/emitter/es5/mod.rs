@@ -15,6 +15,7 @@ mod helpers;
 mod helpers_async;
 mod helpers_async_generator;
 mod helpers_async_shadowing;
+mod helpers_class_expression_comments;
 mod helpers_class_expression_names;
 mod helpers_object_literal;
 #[allow(dead_code)]
