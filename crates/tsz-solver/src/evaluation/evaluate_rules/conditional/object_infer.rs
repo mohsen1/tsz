@@ -149,12 +149,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Pass 2: apply each variable's effective constraint to its fully-accumulated type,
         // then build the substitution in declaration order.
         //
-        // Constraint semantics differ by how the union arose:
-        // - Multi-slot accumulation: the whole union must satisfy the constraint (tsc fails
-        //   the conditional when `string | number extends string` is false).
-        // - Single-slot with a union source property: filter per-member and keep matching
-        //   parts (preserving the original `filter_inferred_by_constraint_or_undefined`
-        //   behaviour for non-distributive unions).
+        // A constrained `infer` is a whole-candidate check (tsc): the accumulated
+        // candidate is kept only when it is assignable to the constraint as a
+        // whole; otherwise the conditional takes its false branch. Optional
+        // properties first strip the optionality-`undefined` they contribute, then
+        // apply the same whole-candidate check.
         let mut subst = TypeSubstitution::new();
         for &(_, info, _) in infer_props {
             if subst.get(info.name).is_some() {
@@ -167,26 +166,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(&(constraint, opt)) = effective_constraint.get(&info.name) {
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
-                let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-                let is_multi = multi_slot.contains(&info.name);
 
                 if opt {
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                    else {
+                    // Optional property: strip the optionality-`undefined` from the
+                    // candidate, then apply the constraint as a whole-candidate check.
+                    let Some(filtered) = self.filter_optional_inferred_by_constraint(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                    ) else {
                         let false_inst =
                             instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union && !cond.is_distributive && !is_multi {
-                    // Union from a single source property — filter members, keep matching.
-                    inferred = self.filter_inferred_by_constraint_or_undefined(
-                        inferred,
-                        constraint,
-                        &mut checker,
-                    );
                 } else if !checker.is_subtype_of(inferred, constraint) {
+                    // A constrained `infer U extends C` is a whole-candidate check in
+                    // tsc: if the full inferred candidate is not assignable to the
+                    // constraint, the conditional resolves to its false branch. No
+                    // per-member union filtering. Distributive conditionals have
+                    // already split union check types into individual members.
                     return self.evaluate(cond.false_type);
                 }
             }
@@ -227,29 +226,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if prop_optional {
+                // Optional property: strip the optionality-`undefined` from the
+                // candidate, then apply the constraint as a whole-candidate check.
                 let Some(filtered) =
-                    self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    self.filter_optional_inferred_by_constraint(inferred, constraint, &mut checker)
                 else {
                     let false_inst =
                         instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
                     return self.evaluate(false_inst);
                 };
                 inferred = filtered;
-            } else if is_union && !cond.is_distributive {
-                // Non-distributive union candidates keep the historical partial-match
-                // behavior; distributive conditionals have already split union members.
-                inferred = self.filter_inferred_by_constraint_or_undefined(
-                    inferred,
-                    constraint,
-                    &mut checker,
-                );
-            } else {
-                // For non-distributive single values, fail if constraint doesn't match
-                if !checker.is_subtype_of(inferred, constraint) {
-                    return self.evaluate(cond.false_type);
-                }
+            } else if !checker.is_subtype_of(inferred, constraint) {
+                // Whole-candidate constraint check (tsc): a constrained `infer`
+                // whose full candidate is not assignable to the constraint takes
+                // the false branch. No per-member union filtering; distributive
+                // conditionals have already split union members.
+                return self.evaluate(cond.false_type);
             }
             subst.insert(info.name, inferred);
         }
@@ -470,7 +463,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         };
 
-        let Some(mut inferred) = inferred else {
+        let Some(inferred) = inferred else {
             return self.evaluate(cond.false_type);
         };
 
@@ -479,20 +472,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-            if is_union && !cond.is_distributive {
-                // Non-distributive union candidates keep the historical partial-match
-                // behavior; distributive conditionals have already split union members.
-                inferred = self.filter_inferred_by_constraint_or_undefined(
-                    inferred,
-                    constraint,
-                    &mut checker,
-                );
-            } else {
-                // For non-distributive single values, fail if constraint doesn't match
-                if !checker.is_subtype_of(inferred, constraint) {
-                    return self.evaluate(cond.false_type);
-                }
+            if !checker.is_subtype_of(inferred, constraint) {
+                // Whole-candidate constraint check (tsc): a constrained `infer`
+                // whose full candidate is not assignable to the constraint takes
+                // the false branch. No per-member union filtering; distributive
+                // conditionals have already split union members.
+                return self.evaluate(cond.false_type);
             }
             subst.insert(info.name, inferred);
         }
