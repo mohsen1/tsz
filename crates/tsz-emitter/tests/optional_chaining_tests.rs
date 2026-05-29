@@ -100,11 +100,16 @@ fn concise_arrow_optional_method_call_gets_temp_prologue() {
     let source = "const typeHandlers = {};\nconst onSomeEvent = (p) => typeHandlers[p.t]?.(p);";
     let output = emit_es2016(source);
 
+    // tsc converts the concise body into a *single-line* block hosting the
+    // hoisted `var _a;` temp (see baseline
+    // `mappedTypeGenericIndexedAccess.js`, where the identical
+    // `const onSomeEvent = (p) => typeHandlers[p.t]?.(p);` is emitted on one
+    // line as `(p) => { var _a; return ...; }`).
     assert!(
         output.contains(
-            "const onSomeEvent = (p) => {\n    var _a;\n    return (_a = typeHandlers[p.t]) === null || _a === void 0 ? void 0 : _a.call(typeHandlers, p);\n};"
+            "const onSomeEvent = (p) => { var _a; return (_a = typeHandlers[p.t]) === null || _a === void 0 ? void 0 : _a.call(typeHandlers, p); };"
         ),
-        "Concise arrow optional-call temp should be declared inside a synthesized block.\nOutput:\n{output}"
+        "Concise arrow optional-call temp should be declared inside a single-line synthesized block.\nOutput:\n{output}"
     );
 }
 
