@@ -526,7 +526,7 @@ pub fn check_files_parallel(
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
         // Sort diagnostics by position for deterministic output within each file.
-        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        diagnostics.sort_by(|a, b| a.compare(b));
 
         suppress_parallel_ts2339_cascade_diagnostics(file.arena.as_ref(), &mut diagnostics);
 
@@ -628,7 +628,7 @@ pub fn check_files_parallel(
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        diagnostics.sort_by(|a, b| a.compare(b));
         diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
         FileCheckResult {
@@ -674,7 +674,7 @@ pub fn check_files_parallel(
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        diagnostics.sort_by(|a, b| a.compare(b));
         diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
         FileCheckResult {

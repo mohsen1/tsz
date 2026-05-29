@@ -164,6 +164,60 @@ impl Diagnostic {
     pub const fn span(&self) -> crate::span::Span {
         crate::span::Span::from_len(self.start, self.length)
     }
+
+    /// Canonical total ordering for diagnostics, mirroring the TypeScript
+    /// compiler's `compareDiagnostics`: by file, then start, then length, then
+    /// code, then message text, then related information.
+    ///
+    /// This is a *total* order over the observable fields, so two diagnostics
+    /// that share a location and code still have a stable, reproducible
+    /// relative order. That is what keeps reported diagnostic order
+    /// deterministic across equivalent relations, regardless of the
+    /// (potentially parallel or hash-map-driven) order in which the
+    /// diagnostics were produced. Every site that emits the final diagnostic
+    /// list must sort through this comparator rather than an ad-hoc partial
+    /// key, otherwise diagnostics that tie on the partial key fall back to
+    /// nondeterministic production order.
+    pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.compare_skip_related_information(other).then_with(|| {
+            compare_related_information(&self.related_information, &other.related_information)
+        })
+    }
+
+    /// The location/code/message portion of [`Diagnostic::compare`], mirroring
+    /// tsc's `compareDiagnosticsSkipRelatedInformation`. Orders by file, then
+    /// start, then length, then code, then message text.
+    pub fn compare_skip_related_information(&self, other: &Self) -> std::cmp::Ordering {
+        self.file
+            .cmp(&other.file)
+            .then_with(|| self.start.cmp(&other.start))
+            .then_with(|| self.length.cmp(&other.length))
+            .then_with(|| self.code.cmp(&other.code))
+            .then_with(|| self.message_text.cmp(&other.message_text))
+    }
+}
+
+/// Order two related-information lists, mirroring tsc's
+/// `compareRelatedInformation`: shorter lists sort first, then the lists are
+/// compared element-by-element on file, start, length, code, and message text.
+fn compare_related_information(
+    a: &[DiagnosticRelatedInformation],
+    b: &[DiagnosticRelatedInformation],
+) -> std::cmp::Ordering {
+    a.len().cmp(&b.len()).then_with(|| {
+        a.iter()
+            .zip(b.iter())
+            .map(|(left, right)| {
+                left.file
+                    .cmp(&right.file)
+                    .then_with(|| left.start.cmp(&right.start))
+                    .then_with(|| left.length.cmp(&right.length))
+                    .then_with(|| left.code.cmp(&right.code))
+                    .then_with(|| left.message_text.cmp(&right.message_text))
+            })
+            .find(|ordering| ordering.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
 }
 
 /// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
@@ -315,6 +369,94 @@ mod tests {
             assert_eq!(diagnostic.message_text, "Unknown diagnostic");
             assert!(diagnostic.related_information.is_empty());
         }
+    }
+
+    // =========================================================================
+    // Diagnostic::compare — canonical, total, deterministic ordering
+    //
+    // These lock the rule: when diagnostics tie on a partial key (e.g. same
+    // file+start), the relative order is still fully determined by the
+    // remaining fields (length, code, message, related info) in tsc's
+    // `compareDiagnostics` order — never by production/insertion order. Each
+    // test scrambles insertion order and asserts the same canonical sequence.
+    // =========================================================================
+
+    fn diag(file: &str, start: u32, length: u32, code: u32, message: &str) -> Diagnostic {
+        Diagnostic::error(file, start, length, message, code)
+    }
+
+    /// Sorting through the canonical comparator yields the same order no matter
+    /// how the input was permuted — the property that makes reported diagnostic
+    /// order deterministic across equivalent relations.
+    fn assert_canonical_order_is_permutation_invariant(canonical: &[Diagnostic]) {
+        // The canonical slice must already be sorted by `compare`.
+        for window in canonical.windows(2) {
+            assert_ne!(
+                window[0].compare(&window[1]),
+                std::cmp::Ordering::Greater,
+                "input slice is expected to be in canonical order"
+            );
+        }
+        // Every permutation collapses back to the same canonical order
+        // (`Diagnostic` derives `PartialEq`, so compare the whole slice).
+        let mut reversed = canonical.to_vec();
+        reversed.reverse();
+        let mut rotated = canonical.to_vec();
+        rotated.rotate_left(canonical.len() / 2);
+        for mut permutation in [reversed, rotated] {
+            permutation.sort_by(|a, b| a.compare(b));
+            assert_eq!(permutation, canonical);
+        }
+    }
+
+    #[test]
+    fn compare_orders_by_file_then_start_then_length_then_code_then_message() {
+        // Canonical tsc order: file, then start, then length, then code, then
+        // message text. Several pairs deliberately tie on the earlier keys so
+        // the later tiebreakers are exercised.
+        let canonical = vec![
+            diag("a.ts", 0, 5, 2304, "alpha"),
+            // same file+start as next, shorter length sorts first
+            diag("a.ts", 10, 2, 9999, "zzz"),
+            diag("a.ts", 10, 4, 1000, "aaa"),
+            // same file+start+length, lower code first
+            diag("a.ts", 20, 3, 2322, "msg"),
+            diag("a.ts", 20, 3, 2345, "msg"),
+            // same file+start+length+code, message breaks the tie
+            diag("a.ts", 30, 1, 2304, "aaa"),
+            diag("a.ts", 30, 1, 2304, "bbb"),
+            // file name is the highest-priority key
+            diag("b.ts", 0, 1, 1000, "anything"),
+        ];
+
+        assert_canonical_order_is_permutation_invariant(&canonical);
+    }
+
+    #[test]
+    fn compare_breaks_ties_on_related_information() {
+        // Two diagnostics identical on every primary field differ only in
+        // related information; the shorter related list sorts first, then the
+        // lists compare element-by-element.
+        let bare = diag("a.ts", 0, 1, 2304, "msg");
+        let with_one = diag("a.ts", 0, 1, 2304, "msg").with_related("a.ts", 5, 1, "see a");
+        let with_two = diag("a.ts", 0, 1, 2304, "msg")
+            .with_related("a.ts", 5, 1, "see a")
+            .with_related("a.ts", 9, 1, "see b");
+
+        let canonical = vec![bare, with_one, with_two];
+        assert_canonical_order_is_permutation_invariant(&canonical);
+    }
+
+    #[test]
+    fn compare_is_a_total_order_consistent_with_equality() {
+        let a = diag("a.ts", 0, 1, 2304, "msg");
+        let b = a.clone();
+        assert_eq!(a.compare(&b), std::cmp::Ordering::Equal);
+
+        let c = diag("a.ts", 0, 1, 2304, "msg2");
+        // Antisymmetry: a < c implies c > a.
+        assert_eq!(a.compare(&c), std::cmp::Ordering::Less);
+        assert_eq!(c.compare(&a), std::cmp::Ordering::Greater);
     }
 
     #[test]
