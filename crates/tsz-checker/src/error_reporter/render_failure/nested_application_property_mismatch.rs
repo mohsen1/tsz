@@ -3,6 +3,7 @@ use crate::diagnostics::{
     diagnostic_messages, format_message,
 };
 use crate::error_reporter::render_failure::RenderContext;
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -705,8 +706,14 @@ impl<'a> CheckerState<'a> {
         );
 
         let mut diag = if ctx.depth == 0 {
-            let (source_str, target_str) = self
-                .format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx);
+            let source_str = self.format_type_for_diagnostic_role(
+                ctx.source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target: ctx.target,
+                    anchor_idx: ctx.idx,
+                },
+            );
+            let target_str = self.format_assignability_type_for_message(ctx.target, ctx.source);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
