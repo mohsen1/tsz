@@ -664,6 +664,15 @@ impl<'a> Printer<'a> {
         if self.assignment_object_rest_target_needs_temp(target) {
             let temp = self.make_unique_name_hoisted_assignment();
             self.write(&temp);
+        } else if self.pattern_has_scoped_static_super_assignment_target(target) {
+            // A `super.x` rest target (`{ ...super.x } = ...`) inside a scoped
+            // static-super context must be lowered to the setter-descriptor
+            // form so it stays a valid assignment LHS. Emitting it through the
+            // plain path would produce `Reflect.get(...) = __rest(...)`, which
+            // is a non-runnable call-expression-as-LHS. Routing through the
+            // scoped-static-super assignment-target emitter yields the
+            // `({ set value(_a) { Reflect.set(...) } }).value` form tsc emits.
+            self.emit_with_scoped_static_super_assignment_targets(target);
         } else {
             self.emit(target);
         }
