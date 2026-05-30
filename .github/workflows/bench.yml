@@ -648,12 +648,16 @@ jobs:
             `bench-prep/${targetSha}/bench-prep.env`,
             "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
             "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -820,12 +824,16 @@ jobs:
             `bench-prep/${targetSha}/bench-prep.env`,
             "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
             "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
