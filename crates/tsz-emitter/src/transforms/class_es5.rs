@@ -91,6 +91,10 @@ pub struct ClassES5Emitter<'a> {
     /// Outer names (e.g. a class-expression alias) excluded from generator state
     /// variable selection inside `__awaiter`/`__generator` method bodies.
     outer_reserved_for_generator_state: Vec<String>,
+    /// Deferred CommonJS `exports.<name> = <name>;` assignment for a top-level
+    /// `export class` lowered to an ES5 IIFE. Emitted right after the IIFE
+    /// statement, before trailing computed-property side effects.
+    pending_commonjs_class_export_name: Option<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -115,6 +119,7 @@ impl<'a> ClassES5Emitter<'a> {
             block_scope_reserved_names: Vec::new(),
             outer_reserved_for_generator_state: Vec::new(),
             tc39_wrap_output: true,
+            pending_commonjs_class_export_name: None,
         }
     }
 
@@ -130,6 +135,12 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
         self.block_scope_shadowed_names = names;
+    }
+
+    /// Schedule a deferred CommonJS `exports.<name> = <name>;` assignment for a
+    /// top-level `export class` lowered to an ES5 IIFE.
+    pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
+        self.pending_commonjs_class_export_name = name;
     }
 
     pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
@@ -517,6 +528,9 @@ impl<'a> ClassES5Emitter<'a> {
         }
         printer.set_block_scope_shadowed_names(self.block_scope_shadowed_names.clone());
         printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
+        printer.set_pending_commonjs_class_export_name(
+            self.pending_commonjs_class_export_name.clone(),
+        );
         if !self.outer_reserved_for_generator_state.is_empty() {
             printer.set_outer_reserved_for_generator_state(
                 self.outer_reserved_for_generator_state.clone(),

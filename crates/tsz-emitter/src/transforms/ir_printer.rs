@@ -87,6 +87,12 @@ pub struct IRPrinter<'a> {
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
+    /// Deferred CommonJS `exports.<name> = <name>;` assignment for a top-level
+    /// `export class` lowered to an ES5 IIFE. When set, the assignment is
+    /// emitted immediately after the class IIFE statement and BEFORE any
+    /// trailing computed-property-name side-effect statements, mirroring the
+    /// ES2015+ class export ordering in `emit_es6.rs`.
+    pending_commonjs_class_export_name: Option<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -319,6 +325,7 @@ impl<'a> IRPrinter<'a> {
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
+            pending_commonjs_class_export_name: None,
         }
     }
 
@@ -350,6 +357,7 @@ impl<'a> IRPrinter<'a> {
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
+            pending_commonjs_class_export_name: None,
         }
     }
 
@@ -381,7 +389,21 @@ impl<'a> IRPrinter<'a> {
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
+            pending_commonjs_class_export_name: None,
         }
+    }
+
+    /// Schedule a deferred CommonJS `exports.<name> = <name>;` assignment for a
+    /// top-level `export class` lowered to an ES5 IIFE. Emitted right after the
+    /// class IIFE statement, before any trailing computed-property side effects.
+    pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
+        self.pending_commonjs_class_export_name = name;
+    }
+
+    /// Consume the scheduled CommonJS class export name, clearing it so a single
+    /// IIFE statement emits the assignment exactly once.
+    pub(super) const fn take_pending_commonjs_class_export_name(&mut self) -> Option<String> {
+        self.pending_commonjs_class_export_name.take()
     }
 
     /// Set transform directives for `ASTRef` emission
