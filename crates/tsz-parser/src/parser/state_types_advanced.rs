@@ -372,12 +372,17 @@ impl ParserState {
                         "',' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                     );
-                    // Progress guard: see parse_type_literal_rest. Forces
-                    // forward motion when parse_tuple_element_type recovers
-                    // without consuming a token (e.g. on `||`/`&&`/`==`).
+                    // Each loop iteration must advance the scanner; without
+                    // this, tokens like `||`/`&&`/`==` that satisfy
+                    // `can_token_start_type` but stall both `parse_type`
+                    // and `parse_optional(',')` would spin forever.
                     if self.token_pos() == pos_before {
                         self.next_token();
                     }
+                    debug_assert!(
+                        self.token_pos() > pos_before,
+                        "tuple-element recovery failed to advance the scanner",
+                    );
                     continue;
                 }
                 break;

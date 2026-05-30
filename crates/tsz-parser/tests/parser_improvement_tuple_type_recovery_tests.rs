@@ -132,33 +132,6 @@ type T = [name?: string];
     );
 }
 
-/// Run every entry of `HANGING_TUPLE_SHAPES` on a single watchdog worker
-/// thread and panic if any shape fails to finish. Wakes immediately on the
-/// happy path via `recv_timeout` and only blocks the full timeout on a real
-/// hang. Returns nothing — diagnostic assertions run inside the worker.
-fn run_hanging_tuple_matrix<F: Fn(&str) + Send + 'static>(timeout_per_shape_secs: u64, body: F) {
-    use std::sync::mpsc;
-    // sync_channel(1) intentionally serializes worker and watchdog one shape
-    // at a time so a hang is attributed to the specific shape that hung
-    // rather than to the matrix as a whole.
-    let (tx, rx) = mpsc::sync_channel::<()>(1);
-    let worker = std::thread::spawn(move || {
-        for source in HANGING_TUPLE_SHAPES {
-            body(source);
-            tx.send(()).expect("watchdog channel closed");
-        }
-    });
-    for expected in HANGING_TUPLE_SHAPES {
-        if rx
-            .recv_timeout(std::time::Duration::from_secs(timeout_per_shape_secs))
-            .is_err()
-        {
-            panic!("parser hung on {expected:?} (exceeded {timeout_per_shape_secs}s)");
-        }
-    }
-    worker.join().expect("watchdog worker panicked");
-}
-
 /// The class of inputs covered by the tuple-recovery progress guard.
 ///
 /// Every shape here has a token inside the brackets that `can_token_start_type`
@@ -185,12 +158,35 @@ const HANGING_TUPLE_SHAPES: &[&str] = &[
 
 #[test]
 fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
-    run_hanging_tuple_matrix(5, |source| {
-        let (parser, _root) = crate::parser::test_fixture::parse_source(source);
-        assert!(
-            !parser.get_diagnostics().is_empty(),
-            "expected at least one parser diagnostic for {source:?}, got none",
-        );
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    // Watchdog: the worker announces each shape over the channel *before*
+    // parsing it and drops the sender after the last shape completes. The
+    // main thread tracks the most recent in-flight shape and panics naming
+    // it on `recv_timeout`. `thread::scope` lets the worker borrow main-
+    // thread state without `'static`/`Send` bounds.
+    std::thread::scope(|scope| {
+        let (tx, rx) = mpsc::sync_channel::<&'static str>(0);
+        scope.spawn(move || {
+            for source in HANGING_TUPLE_SHAPES {
+                tx.send(source).expect("watchdog channel closed");
+                let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+                assert!(
+                    !parser.get_diagnostics().is_empty(),
+                    "expected at least one parser diagnostic for {source:?}, got none",
+                );
+            }
+        });
+        let mut in_flight: Option<&'static str> = None;
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(next) => in_flight = Some(next),
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => panic!(
+                    "parser hung on {:?} (exceeded 5s)",
+                    in_flight.expect("worker did not announce any shape"),
+                ),
+            }
+        }
     });
 }
 
