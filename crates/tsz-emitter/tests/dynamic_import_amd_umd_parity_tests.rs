@@ -30,6 +30,17 @@ fn umd(source: &str) -> String {
     )
 }
 
+fn umd_target(source: &str, target: ScriptTarget) -> String {
+    emit(
+        source,
+        PrintOptions {
+            target,
+            module: ModuleKind::UMD,
+            ..Default::default()
+        },
+    )
+}
+
 fn amd(source: &str) -> String {
     emit(
         source,
@@ -64,6 +75,70 @@ fn umd_await_operand_parenthesizes_conditional() {
             "await (__syncRequire ? Promise.resolve().then(() => __importStar(require('./s'))) : "
         ),
         "await operand must parenthesize the UMD conditional.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn umd_native_await_operand_parenthesizes_conditional_es2017() {
+    // At ES2017 the `await` is retained (no async-to-generator lowering), and a
+    // native `await` binds tighter than `?:`, so the conditional is wrapped.
+    let out = umd_target(
+        "export async function f() { const req = await import('./s'); }",
+        ScriptTarget::ES2017,
+    );
+    assert!(
+        out.contains("const req = await (__syncRequire ? "),
+        "native await operand must parenthesize the UMD conditional.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn umd_downleveled_await_yield_operand_does_not_parenthesize_conditional_es2015() {
+    // At ES2015 the async body is downleveled to a generator, so `await`
+    // becomes `yield`. A `yield` operand binds looser than `?:`, so tsc emits a
+    // bare conditional with no parentheses (`yield a ? b : c` parses correctly).
+    let out = umd_target(
+        "export async function f() { const req = await import('./s'); }",
+        ScriptTarget::ES2015,
+    );
+    assert!(
+        out.contains("const req = yield __syncRequire ? "),
+        "a downleveled await→yield operand must not parenthesize the UMD conditional.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("yield (__syncRequire ?"),
+        "the bare conditional under yield must not be wrapped.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn umd_downleveled_await_yield_does_not_parenthesize_at_es6() {
+    // Same rule at the `es6` alias target: await→yield, bare conditional.
+    let out = umd_target(
+        "export async function f() { const req = await import('./s'); }",
+        ScriptTarget::ES2016,
+    );
+    assert!(
+        out.contains("const req = yield __syncRequire ? ")
+            && !out.contains("yield (__syncRequire ?"),
+        "ES2016 await→yield must emit a bare conditional with no parens.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn umd_downleveled_yield_rule_is_independent_of_binding_and_specifier_names() {
+    // Renaming the import binding and the module specifier must not change the
+    // paren decision: the rule keys on the await→yield lowering shape, not on
+    // any user-chosen identifier name.
+    let out = umd_target(
+        "export async function loader() { const modHandle = await import('./other-module'); }",
+        ScriptTarget::ES2015,
+    );
+    assert!(
+        out.contains("const modHandle = yield __syncRequire ? ")
+            && out.contains("require('./other-module')")
+            && !out.contains("yield (__syncRequire ?"),
+        "renamed binding/specifier must still emit a bare conditional under yield.\nOutput:\n{out}"
     );
 }
 
