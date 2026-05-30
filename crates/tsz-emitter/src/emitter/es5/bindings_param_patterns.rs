@@ -400,24 +400,10 @@ impl<'a> Printer<'a> {
                     value_name
                 };
 
-                // For defaulted empty nested patterns, tsc still materializes
-                // a final pattern temp after applying the default. Empty arrays
-                // under downlevelIteration read the iterable with limit 0.
-                if self
-                    .arena
-                    .get(elem.name)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                    && self.ctx.options.downlevel_iteration
-                {
-                    let empty_name = self.get_temp_var_name();
-                    self.write(", ");
-                    self.write(&empty_name);
-                    self.write(" = ");
-                    self.write_helper("__read");
-                    self.write("(");
-                    self.write(&source_name);
-                    self.write(", 0)");
-                } else if elem.initializer.is_some() {
+                // For defaulted empty nested patterns, tsc materializes a final
+                // pattern temp after applying the default. Empty patterns have nothing
+                // to extract, so tsc never calls __read regardless of downlevelIteration.
+                if elem.initializer.is_some() {
                     let empty_name = self.get_temp_var_name();
                     self.write(", ");
                     self.write(&empty_name);

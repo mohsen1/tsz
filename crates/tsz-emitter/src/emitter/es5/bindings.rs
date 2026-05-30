@@ -87,7 +87,9 @@ impl<'a> Printer<'a> {
                 }
                 first = false;
                 self.write(&temp_name);
-                let downlevel_array_binding = self.ctx.options.downlevel_iteration
+                let is_empty = self.binding_pattern_is_empty(decl.name);
+                let downlevel_array_binding = !is_empty
+                    && self.ctx.options.downlevel_iteration
                     && self
                         .arena
                         .get(decl.name)
@@ -746,15 +748,14 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Empty object patterns skip __read entirely (no elements to iterate).
-        // Empty array patterns with downlevelIteration still fall through to
-        // `emit_es5_destructuring_with_read_node`, which computes a read limit of 0
-        // and emits `__read(source, 0)` — matching tsc behavior.
-        // Empty array patterns WITHOUT downlevelIteration use the fallback path.
+        // Empty patterns — zero bindings, no rest — skip __read entirely.
+        // When a pattern has nothing to extract, tsc assigns the initializer
+        // directly to a temp (`_a = x`) regardless of downlevelIteration; calling
+        // `__read(x, 0)` to trigger the iterator protocol is incorrect for this case.
         let is_empty = self.binding_pattern_is_empty(decl.name);
         let needs_downlevel_read = self.ctx.options.downlevel_iteration
             && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
-        if is_empty && !needs_downlevel_read {
+        if is_empty {
             self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
             return;
         }

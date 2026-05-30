@@ -92,7 +92,7 @@ fn empty_assignment_patterns_commonjs_do_not_schedule_read_helpers() {
 }
 
 #[test]
-fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers() {
+fn empty_array_binding_patterns_without_initializers_skip_read_helpers() {
     let output = emit_es5_downlevel_iteration(
         "(function () {\n\
              var [];\n\
@@ -101,10 +101,16 @@ fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers
          })();\n",
     );
 
+    // Empty array binding patterns have nothing to extract, so tsc assigns the
+    // initializer directly to a temp without invoking the iterator protocol.
+    assert!(
+        !output.contains("__read("),
+        "Empty array binding patterns must not schedule `__read` — no elements to read.\nOutput:\n{output}"
+    );
     assert_eq!(
-        output.matches("__read(void 0, 0)").count(),
+        output.matches("void 0").count(),
         3,
-        "Each empty array binding pattern should preserve the downlevel iterable read.\nOutput:\n{output}"
+        "Each empty array binding pattern should emit a direct `void 0` assignment.\nOutput:\n{output}"
     );
 }
 
@@ -156,7 +162,7 @@ fn for_of_sequential_empty_bindings_allocate_return_temps_before_body_temps() {
 }
 
 #[test]
-fn empty_binding_declarations_evaluate_rhs_and_read_empty_nested_arrays() {
+fn empty_binding_declarations_evaluate_rhs_without_reading_empty_arrays() {
     let output = emit_es5_downlevel_iteration(
         "(function () {\n\
              var a: any;\n\
@@ -165,13 +171,20 @@ fn empty_binding_declarations_evaluate_rhs_and_read_empty_nested_arrays() {
          })();\n",
     );
 
+    // Empty patterns — both top-level and nested — must assign the source directly
+    // to a temp without calling `__read`. There are no elements to extract, so
+    // the iterator protocol adds no value.
     assert!(
-        output.contains("var _a = a, _b = __read(a, 0);"),
-        "Sibling empty object/array bindings should evaluate the same RHS in order, with empty arrays using `__read(_, 0)`.\nOutput:\n{output}"
+        output.contains("var _a = a, _b = a;"),
+        "Sibling empty object/array bindings should evaluate the same RHS with direct assignment.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("var _c = a.p1, _d = __read(a.p2, 0);"),
-        "Nested empty array bindings should read the selected property instead of copying it directly.\nOutput:\n{output}"
+        output.contains("var _c = a.p1, _d = a.p2;"),
+        "Nested empty array bindings should copy the selected property directly, not through `__read`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__read("),
+        "Empty binding declarations must not emit any `__read` calls.\nOutput:\n{output}"
     );
     assert!(
         !output.contains("a_b ="),
