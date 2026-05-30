@@ -553,8 +553,10 @@ impl ModuleResolver {
         // TypeScript treats `paths` mappings as requiring `baseUrl` to avoid surprising
         // absolute lookups that behave like relative resolution.
         let mut path_mapping_attempted = false;
-        if self.base_url.is_some() && !self.path_mappings.is_empty() {
-            let attempt = self.try_path_mappings(specifier, containing_dir);
+        if let Some(base_url) = self.base_url.as_deref()
+            && !self.path_mappings.is_empty()
+        {
+            let attempt = self.try_path_mappings(specifier, base_url);
             if let Some(resolved) = attempt.resolved {
                 return (Ok(resolved), path_mapping_attempted);
             }

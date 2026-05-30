@@ -148,15 +148,17 @@ pub(crate) fn export_pattern_specificity(pattern: &str) -> (usize, usize) {
 /// specificity is largest. Equal-specificity ties resolve to the first entry in
 /// iteration order — callers must use an insertion-order map (`IndexMap`) to get
 /// deterministic JSON-source-order tie-breaking per the Node.js/TypeScript spec.
+type BestExportPatternEntry<'a> = ((usize, usize), &'a str, String, &'a PackageExports);
+
 pub(crate) fn find_best_export_pattern<'a>(
     patterns: impl Iterator<Item = (&'a String, &'a PackageExports)>,
     match_fn: impl Fn(&str) -> Option<String>,
 ) -> Option<(&'a str, String, &'a PackageExports)> {
-    let mut best: Option<((usize, usize), &'a str, String, &'a PackageExports)> = None;
+    let mut best: Option<BestExportPatternEntry<'a>> = None;
     for (pattern, value) in patterns {
         if let Some(matched) = match_fn(pattern) {
             let specificity = export_pattern_specificity(pattern);
-            if best.as_ref().map_or(true, |(s, _, _, _)| specificity > *s) {
+            if best.as_ref().is_none_or(|(s, _, _, _)| specificity > *s) {
                 best = Some((specificity, pattern.as_str(), matched, value));
             }
         }

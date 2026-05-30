@@ -1254,13 +1254,9 @@ fn test_lookup_path_mapping_failure_produces_ts2307_via_lookup() {
 #[test]
 fn test_path_mapping_extension_reflects_resolved_file() {
     // Regression: path-mapping previously classified the resolved module's
-    // extension from the pre-resolution candidate (which always has no
-    // extension at this point — targets with extensions are filtered
-    // earlier). That made every path-mapping-resolved module carry
-    // `ModuleExtension::Unknown` instead of the real `.ts` / `.d.ts` / etc.,
-    // drifting from every other resolver exit (relative, node_modules,
-    // exports, self-reference) which uses the resolved path. The fix
-    // classifies on the resolved path.
+    // extension from the pre-resolution candidate path instead of the
+    // actual resolved file, producing `ModuleExtension::Unknown` for every
+    // path-mapping result. The fix classifies on the resolved path.
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_path_mapping_ext_regression");
     let _ = fs::remove_dir_all(&dir);
