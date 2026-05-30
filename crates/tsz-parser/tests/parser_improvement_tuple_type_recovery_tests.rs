@@ -132,6 +132,107 @@ type T = [name?: string];
     );
 }
 
+/// Parse `source` on a worker thread and panic if it does not finish within
+/// `secs`. Used to assert that a parser fix breaks an otherwise-infinite
+/// recovery loop. Returns the collected diagnostics so individual tests can
+/// also assert the diagnostic shape (parity with tsc).
+fn assert_finishes_within<F: FnOnce() + Send + 'static>(secs: u64, work: F) {
+    let handle = std::thread::spawn(work);
+    let start = std::time::Instant::now();
+    while !handle.is_finished() {
+        if start.elapsed().as_secs() > secs {
+            panic!("parser hung — work did not finish within {secs}s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    handle.join().expect("worker panicked");
+}
+
+/// The class of inputs covered by the tuple-recovery progress guard.
+///
+/// Every shape here has a token inside the brackets that `can_token_start_type`
+/// returns `true` for, but that neither `parse_type` nor `parse_optional(',')`
+/// consume — `||`, `&&`, `==`, etc. Before the fix, the recovery branch in
+/// `parse_tuple_type` would `continue` without advancing the cursor and the
+/// parser would loop forever. The test covers multiple operators and multiple
+/// tuple shapes so a fix that only handles one spelling (or only the bare
+/// tuple form) will fail the matrix.
+const HANGING_TUPLE_SHAPES: &[&str] = &[
+    "type T = [a||b];",
+    "type T = [a&&b];",
+    "type T = [a==b];",
+    "type T = [a===b];",
+    "type T = [a!=b];",
+    "type T = [a, b||c];",
+    "type T = [first: a||b];",
+    "type T = [...a||b];",
+    "type T = readonly [a||b];",
+    "type T = Array<[a||b]>;",
+    "type T<U> = { [K in keyof U]: [U[K], a||b] };",
+];
+
+#[test]
+fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
+    for source in HANGING_TUPLE_SHAPES {
+        let input = (*source).to_string();
+        let label = (*source).to_string();
+        assert_finishes_within(5, move || {
+            let _ = crate::parser::test_fixture::parse_source(&input);
+        });
+        // Sanity-parse on the main thread to inspect diagnostics.
+        let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        assert!(
+            !diagnostics.is_empty(),
+            "expected at least one parser diagnostic for {label:?}, got none",
+        );
+    }
+}
+
+#[test]
+fn tuple_with_double_bar_token_reports_comma_expected_without_cascade() {
+    // Specific shape used by the original repro: a binary operator inside a
+    // tuple element should surface as a single `',' expected.` diagnostic at
+    // the operator (matching tsc), not an infinite loop or a downstream
+    // bracket cascade.
+    let source = "type T = [a||b];";
+    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    let op_pos = source.find("||").expect("operator present") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.message == "',' expected."
+                && d.start == op_pos),
+        "expected TS1005 `',' expected.` at the operator, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.message != "']' expected."
+            && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected no `]`/TS1128 cascade, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn tuple_with_double_bar_token_in_mapped_type_does_not_hang() {
+    // The original issue title mentions "mapped recursion": confirm that
+    // the deadlock also went away inside a mapped-type value position, which
+    // is one of the most common shapes the bug-family bench produces.
+    let source = "type T<U> = { [K in keyof U]: [U[K], a||b] };";
+    assert_finishes_within(5, || {
+        let _ = crate::parser::test_fixture::parse_source(
+            "type T<U> = { [K in keyof U]: [U[K], a||b] };",
+        );
+    });
+    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "expected at least one parser diagnostic for mapped tuple with binary op",
+    );
+}
+
 #[test]
 fn test_mixed_tuple_elements() {
     // Mix of optional, named, and rest elements should work

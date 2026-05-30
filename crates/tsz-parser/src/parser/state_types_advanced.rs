@@ -362,6 +362,7 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            let pos_before = self.token_pos();
             let element = self.parse_tuple_element_type();
             elements.push(element);
 
@@ -371,6 +372,17 @@ impl ParserState {
                         "',' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                     );
+                    // Progress guard: when `parse_tuple_element_type` recovers
+                    // with a synthetic node without advancing (e.g. for tokens
+                    // like `||`, `&&`, `==`, `=` that `can_token_start_type`
+                    // returns true for but neither `parse_type` nor
+                    // `parse_optional(CommaToken)` consume), force one token
+                    // forward to break the deadlock. Mirrors the per-iteration
+                    // progress guards already used by `parse_type_literal_rest`
+                    // and `parse_mapped_type_with_members`.
+                    if self.token_pos() == pos_before {
+                        self.next_token();
+                    }
                     continue;
                 }
                 break;
