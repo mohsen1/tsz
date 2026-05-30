@@ -295,11 +295,16 @@ impl ParserState {
         // in the tree and emitted (` || a`), rather than being skipped. We mirror
         // that by seeding the binary-expression chain with a missing identifier.
         // Comma at statement start is left to the normal `parse_expression`
-        // sequence handling, and assignment operators are handled by
-        // `parse_assignment_expression`, so this only seeds non-comma operators.
-        let started_with_binary_operator_skip_path =
-            started_with_binary_operator && self.token() == SyntaxKind::CommaToken;
-        let expression = if started_with_binary_operator && self.token() != SyntaxKind::CommaToken {
+        // sequence handling. `?` is the conditional-expression separator rather
+        // than a pure binary operator, so it stays on the legacy skip/recovery
+        // path too.
+        let started_with_binary_operator_skip_path = started_with_binary_operator
+            && matches!(
+                self.token(),
+                SyntaxKind::CommaToken | SyntaxKind::QuestionToken
+            );
+        let expression = if started_with_binary_operator && !started_with_binary_operator_skip_path
+        {
             self.error_expression_expected();
             let start_pos = self.token_pos();
             let missing_left = self.create_missing_expression();

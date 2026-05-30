@@ -29,6 +29,22 @@ fn binary_ops_with_missing_left(source: &str) -> Vec<SyntaxKind> {
         .collect()
 }
 
+fn conditional_exprs_with_missing_condition(source: &str) -> usize {
+    let (parser, _root) = parse_source(source);
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .filter(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+        .filter_map(|node| arena.get_conditional_expr(node))
+        .filter(|conditional| {
+            arena
+                .get(conditional.condition)
+                .is_some_and(|condition| condition.pos == condition.end)
+        })
+        .count()
+}
+
 #[test]
 fn test_incomplete_binary_expression_recovery() {
     // Test recovery from incomplete binary expression: a +
@@ -198,5 +214,18 @@ fn test_statement_starting_with_binary_operator_does_not_drop_operator() {
         second_is_binary_expr_statement,
         "leading-binary-operator statement should recover as a binary expression, not a bare operand; diagnostics: {:?}",
         parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_statement_starting_with_question_does_not_seed_conditional_condition() {
+    // `?` has conditional-expression precedence, but it is not a pure binary
+    // operator. At statement start it must stay on the existing skip/recovery
+    // path instead of fabricating a missing conditional condition.
+    let missing_condition_count =
+        conditional_exprs_with_missing_condition("q = () => { } ? a : b\n");
+    assert_eq!(
+        missing_condition_count, 0,
+        "statement-start `?` should not become a conditional expression with a missing condition"
     );
 }
