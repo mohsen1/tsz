@@ -149,6 +149,13 @@ pub struct NamespaceES5Transformer<'a> {
     const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
     const_enum_import_aliases: FxHashMap<String, String>,
     remove_comments: bool,
+    /// Monotonic per-namespace-name suffix counter for IIFE parameter renames.
+    /// `tsc` renames the IIFE parameter with an incrementing suffix across
+    /// reopenings of the same namespace (`schema` → `schema_1`, `schema_2`,
+    /// ...). Each namespace block is transformed by a fresh transformer, so the
+    /// dispatcher seeds this from its shared counter before transforming a block
+    /// and reads it back afterwards to persist the increment.
+    iife_param_rename_counter: RefCell<FxHashMap<String, u32>>,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -172,6 +179,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
+            iife_param_rename_counter: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -195,6 +203,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
+            iife_param_rename_counter: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -268,6 +277,30 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// These will be merged with locally-collected exports for rewriting references.
     pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
         self.prior_exported_vars = vars;
+    }
+
+    /// Seed the IIFE-parameter rename suffix counters from the dispatcher's
+    /// shared, cross-block counter map (`namespace_iife_param_counter`). Call
+    /// before transforming a namespace block so a renamed parameter continues
+    /// the incrementing suffix sequence established by earlier reopenings.
+    pub fn set_iife_param_rename_counter(&mut self, counter: FxHashMap<String, u32>) {
+        self.iife_param_rename_counter = RefCell::new(counter);
+    }
+
+    /// Read back the IIFE-parameter rename suffix counters after transforming a
+    /// block so the dispatcher can persist increments into its shared map.
+    pub fn take_iife_param_rename_counter(&self) -> FxHashMap<String, u32> {
+        self.iife_param_rename_counter.borrow().clone()
+    }
+
+    /// Allocate the next monotonic rename suffix for `ns_name`, mirroring the
+    /// ES2015 printer path (`schema` → `schema_1`, `schema_2`, ...). The counter
+    /// is shared across reopenings via the dispatcher.
+    fn next_renamed_iife_param(&self, ns_name: &str) -> String {
+        let mut counters = self.iife_param_rename_counter.borrow_mut();
+        let counter = counters.entry(ns_name.to_string()).or_insert(0);
+        *counter += 1;
+        format!("{ns_name}_{counter}")
     }
 
     /// Collect exported variable names from a namespace declaration without emitting.
@@ -406,10 +439,18 @@ impl<'a> NamespaceES5Transformer<'a> {
             return None;
         }
 
-        // Detect collision: if a member name matches the innermost namespace name,
-        // rename the IIFE parameter (e.g., A -> A_1)
+        // Detect collision: rename the IIFE parameter (e.g., A -> A_1) when a
+        // top-level member OR any nested-scope binding (e.g. a parameter
+        // `function f(A) {}`) shadows the innermost namespace name.
         let innermost_name = name_parts.last().map_or("", |s| s.as_str());
-        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
+        let nested_conflict =
+            self.namespace_body_has_nested_binding(innermost_body, innermost_name);
+        let param_name = detect_and_apply_param_rename_with_extra(
+            &mut body,
+            innermost_name,
+            nested_conflict,
+            || self.next_renamed_iife_param(innermost_name),
+        );
 
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -446,6 +487,29 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .map(Into::into),
             invalid_namespace_static: self.has_invalid_namespace_static_modifier(ns_idx),
         })
+    }
+
+    /// Returns `true` when the namespace body introduces a runtime binding
+    /// named `ns_name` from a *nested* scope (a nested function's parameter, or
+    /// a binding declared inside a nested function/class body). Such a binding
+    /// shadows the namespace name at reference sites, so `tsc` renames the IIFE
+    /// parameter. The top-level member scan in
+    /// `detect_and_apply_param_rename_with_extra` does not see these deeper
+    /// bindings; this source-text scan (shared with the ES2015 printer path)
+    /// does.
+    fn namespace_body_has_nested_binding(&self, body_idx: NodeIndex, ns_name: &str) -> bool {
+        if ns_name.is_empty() {
+            return false;
+        }
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        crate::transforms::namespace_iife_binding_scan::namespace_body_text_has_binding_named(
+            self.arena,
+            self.source_text,
+            body_node,
+            ns_name,
+        )
     }
 
     fn namespace_body_using_region(
@@ -1672,10 +1736,17 @@ impl<'a> NamespaceES5Transformer<'a> {
             return None;
         }
 
-        // Detect collision: if a member name matches the innermost namespace name,
-        // rename the IIFE parameter (e.g., A -> A_1)
+        // Detect collision: rename the IIFE parameter (e.g., A -> A_1) when a
+        // top-level member OR any nested-scope binding (e.g. a parameter
+        // `function f(A) {}`) shadows the innermost namespace name.
         let innermost_name = name_parts.last().map_or("", |s| s.as_str());
-        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
+        let nested_conflict = self.namespace_body_has_nested_binding(ns_data.body, innermost_name);
+        let param_name = detect_and_apply_param_rename_with_extra(
+            &mut body,
+            innermost_name,
+            nested_conflict,
+            || self.next_renamed_iife_param(innermost_name),
+        );
 
         let name = name_parts.first().cloned().unwrap_or_default();
 

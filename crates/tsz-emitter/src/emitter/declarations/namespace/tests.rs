@@ -655,3 +655,114 @@ fn namespace_invalid_default_expression_export_is_preserved_verbatim() {
         "Invalid default expression export should not become a namespace property assignment.\nOutput:\n{output}"
     );
 }
+
+/// ES5 target: a nested function *parameter* sharing the namespace name shadows
+/// the IIFE parameter at reference sites, so tsc renames the IIFE parameter
+/// (`schema` -> `schema_1`). This previously only worked at ES2015+ because the
+/// ES5 IR collision scan only inspected top-level member names.
+#[test]
+fn es5_namespace_iife_param_renamed_for_nested_function_param() {
+    let source = "namespace schema {\n  export function f(schema: any): number { return 0; }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (schema_1)"),
+        "ES5 namespace IIFE param should rename to schema_1 when a nested function parameter shadows the namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("schema_1.f = f;"),
+        "Member export should use the renamed parameter schema_1.\nOutput:\n{output}"
+    );
+}
+
+/// Same rule, different chosen names — the fix must be keyed on the AST shape
+/// (a binding shadowing the namespace name), not on the spelling `schema`.
+#[test]
+fn es5_namespace_iife_param_renamed_for_nested_function_param_renamed_idents() {
+    let source = "namespace build {\n  export function make(build: any): number { return 0; }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (build_1)"),
+        "ES5 namespace IIFE param should rename to build_1 regardless of identifier spelling.\nOutput:\n{output}"
+    );
+}
+
+/// ES5 target: reopening the same namespace several times, each with a shadowing
+/// parameter, increments the rename suffix monotonically across blocks
+/// (`m_1`, `m_2`), matching tsc's declaration-merging behavior.
+#[test]
+fn es5_namespace_iife_param_suffix_increments_across_reopenings() {
+    let source = "namespace m {\n  export function a(m: any): number { return 0; }\n}\nnamespace m {\n  export function b(m: any): number { return 0; }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m_1)"),
+        "First reopening should rename to m_1.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (m_2)"),
+        "Second reopening should increment the suffix to m_2.\nOutput:\n{output}"
+    );
+}
+
+/// ES5 target negative case: no binding shadows the namespace name, so the IIFE
+/// parameter keeps the original name (no rename).
+#[test]
+fn es5_namespace_iife_param_not_renamed_without_shadowing_binding() {
+    let source = "namespace m {\n  export function f(x: any): number { return 0; }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m)"),
+        "ES5 namespace IIFE param should stay `m` when nothing shadows the namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (m_1)"),
+        "No rename should occur without a shadowing binding.\nOutput:\n{output}"
+    );
+}

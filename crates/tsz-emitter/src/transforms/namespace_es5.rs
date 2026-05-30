@@ -134,6 +134,19 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_source_text(text);
     }
 
+    /// Seed the cross-block IIFE-parameter rename suffix counters before
+    /// transforming this namespace block (see
+    /// `NamespaceES5Transformer::set_iife_param_rename_counter`).
+    pub fn set_iife_param_rename_counter(&mut self, counter: rustc_hash::FxHashMap<String, u32>) {
+        self.transformer.set_iife_param_rename_counter(counter);
+    }
+
+    /// Read back the IIFE-parameter rename suffix counters after transforming
+    /// this block so the dispatcher can persist increments.
+    pub fn take_iife_param_rename_counter(&self) -> rustc_hash::FxHashMap<String, u32> {
+        self.transformer.take_iife_param_rename_counter()
+    }
+
     /// Set whether to emit a 'var' declaration for the namespace
     /// When false (e.g., when merging with a class/enum/function), the 'var' is omitted
     pub const fn set_should_declare_var(&mut self, value: bool) {

@@ -130,7 +130,9 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter
                     .set_should_declare_var(*should_declare_var && !self.in_top_level_using_scope);
+                ns_emitter.set_iife_param_rename_counter(self.namespace_iife_param_counter.clone());
                 let output = ns_emitter.emit_namespace(*namespace_node);
+                self.namespace_iife_param_counter = ns_emitter.take_iife_param_rename_counter();
                 self.write(output.trim_end_matches('\n'));
                 // Advance comment cursor past comments inside the namespace body,
                 // since the sub-emitter already handled them.
@@ -192,7 +194,10 @@ impl<'a> Printer<'a> {
                     }) {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
+                    ns_emitter
+                        .set_iife_param_rename_counter(self.namespace_iife_param_counter.clone());
                     let output = ns_emitter.emit_exported_namespace(idx);
+                    self.namespace_iife_param_counter = ns_emitter.take_iife_param_rename_counter();
                     self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                     if let Some(module_decl) = self.arena.get_module(node) {
                         let ns_name = self.get_identifier_text_idx(module_decl.name);
