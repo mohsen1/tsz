@@ -35,6 +35,10 @@ name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
 
 [[test]]
+name = "mapped_remapped_excess_function_property_tests"
+path = "tests/mapped_remapped_excess_function_property_tests.rs"
+
+[[test]]
 name = "cross_file_lib_generic_heritage_tests"
 path = "tests/cross_file_lib_generic_heritage_tests.rs"
 
