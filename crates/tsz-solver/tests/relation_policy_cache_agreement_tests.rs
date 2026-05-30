@@ -180,6 +180,89 @@ fn assignability_cache_strict_any_matches_uncached_relation_policy() {
 }
 
 #[test]
+fn assignability_cache_strict_function_types_does_not_imply_strict_any_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+
+    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
+
+    let strict_functions =
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let strict_any = strict_functions.with_strict_any_propagation(true);
+    let strict_functions_key =
+        RelationCacheKey::for_assignability(source, target, strict_functions.cache_config());
+    let strict_any_key =
+        RelationCacheKey::for_assignability(source, target, strict_any.cache_config());
+
+    assert_ne!(
+        strict_functions_key, strict_any_key,
+        "strict-function and strict-any policies must occupy distinct assignability cache slots",
+    );
+
+    let strict_functions_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_functions,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_any_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_any,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        strict_functions_uncached,
+        "strict function types alone should still allow nested `any` to satisfy a number property",
+    );
+    assert!(
+        !strict_any_uncached,
+        "explicit strict-any propagation must reject the nested `any` property mismatch",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict_functions),
+        strict_functions_uncached,
+        "cached strict-function policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_functions_key),
+        Some(strict_functions_uncached),
+        "strict-function result must be stored in the strict-function assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_any_key),
+        None,
+        "strict-any lookup must not hit the strict-function slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict_any),
+        strict_any_uncached,
+        "cached strict-any policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_any_key),
+        Some(strict_any_uncached),
+        "strict-any result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_functions_key),
+        Some(strict_functions_uncached),
+        "strict-function slot must remain intact after the strict-any lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_skip_weak_type_checks_matches_uncached_relation_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
