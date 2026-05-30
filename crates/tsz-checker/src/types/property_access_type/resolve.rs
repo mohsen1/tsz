@@ -2045,7 +2045,9 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Special case: unconstrained type parameters should emit TS2339
-                    // because they have no properties by definition.
+                    // unless the property exists on Object (all types implicitly extend
+                    // `{}` / `Object`, giving access to Object.prototype methods like
+                    // `toString`, `valueOf`, `hasOwnProperty`, etc.).
                     if crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         object_type_for_access,
@@ -2055,6 +2057,24 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_none()
                     {
+                        // Try Object.prototype first before emitting TS2339.
+                        // TypeScript: unconstrained `T` implicitly extends `{}` so
+                        // Object.prototype members are always valid.
+                        if let Some(object_lib_type) = self.resolve_lib_type_by_name("Object") {
+                            match self
+                                .resolve_property_access_with_env(object_lib_type, property_name)
+                            {
+                                PropertyAccessResult::Success { type_id, .. } => {
+                                    return self.finalize_property_access_result(
+                                        idx,
+                                        type_id,
+                                        skip_flow_narrowing,
+                                        skip_result_flow_for_result,
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
                         // Genuinely unconstrained type parameter - emit TS2339
                         if !property_name.starts_with('#') && !accessibility_error_emitted {
                             self.error_property_not_exist_at(
