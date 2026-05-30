@@ -1597,6 +1597,55 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // tsc emits TS2536 ("Type 'X' cannot be used to index type 'Y'") only
+            // when the index type is itself a type parameter (or the object type is
+            // generic/deferred). For a *concrete* object type indexed by a *missing
+            // literal* key, tsc instead reports the property as missing (TS2339) —
+            // uniformly across object literals, interfaces, classes, unions,
+            // intersections, function/callable types, and `unknown`. When the index
+            // is not a type parameter, the object type carries no type parameters
+            // (so type-parameter-like, generic index-access/conditional/application
+            // objects are all excluded), and the index resolves to a literal key,
+            // emit TS2339 so anonymous object literals and union/function-typed
+            // accesses match tsc instead of falling through to a spurious TS2536.
+            // Dedup merges this with any TS2339 the property path already produced
+            // for the same key and location.
+            if !original_index_is_type_param
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+                && let Some(key_atom) =
+                    crate::query_boundaries::type_computation::access::literal_property_name(
+                        self.ctx.types,
+                        index_type_for_check,
+                    )
+            {
+                let key_name = self.ctx.types.resolve_atom(key_atom);
+                // Only report the key as missing if it genuinely does not resolve
+                // to a property. Some valid accesses (e.g. an enum member via
+                // `(typeof Enum)["Member"]`) can reach this fallback through
+                // unrelated resolution gaps; emitting here would turn a valid
+                // access into a spurious error. Either way, a concrete object
+                // indexed by a concrete literal key is never a TS2536 in tsc, so do
+                // not fall through to the TS2536 emission below.
+                if !matches!(
+                    self.resolve_property_access_with_env(object_type_for_check, &key_name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                ) {
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[key_name.as_str(), &obj_type_str],
+                    );
+                    self.error_at_node(
+                        concrete_error_anchor,
+                        &message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                return;
+            }
+
             let message_2536 = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
                 &[&index_type_str, &obj_type_str],
@@ -1644,7 +1693,6 @@ impl<'a> CheckerState<'a> {
             concrete_object_type,
         );
         let object_has_shape = object_shape.is_some();
-        let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
         let object_is_array_like =
             crate::query_boundaries::common::is_array_type(self.ctx.types, concrete_object_type)
                 || crate::query_boundaries::common::tuple_elements(
@@ -1806,7 +1854,7 @@ impl<'a> CheckerState<'a> {
             ) && self.get_index_key_kind(index_type) == Some((true, false))
                 && !self.is_element_indexable(concrete_object_type, true, false)
                 && !object_is_type_parameter_ref
-                && (object_has_named_shape || object_is_array_like)
+                && (object_has_shape || object_is_array_like)
             {
                 let object_type_str = self.format_type(object_type);
                 let message = format_message(

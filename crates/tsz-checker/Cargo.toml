@@ -931,6 +931,10 @@ name = "enum_indexed_access_tests"
 path = "tests/enum_indexed_access_tests.rs"
 
 [[test]]
+name = "indexed_access_concrete_missing_key_ts2536_tests"
+path = "tests/indexed_access_concrete_missing_key_ts2536_tests.rs"
+
+[[test]]
 name = "enum_member_cache_tests"
 path = "tests/enum_member_cache_tests.rs"
 
