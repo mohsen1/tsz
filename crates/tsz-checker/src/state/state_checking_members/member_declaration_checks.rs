@@ -706,8 +706,26 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
 
-        let factory = self.ctx.types.factory();
+        // Two-pass insertion mirrors `push_type_parameters`: the first pass
+        // binds every name unconstrained so the second pass can resolve each
+        // declared constraint against its sibling type parameters. Without
+        // the second pass the early "missing names" scan observes a parameter
+        // `K extends keyof T[U]` as if it were unconstrained, which causes
+        // downstream mapped-type validity checks (`{ [P in K]: ... }`) to
+        // incorrectly fire TS2322/TS2536. `tsc` resolves constraints lazily;
+        // tsz uses scope, so the scope must reflect the declared constraints
+        // before validation walks the signature.
+        struct Entry {
+            name: String,
+            atom: tsz_common::interner::Atom,
+            is_const: bool,
+            constraint_node: Option<NodeIndex>,
+        }
+        let mut entries: Vec<Entry> = Vec::new();
         let mut updates = Vec::new();
+
+        // Pass 1: insert unconstrained provisional bindings so constraint
+        // resolution in pass 2 can see all sibling type parameters.
         for &param_idx in &list.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -727,14 +745,46 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .has_modifier(&param.modifiers, SyntaxKind::ConstKeyword);
-            let type_id = factory.type_param(TypeParamInfo {
+            let constraint_node = (param.constraint != NodeIndex::NONE).then_some(param.constraint);
+            let type_id = self.ctx.types.factory().type_param(TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
                 is_const,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-            updates.push((name, previous, false));
+            updates.push((name.clone(), previous, false));
+            entries.push(Entry {
+                name,
+                atom,
+                is_const,
+                constraint_node,
+            });
+        }
+
+        // Pass 2: refine each binding with its resolved constraint. Resolution
+        // runs against the now-populated scope so transitive references like
+        // `<K extends keyof T[TB]>` (where `TB` is a prior type parameter)
+        // bind to the constrained type, not the provisional placeholder.
+        // Resolution errors fall back to the unconstrained placeholder so
+        // TS2304 / cycle handling is preserved.
+        for entry in entries {
+            let Some(constraint_node_idx) = entry.constraint_node else {
+                continue;
+            };
+            let resolved = self.get_type_from_type_node(constraint_node_idx);
+            if resolved == TypeId::ERROR {
+                continue;
+            }
+            let constrained_type_id = self.ctx.types.factory().type_param(TypeParamInfo {
+                name: entry.atom,
+                constraint: Some(resolved),
+                default: None,
+                is_const: entry.is_const,
+            });
+            self.ctx
+                .type_parameter_scope
+                .insert(entry.name, constrained_type_id);
         }
 
         updates
