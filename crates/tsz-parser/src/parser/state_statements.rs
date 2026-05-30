@@ -153,8 +153,11 @@ impl ParserState {
                 code: diag.code,
             });
         }
-        // Sort diagnostics by position to maintain correct order after merging
-        self.parse_diagnostics.sort_by_key(|d| d.start);
+        // Sort diagnostics into tsc's canonical `compareDiagnostics` order after
+        // merging scanner- and parser-produced entries. Sorting by `start` alone
+        // left position ties resolved by production/merge order, which is not
+        // guaranteed to match tsc and is fragile under reordering.
+        self.parse_diagnostics.sort_by(|a, b| a.compare(b));
 
         // Create source file node
         let end_pos = self.token_end();

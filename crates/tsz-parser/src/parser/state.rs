@@ -100,6 +100,23 @@ pub struct ParseDiagnostic {
     pub code: u32,
 }
 
+impl ParseDiagnostic {
+    /// Canonical ordering for parse diagnostics, mirroring the TypeScript
+    /// compiler's `compareDiagnostics`. All parse diagnostics for one parse
+    /// belong to the same source file, so the file key is constant and the
+    /// order is fully determined by `(start, length, code, message)`. This is a
+    /// total order over the observable fields, so diagnostics that tie on
+    /// position still have a stable, reproducible order independent of the
+    /// scanner/parser merge order in which they were produced.
+    pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.start
+            .cmp(&other.start)
+            .then_with(|| self.length.cmp(&other.length))
+            .then_with(|| self.code.cmp(&other.code))
+            .then_with(|| self.message.cmp(&other.message))
+    }
+}
+
 pub struct IncrementalParseResult {
     pub statements: NodeList,
     pub end_pos: u32,
