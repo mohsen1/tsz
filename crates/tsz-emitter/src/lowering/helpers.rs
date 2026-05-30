@@ -973,6 +973,13 @@ impl<'a> LoweringPass<'a> {
                     }
                     return self.property_declaration_binding_name_ref(property.name);
                 }
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.arena.get_property_assignment(parent_node)?;
+                    if prop.initializer != current {
+                        return None;
+                    }
+                    return self.property_declaration_binding_name_ref(prop.name);
+                }
                 syntax_kind_ext::BINARY_EXPRESSION => {
                     let binary = self.arena.get_binary_expr(parent_node)?;
                     if binary.right != current
