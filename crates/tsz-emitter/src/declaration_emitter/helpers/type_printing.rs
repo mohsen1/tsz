@@ -59,6 +59,13 @@ impl<'a> DeclarationEmitter<'a> {
         symbol: &tsz_binder::Symbol,
     ) -> bool {
         symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+
             let mut current = decl_idx;
             for _ in 0..32 {
                 let Some(parent_idx) = self.arena.parent_of(current) else {

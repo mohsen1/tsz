@@ -1416,3 +1416,18 @@ fn module_level_type_alias_is_not_function_local() {
         "a module-level non-generic alias must not be treated as function-local"
     );
 }
+
+#[test]
+fn unresolved_function_body_type_reference_is_not_function_local_alias() {
+    // A missing global type reference inside a function body may still have a
+    // binder symbol, but it is not a type-alias declaration. The function-local
+    // detector must not treat unresolved references as local aliases or
+    // transpileDeclaration emits a spurious TS7056.
+    assert!(
+        !function_local_alias_detector_for(
+            "export const fn = (a: MissingGlobalType) => null! as MissingGlobalType;\n",
+            "MissingGlobalType",
+        ),
+        "unresolved type references inside a function are not local aliases"
+    );
+}
