@@ -5,6 +5,7 @@ mod emit_declaration;
 mod emit_es6;
 mod helpers;
 mod private_method_defs;
+mod static_block_self_alias;
 
 use super::super::core::PropertyNameEmit;
 use tsz_parser::parser::NodeIndex;
@@ -116,6 +117,14 @@ pub(in crate::emitter) fn class_has_self_references(
                 arena
                     .get(acc.body)
                     .map(|n| (n.pos as usize, n.end as usize))
+            }
+            // Static initializer blocks (`static { ... }`) can reference the class
+            // by name just like method/accessor/property bodies. tsc allocates the
+            // same `C_1` alias when a decorated class names itself inside a static
+            // block, so the whole block span participates in self-reference
+            // detection.
+            k if k == tsz_parser::parser::syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                Some((member_node.pos as usize, member_node.end as usize))
             }
             _ => continue,
         };

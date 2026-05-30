@@ -358,10 +358,7 @@ impl<'a> Printer<'a> {
             }
             self.write(binding_name);
             self.write(" = ");
-            if let Some(alias) = assignment_alias {
-                self.write(alias);
-                self.write(" = ");
-            }
+            self.write_outer_alias_prefix(node, assignment_alias);
             if let Some(temp) = default_export_set_function_name_temp.as_ref() {
                 self.write(temp);
                 self.write(" = ");
@@ -2087,6 +2084,7 @@ impl<'a> Printer<'a> {
             && class.members.nodes.iter().any(|&member_idx| {
                 self.legacy_member_decorator_needs_private_name_scope(member_idx)
             });
+        emitted_any_member |= self.emit_synthetic_static_self_alias_block(node, assignment_alias);
         if self.ctx.options.use_define_for_class_fields && target_supports_native_fields {
             // Find the constructor and collect its parameter properties
             for &member_idx in &class.members.nodes {
