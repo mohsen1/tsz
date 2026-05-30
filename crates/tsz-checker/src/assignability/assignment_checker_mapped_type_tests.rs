@@ -251,3 +251,63 @@ const bad: M = { a: 1 };
         "multi-property list must not bracket enum members, got: {diag:?}"
     );
 }
+
+// ── Intersection-with-indexed-access source vs. mapped-type target ───────────
+//
+// When source is `T[K] & { a: string }` and target is a structural type (mapped,
+// intersection, conditional, index-access, or string intrinsic), the checker must
+// not suppress TS2322 — the solver checks property membership directly.
+// Structural rule: `T[K] & { a: string } <: { [P in "a" | "b"]: string }` must
+// emit TS2322 because "b" is guaranteed absent from the source.
+
+/// Primary repro: indexed-access intersection against a two-key mapped type.
+/// tsc emits TS2322; tsz was incorrectly suppressing it.
+#[test]
+fn intersection_indexed_access_vs_mapped_type_emits_ts2322() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+function test<T extends { a: string }, K extends keyof T>(x: T[K] & { a: string }): void {
+    const _: { [P in "a" | "b"]: string } = x;
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "intersection with indexed-access source vs two-key mapped target must emit TS2322; got: {diagnostics:?}"
+    );
+}
+
+/// Anti-hardcoding: renamed type parameters (`U`/`I` instead of `T`/`K`).
+/// Confirms the fix is keyed on structural semantics, not parameter names.
+#[test]
+fn intersection_indexed_access_vs_mapped_type_renamed_params_emits_ts2322() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+function test<U extends { a: string }, I extends keyof U>(x: U[I] & { a: string }): void {
+    const _: { [Q in "a" | "b"]: string } = x;
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "renamed-param variant must also emit TS2322; got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a valid assignment must still not emit TS2322.
+/// Source `T[K] & { a: string }` trivially satisfies a single-key mapped type
+/// `{ [P in "a"]: string }` because "a" is present in the concrete member.
+#[test]
+fn intersection_indexed_access_valid_assignment_no_ts2322() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+function test<T extends { a: string }, K extends keyof T>(x: T[K] & { a: string }): void {
+    const _: { [P in "a"]: string } = x;
+}
+"#,
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "valid assignment to single-key mapped type must not emit TS2322; got: {diagnostics:?}"
+    );
+}
