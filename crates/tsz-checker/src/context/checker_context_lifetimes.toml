@@ -109,7 +109,7 @@ real_syntax_error_positions = { lifetime = "DiagnosticsOnly", capability = "Diag
 all_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 nullable_type_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
-emitted_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+diagnostic_indices = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic dedupe and auxiliary suppression indices; clear at file-session boundary and rebuild after speculation rollbacks" }
 no_overload_call_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
 callback_return_type_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 modules_with_ts2307_emitted = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }

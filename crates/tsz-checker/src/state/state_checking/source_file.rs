@@ -618,7 +618,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let key = self.ctx.diagnostic_dedup_key(&diag);
-            self.ctx.emitted_diagnostics.remove(&key);
+            self.ctx.diagnostic_indices.emitted.remove(&key);
             self.ctx
                 .error(diag.start, diag.length, diag.message_text, diag.code);
         }
