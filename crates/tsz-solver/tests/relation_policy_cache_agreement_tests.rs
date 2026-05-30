@@ -9,7 +9,8 @@ use crate::relations::relation_queries::{
 };
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
-    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, RelationFlags, TypeId, TypeParamInfo,
+    CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey,
+    RelationFlags, TypeId, TypeParamInfo,
 };
 
 #[test]
@@ -592,6 +593,107 @@ fn assignability_cache_strict_function_types_matches_uncached_function_variance(
     assert!(
         stats.assignability_misses >= 2,
         "strict and loose variance policies should miss in separate cache slots",
+    );
+}
+
+#[test]
+fn assignability_cache_callable_signatures_match_uncached_function_variance() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+
+    let source = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(dog)],
+            TypeId::VOID,
+        )],
+        ..CallableShape::default()
+    });
+    let target = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(animal)],
+            TypeId::VOID,
+        )],
+        ..CallableShape::default()
+    });
+
+    let strict_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let loose_policy = RelationPolicy::unflagged_compatibility();
+    let strict_key =
+        RelationCacheKey::for_assignability(source, target, strict_policy.cache_config());
+    let loose_key =
+        RelationCacheKey::for_assignability(source, target, loose_policy.cache_config());
+
+    assert_ne!(
+        strict_key, loose_key,
+        "callable strict and loose variance policies must occupy distinct assignability cache slots",
+    );
+
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let loose_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        loose_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !strict_uncached,
+        "strict callable parameter variance should reject `(dog) => void` where `(animal) => void` is required",
+    );
+    assert!(
+        loose_uncached,
+        "loose callable parameter variance should accept the bivariant call-signature comparison",
+    );
+
+    let strict_cached = db.is_assignable_to_with_policy(source, target, strict_policy);
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict callable variance must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict callable result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        None,
+        "loose callable lookup must not hit the strict callable slot",
+    );
+
+    let loose_cached = db.is_assignable_to_with_policy(source, target, loose_policy);
+    assert_eq!(
+        loose_cached, loose_uncached,
+        "cached loose callable variance must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        Some(loose_cached),
+        "loose callable result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict callable slot must remain intact after the loose callable lookup",
     );
 }
 
