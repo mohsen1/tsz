@@ -1989,6 +1989,11 @@ impl<'a> EnumES5Emitter<'a> {
             None => IRPrinter::with_arena(arena),
         };
         printer.set_indent_level(self.indent_level);
+        // Propagate the ES5/ES3 target so `ASTRef` arrows inside enum member
+        // initializers (e.g. `(() => ...)()`) downlevel to function expressions,
+        // matching `emit_enum_declaration`; otherwise the nested AST printer
+        // defaults to native ES2015 arrow emission.
+        printer.set_target_es5(self.transformer.target_es5);
         let result = printer.emit(&ir);
         result.to_string()
     }
