@@ -899,7 +899,12 @@ fn test_iife_closes_properly() {
 }
 
 // =============================================================================
-// Derived class synthetic constructor: super(...args) and ordering
+// Derived class synthetic constructor: zero-param ctor forwarding ...arguments
+//
+// tsc synthesizes `constructor() { super(...arguments); ... }` (zero-parameter,
+// implicit `arguments` forwarding) for a derived decorated class that needs to
+// run member initializers — NOT an explicit rest parameter. See conformance
+// witnesses esDecoratorsMetadata2(target=es2015|es2022).
 // =============================================================================
 
 #[test]
@@ -907,12 +912,16 @@ fn derived_class_with_instance_member_decorator_synthesizes_super_call() {
     let source = "@dec class Child extends Base { @dec method() {} }";
     let output = emit_decorator_with(source, true, true);
     assert!(
-        output.contains("constructor(...args)"),
-        "Expected synthetic constructor with rest parameter.\nOutput:\n{output}"
+        output.contains("constructor() {"),
+        "Expected zero-parameter synthetic constructor.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "Expected super(...args) forwarding call in synthetic constructor.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "Expected super(...arguments) forwarding call in synthetic constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)") && !output.contains("super(...args)"),
+        "Synthetic constructor must not introduce an explicit rest parameter.\nOutput:\n{output}"
     );
     assert!(
         output.contains("__runInitializers"),
@@ -925,28 +934,36 @@ fn derived_class_renamed_params_still_synthesizes_super_call() {
     let source = "@myDec class Beta extends Alpha { @myDec go() {} }";
     let output = emit_decorator_with(source, true, true);
     assert!(
-        output.contains("constructor(...args)"),
-        "Expected synthetic constructor regardless of class/method name.\nOutput:\n{output}"
+        output.contains("constructor() {"),
+        "Expected zero-parameter synthetic constructor regardless of class/method name.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "Expected super(...args) in synthetic constructor regardless of class name.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "Expected super(...arguments) in synthetic constructor regardless of class name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)") && !output.contains("super(...args)"),
+        "Synthetic constructor must not introduce an explicit rest parameter.\nOutput:\n{output}"
     );
 }
 
 #[test]
 fn derived_class_member_only_decorator_synthesizes_super_call() {
     // Member-only decorators (no class decorator) on a derived class also need
-    // a synthetic constructor with super(...args).
+    // a synthetic constructor that forwards `...arguments`.
     let source = "class Leaf extends Root { @dec handle() {} }";
     let output = emit_decorator_with(source, true, true);
     assert!(
-        output.contains("constructor(...args)"),
-        "Expected synthetic constructor for member-decorated derived class.\nOutput:\n{output}"
+        output.contains("constructor() {"),
+        "Expected zero-parameter synthetic constructor for member-decorated derived class.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "Expected super call in synthetic constructor for member-only decorated derived class.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "Expected super(...arguments) call in synthetic constructor for member-only decorated derived class.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)") && !output.contains("super(...args)"),
+        "Synthetic constructor must not introduce an explicit rest parameter.\nOutput:\n{output}"
     );
 }
 
