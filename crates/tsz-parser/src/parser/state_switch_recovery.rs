@@ -284,7 +284,32 @@ impl ParserState {
         self.jsx_missing_brace_semicolon_window_start = Some(start_pos);
 
         let started_with_binary_operator = !self.is_expression_start() && self.is_binary_operator();
-        let expression = if started_with_binary_operator {
+        // A statement that begins with a purely-binary operator (e.g. `|| a`,
+        // `!= b`, `&& c`; not `+`/`-`/`*`/`/`, which are unary/JSX/regex at
+        // statement start and stay on their existing paths) is recovered by tsc
+        // as `<missing> <op> <rhs>`: its
+        // `parsePrimaryExpression` synthesizes a missing identifier (via
+        // `createMissingNode`, reporting TS1109 at the operator position without
+        // consuming it) and then `parseBinaryExpressionRest` consumes the
+        // operator and parses the right operand. The operator is therefore kept
+        // in the tree and emitted (` || a`), rather than being skipped. We mirror
+        // that by seeding the binary-expression chain with a missing identifier.
+        // Comma at statement start is left to the normal `parse_expression`
+        // sequence handling. `?` is the conditional-expression separator rather
+        // than a pure binary operator, so it stays on the legacy skip/recovery
+        // path too.
+        let started_with_binary_operator_skip_path = started_with_binary_operator
+            && matches!(
+                self.token(),
+                SyntaxKind::CommaToken | SyntaxKind::QuestionToken
+            );
+        let expression = if started_with_binary_operator && !started_with_binary_operator_skip_path
+        {
+            self.error_expression_expected();
+            let start_pos = self.token_pos();
+            let missing_left = self.create_missing_expression();
+            self.parse_binary_expression_chain_seeded(2, start_pos, Some(missing_left))
+        } else if started_with_binary_operator {
             self.error_expression_expected();
             self.next_token();
             let right = if self.is_expression_start() {
@@ -501,7 +526,7 @@ impl ParserState {
             let has_numeric_follow_error = self.current_token_has_numeric_literal_follow_error();
             if jsx_head_needs_semicolon && has_numeric_follow_error {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-            } else if started_with_binary_operator {
+            } else if started_with_binary_operator_skip_path {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
                 if self.is_assignment_operator(self.token()) {
                     self.next_token();

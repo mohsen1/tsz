@@ -275,7 +275,28 @@ impl ParserState {
         min_precedence: u8,
         start_pos: u32,
     ) -> NodeIndex {
-        let mut left = self.parse_unary_expression();
+        self.parse_binary_expression_chain_seeded(min_precedence, start_pos, None)
+    }
+
+    /// Binary-expression precedence climbing with an optional pre-parsed left
+    /// operand. When `seed` is `Some`, that node is used as the initial left
+    /// operand instead of calling `parse_unary_expression`. This mirrors tsc's
+    /// `parseBinaryExpressionRest(precedence, leftOperand)`, which is reached
+    /// during error recovery when `parsePrimaryExpression` synthesizes a missing
+    /// identifier (via `createMissingNode`) for a statement that begins with a
+    /// binary operator. The operator is then consumed by this loop and the
+    /// missing node becomes the binary expression's left operand, so the
+    /// emitted tree is `<missing> <op> <rhs>` rather than dropping the operator.
+    pub(crate) fn parse_binary_expression_chain_seeded(
+        &mut self,
+        min_precedence: u8,
+        start_pos: u32,
+        seed: Option<NodeIndex>,
+    ) -> NodeIndex {
+        let mut left = match seed {
+            Some(node) => node,
+            None => self.parse_unary_expression(),
+        };
 
         loop {
             let op = if self.is_token(SyntaxKind::GreaterThanToken) {
