@@ -139,6 +139,22 @@ function validateRunnerEnvironmentConsistency(environments) {
   return warnings;
 }
 
+const FATAL_RUNNER_ENVIRONMENT_MISMATCH_FIELDS = new Set([
+  "platform",
+  "arch",
+  "release",
+  "cpu_count",
+  "github_runner_os",
+  "github_runner_arch",
+  "cloud_build_machine_type",
+]);
+
+function isFatalRunnerEnvironmentWarning(warning) {
+  return warning.mismatched_fields.some((field) =>
+    FATAL_RUNNER_ENVIRONMENT_MISMATCH_FIELDS.has(field),
+  );
+}
+
 function isMissingSignatureValue(value) {
   return value === undefined || value === null || value === "";
 }
@@ -254,7 +270,7 @@ function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
     }
   }
 
-  for (const warning of runnerEnvironmentWarnings) {
+  for (const warning of runnerEnvironmentWarnings.filter(isFatalRunnerEnvironmentWarning)) {
     failures.push(`${warning.file}: runner_environment mismatch (${warning.mismatched_fields.join(", ")})`);
   }
 
