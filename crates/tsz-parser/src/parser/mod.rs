@@ -122,6 +122,9 @@ mod parser_improvement_primitive_type_recovery_tests;
 #[path = "../../tests/parser_improvement_regex_recovery_tests.rs"]
 mod parser_improvement_regex_recovery_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_improvement_satisfies_generic_chain_tests.rs"]
+mod parser_improvement_satisfies_generic_chain_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_improvement_template_recovery_tests.rs"]
 mod parser_improvement_template_recovery_tests;
 #[cfg(test)]

@@ -427,6 +427,8 @@ impl ParserState {
         }
 
         let right = self.parse_binary_expression_rhs(left, op, precedence);
+        // TODO: should be token_full_start() to match tsc's finishNode default; token_end()
+        // overshoots by the lookahead token. Fix requires CI conformance verification.
         let end_pos = self.token_end();
         let final_right = if right.is_none() { left } else { right };
 
@@ -461,6 +463,8 @@ impl ParserState {
             self.error_expression_expected();
             when_false = self.create_missing_expression();
         }
+        // TODO: should be token_full_start() to match tsc's finishNode default; token_end()
+        // overshoots by the lookahead token. Fix requires CI conformance verification.
         let end_pos = self.token_end();
 
         self.arena.add_conditional_expr(
@@ -566,7 +570,9 @@ impl ParserState {
         } else {
             self.parse_non_predicate_type()
         };
-        let end_pos = self.token_end();
+        // token_full_start() matches tsc's finishNode default (scanner.getTokenFullStart()).
+        // token_end() overshoots: it returns the end of the *next* token, not the type.
+        let end_pos = self.token_full_start();
 
         let result = self.arena.add_type_assertion(
             if is_satisfies {
