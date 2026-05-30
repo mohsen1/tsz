@@ -31,6 +31,22 @@ impl<'a> Printer<'a> {
         if self.in_async_captured_super() {
             return false;
         }
+        // When a `super`-property assignment (`super.x = <default>`) sits in a
+        // destructuring assignment-*target* position (e.g. an array/object
+        // pattern element with a default: `[super.x = 0] = [0]`), it is not a
+        // value-producing assignment expression. tsc emits the setter-descriptor
+        // member-expression as the target with the right-hand side as the
+        // destructuring default (`({ set value(_a) { Reflect.set(...) } }).value
+        // = <default>`), not the comma/IIFE value form. Decline the value
+        // lowering here so the caller falls through to the native `left = right`
+        // emit, where `left` is the `super.x` access that itself renders as the
+        // setter-descriptor while the assignment-target flag is set. Emitting the
+        // value/IIFE form in this position produces invalid (non-runnable) JS
+        // because an IIFE call is not a legal destructuring assignment target.
+        if self.scoped_static_super_assignment_target && operator == SyntaxKind::EqualsToken as u16
+        {
+            return false;
+        }
         let Some(member) = self.scoped_static_super_member(left) else {
             return false;
         };
