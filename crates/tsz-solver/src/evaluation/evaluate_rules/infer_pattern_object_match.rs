@@ -37,18 +37,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .find(|prop| prop.name == pattern_prop.name);
             let Some(source_prop) = source_prop else {
                 if pattern_prop.optional {
-                    if self.type_contains_infer(pattern_prop.type_id) {
-                        let mut visited = FxHashSet::default();
-                        if !self.match_infer_pattern(
-                            TypeId::UNDEFINED,
-                            pattern_prop.type_id,
-                            bindings,
-                            &mut visited,
-                            checker,
-                        ) {
-                            return false;
-                        }
-                    }
+                    self.fill_absent_optional_infer_defaults(pattern_prop.type_id, bindings);
                     continue;
                 }
                 return false;
@@ -126,10 +115,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if !pattern_prop.optional {
                         return false;
                     }
-                    if !self.type_contains_infer(pattern_prop.type_id) {
-                        continue;
-                    }
-                    TypeId::UNDEFINED
+                    // Absent optional property: default each infer variable to its declared
+                    // constraint (or `undefined`), matching tsc's `inferFromProperties`.
+                    // A constrained `infer R extends C` gets C directly so the true branch
+                    // is taken without a spurious `undefined` failing the constraint check.
+                    // An unconstrained `infer R` gets `undefined` — the value of an absent
+                    // optional property — so union sources produce `<type> | undefined`.
+                    self.fill_absent_optional_infer_defaults(pattern_prop.type_id, &mut merged);
+                    continue;
                 }
             };
             let mut local = base.clone();
@@ -222,17 +215,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .find(|prop| prop.name == pattern_prop.name);
                     let Some(source_prop) = source_prop else {
                         if pattern_prop.optional {
-                            if self.type_contains_infer(pattern_prop.type_id)
-                                && !self.match_infer_pattern(
-                                    TypeId::UNDEFINED,
-                                    pattern_prop.type_id,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                )
-                            {
-                                return false;
-                            }
+                            self.fill_absent_optional_infer_defaults(
+                                pattern_prop.type_id,
+                                bindings,
+                            );
                             continue;
                         }
                         return false;
@@ -291,17 +277,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     let Some(source_type) = merged_type else {
                         if pattern_prop.optional {
-                            if self.type_contains_infer(pattern_prop.type_id)
-                                && !self.match_infer_pattern(
-                                    TypeId::UNDEFINED,
-                                    pattern_prop.type_id,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                )
-                            {
-                                return false;
-                            }
+                            self.fill_absent_optional_infer_defaults(
+                                pattern_prop.type_id,
+                                bindings,
+                            );
                             continue;
                         }
                         return false;
@@ -359,17 +338,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.implicit_sequence_property_type(source, pattern_prop.name)
                     else {
                         if pattern_prop.optional {
-                            if self.type_contains_infer(pattern_prop.type_id)
-                                && !self.match_infer_pattern(
-                                    TypeId::UNDEFINED,
-                                    pattern_prop.type_id,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                )
-                            {
-                                return false;
-                            }
+                            self.fill_absent_optional_infer_defaults(
+                                pattern_prop.type_id,
+                                bindings,
+                            );
                             continue;
                         }
                         return false;
