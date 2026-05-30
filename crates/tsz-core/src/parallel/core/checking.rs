@@ -363,6 +363,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 /// preserve CLI diagnostics, cache invalidation, and file-session reuse policy.
 /// Feature and fidelity fixes for CLI checking should usually start in that
 /// scheduler before changing this helper.
+///
+/// The body is intentionally thin: [`ParallelCheckPlan::build`] computes the
+/// shared scheduling inputs once, [`ParallelCheckPlan::run_file_checks`] and
+/// [`ParallelCheckPlan::run_lib_checks`] perform the per-file/per-lib work, and
+/// [`ParallelCheckPlan::aggregate`] folds the results into the final
+/// `CheckResult`.
 pub fn check_files_parallel(
     program: &MergedProgram,
     checker_options: &CheckerOptions,
@@ -371,154 +377,272 @@ pub fn check_files_parallel(
     // Ensure Rayon global pool has adequate stack size for deep type-checking recursion.
     ensure_rayon_global_pool();
 
-    let file_names: Vec<String> = program
-        .files
-        .iter()
-        .map(|file| file.file_name.clone())
-        .collect();
-    let (resolved_module_paths, resolved_modules) =
-        crate::checker::module_resolution::build_module_resolution_maps(&file_names);
-    let resolved_module_paths = Arc::new(resolved_module_paths);
+    let plan = ParallelCheckPlan::build(program, checker_options, lib_files);
+    let mut file_results = plan.run_file_checks();
+    plan.run_lib_checks(&mut file_results);
+    plan.aggregate(file_results)
+}
 
-    let should_clone_libs_in_parallel = program.files.len() > 1;
-    let checker_lib_files = clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
+/// Stable key for matching a lib diagnostic against the baseline lib run.
+///
+/// Lib files are checked twice (once standalone for the baseline, once with
+/// user augmentations applied); diagnostics that appear in both runs are
+/// pre-existing lib noise and are filtered out. The fingerprint
+/// `(file_name, start, code, message_text)` identifies "the same diagnostic"
+/// across the two runs.
+fn lib_diagnostic_fingerprint(file_name: &str, diag: &Diagnostic) -> (String, u32, u32, String) {
+    (
+        file_name.to_owned(),
+        diag.start,
+        diag.code,
+        diag.message_text.clone(),
+    )
+}
 
-    // Create fresh checker lib contexts from cloned lib files (contains both arena and binder).
-    // Wrapped in Arc so that per-file checkers and child delegations share
-    // the same Vec with O(1) clone cost (single atomic refcount increment).
-    let lib_contexts: Arc<Vec<LibContext>> = Arc::new(
-        checker_lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect(),
-    );
+/// Shared, read-only scheduling inputs for one parallel file check.
+///
+/// `ParallelCheckPlan` captures everything the per-file and per-lib workers
+/// need — resolved module maps, shared binders/arenas, lib contexts, the shared
+/// query cache, and the affected-lib interface sets — computed once from the
+/// `MergedProgram` and `CheckerOptions`. Holding these as named fields keeps
+/// [`check_files_parallel`] a thin orchestrator and makes the
+/// scheduling/diagnostics boundary explicit: `build` produces the plan, the
+/// `check_one_*` workers consume it, and [`ParallelCheckPlan::aggregate`] folds
+/// the per-file results into the final [`CheckResult`].
+struct ParallelCheckPlan<'a> {
+    program: &'a MergedProgram,
+    checker_options: &'a CheckerOptions,
+    resolved_module_paths: Arc<FxHashMap<(usize, String), usize>>,
+    resolved_modules: Arc<FxHashSet<String>>,
+    checker_lib_files: Vec<Arc<LibFile>>,
+    lib_contexts: Arc<Vec<LibContext>>,
+    all_binders: Arc<Vec<Arc<BinderState>>>,
+    all_arenas: Arc<Vec<Arc<NodeArena>>>,
+    global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>>,
+    shared_declared_modules: Option<Arc<crate::checker::context::GlobalDeclaredModules>>,
+    shared_query_cache: Option<tsz_solver::construction::SharedQueryCache>,
+    affected_lib_interfaces: FxHashSet<String>,
+    affected_lib_extension_interfaces: FxHashSet<String>,
+}
 
-    // PERF: Pre-compute merged augmentation data ONCE instead of per-file.
-    // This reduces augmentation merging from O(N_files^2) to O(N_files).
-    let shared_binder_data = SharedBinderData::from_program(&program.files);
-
-    let shared_binders: Vec<Arc<BinderState>> = program
-        .files
-        .iter()
-        .enumerate()
-        .map(|(file_idx, file)| {
-            Arc::new(create_binder_from_bound_file_with_shared(
-                file,
-                program,
-                file_idx,
-                &shared_binder_data,
-            ))
-        })
-        .collect();
-    let all_binders = Arc::new(shared_binders.clone());
-    let all_arenas = Arc::new(
-        program
+impl<'a> ParallelCheckPlan<'a> {
+    /// Compute every shared input the parallel workers need, exactly once.
+    fn build(
+        program: &'a MergedProgram,
+        checker_options: &'a CheckerOptions,
+        lib_files: &[Arc<LibFile>],
+    ) -> Self {
+        let file_names: Vec<String> = program
             .files
             .iter()
-            .map(|file| Arc::clone(&file.arena))
-            .collect::<Vec<_>>(),
-    );
-    // PERF: Build arena-pointer -> file-index reverse lookup map first (O(F)),
-    // then map each symbol to its file index in O(1) per symbol.
-    // Total: O(S + F) instead of the previous O(S * F) nested iteration.
-    let arena_to_file_idx: FxHashMap<usize, usize> = all_arenas
-        .iter()
-        .enumerate()
-        .map(|(idx, arena)| (Arc::as_ptr(arena) as usize, idx))
-        .collect();
-    let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
-        .symbol_arenas
-        .iter()
-        .filter_map(|(sym_id, arena)| {
-            arena_to_file_idx
-                .get(&(Arc::as_ptr(arena) as usize))
-                .map(|&file_idx| (*sym_id, file_idx))
-        })
-        .collect();
+            .map(|file| file.file_name.clone())
+            .collect();
+        let (resolved_module_paths, resolved_modules) =
+            crate::checker::module_resolution::build_module_resolution_maps(&file_names);
+        let resolved_module_paths = Arc::new(resolved_module_paths);
+        let resolved_modules = Arc::new(resolved_modules);
 
-    // Pre-compute the symbol->file index as a shared read-only map.
-    // Each checker gets an Arc clone (O(1)) instead of O(N) per-checker insertion.
-    let global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>> = Arc::new(
-        symbol_file_targets
+        let should_clone_libs_in_parallel = program.files.len() > 1;
+        let checker_lib_files =
+            clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
+
+        // Create fresh checker lib contexts from cloned lib files (contains both arena and binder).
+        // Wrapped in Arc so that per-file checkers and child delegations share
+        // the same Vec with O(1) clone cost (single atomic refcount increment).
+        let lib_contexts: Arc<Vec<LibContext>> = Arc::new(
+            checker_lib_files
+                .iter()
+                .map(|lib| LibContext {
+                    arena: Arc::clone(&lib.arena),
+                    binder: Arc::clone(&lib.binder),
+                })
+                .collect(),
+        );
+
+        // PERF: Pre-compute merged augmentation data ONCE instead of per-file.
+        // This reduces augmentation merging from O(N_files^2) to O(N_files).
+        let shared_binder_data = SharedBinderData::from_program(&program.files);
+
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(create_binder_from_bound_file_with_shared(
+                        file,
+                        program,
+                        file_idx,
+                        &shared_binder_data,
+                    ))
+                })
+                .collect(),
+        );
+        let all_arenas = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect::<Vec<_>>(),
+        );
+        // PERF: Build arena-pointer -> file-index reverse lookup map first (O(F)),
+        // then map each symbol to its file index in O(1) per symbol.
+        // Total: O(S + F) instead of the previous O(S * F) nested iteration.
+        let arena_to_file_idx: FxHashMap<usize, usize> = all_arenas
             .iter()
-            .copied()
-            .collect::<FxHashMap<_, _>>(),
-    );
+            .enumerate()
+            .map(|(idx, arena)| (Arc::as_ptr(arena) as usize, idx))
+            .collect();
+        let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
+            .symbol_arenas
+            .iter()
+            .filter_map(|(sym_id, arena)| {
+                arena_to_file_idx
+                    .get(&(Arc::as_ptr(arena) as usize))
+                    .map(|&file_idx| (*sym_id, file_idx))
+            })
+            .collect();
 
-    // Pre-compute skeleton-derived declared modules ONCE and share via Arc.
-    // Previously this was computed per-file inside the closure, rebuilding the
-    // same FxHashSet/Vec on every file (O(N_files * N_modules) total work).
-    let shared_declared_modules: Option<Arc<crate::checker::context::GlobalDeclaredModules>> =
-        program.skeleton_index.as_ref().map(|skel| {
-            let (exact, patterns) = skel.build_declared_module_sets();
-            Arc::new(crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns))
-        });
+        // Pre-compute the symbol->file index as a shared read-only map.
+        // Each checker gets an Arc clone (O(1)) instead of O(N) per-checker insertion.
+        let global_symbol_file_index: Arc<FxHashMap<tsz_binder::SymbolId, usize>> = Arc::new(
+            symbol_file_targets
+                .iter()
+                .copied()
+                .collect::<FxHashMap<_, _>>(),
+        );
 
-    // Initialize per-file delegation locks for parallel correctness.
-    program
-        .definition_store
-        .init_file_locks(program.files.len());
+        // Pre-compute skeleton-derived declared modules ONCE and share via Arc.
+        // Previously this was computed per-file inside the closure, rebuilding the
+        // same FxHashSet/Vec on every file (O(N_files * N_modules) total work).
+        let shared_declared_modules: Option<Arc<crate::checker::context::GlobalDeclaredModules>> =
+            program.skeleton_index.as_ref().map(|skel| {
+                let (exact, patterns) = skel.build_declared_module_sets();
+                Arc::new(crate::checker::context::GlobalDeclaredModules::from_skeleton(
+                    exact, patterns,
+                ))
+            });
 
-    // Create a shared cross-file query cache for multi-file projects.
-    // In projects like ts-toolbelt (242 files), the same type evaluations and
-    // subtype checks are performed across many files. The shared cache uses
-    // DashMap for thread-safe concurrent access and eliminates redundant
-    // computation across parallel file checkers.
-    let shared_query_cache = if program.files.len() > 1 {
-        Some(tsz_solver::construction::SharedQueryCache::new())
-    } else {
-        None
-    };
+        // Initialize per-file delegation locks for parallel correctness.
+        program
+            .definition_store
+            .init_file_locks(program.files.len());
 
-    // Closure that checks a single file and returns its result.
-    // Extracted so both sequential and parallel paths use identical logic.
-    let check_one_file = |file_idx: usize, file: &BoundFile| -> FileCheckResult {
-        let binder = Arc::clone(&shared_binders[file_idx]);
-
-        // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
-        // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
-        // For multi-file projects, the shared cache provides L2 cross-file caching.
-        let query_cache = if let Some(ref shared) = shared_query_cache {
-            tsz_solver::construction::QueryCache::new_with_shared(&program.type_interner, shared)
+        // Create a shared cross-file query cache for multi-file projects.
+        // In projects like ts-toolbelt (242 files), the same type evaluations and
+        // subtype checks are performed across many files. The shared cache uses
+        // DashMap for thread-safe concurrent access and eliminates redundant
+        // computation across parallel file checkers.
+        let shared_query_cache = if program.files.len() > 1 {
+            Some(tsz_solver::construction::SharedQueryCache::new())
         } else {
-            tsz_solver::construction::QueryCache::new(&program.type_interner)
+            None
         };
+
+        let affected_lib_interfaces = affected_lib_interface_names(program, &checker_lib_files);
+        let affected_lib_extension_interfaces = if affected_lib_interfaces.is_empty() {
+            FxHashSet::default()
+        } else {
+            affected_lib_extension_interface_names(
+                program,
+                &checker_lib_files,
+                &affected_lib_interfaces,
+            )
+        };
+
+        Self {
+            program,
+            checker_options,
+            resolved_module_paths,
+            resolved_modules,
+            checker_lib_files,
+            lib_contexts,
+            all_binders,
+            all_arenas,
+            global_symbol_file_index,
+            shared_declared_modules,
+            shared_query_cache,
+            affected_lib_interfaces,
+            affected_lib_extension_interfaces,
+        }
+    }
+
+    /// Build a per-worker `QueryCache`, attaching the shared cross-file cache
+    /// (L2) when this is a multi-file project.
+    ///
+    /// Each thread gets its own `RefCell`/`Cell`-backed cache (no atomic
+    /// overhead) for memoized `evaluate_type` / `is_subtype_of` calls.
+    fn make_query_cache(&self) -> tsz_solver::construction::QueryCache<'_> {
+        if let Some(ref shared) = self.shared_query_cache {
+            tsz_solver::construction::QueryCache::new_with_shared(&self.program.type_interner, shared)
+        } else {
+            tsz_solver::construction::QueryCache::new(&self.program.type_interner)
+        }
+    }
+
+    /// Build a `FileCheckResult` for a lib file at `lib_idx` with the given
+    /// diagnostics. Lib results are indexed after the user files.
+    fn lib_file_result(
+        &self,
+        lib_idx: usize,
+        lib_file: &Arc<LibFile>,
+        diagnostics: Vec<Diagnostic>,
+    ) -> FileCheckResult {
+        FileCheckResult {
+            file_idx: self.program.files.len() + lib_idx,
+            file_name: lib_file.file_name.clone(),
+            function_results: Vec::new(),
+            diagnostics,
+        }
+    }
+
+    /// Sort by position then deduplicate by `(start, code)` for deterministic
+    /// output regardless of thread scheduling.
+    fn sort_and_dedup(diagnostics: &mut Vec<Diagnostic>) {
+        diagnostics.sort_by(|a, b| a.compare(b));
+        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+    }
+
+    /// Check a single user file, returning its sorted, deduplicated diagnostics.
+    fn check_one_file(&self, file_idx: usize, file: &BoundFile) -> FileCheckResult {
+        let binder = Arc::clone(&self.all_binders[file_idx]);
+
+        let query_cache = self.make_query_cache();
 
         let mut checker = CheckerState::with_options_and_shared_def_store(
             &file.arena,
             binder.as_ref(),
             &query_cache,
             file.file_name.clone(),
-            checker_options,
-            std::sync::Arc::clone(&program.definition_store),
+            self.checker_options,
+            std::sync::Arc::clone(&self.program.definition_store),
         );
-        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_arenas(Arc::clone(&self.all_arenas));
 
         // Use pre-computed skeleton-derived declared modules (shared via Arc::clone).
-        if let Some(ref modules) = shared_declared_modules {
+        if let Some(ref modules) = self.shared_declared_modules {
             checker
                 .ctx
                 .set_declared_modules_from_skeleton(Arc::clone(modules));
         }
 
-        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_all_binders(Arc::clone(&self.all_binders));
         checker.ctx.set_current_file_idx(file_idx);
         checker
             .ctx
-            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
-        checker.ctx.set_resolved_modules(resolved_modules.clone());
+            .set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
         checker
             .ctx
-            .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
+            .set_resolved_modules(Arc::clone(&self.resolved_modules));
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::clone(&self.global_symbol_file_index));
 
-        if !lib_contexts.is_empty() {
+        if !self.lib_contexts.is_empty() {
             checker
                 .ctx
-                .set_lib_contexts_shared(Arc::clone(&lib_contexts));
-            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+                .set_lib_contexts_shared(Arc::clone(&self.lib_contexts));
+            checker.ctx.set_actual_lib_file_count(self.lib_contexts.len());
         }
 
         checker.check_source_file(file.source_file);
@@ -539,39 +663,26 @@ pub fn check_files_parallel(
             function_results: Vec::new(),
             diagnostics,
         }
-    };
+    }
 
-    let affected_lib_interfaces = affected_lib_interface_names(program, &checker_lib_files);
-    let affected_lib_extension_interfaces = if affected_lib_interfaces.is_empty() {
-        FxHashSet::default()
-    } else {
-        affected_lib_extension_interface_names(
-            program,
-            &checker_lib_files,
-            &affected_lib_interfaces,
-        )
-    };
-
-    let check_one_lib = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
-        if !lib_file_contains_affected_interface(lib_file.as_ref(), &affected_lib_interfaces) {
-            return FileCheckResult {
-                file_idx: program.files.len() + lib_idx,
-                file_name: lib_file.file_name.clone(),
-                function_results: Vec::new(),
-                diagnostics: Vec::new(),
-            };
+    /// Check a single lib file against the merged program's affected interfaces.
+    fn check_one_lib(&self, lib_idx: usize, lib_file: &Arc<LibFile>) -> FileCheckResult {
+        if !lib_file_contains_affected_interface(lib_file.as_ref(), &self.affected_lib_interfaces) {
+            return self.lib_file_result(lib_idx, lib_file, Vec::new());
         }
 
-        let query_cache = if let Some(ref shared) = shared_query_cache {
-            tsz_solver::construction::QueryCache::new_with_shared(&program.type_interner, shared)
-        } else {
-            tsz_solver::construction::QueryCache::new(&program.type_interner)
-        };
+        let query_cache = self.make_query_cache();
 
-        let lib_bound_file =
-            build_lib_bound_file_for_interface_checks(program, lib_file, &affected_lib_interfaces);
-        let mut binder =
-            create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
+        let lib_bound_file = build_lib_bound_file_for_interface_checks(
+            self.program,
+            lib_file,
+            &self.affected_lib_interfaces,
+        );
+        let mut binder = create_binder_from_bound_file(
+            &lib_bound_file,
+            self.program,
+            self.program.files.len(),
+        );
         // PERF: `build_lib_bound_file_for_interface_checks` always seeds
         // `lib_bound_file.semantic_defs` as empty, so the previous
         // clone-then-overlay collapsed to a deep clone of `program.semantic_defs`
@@ -580,9 +691,9 @@ pub fn check_files_parallel(
         // potential `Arc::make_mut` only when the per-lib map actually
         // contributes entries (currently never).
         if lib_bound_file.semantic_defs.is_empty() {
-            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+            binder.semantic_defs = Arc::clone(&self.program.semantic_defs);
         } else {
-            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            let mut composed_semantic_defs = (*self.program.semantic_defs).clone();
             for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
                 composed_semantic_defs.insert(*sym_id, entry.clone());
             }
@@ -594,182 +705,176 @@ pub fn check_files_parallel(
             &binder,
             &query_cache,
             lib_bound_file.file_name.clone(),
-            checker_options,
+            self.checker_options,
         );
-        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-        if let Some(ref modules) = shared_declared_modules {
+        checker.ctx.set_all_arenas(Arc::clone(&self.all_arenas));
+        if let Some(ref modules) = self.shared_declared_modules {
             checker
                 .ctx
                 .set_declared_modules_from_skeleton(Arc::clone(modules));
         }
-        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_all_binders(Arc::clone(&self.all_binders));
         checker
             .ctx
-            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
-        checker.ctx.set_resolved_modules(resolved_modules.clone());
+            .set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
         checker
             .ctx
-            .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
+            .set_resolved_modules(Arc::clone(&self.resolved_modules));
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::clone(&self.global_symbol_file_index));
 
-        let other_lib_contexts: Vec<LibContext> = lib_contexts
+        let other_lib_contexts: Vec<LibContext> = self
+            .lib_contexts
             .iter()
             .enumerate()
             .filter(|(idx, _)| *idx != lib_idx)
             .map(|(_, ctx)| ctx.clone())
             .collect();
         checker.ctx.set_lib_contexts(other_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.ctx.set_actual_lib_file_count(self.lib_contexts.len());
         checker.prime_boxed_types();
 
         checker.check_source_file_interfaces_only_filtered_post_merge(
             lib_bound_file.source_file,
-            &affected_lib_interfaces,
-            &affected_lib_extension_interfaces,
+            &self.affected_lib_interfaces,
+            &self.affected_lib_extension_interfaces,
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-        diagnostics.sort_by(|a, b| a.compare(b));
-        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+        Self::sort_and_dedup(&mut diagnostics);
 
-        FileCheckResult {
-            file_idx: program.files.len() + lib_idx,
-            file_name: lib_file.file_name.clone(),
-            function_results: Vec::new(),
-            diagnostics,
-        }
-    };
+        self.lib_file_result(lib_idx, lib_file, diagnostics)
+    }
 
-    let check_one_lib_baseline = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
-        if !lib_file_contains_affected_interface(lib_file.as_ref(), &affected_lib_interfaces) {
-            return FileCheckResult {
-                file_idx: program.files.len() + lib_idx,
-                file_name: lib_file.file_name.clone(),
-                function_results: Vec::new(),
-                diagnostics: Vec::new(),
-            };
+    /// Check a lib file in isolation to capture its pre-existing diagnostics.
+    ///
+    /// The resulting diagnostics form the baseline that [`check_one_lib`] output
+    /// is filtered against, so only diagnostics introduced by user augmentations
+    /// survive.
+    fn check_one_lib_baseline(&self, lib_idx: usize, lib_file: &Arc<LibFile>) -> FileCheckResult {
+        if !lib_file_contains_affected_interface(lib_file.as_ref(), &self.affected_lib_interfaces) {
+            return self.lib_file_result(lib_idx, lib_file, Vec::new());
         }
 
-        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&self.program.type_interner);
 
         let mut checker = CheckerState::with_options(
             &lib_file.arena,
             lib_file.binder.as_ref(),
             &query_cache,
             lib_file.file_name.clone(),
-            checker_options,
+            self.checker_options,
         );
-        let other_lib_contexts: Vec<LibContext> = lib_contexts
+        let other_lib_contexts: Vec<LibContext> = self
+            .lib_contexts
             .iter()
             .enumerate()
             .filter(|(idx, _)| *idx != lib_idx)
             .map(|(_, ctx)| ctx.clone())
             .collect();
         checker.ctx.set_lib_contexts(other_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.ctx.set_actual_lib_file_count(self.lib_contexts.len());
         checker.prime_boxed_types();
         checker.check_source_file_interfaces_only_filtered_post_merge(
             lib_file.root_index,
-            &affected_lib_interfaces,
-            &affected_lib_extension_interfaces,
+            &self.affected_lib_interfaces,
+            &self.affected_lib_extension_interfaces,
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-        diagnostics.sort_by(|a, b| a.compare(b));
-        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+        Self::sort_and_dedup(&mut diagnostics);
 
-        FileCheckResult {
-            file_idx: program.files.len() + lib_idx,
-            file_name: lib_file.file_name.clone(),
-            function_results: Vec::new(),
-            diagnostics,
-        }
-    };
-
-    let fingerprint = |file_name: &str, diag: &Diagnostic| {
-        (
-            file_name.to_owned(),
-            diag.start,
-            diag.code,
-            diag.message_text.clone(),
-        )
-    };
-    // Single-file optimization: skip Rayon overhead when there's only one file.
-    // For multi-file projects, use parallel iteration via Rayon's work-stealing
-    // scheduler. `par_iter().enumerate()` preserves input ordering (file_idx) so
-    // results are deterministic regardless of which thread completes first.
-    let mut file_results: Vec<FileCheckResult> = if program.files.len() <= 1 {
-        program
-            .files
-            .iter()
-            .enumerate()
-            .map(|(file_idx, file)| check_one_file(file_idx, file))
-            .collect()
-    } else {
-        maybe_parallel_iter!(program.files)
-            .enumerate()
-            .map(|(file_idx, file)| check_one_file(file_idx, file))
-            .collect()
-    };
-
-    if affected_lib_interfaces.is_empty() {
-        file_results.extend(
-            checker_lib_files
-                .iter()
-                .enumerate()
-                .map(|(lib_idx, lib_file)| FileCheckResult {
-                    file_idx: program.files.len() + lib_idx,
-                    file_name: lib_file.file_name.clone(),
-                    function_results: Vec::new(),
-                    diagnostics: Vec::new(),
-                }),
-        );
-    } else {
-        let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = checker_lib_files
-            .iter()
-            .enumerate()
-            .flat_map(|(lib_idx, lib_file)| {
-                let file_result = check_one_lib_baseline(lib_idx, lib_file);
-                let file_name = file_result.file_name.clone();
-                file_result
-                    .diagnostics
-                    .into_iter()
-                    .map(move |diag| fingerprint(&file_name, &diag))
-            })
-            .collect();
-
-        file_results.extend(
-            checker_lib_files
-                .iter()
-                .enumerate()
-                .map(|(lib_idx, lib_file)| {
-                    let mut file_result = check_one_lib(lib_idx, lib_file);
-                    let file_name = file_result.file_name.clone();
-                    file_result.diagnostics.retain(|diag| {
-                        !baseline_lib_diagnostics.contains(&fingerprint(&file_name, diag))
-                    });
-                    file_result
-                }),
-        );
+        self.lib_file_result(lib_idx, lib_file, diagnostics)
     }
 
-    add_reexported_module_augmentation_enum_conflict_diagnostics(
-        program,
-        resolved_module_paths.as_ref(),
-        &mut file_results,
-    );
-    suppress_parallel_import_shadowing_namespace_type_diagnostics(
-        program,
-        resolved_module_paths.as_ref(),
-        &mut file_results,
-    );
-    add_parallel_global_augmentation_member_conflict_diagnostics(program, &mut file_results);
+    /// Run the per-user-file checks, sequentially for a single file and in
+    /// parallel (preserving `file_idx` order) otherwise.
+    fn run_file_checks(&self) -> Vec<FileCheckResult> {
+        // Single-file optimization: skip Rayon overhead when there's only one file.
+        // For multi-file projects, use parallel iteration via Rayon's work-stealing
+        // scheduler. `par_iter().enumerate()` preserves input ordering (file_idx) so
+        // results are deterministic regardless of which thread completes first.
+        if self.program.files.len() <= 1 {
+            self.program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| self.check_one_file(file_idx, file))
+                .collect()
+        } else {
+            maybe_parallel_iter!(self.program.files)
+                .enumerate()
+                .map(|(file_idx, file)| self.check_one_file(file_idx, file))
+                .collect()
+        }
+    }
 
-    let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
+    /// Append the per-lib-file check results to `file_results`.
+    ///
+    /// When no user code touches a lib interface, the lib results are empty
+    /// placeholders. Otherwise each affected lib is checked twice — once for the
+    /// baseline and once with augmentations — and only the augmentation-induced
+    /// diagnostics are retained.
+    fn run_lib_checks(&self, file_results: &mut Vec<FileCheckResult>) {
+        if self.affected_lib_interfaces.is_empty() {
+            file_results.extend(
+                self.checker_lib_files
+                    .iter()
+                    .enumerate()
+                    .map(|(lib_idx, lib_file)| self.lib_file_result(lib_idx, lib_file, Vec::new())),
+            );
+        } else {
+            let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = self
+                .checker_lib_files
+                .iter()
+                .enumerate()
+                .flat_map(|(lib_idx, lib_file)| {
+                    let file_result = self.check_one_lib_baseline(lib_idx, lib_file);
+                    let file_name = file_result.file_name.clone();
+                    file_result
+                        .diagnostics
+                        .into_iter()
+                        .map(move |diag| lib_diagnostic_fingerprint(&file_name, &diag))
+                })
+                .collect();
 
-    CheckResult {
-        file_results,
-        function_count: 0,
-        diagnostic_count,
+            file_results.extend(self.checker_lib_files.iter().enumerate().map(
+                |(lib_idx, lib_file)| {
+                    let mut file_result = self.check_one_lib(lib_idx, lib_file);
+                    let file_name = file_result.file_name.clone();
+                    file_result.diagnostics.retain(|diag| {
+                        !baseline_lib_diagnostics
+                            .contains(&lib_diagnostic_fingerprint(&file_name, diag))
+                    });
+                    file_result
+                },
+            ));
+        }
+    }
+
+    /// Apply cross-file augmentation diagnostics and fold per-file results into
+    /// the final [`CheckResult`].
+    fn aggregate(&self, mut file_results: Vec<FileCheckResult>) -> CheckResult {
+        add_reexported_module_augmentation_enum_conflict_diagnostics(
+            self.program,
+            self.resolved_module_paths.as_ref(),
+            &mut file_results,
+        );
+        suppress_parallel_import_shadowing_namespace_type_diagnostics(
+            self.program,
+            self.resolved_module_paths.as_ref(),
+            &mut file_results,
+        );
+        add_parallel_global_augmentation_member_conflict_diagnostics(self.program, &mut file_results);
+
+        let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
+
+        CheckResult {
+            file_results,
+            function_count: 0,
+            diagnostic_count,
+        }
     }
 }
 
