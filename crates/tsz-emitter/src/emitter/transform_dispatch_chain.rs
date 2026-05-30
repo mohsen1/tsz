@@ -33,6 +33,23 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
+                // Hand off any deferred CommonJS `export class` assignment so the
+                // ES5 emitter places `exports.X = X;` immediately after the class
+                // IIFE statement and BEFORE its trailing computed-property
+                // side-effect statements (matching tsc and the ES2015+ path).
+                // Consuming it here prevents the chained CommonJSExport fallback
+                // from emitting the assignment after those side effects.
+                if self
+                    .pending_commonjs_class_export_name
+                    .as_ref()
+                    .is_some_and(|(class_idx, _)| *class_idx == *class_node)
+                {
+                    let (_, export_name) = self
+                        .pending_commonjs_class_export_name
+                        .take()
+                        .expect("pending class export should be present");
+                    es5_emitter.set_pending_commonjs_class_export_name(Some(export_name));
+                }
                 let es5_output = self.emit_es5_class_output(
                     &mut es5_emitter,
                     *class_node,

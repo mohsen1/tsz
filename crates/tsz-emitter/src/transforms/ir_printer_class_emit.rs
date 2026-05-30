@@ -63,6 +63,20 @@ impl<'a> IRPrinter<'a> {
         self.emit_es5_class_expression(name, base_class.as_deref(), super_param.as_deref(), body);
         self.write(";");
 
+        // A top-level `export class` lowered to this IIFE carries a deferred
+        // CommonJS export assignment. tsc emits `exports.X = X;` immediately
+        // after the class statement and BEFORE any trailing computed-property
+        // side-effect statements, matching the ES2015+ ordering in `emit_es6.rs`.
+        if let Some(export_name) = self.take_pending_commonjs_class_export_name() {
+            self.write_line();
+            self.write_indent();
+            self.write("exports.");
+            self.write(&export_name);
+            self.write(" = ");
+            self.write(&export_name);
+            self.write(";");
+        }
+
         for init in computed_prop_temp_inits {
             self.write_line();
             self.write_indent();
