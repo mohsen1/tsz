@@ -146,30 +146,31 @@ fn template_literal_type_text_reescapes_backtick_and_dollar_brace() {
 }
 
 // ---------------------------------------------------------------------------
-// Fix C: a source-parenthesized array element keeps its parens verbatim in
-// the copied annotation (`(T)[]` stays `(T)[]`, not `T[]`). The fix keys on
-// the source `PARENTHESIZED_TYPE` array element, never on the element's name.
+// Fix C: a source-parenthesized array element has its parens stripped in the
+// .d.ts when the element type needs no structural grouping. Only composite
+// types (union, conditional, function, etc.) re-add parens structurally.
+// Reference types like `(Foo)[]` normalize to `Foo[]`, matching tsc 6.0.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn parenthesized_array_element_keeps_parens() {
-    // `(Foo)[]` is a redundant-but-user-written grouping that tsc preserves
-    // verbatim in the .d.ts.
+fn parenthesized_array_element_reference_strips_parens() {
+    // `(Foo)[]` — source parens around a simple reference type are stripped;
+    // tsc 6.0 emits `Foo[]` in the .d.ts (no structural reason for grouping).
     let output = emit_dts("export type T = (Foo)[];");
     assert!(
-        output.contains("(Foo)[]"),
-        "source-parenthesized array element must keep parens: {output}"
+        output.contains("T = Foo[]") && !output.contains("(Foo)[]"),
+        "source-parenthesized reference element must strip parens: {output}"
     );
 }
 
 #[test]
-fn parenthesized_array_element_keeps_parens_renamed() {
-    // Same rule, different element spelling: proves the fix is not keyed on a
+fn parenthesized_array_element_reference_strips_parens_renamed() {
+    // Same rule, different element spelling: proves the rule is not keyed on a
     // particular type-reference name.
     let output = emit_dts("export type T = (Widget9)[];");
     assert!(
-        output.contains("(Widget9)[]"),
-        "source-parenthesized array element must keep parens (renamed): {output}"
+        output.contains("T = Widget9[]") && !output.contains("(Widget9)[]"),
+        "source-parenthesized reference element must strip parens (renamed): {output}"
     );
 }
 
@@ -341,12 +342,21 @@ fn function_return_parenthesized_infer_with_constraint_keeps_parens_renamed() {
 }
 
 #[test]
-fn annotation_redundant_parens_around_keyword_are_stripped() {
-    // #11687's win: `var x: (string)` → `string`.
+fn annotation_parens_around_keyword_are_preserved() {
+    // tsc 6.0 preserves source-level parens around keyword types in annotation
+    // position: `var x: (string)` stays `var x: (string)` in the .d.ts.
+    // Only function/constructor types and bare infer types (no constraint) have
+    // their annotation-position parens stripped.
     let output = emit_dts("export declare var x: (string);");
     assert!(
-        output.contains("var x: string;") && !output.contains("(string)"),
-        "redundant parens around a keyword type must be stripped: {output}"
+        output.contains("var x: (string);"),
+        "keyword type annotation parens must be preserved: {output}"
+    );
+    // Same rule for another keyword: prove it is not spelling-dependent.
+    let output2 = emit_dts("export declare var n: (number);");
+    assert!(
+        output2.contains("var n: (number);"),
+        "keyword type annotation parens must be preserved (number): {output2}"
     );
 }
 
