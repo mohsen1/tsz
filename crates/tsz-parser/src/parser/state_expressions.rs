@@ -427,9 +427,11 @@ impl ParserState {
         }
 
         let right = self.parse_binary_expression_rhs(left, op, precedence);
-        // TODO: should be token_full_start() to match tsc's finishNode default; token_end()
-        // overshoots by the lookahead token. Fix requires CI conformance verification.
-        let end_pos = self.token_end();
+        // Use token_full_start() (start of next lookahead token's trivia) rather than
+        // token_end() (end of that token). After parse_binary_expression_rhs returns, the
+        // scanner sits on the first token not part of this expression. token_full_start()
+        // matches tsc's finishNode(scanner.getTokenFullStart()) convention.
+        let end_pos = self.token_full_start();
         let final_right = if right.is_none() { left } else { right };
 
         self.arena.add_binary_expr(
@@ -463,9 +465,12 @@ impl ParserState {
             self.error_expression_expected();
             when_false = self.create_missing_expression();
         }
-        // TODO: should be token_full_start() to match tsc's finishNode default; token_end()
-        // overshoots by the lookahead token. Fix requires CI conformance verification.
-        let end_pos = self.token_end();
+        // Use token_full_start() rather than token_end(); same convention as
+        // parse_binary_expression_remainder and state_types.rs union/intersection
+        // types: after the last branch is parsed, the scanner sits on the first
+        // token not part of this expression, so token_full_start() gives the
+        // correct node end, matching tsc's finishNode(scanner.getTokenFullStart()).
+        let end_pos = self.token_full_start();
 
         self.arena.add_conditional_expr(
             syntax_kind_ext::CONDITIONAL_EXPRESSION,

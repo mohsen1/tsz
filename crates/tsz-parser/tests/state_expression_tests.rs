@@ -775,3 +775,134 @@ fn malformed_octal_literal_does_not_leak_ts1005_alongside_ts1178() {
         "TS1005 must NOT fire at the same position as TS1178. Got codes: {codes:?}"
     );
 }
+
+// ── binary / conditional span correctness ──────────────────────────────────
+//
+// After parse_binary_expression_rhs / parse_assignment_expression return, the
+// scanner sits on the first token NOT part of the expression (e.g. `;`).
+// token_full_start() gives the start of that lookahead token's trivia, which
+// is the correct node end matching tsc's finishNode(scanner.getTokenFullStart())
+// convention. token_end() overshoots by including the full lookahead token.
+
+fn binary_expr_end(source: &str) -> u32 {
+    let (parser, _) = parse_source(source);
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .find(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+        .expect("expected a BinaryExpression node")
+        .end
+}
+
+fn conditional_expr_end(source: &str) -> u32 {
+    let (parser, _) = parse_source(source);
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .find(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+        .expect("expected a ConditionalExpression node")
+        .end
+}
+
+#[test]
+fn binary_expression_end_does_not_overshoot_semicolon() {
+    // "a + b;" — binary expr is "a + b", semicolon is separate.
+    // end must point at `;` (offset 5), not past it (offset 6).
+    let source = "a + b;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = binary_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "BinaryExpression.end ({end}) must equal the start of ';' ({semi_pos}), not past it"
+    );
+    assert_eq!(
+        &source[..end as usize],
+        "a + b",
+        "source slice must be the expression text without the trailing semicolon"
+    );
+}
+
+#[test]
+fn binary_expression_end_does_not_overshoot_with_multiple_operators() {
+    // "a + b * c;" — nested binary, outermost end must not include ';'.
+    let source = "a + b * c;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = binary_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "BinaryExpression.end ({end}) must not include the trailing ';' at {semi_pos}"
+    );
+}
+
+#[test]
+fn binary_expression_end_does_not_overshoot_comparison_operator() {
+    // "x === y;" — strict-equality binary expression.
+    let source = "x === y;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = binary_expr_end(source);
+    assert_eq!(end, semi_pos, "BinaryExpression end must stop before ';'");
+}
+
+#[test]
+fn binary_expression_end_does_not_overshoot_logical_operator() {
+    // "a && b;" — logical-AND binary expression.
+    let source = "a && b;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = binary_expr_end(source);
+    assert_eq!(end, semi_pos, "BinaryExpression end must stop before ';'");
+}
+
+#[test]
+fn binary_expression_end_does_not_bleed_into_next_statement() {
+    // Two statements — the binary expr of the first must not reach into the second.
+    let source = "a + b;\nlet x = 1;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = binary_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "BinaryExpression.end must not bleed into the next statement (end={end}, semi={semi_pos})"
+    );
+}
+
+#[test]
+fn conditional_expression_end_does_not_overshoot_semicolon() {
+    // "a ? b : c;" — conditional expr is "a ? b : c", semicolon is separate.
+    let source = "a ? b : c;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = conditional_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "ConditionalExpression.end ({end}) must equal the start of ';' ({semi_pos}), not past it"
+    );
+    assert_eq!(
+        &source[..end as usize],
+        "a ? b : c",
+        "source slice must be the expression text without the trailing semicolon"
+    );
+}
+
+#[test]
+fn conditional_expression_end_does_not_overshoot_with_nested_binary() {
+    // "x > 0 ? y + 1 : z;" — conditional with binary branches.
+    let source = "x > 0 ? y + 1 : z;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = conditional_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "ConditionalExpression.end must not include ';' (end={end}, semi={semi_pos})"
+    );
+}
+
+#[test]
+fn conditional_expression_end_does_not_bleed_into_next_statement() {
+    // Two statements — conditional expr of the first must not reach into the second.
+    let source = "a ? b : c;\nlet x = 1;";
+    let semi_pos = source.find(';').unwrap() as u32;
+    let end = conditional_expr_end(source);
+    assert_eq!(
+        end, semi_pos,
+        "ConditionalExpression.end must not bleed into the next statement (end={end}, semi={semi_pos})"
+    );
+}
