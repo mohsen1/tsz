@@ -1048,10 +1048,17 @@ impl<'a> CheckerState<'a> {
                                     // The later base's index signature conflicts with
                                     // what was inherited from earlier bases.
                                     // tsc reports TS2430 against the later base only.
+                                    let index_kind = if key_type == TypeId::NUMBER {
+                                        "number"
+                                    } else {
+                                        "string"
+                                    };
+                                    let prev_type_str = self.format_type(prev_val);
+                                    let value_type_str = self.format_type(value_type);
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
-                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  '{index_kind}' index signatures are incompatible.\n    Type '{prev_type_str}' is not assignable to type '{value_type_str}'."
                                         ),
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
@@ -1944,10 +1951,12 @@ impl<'a> CheckerState<'a> {
                     (derived_string_index_type, base_string_index_value)
                     && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
+                    let derived_type_str = self.format_type(derived_val);
+                    let base_type_str = self.format_type(base_val);
                     self.error_at_node(
                         iface_data.name,
                         &format!(
-                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  'string' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
                         ),
                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                     );
@@ -1957,10 +1966,12 @@ impl<'a> CheckerState<'a> {
                     (derived_number_index_type, base_number_index_value)
                     && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
+                    let derived_type_str = self.format_type(derived_val);
+                    let base_type_str = self.format_type(base_val);
                     self.error_at_node(
                         iface_data.name,
                         &format!(
-                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  'number' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
                         ),
                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                     );
