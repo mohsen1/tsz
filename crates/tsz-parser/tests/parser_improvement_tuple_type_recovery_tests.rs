@@ -132,20 +132,31 @@ type T = [name?: string];
     );
 }
 
-/// Parse `source` on a worker thread and panic if it does not finish within
-/// `secs`. Used to assert that a parser fix breaks an otherwise-infinite
-/// recovery loop. Returns the collected diagnostics so individual tests can
-/// also assert the diagnostic shape (parity with tsc).
-fn assert_finishes_within<F: FnOnce() + Send + 'static>(secs: u64, work: F) {
-    let handle = std::thread::spawn(work);
-    let start = std::time::Instant::now();
-    while !handle.is_finished() {
-        if start.elapsed().as_secs() > secs {
-            panic!("parser hung — work did not finish within {secs}s");
+/// Run every entry of `HANGING_TUPLE_SHAPES` on a single watchdog worker
+/// thread and panic if any shape fails to finish. Wakes immediately on the
+/// happy path via `recv_timeout` and only blocks the full timeout on a real
+/// hang. Returns nothing — diagnostic assertions run inside the worker.
+fn run_hanging_tuple_matrix<F: Fn(&str) + Send + 'static>(timeout_per_shape_secs: u64, body: F) {
+    use std::sync::mpsc;
+    // sync_channel(1) intentionally serializes worker and watchdog one shape
+    // at a time so a hang is attributed to the specific shape that hung
+    // rather than to the matrix as a whole.
+    let (tx, rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        for source in HANGING_TUPLE_SHAPES {
+            body(source);
+            tx.send(()).expect("watchdog channel closed");
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+    });
+    for expected in HANGING_TUPLE_SHAPES {
+        if rx
+            .recv_timeout(std::time::Duration::from_secs(timeout_per_shape_secs))
+            .is_err()
+        {
+            panic!("parser hung on {expected:?} (exceeded {timeout_per_shape_secs}s)");
+        }
     }
-    handle.join().expect("worker panicked");
+    worker.join().expect("watchdog worker panicked");
 }
 
 /// The class of inputs covered by the tuple-recovery progress guard.
@@ -154,9 +165,10 @@ fn assert_finishes_within<F: FnOnce() + Send + 'static>(secs: u64, work: F) {
 /// returns `true` for, but that neither `parse_type` nor `parse_optional(',')`
 /// consume — `||`, `&&`, `==`, etc. Before the fix, the recovery branch in
 /// `parse_tuple_type` would `continue` without advancing the cursor and the
-/// parser would loop forever. The test covers multiple operators and multiple
-/// tuple shapes so a fix that only handles one spelling (or only the bare
-/// tuple form) will fail the matrix.
+/// parser would loop forever. The matrix covers multiple operators and
+/// multiple tuple shapes (bare, comma-separated, named, rest, readonly,
+/// nested in a type argument, and inside a mapped-type value position) so a
+/// fix that only handles one spelling — or only the bare tuple form — fails.
 const HANGING_TUPLE_SHAPES: &[&str] = &[
     "type T = [a||b];",
     "type T = [a&&b];",
@@ -173,20 +185,13 @@ const HANGING_TUPLE_SHAPES: &[&str] = &[
 
 #[test]
 fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
-    for source in HANGING_TUPLE_SHAPES {
-        let input = (*source).to_string();
-        let label = (*source).to_string();
-        assert_finishes_within(5, move || {
-            let _ = crate::parser::test_fixture::parse_source(&input);
-        });
-        // Sanity-parse on the main thread to inspect diagnostics.
+    run_hanging_tuple_matrix(5, |source| {
         let (parser, _root) = crate::parser::test_fixture::parse_source(source);
-        let diagnostics = parser.get_diagnostics();
         assert!(
-            !diagnostics.is_empty(),
-            "expected at least one parser diagnostic for {label:?}, got none",
+            !parser.get_diagnostics().is_empty(),
+            "expected at least one parser diagnostic for {source:?}, got none",
         );
-    }
+    });
 }
 
 #[test]
@@ -212,24 +217,6 @@ fn tuple_with_double_bar_token_reports_comma_expected_without_cascade() {
         diagnostics.iter().all(|d| d.message != "']' expected."
             && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "expected no `]`/TS1128 cascade, got {diagnostics:?}",
-    );
-}
-
-#[test]
-fn tuple_with_double_bar_token_in_mapped_type_does_not_hang() {
-    // The original issue title mentions "mapped recursion": confirm that
-    // the deadlock also went away inside a mapped-type value position, which
-    // is one of the most common shapes the bug-family bench produces.
-    let source = "type T<U> = { [K in keyof U]: [U[K], a||b] };";
-    assert_finishes_within(5, || {
-        let _ = crate::parser::test_fixture::parse_source(
-            "type T<U> = { [K in keyof U]: [U[K], a||b] };",
-        );
-    });
-    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
-    assert!(
-        !parser.get_diagnostics().is_empty(),
-        "expected at least one parser diagnostic for mapped tuple with binary op",
     );
 }
 

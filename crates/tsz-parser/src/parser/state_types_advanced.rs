@@ -372,14 +372,9 @@ impl ParserState {
                         "',' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                     );
-                    // Progress guard: when `parse_tuple_element_type` recovers
-                    // with a synthetic node without advancing (e.g. for tokens
-                    // like `||`, `&&`, `==`, `=` that `can_token_start_type`
-                    // returns true for but neither `parse_type` nor
-                    // `parse_optional(CommaToken)` consume), force one token
-                    // forward to break the deadlock. Mirrors the per-iteration
-                    // progress guards already used by `parse_type_literal_rest`
-                    // and `parse_mapped_type_with_members`.
+                    // Progress guard: see parse_type_literal_rest. Forces
+                    // forward motion when parse_tuple_element_type recovers
+                    // without consuming a token (e.g. on `||`/`&&`/`==`).
                     if self.token_pos() == pos_before {
                         self.next_token();
                     }
