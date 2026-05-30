@@ -168,7 +168,9 @@ fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
         let (tx, rx) = mpsc::sync_channel::<&'static str>(0);
         scope.spawn(move || {
             for source in HANGING_TUPLE_SHAPES {
-                tx.send(source).expect("watchdog channel closed");
+                // `thread::scope` keeps the receiver alive for the entire
+                // scope, so this send cannot fail.
+                let _ = tx.send(source);
                 let (parser, _root) = crate::parser::test_fixture::parse_source(source);
                 assert!(
                     !parser.get_diagnostics().is_empty(),
@@ -176,15 +178,14 @@ fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
                 );
             }
         });
-        let mut in_flight: Option<&'static str> = None;
+        let mut in_flight: &'static str = "<no shape announced>";
         loop {
             match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-                Ok(next) => in_flight = Some(next),
+                Ok(next) => in_flight = next,
                 Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) => panic!(
-                    "parser hung on {:?} (exceeded 5s)",
-                    in_flight.expect("worker did not announce any shape"),
-                ),
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!("parser hung on {in_flight:?} (exceeded 5s)")
+                }
             }
         }
     });

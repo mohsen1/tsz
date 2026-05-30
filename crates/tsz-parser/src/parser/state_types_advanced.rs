@@ -379,10 +379,6 @@ impl ParserState {
                     if self.token_pos() == pos_before {
                         self.next_token();
                     }
-                    debug_assert!(
-                        self.token_pos() > pos_before,
-                        "tuple-element recovery failed to advance the scanner",
-                    );
                     continue;
                 }
                 break;
