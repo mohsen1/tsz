@@ -129,6 +129,9 @@ mod class_namespace_static_relation_routing_arch_tests;
 #[path = "../tests/class_property_typed_const_initializer_tests.rs"]
 mod class_property_typed_const_initializer_tests;
 #[cfg(test)]
+#[path = "../tests/constructor_overload_excess_property_tests.rs"]
+mod constructor_overload_excess_property_tests;
+#[cfg(test)]
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
