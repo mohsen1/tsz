@@ -232,9 +232,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 if decorated_field_idx_set.contains(member_idx) {
                     continue;
                 }
-                let Some(assignment) =
-                    self.plain_static_field_assignment(member_node, _class_alias, indent)
-                else {
+                let Some(assignment) = self.plain_static_field_assignment(
+                    *member_idx,
+                    member_node,
+                    _class_alias,
+                    indent,
+                ) else {
                     continue;
                 };
                 plain_static_field_idx_set.insert(*member_idx);

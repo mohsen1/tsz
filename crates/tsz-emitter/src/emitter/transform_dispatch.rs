@@ -1543,10 +1543,11 @@ impl<'a> Printer<'a> {
                         && self.node_is_this_keyword(prop.initializer)
                         && !is_auto_accessor;
                     if needs_super_alias || needs_this_alias {
-                        self.seed_tc39_decorator_static_member(
+                        self.seed_tc39_decorator_static_member_and_hoisted(
                             emitter,
                             member_idx,
                             prop,
+                            needs_super_alias,
                             class_this_var.as_deref(),
                             class_super_var.as_deref(),
                         );
@@ -1719,7 +1720,7 @@ impl<'a> Printer<'a> {
         emitter.set_static_block_text(member_idx, output);
     }
 
-    fn seed_tc39_decorator_static_member(
+    pub(in crate::emitter) fn seed_tc39_decorator_static_member(
         &mut self,
         emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
         member_idx: NodeIndex,

@@ -1614,3 +1614,201 @@ class Dog extends Animal {
         "Synthesized ctor (es2015) must not introduce an explicit rest parameter.\nOutput:\n{output}"
     );
 }
+
+/// Assert no hoisted `_classThis.<name> = super...` assignment leaked a bare
+/// `super` token outside the class body (a `'super' keyword unexpected here`
+/// `SyntaxError` at runtime). The hoist statements are the lines that begin
+/// with the class-this alias receiver.
+fn assert_no_hoisted_super_leak(output: &str) {
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        assert!(
+            !(trimmed.starts_with("_classThis.") && trimmed.contains("= super")),
+            "Hoisted static-field assignment must rewrite `super`, not emit a bare \
+             `super` outside the class body.\nOffending line: {trimmed}\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn tc39_es2015_decorated_static_super_read_hoists_reflect_get() {
+    // Read of `super.<name>` in a hoisted static field initializer (pre-ES2022,
+    // decorated class) must lower to `Reflect.get(_classSuper, "<name>",
+    // _classThis)`, never a bare `super.<name>` in `_classThis.<name> = ...`.
+    let source = "\
+declare var dec: any;
+declare class Base { static p: number; }
+@dec
+class C extends Base {
+    static a = super.p;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("_classThis.a = Reflect.get(_classSuper, \"p\", _classThis);"),
+        "Hoisted static-field read of `super.p` should be `Reflect.get(_classSuper, \"p\", _classThis)`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2015_decorated_static_super_write_hoists_reflect_set_iife() {
+    // Assignment to `super.<name>` in a hoisted static field initializer must
+    // lower to an IIFE wrapping `Reflect.set(...)`, preserving a valid LHS.
+    let source = "\
+declare var dec: any;
+declare class Base { static q: number; }
+@dec
+class D extends Base {
+    static b = super.q = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"q\""),
+        "Hoisted static-field write to `super.q` should lower through `Reflect.set(_classSuper, \"q\", ...)`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= super.q ="),
+        "Hoisted static-field write must not keep a bare `super.q =` LHS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2015_decorated_static_super_prefix_update_hoists_reflect() {
+    // Prefix update `++super.<name>` in a hoisted static field initializer must
+    // route through `Reflect.get`/`Reflect.set`, not a bare `super`.
+    let source = "\
+declare var dec: any;
+declare class Base { static r: number; }
+@dec
+class E extends Base {
+    static c = ++super.r;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"r\"")
+            && output.contains("Reflect.get(_classSuper, \"r\""),
+        "Hoisted static-field prefix update of `super.r` should use `Reflect.get`/`Reflect.set`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2015_decorated_static_super_index_read_hoists_reflect_get() {
+    // The rule is keyed on the `super` element-access shape, not on the
+    // identifier spelling: `super["<name>"]` must lower the same way.
+    let source = "\
+declare var dec: any;
+declare class Base { static s: number; }
+@dec
+class F extends Base {
+    static d = super[\"s\"];
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("_classThis.d = Reflect.get(_classSuper, \"s\", _classThis);"),
+        "Hoisted static-field read of `super[\"s\"]` should be `Reflect.get(_classSuper, \"s\", _classThis)`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2020_decorated_static_super_read_hoists_reflect_get() {
+    // The rule holds for every pre-ES2022 target that hoists static fields,
+    // not only ES2015.
+    let source = "\
+declare var dec: any;
+declare class Base { static t: number; }
+@dec
+class G extends Base {
+    static e = super.t;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2020,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("_classThis.e = Reflect.get(_classSuper, \"t\", _classThis);"),
+        "ES2020 hoisted static-field read of `super.t` should also rewrite to `Reflect.get`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2015_decorated_static_plain_initializer_unchanged() {
+    // Negative/fallback case: a static field initializer with no `super` must
+    // keep its plain hoisted assignment (no Reflect rewrite, no IIFE).
+    let source = "\
+declare var dec: any;
+@dec
+class H {
+    static f = 41 + 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert_no_hoisted_super_leak(&output);
+    assert!(
+        output.contains("_classThis.f = 41 + 1;"),
+        "A super-free static-field initializer must keep its plain hoisted value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Reflect.get(_classSuper") && !output.contains("Reflect.set(_classSuper"),
+        "A super-free static-field initializer must not introduce scoped-super Reflect calls.\nOutput:\n{output}"
+    );
+}
