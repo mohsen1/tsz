@@ -612,10 +612,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// TypeScript only checks `this` parameter compatibility when the target
     /// declares an explicit `this` parameter. If the target has no `this` parameter,
     /// any source `this` type is acceptable.
+    /// Check if this-parameters are compatible between source and target.
+    ///
+    /// When `is_method` is true, this-parameters are bivariant regardless of
+    /// `strict_function_types`, matching tsc's behavior where method this-parameters
+    /// follow method parameter bivariance.
     pub(crate) fn are_this_parameters_compatible(
         &mut self,
         source_type: Option<TypeId>,
         target_type: Option<TypeId>,
+        is_method: bool,
     ) -> bool {
         // If target has no explicit `this` parameter, always compatible.
         // TypeScript only checks `this` when the target declares one.
@@ -625,8 +631,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_type = source_type.unwrap_or(TypeId::UNKNOWN);
         let target_type = target_type.unwrap_or(TypeId::UNKNOWN);
 
-        // this parameters follow the same variance rules as regular parameters
-        if self.strict_function_types {
+        // this parameters follow the same variance rules as regular parameters.
+        // For methods, this-parameters are bivariant (matching method parameter bivariance).
+        if is_method {
+            // Bivariant for methods
+            self.check_subtype(source_type, target_type).is_true()
+                || self.check_subtype(target_type, source_type).is_true()
+        } else if self.strict_function_types {
             // Contravariant in strict mode
             self.check_subtype(target_type, source_type).is_true()
         } else {
