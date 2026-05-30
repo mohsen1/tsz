@@ -479,6 +479,7 @@ impl<'a> Printer<'a> {
         self.write("\"use strict\";");
         self.write_line();
         self.emit_system_helpers_if_needed(source);
+        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
         let mut dep_vars =
             self.collect_system_dependency_vars(&system_dependencies, source, &system_plan);
         for (dep, actions) in &system_plan.actions {
@@ -518,7 +519,6 @@ impl<'a> Printer<'a> {
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
         self.ctx.options.module = prev_module;
         self.ctx.original_module_kind = prev_original;
-        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
         self.write_line();

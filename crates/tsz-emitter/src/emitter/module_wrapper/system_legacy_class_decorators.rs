@@ -24,6 +24,7 @@ impl<'a> Printer<'a> {
         self.write("\", ");
         self.write(&assignment);
         self.write(");");
+        self.write_line();
     }
 
     pub(in crate::emitter::module_wrapper) fn capture_system_legacy_class_decorator_assignment(
