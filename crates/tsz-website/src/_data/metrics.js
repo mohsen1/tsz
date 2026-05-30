@@ -79,9 +79,9 @@ function setSuiteCandidate(metrics, key, candidate) {
 }
 
 function preferBestCandidate(ciCandidate, readmeCandidate) {
-  if (ciCandidate && readmeCandidate && readmeCandidate.total > ciCandidate.total) {
-    return readmeCandidate;
-  }
+  // CI metrics are the freshness source for the website. README values are a
+  // fallback for local builds without downloaded metrics; larger historical
+  // suite totals should not pin the live site to stale compatibility data.
   return ciCandidate || readmeCandidate;
 }
 
