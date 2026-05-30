@@ -55,7 +55,7 @@ irm https://tsz.dev/install.ps1 | iex
 
 ## TypeScript compatibility
 
-`tsz` runs TypeScript's own test suite for compatablity across type-checking, code emition and LSP. 
+`tsz` runs TypeScript's own test suite for compatibility across type-checking, code emission, and LSP.
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
@@ -67,7 +67,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 99.9% (12,889/12,896 tests)
+Progress: [████████████████████] 100.0% (12,581/12,585 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -77,8 +77,8 @@ Progress: [████████████████████] 99.9% (
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [████████████████████] 99.2% (13,426 / 13,530 tests)
-Declaration: [████████████████████] 98.4% (1,643 / 1,669 tests)
+JavaScript:  [████████████████████] 99.5% (13,459 / 13,530 tests)
+Declaration: [████████████████████] 98.5% (1,644 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
