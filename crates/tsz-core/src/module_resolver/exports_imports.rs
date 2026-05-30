@@ -338,13 +338,23 @@ impl ModuleResolver {
         exports: &PackageExports,
         subpath: &str,
         conditions: &[String],
+        is_types_condition: bool,
     ) -> Option<(PathBuf, bool)> {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
                     let resolved = package_relative_target_path(package_dir, s)?;
-                    if let Some(r) = self.try_export_target(&resolved) {
-                        return Some((r, false));
+                    if is_types_condition {
+                        if let Some(r) = self
+                            .try_types_entry(&resolved)
+                            .or_else(|| self.try_export_target(&resolved))
+                        {
+                            return Some((r, false));
+                        }
+                    } else {
+                        if let Some(r) = self.try_export_target(&resolved) {
+                            return Some((r, false));
+                        }
                     }
                 }
                 None
@@ -357,7 +367,12 @@ impl ModuleResolver {
                 {
                     let key_uses_ts = key_ends_with_ts_extension(key);
                     return self
-                        .resolve_export_value_with_conditions(package_dir, value, conditions)
+                        .resolve_export_value_with_conditions(
+                            package_dir,
+                            value,
+                            conditions,
+                            is_types_condition,
+                        )
                         .map(|p| (p, key_uses_ts));
                 }
 
@@ -380,6 +395,7 @@ impl ModuleResolver {
                         package_dir,
                         &substituted_value,
                         conditions,
+                        is_types_condition,
                     ) {
                         return Some((resolved, key_uses_ts));
                     }
@@ -391,6 +407,7 @@ impl ModuleResolver {
                 // Iterate condition map entries in JSON key order (not our conditions order)
                 for (key, value) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
+                        let is_types = is_types_condition || key == "types";
                         // null means explicitly blocked - stop here
                         if matches!(value, PackageExports::Null) {
                             return None;
@@ -400,6 +417,7 @@ impl ModuleResolver {
                             value,
                             subpath,
                             conditions,
+                            is_types,
                         ) {
                             return Some(resolved);
                         }
@@ -415,6 +433,7 @@ impl ModuleResolver {
                         element,
                         subpath,
                         conditions,
+                        is_types_condition,
                     ) {
                         return Some(resolved);
                     }
@@ -434,16 +453,23 @@ impl ModuleResolver {
         package_dir: &Path,
         value: &PackageExports,
         conditions: &[String],
+        is_types_condition: bool,
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
                 let resolved = package_relative_target_path(package_dir, s)?;
-                self.try_export_target(&resolved)
+                if is_types_condition {
+                    self.try_types_entry(&resolved)
+                        .or_else(|| self.try_export_target(&resolved))
+                } else {
+                    self.try_export_target(&resolved)
+                }
             }
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
+                        let is_types = is_types_condition || key == "types";
                         // null means explicitly blocked - stop here
                         if matches!(nested, PackageExports::Null) {
                             return None;
@@ -452,6 +478,7 @@ impl ModuleResolver {
                             package_dir,
                             nested,
                             conditions,
+                            is_types,
                         ) {
                             return Some(resolved);
                         }
@@ -461,9 +488,12 @@ impl ModuleResolver {
             }
             PackageExports::Array(elements) => {
                 for element in elements {
-                    if let Some(resolved) =
-                        self.resolve_export_value_with_conditions(package_dir, element, conditions)
-                    {
+                    if let Some(resolved) = self.resolve_export_value_with_conditions(
+                        package_dir,
+                        element,
+                        conditions,
+                        is_types_condition,
+                    ) {
                         return Some(resolved);
                     }
                 }

@@ -449,7 +449,7 @@ pub(crate) fn apply_wildcard_substitution(
     is_directory_match: bool,
 ) -> String {
     if target.contains('*') {
-        target.replace('*', wildcard)
+        target.replacen('*', wildcard, 1)
     } else if is_directory_match && target.ends_with('/') {
         format!("{target}{wildcard}")
     } else {
@@ -470,7 +470,7 @@ pub(crate) fn substitute_wildcard_in_exports(
     match value {
         PackageExports::String(s) => {
             if s.contains('*') {
-                PackageExports::String(s.replace('*', wildcard))
+                PackageExports::String(s.replacen('*', wildcard, 1))
             } else if is_directory_match && s.ends_with('/') {
                 PackageExports::String(format!("{s}{wildcard}"))
             } else {
