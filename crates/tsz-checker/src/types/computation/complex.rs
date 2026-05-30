@@ -1636,8 +1636,21 @@ impl<'a> CheckerState<'a> {
                     {
                         return app;
                     }
+                    // Only synthesize a `G<args>` display alias when `return_type`
+                    // is a bare reference whose printed form would otherwise omit
+                    // the type arguments (e.g. `new D<string>()` where the construct
+                    // signature was pre-instantiated to empty `type_params`). When
+                    // the constructor is a generic construct signature whose return
+                    // type is already an application — `new<K, V>(): G<K, V>` invoked
+                    // as `new G<string, number>()` — the args are already applied
+                    // (`return_type` is `G<string, number>`), so wrapping it again
+                    // would double-print them as `G<string, number><string, number>`.
                     if query::lazy_def_id(self.ctx.types, return_type).is_none()
                         && self.ctx.types.get_display_alias(return_type).is_none()
+                        && !crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            return_type,
+                        )
                     {
                         let factory = self.ctx.types.factory();
                         let app = factory.application(return_type, resolved_args);
