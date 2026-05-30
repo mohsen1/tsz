@@ -1,4 +1,5 @@
 use crate::emitter::Printer;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 
 /// Scan `bytes[start_pos..end_pos]` and return two boundary markers for the
@@ -1198,6 +1199,113 @@ impl<'a> Printer<'a> {
                 break;
             }
         }
+    }
+
+    /// Find the source position of the first `<` (type-parameter list) or `(`
+    /// (parameter list) at or after `start`, skipping characters that appear
+    /// inside line/block comments or string/template literals. Returns `None`
+    /// when no such token is found before `limit`.
+    ///
+    /// This is the structural boundary between a function-like's name and its
+    /// type-parameter/parameter list, used to bound the name → `(` comment seam.
+    /// Skipping comment and string contents avoids matching a `<` or `(` that
+    /// merely appears inside a seam comment (e.g. `foo /* (x) */(a)`).
+    fn find_name_seam_boundary(&self, start: u32, limit: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let end = (limit as usize).min(bytes.len());
+        let mut i = start as usize;
+        while i < end {
+            match bytes[i] {
+                b'<' | b'(' => return Some(i as u32),
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < end && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i += 2;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < end && bytes[i] != quote {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    /// Emit comments that sit in the source seam between a function-like's name
+    /// and the first structural token that follows it — the type-parameter list
+    /// `<` or the parameter-list `(`
+    /// (e.g. `function clone /* <T> */(a, b)` or `generic /* keep */<T>(a)`).
+    ///
+    /// `tsc` keeps such a comment attached to the name — emitted right after the
+    /// name and before `(` — rather than letting it drift into the parameter
+    /// list. `skip_comments_in_range(node.pos, open_paren)` cannot do this: it
+    /// narrows the range to the last code token (the name), so a comment that
+    /// starts *after* the name end is never consumed there and later leaks into
+    /// the first parameter's leading comments.
+    ///
+    /// `name_idx` is the function-like's name node and `search_limit` bounds the
+    /// forward scan (use the function-like node's `end`). The seam runs from the
+    /// name's real token end up to the first non-trivia token after it — the `<`
+    /// of a type-parameter list or the parameter-list `(`. Stopping at `<` means
+    /// only the comment *before* `<` is emitted here; comments *inside* `<...>`
+    /// are erased separately. Comments in that span are emitted with their
+    /// source-faithful spacing and `comment_emit_idx` is advanced past them so
+    /// the parameter-list emit no longer re-emits them.
+    ///
+    /// This deliberately re-derives the boundary from source instead of trusting
+    /// a precomputed `(` position: the parser can extend a name's `end` past the
+    /// real `(` (e.g. empty-parameter methods), which would make a precomputed
+    /// `map_token_after(name.end, ..)` skip the real `(` and match a later `(`
+    /// inside the body, dragging body comments into the seam.
+    ///
+    /// Shared by function declarations, function expressions, methods, and
+    /// accessors, which all expose the same name → `(` seam.
+    pub(in crate::emitter) fn emit_name_to_paren_seam_comments(
+        &mut self,
+        name_idx: NodeIndex,
+        search_limit: u32,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        // The parser's identifier `end` can extend over trailing trivia (the
+        // seam comment) up to the next token, so recover the real token end.
+        // The seam ends at the first `<` (type-parameter list) or `(`
+        // (parameter list) after the name, ignoring such characters that appear
+        // inside comments or strings. This is the structural boundary: a comment
+        // before it is a name seam comment; a comment after it lives inside
+        // `<...>` (erased) or the parameter list.
+        let Some(boundary) = self.find_name_seam_boundary(name_node.pos, search_limit) else {
+            return;
+        };
+        // The name's real text ends at the last code token before the boundary;
+        // the parser's `name.end` can over-extend past `<`/`(`, so clamp the
+        // scan to the boundary rather than trusting `name.end`.
+        let name_end = self.find_token_end_before_trivia(name_node.pos, boundary);
+        if name_end >= boundary {
+            return;
+        }
+        self.emit_comments_in_range(name_end, boundary, false, false);
     }
 
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).

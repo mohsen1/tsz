@@ -96,6 +96,12 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
+        // A comment in the source seam between the function name and `(`
+        // (e.g. `function copy /* <U> */(a, b)`) belongs right after the name,
+        // before `(`. Emit it here so it does not leak into the parameter list.
+        if func.name.is_some() {
+            self.emit_name_to_paren_seam_comments(func.name, node.end);
+        }
         self.open_paren();
         let search_start = func
             .parameters
