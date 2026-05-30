@@ -2777,11 +2777,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             output.push_str(&format!("{indent}}}\n"));
         } else {
-            // Synthetic constructor: derived decorated classes forward the caller's
-            // arguments via an explicit rest parameter, matching tsc's output shape.
+            // Synthetic ctor for a derived decorated class: tsc emits a
+            // zero-parameter `constructor() { super(...arguments); }`, not a rest param.
             if has_extends {
-                output.push_str("...args) {\n");
-                output.push_str(&format!("{inner_indent}super(...args);\n"));
+                output.push_str(") {\n");
+                output.push_str(&format!("{inner_indent}super(...arguments);\n"));
             } else {
                 output.push_str(") {\n");
             }
