@@ -543,12 +543,29 @@ impl<'a> CheckerState<'a> {
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             self.ctx.binder.get_node_symbol(node_idx).map(|id| id.0)
         };
+        // Pre-collect class-level type param bindings. Without this seeding, class type
+        // params (e.g. `T` in `class Foo<T>`) in overload return types produce
+        // `UnresolvedTypeName` (error), triggering the error fallback and causing false
+        // positive TS2394 diagnostics. Method-level params are handled inside
+        // `lower_signature_from_declaration` via `with_type_params`.
+        let class_param_bindings: Vec<_> = self
+            .ctx
+            .enclosing_class
+            .iter()
+            .flat_map(|ci| ci.class_type_parameters.iter())
+            .filter_map(|info| {
+                let name = self.ctx.types.resolve_atom_ref(info.name);
+                let type_id = self.ctx.type_parameter_scope.get(name.as_ref())?;
+                Some((info.name, *type_id))
+            })
+            .collect();
         let lowering = tsz_lowering::TypeLowering::with_resolvers(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,
             &value_resolver,
-        );
+        )
+        .with_type_param_bindings(class_param_bindings);
 
         // 3. Get the implementation's type using manual lowering.
         // When the implementation has no return type annotation, lower_return_type returns ERROR.

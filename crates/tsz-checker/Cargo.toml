@@ -1914,5 +1914,9 @@ path = "tests/diagnostic_index_suppression_tests.rs"
 name = "ts2379_exact_optional_argument_tests"
 path = "tests/ts2379_exact_optional_argument_tests.rs"
 
+[[test]]
+name = "overload_modifier_tests"
+path = "tests/overload_modifier_tests.rs"
+
 [lints]
 workspace = true
