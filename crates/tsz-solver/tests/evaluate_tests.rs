@@ -22,6 +22,21 @@ fn test_infer_param_from_name(interner: &TypeInterner, name: Atom) -> TypeId {
     interner.intern(TypeData::Infer(TypeParamInfo::simple(name)))
 }
 
+fn test_constrained_infer_param(
+    interner: &TypeInterner,
+    name: &str,
+    constraint: TypeId,
+) -> (Atom, TypeId) {
+    let name = interner.intern_string(name);
+    let id = interner.intern(TypeData::Infer(TypeParamInfo {
+        name,
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }));
+    (name, id)
+}
+
 fn assert_evaluates_to(interner: &TypeInterner, input: TypeId, expected: TypeId) {
     let result = evaluate_type(interner, input);
     assert_eq!(result, expected);

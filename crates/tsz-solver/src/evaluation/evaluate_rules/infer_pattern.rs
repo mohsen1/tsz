@@ -551,6 +551,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
     }
 
+    /// Default each `infer` variable in `pattern` to its declared constraint, or
+    /// `undefined` when unconstrained, for any name not already bound in `bindings`.
+    ///
+    /// Used when an *optional* property of the conditional extends-pattern is absent
+    /// in the source type.  An absent optional property reads as `undefined`, so an
+    /// unconstrained `infer R` gets `undefined`.  A constrained `infer R extends C`
+    /// gets `C` directly (bypassing the constraint check), allowing the conditional
+    /// to take its **true** branch without a spurious `undefined` failing the
+    /// constraint.
+    ///
+    /// Note: the fast path (`eval_conditional_object_prop_infer`) uses `unknown`
+    /// when ALL candidates across ALL slots are absent (a single-object source with
+    /// no union). This function is called from the **general path** (tuple patterns,
+    /// union sources iterated member-by-member), where each absent optional member
+    /// should contribute `undefined` so the union of members is `<type> | undefined`.
+    pub(crate) fn fill_absent_optional_infer_defaults(
+        &self,
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+    ) {
+        let mut visited = FxHashSet::default();
+        self.for_each_infer(
+            pattern,
+            &mut |info| {
+                // A constrained `infer R extends C` defaults to C (true branch stays
+                // valid). An unconstrained `infer R` defaults to `undefined`, matching
+                // the value an absent optional property produces in a union member.
+                let default_ty = info.constraint.unwrap_or(TypeId::UNDEFINED);
+                bindings.entry(info.name).or_insert(default_ty);
+                true
+            },
+            &mut visited,
+        );
+    }
+
     /// Bind an inferred type to an infer parameter.
     ///
     /// Handles constraint checking and merging with existing bindings.
