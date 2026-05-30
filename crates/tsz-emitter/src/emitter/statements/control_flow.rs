@@ -1426,6 +1426,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Labeled downleveled `for await...of`: label moves to the inner `for`.
+        if self.try_emit_downleveled_labeled_for_await(labeled.statement) {
+            return;
+        }
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
@@ -1453,25 +1457,6 @@ impl<'a> Printer<'a> {
         if self.writer.len() == before {
             self.write(";");
         }
-    }
-
-    fn labeled_body_needs_block(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-            return false;
-        }
-        let Some(enum_decl) = self.arena.get_enum(stmt_node) else {
-            return false;
-        };
-        if self.arena.is_declare(&enum_decl.modifiers) {
-            return false;
-        }
-        !self
-            .arena
-            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
-            || self.ctx.options.preserve_const_enums
     }
 
     fn statement_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
