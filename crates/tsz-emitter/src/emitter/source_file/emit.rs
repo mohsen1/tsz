@@ -93,6 +93,8 @@ impl<'a> Printer<'a> {
             self.commonjs_tslib_import_binding = "tslib_1".to_string();
         }
         self.ctx.arguments_capture_counter = 0;
+        self.ctx.loop_this_capture_counter = 0;
+        self.ctx.loop_this_capture_name = None;
         self.next_dynamic_import_promise_id = 1;
         self.first_for_of_emitted = false;
         self.namespace_all_exported_names.clear();

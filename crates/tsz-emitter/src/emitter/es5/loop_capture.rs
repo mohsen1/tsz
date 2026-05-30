@@ -343,7 +343,7 @@ impl<'a> Printer<'a> {
         // not threaded as parameters.
         let param_vars: Vec<String> = init_vars.to_vec();
 
-        self.emit_loop_function(
+        let this_capture = self.emit_loop_function(
             &loop_fn_name,
             &param_vars,
             loop_stmt.statement,
@@ -351,6 +351,9 @@ impl<'a> Printer<'a> {
             init_vars,
         );
         self.write_line();
+        if let Some(capture_name) = this_capture {
+            self.emit_loop_this_capture_decl(&capture_name);
+        }
         self.emit_hoisted_loop_var_decls(body_info);
 
         self.write("for (");
@@ -382,8 +385,12 @@ impl<'a> Printer<'a> {
         kind: ConditionLoopKind,
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
-        self.emit_loop_function(&loop_fn_name, &[], loop_stmt.statement, body_info, &[]);
+        let this_capture =
+            self.emit_loop_function(&loop_fn_name, &[], loop_stmt.statement, body_info, &[]);
         self.write_line();
+        if let Some(capture_name) = this_capture {
+            self.emit_loop_this_capture_decl(&capture_name);
+        }
         self.emit_hoisted_loop_var_decls(body_info);
 
         match kind {
@@ -419,7 +426,13 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit the _`loop_N` function definition
+    /// Emit the _`loop_N` function definition.
+    ///
+    /// Returns the freshly-allocated `this_N` capture name when this converted
+    /// loop owns a lexical `this` capture (i.e. it is the outermost converted
+    /// loop whose body references `this`). The caller declares
+    /// `var this_N = this;` at the function scope via
+    /// [`Printer::emit_loop_this_capture_decl`] after this definition.
     pub(in crate::emitter) fn emit_loop_function(
         &mut self,
         fn_name: &str,
@@ -427,7 +440,12 @@ impl<'a> Printer<'a> {
         body_idx: NodeIndex,
         body_info: &LoopBodyVarInfo,
         _init_vars: &[String],
-    ) {
+    ) -> Option<String> {
+        // Activate `this` -> `this_N` substitution for the IIFE body when it
+        // lexically references `this`. The outermost converted loop owns the
+        // capture; nested converted loops inherit it.
+        let this_capture_scope = self.begin_loop_iife_this_capture(body_idx);
+
         self.write("var ");
         self.write(fn_name);
         self.write(" = function (");
@@ -495,6 +513,9 @@ impl<'a> Printer<'a> {
             prev_lexical_block_missing_initializer_function_depth;
         self.lexical_block_missing_initializer_is_loop_body =
             prev_lexical_block_missing_initializer_is_loop_body;
+        // Restore the `this` capture substitution state. The remaining output
+        // (`};`, hoist-temp insertions) never references lexical `this`.
+        let owned_this_capture = self.end_loop_iife_this_capture(this_capture_scope);
         self.ctx.block_scope_state.exit_scope();
 
         // Flush this IIFE's own spread-receiver hoist temps (`var _a;`) at its
@@ -535,6 +556,8 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("};");
+
+        owned_this_capture
     }
 
     /// Emit loop body statements inside the IIFE function
