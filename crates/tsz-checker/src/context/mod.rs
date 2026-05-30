@@ -23,6 +23,7 @@ pub use cross_file_type_params_cache::{
 mod constructors;
 mod core;
 mod cross_file_query;
+mod diagnostic_indices;
 mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
@@ -43,6 +44,7 @@ mod strict_mode;
 mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
+pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
@@ -769,11 +771,8 @@ pub struct CheckerContext<'a> {
     /// Used by TS2677 to widen predicate types to `T | null | undefined`.
     /// Excludes `!T` / `T!` errors which should not trigger widening.
     pub nullable_type_parse_error_positions: Vec<u32>,
-
-    /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
-    /// Set of already-emitted diagnostics (start, code) for deduplication.
-    pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    pub(crate) diagnostic_indices: DiagnosticIndices,
     /// Call-expression nodes that resolved to TS2769 during the current
     /// speculative context. Used so overload resolution can reject outer
     /// candidates whose callback bodies contain a failed nested overload even

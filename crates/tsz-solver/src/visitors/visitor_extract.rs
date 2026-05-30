@@ -664,6 +664,16 @@ pub fn unresolved_type_name_atom(
 /// passes to detect when the first-pass result still carries cross-file
 /// resolution residue and a wider resolver pass is required.
 pub fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    // The checker's `needs_resolver_pass` gate calls this for the same large
+    // evaluated shapes repeatedly. The answer is deterministic per `TypeId`
+    // within one interner (the `depth > 64` cap is keyed on shape, not call
+    // order), so memoize it project-wide.
+    if let Some(cached) = types.contains_unresolved_application_cached(type_id) {
+        return cached;
+    }
     fn walk(
         types: &dyn TypeDatabase,
         type_id: TypeId,
@@ -714,7 +724,9 @@ pub fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId
             _ => false,
         }
     }
-    with_extract_visited(|visited| walk(types, type_id, visited, 0))
+    let result = with_extract_visited(|visited| walk(types, type_id, visited, 0));
+    types.set_contains_unresolved_application_cache(type_id, result);
+    result
 }
 
 /// Extract the mapped type id if this is a mapped type.
