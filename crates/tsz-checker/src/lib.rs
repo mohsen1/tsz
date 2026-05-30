@@ -162,6 +162,9 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/flow_guard_boundary_tests.rs"]
+mod flow_guard_boundary_tests;
+#[cfg(test)]
 #[path = "tests/flow_inferred_predicate_boundary_tests.rs"]
 mod flow_inferred_predicate_boundary_tests;
 #[cfg(test)]

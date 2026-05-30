@@ -825,15 +825,8 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
     ) -> TypeId {
         let effective_true_branch = predicate.asserts || is_true_branch;
-
-        // Create narrowing context and wire up TypeEnvironment if available
-        let env_borrow;
-        let narrowing = if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            self.make_narrowing_context().with_resolver(&*env_borrow)
-        } else {
-            self.make_narrowing_context()
-        };
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        let env = env_borrow.as_deref();
 
         if let Some(predicate_type) = predicate.type_id {
             // Route through TypeGuard::Predicate for proper intersection semantics.
@@ -843,8 +836,13 @@ impl<'a> FlowAnalyzer<'a> {
                 type_id: Some(predicate_type),
                 asserts: predicate.asserts,
             };
-            let narrowed =
-                narrowing.narrow_type(type_id, &guard, GuardSense::from(effective_true_branch));
+            let narrowed = flow_query::narrow_with_guard(
+                self.interner,
+                env,
+                type_id,
+                &guard,
+                effective_true_branch,
+            );
 
             // Fallback for cross-file asserted predicates whose target is an
             // unresolved `Application(NonNullable-like, T)`. The solver's
@@ -901,11 +899,17 @@ impl<'a> FlowAnalyzer<'a> {
         // This is the CRITICAL fix: use TypeGuard::Truthy instead of just excluding null/undefined
         if effective_true_branch {
             // Delegate to narrow_type with TypeGuard::Truthy for comprehensive narrowing
-            return narrowing.narrow_type(type_id, &TypeGuard::Truthy, GuardSense::Positive);
+            return flow_query::narrow_with_guard(
+                self.interner,
+                env,
+                type_id,
+                &TypeGuard::Truthy,
+                true,
+            );
         }
 
         // Use Solver's narrow_to_falsy for correct NaN handling
-        narrowing.narrow_to_falsy(type_id)
+        flow_query::narrow_to_falsy(self.interner, env, type_id)
     }
 
     pub(crate) fn narrow_by_instanceof(
@@ -945,14 +949,12 @@ impl<'a> FlowAnalyzer<'a> {
                 Some(t) => t,
                 None => {
                     if is_true_branch {
-                        let env_borrow;
-                        let narrowing = if let Some(env) = &self.type_environment {
-                            env_borrow = env.borrow();
-                            self.make_narrowing_context().with_resolver(&*env_borrow)
-                        } else {
-                            self.make_narrowing_context()
-                        };
-                        return narrowing.narrow_to_objectish(type_id);
+                        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+                        return flow_query::narrow_to_objectish(
+                            self.interner,
+                            env_borrow.as_deref(),
+                            type_id,
+                        );
                     }
                     return type_id;
                 }
@@ -960,13 +962,7 @@ impl<'a> FlowAnalyzer<'a> {
             (instance_type, false)
         };
 
-        let env_borrow;
-        let narrowing = if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            self.make_narrowing_context().with_resolver(&*env_borrow)
-        } else {
-            self.make_narrowing_context()
-        };
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
 
         let guard = if use_predicate_guard {
             TypeGuard::Predicate {
@@ -977,7 +973,13 @@ impl<'a> FlowAnalyzer<'a> {
             TypeGuard::Instanceof(instance_type, false)
         };
 
-        narrowing.narrow_type(type_id, &guard, GuardSense::from(is_true_branch))
+        flow_query::narrow_with_guard(
+            self.interner,
+            env_borrow.as_deref(),
+            type_id,
+            &guard,
+            is_true_branch,
+        )
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
