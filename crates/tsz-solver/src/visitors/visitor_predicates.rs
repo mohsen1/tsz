@@ -745,12 +745,9 @@ pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
-    if let Some(cached) = types.contains_this_type_cached(type_id) {
-        return cached;
-    }
-    let result = contains_type_matching(types, type_id, |key| matches!(key, TypeData::ThisType));
-    types.set_contains_this_type_cache(type_id, result);
-    result
+    // The deep walk is memoized per node in the shared `contains_this` cache,
+    // so repeated checks over the same large recursive shapes stay O(1).
+    crate::type_queries::contains_this_type_db(types, type_id)
 }
 
 /// Check if a type contains any type matching a predicate.

@@ -41,6 +41,7 @@ pub(crate) use array_methods::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
+mod closed_eval;
 mod support;
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -123,6 +124,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// detection pass to recognize a divergent (unconditionally growing)
     /// recursive alias. See `recursive_growth::detect_recursive_growth`.
     pub(super) detection_growth_runs: FxHashMap<DefId, (u64, u32)>,
+    /// Sticky flag: set when this run hit any recursion limit (a `DefId` reached
+    /// `MAX_DEF_DEPTH`, a structural cycle/depth/iteration bail). Such depth-
+    /// bounded runs must not be persisted in `closed_eval_cache`, or a later read
+    /// could short-circuit the expansion that re-derives `TS2589`. See the
+    /// `closed_eval` module.
+    deep_recursion_seen: bool,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -184,6 +191,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             apparent_conditional_branch: None,
             silent_depth_bailed: false,
             detection_growth_runs: FxHashMap::default(),
+            deep_recursion_seen: false,
         }
     }
 
@@ -242,6 +250,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn increment_def_depth(&mut self, def_id: DefId) -> bool {
         let depth = self.def_depth.entry(def_id).or_insert(0);
         if *depth >= Self::MAX_DEF_DEPTH {
+            // Depth-bounded run (see `deep_recursion_seen`).
+            self.deep_recursion_seen = true;
             return false;
         }
 
@@ -249,6 +259,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         *depth += 1;
         if !was_real_instantiation_depth && *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
             self.real_instantiation_depth_count += 1;
+            self.deep_recursion_seen = true;
         }
         true
     }
@@ -496,6 +507,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
+        // Substitution-independent persistent cache. See `closed_eval` module.
+        if let Some(cached) = self.try_closed_eval_read(type_id) {
+            self.cache.insert(type_id, cached);
+            return cached;
+        }
+
         // Check if depth was already exceeded in a previous call
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
@@ -528,7 +545,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return result;
         }
 
-        self.evaluate_guarded(type_id)
+        // Top-level frame: evaluate, then commit closed-eval cache writes.
+        // See the `closed_eval` module for the safety gates.
+        let union_too_complex_before = self.interner.is_union_too_complex();
+        let result = self.evaluate_guarded(type_id);
+        self.commit_closed_eval_writes(union_too_complex_before);
+        result
     }
 
     /// Inner evaluate logic, called after global depth check.
@@ -572,6 +594,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.guard.enter(type_id) {
             RecursionResult::Entered => {}
             RecursionResult::Cycle => {
+                // Recursion-bounded run: do not persist its intermediates (see
+                // `deep_recursion_seen`).
+                self.deep_recursion_seen = true;
                 // Recursion guard for self-referential mapped/application types.
                 // Recursive mapped types must stay deferred here. Collapsing them to
                 // `{}` loses the constraint structure and can incorrectly make
@@ -594,6 +619,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             RecursionResult::DepthExceeded => {
+                // Depth-bounded run (see `deep_recursion_seen`).
+                self.deep_recursion_seen = true;
                 // The per-`TypeId` guard's depth limit is structural — it caps the
                 // type-tree walk to protect the stack, not the instantiation chain.
                 // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
@@ -611,6 +638,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             RecursionResult::IterationExceeded => {
+                // Iteration-limit bail: also a bounded run.
+                self.deep_recursion_seen = true;
                 self.cache.insert(type_id, type_id);
                 return type_id;
             }

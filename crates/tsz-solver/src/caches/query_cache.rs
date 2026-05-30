@@ -380,6 +380,9 @@ impl std::fmt::Display for QueryCacheStatistics {
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    /// Substitution-independent evaluation cache (see the `closed_eval` module
+    /// in `evaluate`). Keyed by `(TypeId, no_unchecked_indexed_access)`.
+    closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
@@ -455,6 +458,7 @@ impl<'a> QueryCache<'a> {
         QueryCache {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
+            closed_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
@@ -486,6 +490,7 @@ impl<'a> QueryCache<'a> {
 
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
+        self.closed_eval_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
         self.object_spread_properties_cache.borrow_mut().clear();
@@ -1053,6 +1058,43 @@ impl TypePredicateCache for QueryCache<'_> {
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.interner.set_contains_type_query_cache(type_id, result);
     }
+
+    fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_type_params_cached(type_id)
+    }
+
+    fn set_contains_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_type_params_cache(type_id, result);
+    }
+
+    fn contains_lazy_or_recursive_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_lazy_or_recursive_cached(type_id)
+    }
+
+    fn set_contains_lazy_or_recursive_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_lazy_or_recursive_cache(type_id, result);
+    }
+
+    fn contains_unresolved_application_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner
+            .contains_unresolved_application_cached(type_id)
+    }
+
+    fn set_contains_unresolved_application_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_unresolved_application_cache(type_id, result);
+    }
+
+    fn contains_resolver_dependent_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_resolver_dependent_cached(type_id)
+    }
+
+    fn set_contains_resolver_dependent_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_resolver_dependent_cache(type_id, result);
+    }
 }
 
 impl TypeTupleLimitSignal for QueryCache<'_> {
@@ -1113,6 +1155,10 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.take_union_too_complex()
     }
 
+    fn is_union_too_complex(&self) -> bool {
+        self.interner.is_union_too_complex()
+    }
+
     fn mark_union_too_complex(&self) {
         self.interner.set_union_too_complex();
     }
@@ -1156,6 +1202,32 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
                 smallvec::SmallVec::from_slice(args),
                 no_unchecked_indexed_access,
             ),
+            result,
+        );
+    }
+
+    fn lookup_closed_eval_cache(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.closed_eval_cache
+            .borrow()
+            .get(&EvaluationCacheKey::new(
+                type_id,
+                no_unchecked_indexed_access,
+            ))
+            .copied()
+    }
+
+    fn insert_closed_eval_cache(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+        result: TypeId,
+    ) {
+        self.closed_eval_cache.borrow_mut().insert(
+            EvaluationCacheKey::new(type_id, no_unchecked_indexed_access),
             result,
         );
     }
