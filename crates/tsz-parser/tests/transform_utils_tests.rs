@@ -1,6 +1,8 @@
 //! Tests for transform utility helpers (`contains_this_reference`, `contains_arguments_reference`).
+use crate::parser::node::NodeAccess;
 use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, ParserState};
+use crate::syntax::transform_utils::arrow_captures_lexical_this;
 use crate::syntax::transform_utils::contains_arguments_reference;
 use crate::syntax::transform_utils::contains_new_target_reference;
 use crate::syntax::transform_utils::contains_this_reference;
@@ -144,4 +146,81 @@ fn contains_this_reference_detects_nested_class_heritage_clauses() {
     );
 
     assert!(contains_this_reference(parser.get_arena(), initializer));
+}
+
+/// Find the first arrow-function node reachable from `root` (breadth-first).
+fn first_arrow_function(parser: &ParserState, root: NodeIndex) -> NodeIndex {
+    use crate::parser::syntax_kind_ext::ARROW_FUNCTION;
+    let arena = parser.get_arena();
+    let mut queue = vec![root];
+    while let Some(idx) = queue.pop() {
+        if arena
+            .get(idx)
+            .is_some_and(|node| node.kind == ARROW_FUNCTION)
+        {
+            return idx;
+        }
+        queue.extend(arena.get_children(idx));
+    }
+    panic!("no arrow function found");
+}
+
+fn arrow_captures(source: &str) -> bool {
+    let (parser, root) = parse_source(source);
+    let arrow = first_arrow_function(&parser, root);
+    arrow_captures_lexical_this(parser.get_arena(), arrow)
+}
+
+#[test]
+fn arrow_captures_lexical_this_for_super_method_call() {
+    // A `super.m()` call lowers to `_super.prototype.m.call(_this)`, so the
+    // arrow captures `this`. Two name choices prove the rule is structural.
+    assert!(arrow_captures(
+        "class B extends A { m() { var f = () => super.greet(); } }"
+    ));
+    assert!(arrow_captures(
+        "class Dog extends Animal { bark() { var go = () => super.speak(); } }"
+    ));
+}
+
+#[test]
+fn arrow_captures_lexical_this_for_super_element_call() {
+    assert!(arrow_captures(
+        r#"class B extends A { m() { var f = () => super["greet"](); } }"#
+    ));
+}
+
+#[test]
+fn arrow_does_not_capture_for_super_property_access_only() {
+    // Bare `super.x` access lowers to `_super.prototype.x` (no `this`), so an
+    // arrow that only reads a super property must not capture `this`.
+    assert!(!arrow_captures(
+        "class B extends A { m() { var f = () => super.value; } }"
+    ));
+    assert!(!arrow_captures(
+        "class Circle extends Shape { measure() { var g = () => super.area; } }"
+    ));
+}
+
+#[test]
+fn arrow_captures_lexical_this_for_literal_this() {
+    assert!(arrow_captures(
+        "class B extends A { m() { var f = () => this.value; } }"
+    ));
+}
+
+#[test]
+fn arrow_does_not_capture_without_this_or_super_call() {
+    assert!(!arrow_captures(
+        "class B extends A { m() { var f = (a, b) => a + b; } }"
+    ));
+}
+
+#[test]
+fn arrow_does_not_capture_for_chained_super_property_call() {
+    // `super.a.b()` is a normal call on `super.a` (which lowers to
+    // `_super.prototype.a`), not a super call, so it must not capture `this`.
+    assert!(!arrow_captures(
+        "class B extends A { m() { var f = () => super.a.b(); } }"
+    ));
 }
