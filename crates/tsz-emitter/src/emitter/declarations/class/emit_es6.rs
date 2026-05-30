@@ -358,10 +358,7 @@ impl<'a> Printer<'a> {
             }
             self.write(binding_name);
             self.write(" = ");
-            if let Some(alias) = assignment_alias {
-                self.write(alias);
-                self.write(" = ");
-            }
+            self.write_outer_alias_prefix(node, assignment_alias);
             if let Some(temp) = default_export_set_function_name_temp.as_ref() {
                 self.write(temp);
                 self.write(" = ");
@@ -757,9 +754,6 @@ impl<'a> Printer<'a> {
             && static_initializer_alias_source_nodes
                 .iter()
                 .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
-        let static_initializer_directly_uses_private_name = static_initializer_alias_source_nodes
-            .iter()
-            .any(|idx| self.expression_directly_contains_private_identifier(*idx));
         let static_initializer_needs_class_alias = static_initializer_contains_class_name
             && (static_initializer_needs_this_alias
                 || has_static_privates
@@ -2090,6 +2084,7 @@ impl<'a> Printer<'a> {
             && class.members.nodes.iter().any(|&member_idx| {
                 self.legacy_member_decorator_needs_private_name_scope(member_idx)
             });
+        emitted_any_member |= self.emit_synthetic_static_self_alias_block(node, assignment_alias);
         if self.ctx.options.use_define_for_class_fields && target_supports_native_fields {
             // Find the constructor and collect its parameter properties
             for &member_idx in &class.members.nodes {
@@ -2915,14 +2910,18 @@ impl<'a> Printer<'a> {
             self.write("() => { };");
         }
 
-        // Emit static field initializers after class body
-        // For class expressions: use comma expression `(_a = class C {}, _a.field = value, _a)`
-        // For class declarations: use separate statements `ClassName.field = value;`
+        // Emit static field initializers after class body. Class expressions use
+        // a comma expression; class declarations use separate statements.
+        //
+        // For a class *declaration* lowered to the WeakMap pattern, tsc always
+        // emits the private-member init statements before the static field
+        // assignment statements: a static initializer can instantiate the class,
+        // whose constructor populates the WeakMaps, so the storage must exist
+        // first. This holds even without a class/private self-reference, so the
+        // gate fires whenever private lowering and static elements coexist on a
+        // declaration, not only for the self-referential subset.
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && (static_initializer_class_alias.is_some()
-                || has_static_privates
-                || static_initializer_directly_uses_private_name)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {
@@ -3522,16 +3521,10 @@ impl<'a> Printer<'a> {
         //       _a)
         // For class declarations, emit as separate statements after the class body.
         if needs_private_comma_expr && has_post_class_inits {
-            // Emit comma-separated inits inline in the expression.
-            // The `(_a = ` prefix was already emitted before the `class` keyword.
-
-            if (!needs_static_comma_expr || class_expr_static_comma_has_no_scheduled_elements)
-                && let Some(temp) = class_expr_temp.as_ref()
-                && let Some(name) = class_expr_set_function_name.as_ref()
-            {
-                self.emit_class_expr_set_function_name_comma_item(temp, name);
-            }
-
+            // Emit comma-separated inits inline. tsc orders them as:
+            // instance-member helpers (WeakMap/WeakSet/private method+accessor
+            // functions) first, then `__setFunctionName`, then static value
+            // inits. The named-evaluation step is emitted below, after helpers.
             // WeakMap inits: _X_field = new WeakMap()
             let weakmap_inits = self.pending_weakmap_inits.clone();
             for init in &weakmap_inits {
@@ -3634,6 +3627,15 @@ impl<'a> Printer<'a> {
                     );
                     self.decrease_indent();
                 }
+            }
+
+            // Named-evaluation step: after instance helpers, before static
+            // value inits, matching tsc.
+            if (!needs_static_comma_expr || class_expr_static_comma_has_no_scheduled_elements)
+                && let Some(temp) = class_expr_temp.as_ref()
+                && let Some(name) = class_expr_set_function_name.as_ref()
+            {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
             }
 
             // Emit static private field value initializations as comma items

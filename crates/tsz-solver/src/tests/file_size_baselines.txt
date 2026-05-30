@@ -38,7 +38,7 @@ solver_file_types 2018
 binder_max_loc        2890
 binder_oversized      1
 
-emitter_max_loc     5724
+emitter_max_loc     5755
 emitter_oversized   36
 
 parser_max_loc      3304

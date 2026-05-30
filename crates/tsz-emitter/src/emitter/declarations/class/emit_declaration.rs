@@ -124,18 +124,22 @@ impl<'a> Printer<'a> {
                 !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
 
             if self.ctx.target_es5 {
+                // A self-referencing block-scoped class renames its outer `var`
+                // binding to keep it distinct from the hoisted self-alias /
+                // `Name = __decorate(...)` assignment (tsc emits `var Foo_1` for
+                // a self-referencing `class Foo` inside a `try`/`if` block).
+                let class_self_references = class_has_self_references(
+                    self.arena,
+                    self.source_text_for_map(),
+                    &class_name,
+                    &class.members.nodes,
+                );
                 let binding_name = self
                     .ctx
                     .block_scope_state
-                    .register_block_scoped_class(&class_name);
+                    .register_block_scoped_class(&class_name, class_self_references);
                 let binding_name = (binding_name != class_name).then_some(binding_name);
-                let needs_alias = needs_class_decorate
-                    && class_has_self_references(
-                        self.arena,
-                        self.source_text_for_map(),
-                        &class_name,
-                        &class.members.nodes,
-                    );
+                let needs_alias = needs_class_decorate && class_self_references;
                 let alias_name = needs_alias.then(|| self.make_unique_name_from_base(&class_name));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_block_scope_shadowed_names(

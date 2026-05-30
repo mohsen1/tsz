@@ -1224,7 +1224,15 @@ impl<'a> Printer<'a> {
                 let prev_in_static_block = self.ctx.flags.in_class_static_block;
                 self.emitting_function_body_block = true;
                 self.ctx.flags.in_class_static_block = true;
+                // A native `static { ... }` block is a function-body block, but the
+                // outer-scope hoisted temps (e.g. legacy-decorator class-self
+                // aliases destined for the file-top `var C_1;`) do not belong
+                // inside it. Save/restore them so the block's function-body flush
+                // only emits temps generated within the block, mirroring the
+                // lowered static-block IIFE path.
+                let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
                 self.emit_block(node, idx);
+                self.hoisted_assignment_temps = saved_temps;
                 self.emitting_function_body_block = prev;
                 self.ctx.flags.in_class_static_block = prev_in_static_block;
             }
@@ -1720,6 +1728,11 @@ impl<'a> Printer<'a> {
                 {
                     let name = std::sync::Arc::clone(capture_name);
                     self.write(&name);
+                } else if let Some(loop_this) = self.ctx.loop_this_capture_name.clone() {
+                    // Inside an ES5 converted-loop (`_loop_N`) IIFE body, a
+                    // lexical `this` is rewritten to the captured `this_N`
+                    // binding declared at the real function scope.
+                    self.write(&loop_this);
                 } else if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
                     self.write(&alias);
                 } else {

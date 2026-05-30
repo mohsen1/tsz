@@ -211,18 +211,54 @@ impl BlockScopeState {
 
     /// Register a class declaration lowered to ES5.
     ///
-    /// Class declarations are block-scoped, but ES5 emits `var`. A class inside
-    /// a nested block therefore needs a synthetic binding even when no outer
-    /// declaration currently has the same name; otherwise the lowered `var`
-    /// would leak out of the block.
-    pub fn register_block_scoped_class(&mut self, original_name: &str) -> String {
+    /// Class declarations are block-scoped, but ES5 emits `var`. A nested-block
+    /// class only needs a synthetic `Name_N` binding when either:
+    ///   * `self_referencing` is true — the class body refers to its own name
+    ///     (e.g. `static f(): Foo { return new Foo() }` or a decorated class),
+    ///     which forces the hoisted self-alias pattern and a renamed outer
+    ///     `var Foo_1`; or
+    ///   * its name *actually* collides with another binding already visible in
+    ///     the enclosing function/block scopes or with a reserved temp name.
+    ///
+    /// tsc keeps the original name otherwise — even for two same-named classes
+    /// in disjoint sibling blocks — relying on plain `var` function-scoping.
+    /// Synthesizing a suffix unconditionally diverges from tsc (`var C_1` where
+    /// tsc emits `var C`).
+    pub fn register_block_scoped_class(
+        &mut self,
+        original_name: &str,
+        self_referencing: bool,
+    ) -> String {
         // An empty scope stack means there is no enclosing block at all — the
         // class sits at module/script top level (e.g. inside a System/AMD/UMD
         // wrapper that never opened a block scope). At top level the lowered
         // `var` *is* the binding, so it must reuse the name rather than getting
         // a synthetic `Name_1` that would diverge from the hoisted declaration.
+        // Use `var`-declaration semantics so a same-name redeclaration (e.g.
+        // two `export default class C`) reuses `C` instead of renaming the
+        // second to `C_1`; tsc emits `var C` for both.
         if self.function_scope_marks.last().copied().unwrap_or(true) {
-            return self.register_variable(original_name);
+            return self.register_var_declaration(original_name);
+        }
+
+        // Self-referencing nested-block classes always rename (the self-alias
+        // pattern requires a distinct outer binding). Otherwise only rename
+        // when the name genuinely conflicts with a binding already visible in
+        // scope (e.g. an outer `var C` the lowered class would clash with) or
+        // with a reserved temp name. Sibling-block classes do not conflict
+        // because their scopes are popped before this runs, so the common
+        // nested-block case reuses `original_name` exactly like tsc.
+        let collides = self_referencing
+            || self.reserved_names.contains(original_name)
+            || self.scope_stack.iter().any(|scope| {
+                scope.contains_key(original_name) || scope.values().any(|v| v == original_name)
+            });
+
+        if !collides {
+            if let Some(current_scope) = self.scope_stack.last_mut() {
+                current_scope.insert(original_name.to_string(), original_name.to_string());
+            }
+            return original_name.to_string();
         }
 
         let mut suffix = 1u32;

@@ -39,6 +39,10 @@ name = "super_missing_member_recovery_tests"
 path = "tests/super_missing_member_recovery_tests.rs"
 
 [[test]]
+name = "static_super_object_rest_assignment_target_tests"
+path = "tests/static_super_object_rest_assignment_target_tests.rs"
+
+[[test]]
 name = "class_temp_dedup_hoist_buckets_tests"
 path = "tests/class_temp_dedup_hoist_buckets_tests.rs"
 
@@ -281,6 +285,10 @@ path = "tests/ternary_trailing_comment_tests.rs"
 [[test]]
 name = "static_field_lowering_trailing_comment_tests"
 path = "tests/static_field_lowering_trailing_comment_tests.rs"
+
+[[test]]
+name = "static_super_destructure_default_target_tests"
+path = "tests/static_super_destructure_default_target_tests.rs"
 
 [[test]]
 name = "wave3_small_emit_fixes_tests"

@@ -1,5 +1,8 @@
 mod const_enums;
 mod emit;
+mod import_helpers_class_scan;
+#[cfg(test)]
+mod import_helpers_class_scan_tests;
 mod recovery;
 #[cfg(test)]
 mod tc39_decorator_tests;
@@ -24,6 +27,8 @@ mod derived_constructor_tests;
 mod es5_object_rest_tests;
 #[cfg(test)]
 mod legacy_decorator_computed_tests;
+#[cfg(test)]
+mod legacy_decorator_static_block_self_alias_tests;
 #[cfg(test)]
 mod private_field_helper_order_tests;
 #[cfg(test)]
