@@ -7,6 +7,7 @@ use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::construct_signatures::has_construct_overloads;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -851,19 +852,6 @@ impl<'a> CheckerState<'a> {
             constructor_shape_type,
             args.len(),
         );
-        // Detect an overloaded constructor: a construct-signature set with more than
-        // one signature. For overload sets, excess-property checking must be deferred
-        // to overload resolution (`resolve_new_with_checker_adapter`) instead of being
-        // driven by the single contextual signature picked above. Otherwise a fresh
-        // object-literal argument that fits a *later* overload is wrongly reported as
-        // excess against the *first* signature's parameter type. This mirrors the
-        // call-expression path, which sets `check_excess_properties = false` whenever
-        // multiple overload signatures are present (see `call/inner.rs`).
-        let constructor_is_overloaded = crate::query_boundaries::common::get_construct_signatures(
-            self.ctx.types,
-            constructor_shape_type,
-        )
-        .is_some_and(|sigs| sigs.len() > 1);
         let is_generic_new = constructor_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -923,7 +911,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.no_implicit_any,
             )
         };
-        let check_excess_properties = !constructor_is_overloaded;
+        let check_excess_properties =
+            !has_construct_overloads(self.ctx.types, constructor_shape_type);
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
         // Preserve literal types in array literals during generic constructor
         // argument collection — mirroring the function call path. This ensures

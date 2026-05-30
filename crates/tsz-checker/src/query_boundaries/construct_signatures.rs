@@ -21,3 +21,7 @@ pub(crate) fn construct_signatures_for_type(
         is_method: shape.is_method,
     }])
 }
+
+pub(crate) fn has_construct_overloads(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    construct_signatures_for_type(db, type_id).is_some_and(|sigs| sigs.len() > 1)
+}
