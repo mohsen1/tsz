@@ -303,6 +303,7 @@ impl<'a> Printer<'a> {
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
             next_dynamic_import_promise_id: 1,
+            next_catch_binding_ordinals: FxHashMap::default(),
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
             reserved_top_level_using_class_result_temps: FxHashMap::default(),

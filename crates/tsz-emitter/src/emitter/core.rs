@@ -473,6 +473,11 @@ pub struct Printer<'a> {
     /// (`resolve_1`, `reject_1`, ...).
     pub(crate) next_dynamic_import_promise_id: u32,
 
+    /// Per-file ordinal counters for async catch-binding renames.
+    /// tsc numbers these file-wide: the first `catch (e)` in any async
+    /// function becomes `e_1`, the second becomes `e_2`, and so on.
+    pub(crate) next_catch_binding_ordinals: FxHashMap<String, u32>,
+
     /// Per-file counters for lowered async-generator inner function names.
     pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
 

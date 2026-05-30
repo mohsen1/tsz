@@ -146,7 +146,23 @@ impl<'a> AsyncES5Transformer<'a> {
         source_name: &str,
         _catch_clause: NodeIndex,
     ) -> String {
-        self.fresh_reserved_name(source_name.to_string())
+        // tsc numbers async catch-binding renames with a file-wide counter per
+        // source name.  The first `catch (e)` across all async functions in the
+        // file becomes `e_1`, the second `e_2`, and so on.  The ordinal never
+        // resets at function boundaries, so we use `catch_binding_ordinals`
+        // (persistent for the lifetime of the transformer) rather than
+        // `blocked_temp_names` (which resets per function).
+        let ordinal = {
+            let mut ordinals = self.catch_binding_ordinals.borrow_mut();
+            let entry = ordinals.entry(source_name.to_string()).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+        let candidate = format!("{source_name}_{ordinal}");
+        self.blocked_temp_names
+            .borrow_mut()
+            .insert(candidate.clone());
+        candidate
     }
 
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
@@ -231,6 +247,18 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub(in crate::transforms) fn env_id_from_name(&self, name: &str) -> Option<u32> {
         name.strip_prefix("env_")?.parse().ok()
+    }
+
+    /// Seed the file-wide catch-binding ordinal map from the outer emitter's
+    /// accumulated state (so ordinals continue across async-function boundaries).
+    pub fn set_catch_binding_ordinals(&self, ordinals: rustc_hash::FxHashMap<String, u32>) {
+        *self.catch_binding_ordinals.borrow_mut() = ordinals;
+    }
+
+    /// Extract the accumulated catch-binding ordinals so the outer emitter can
+    /// persist them for the next async function in the same file.
+    pub fn take_catch_binding_ordinals(&self) -> rustc_hash::FxHashMap<String, u32> {
+        std::mem::take(&mut *self.catch_binding_ordinals.borrow_mut())
     }
 
     /// Get the helpers needed after transformation.

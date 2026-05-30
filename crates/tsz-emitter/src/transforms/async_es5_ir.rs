@@ -165,6 +165,11 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) labeled_break_targets: Vec<(String, u32)>,
     /// Active catch binding substitutions used while lowering async try regions.
     pub(super) catch_binding_renames: Vec<(String, String)>,
+    /// File-wide ordinal counter for each source catch-binding name.
+    /// tsc increments the suffix across async functions in the same file so
+    /// the first `catch (e)` in the file becomes `e_1`, the second becomes
+    /// `e_2`, and so on, regardless of function boundaries.
+    pub(super) catch_binding_ordinals: RefCell<rustc_hash::FxHashMap<String, u32>>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -195,6 +200,7 @@ impl<'a> AsyncES5Transformer<'a> {
             labeled_continue_targets: Vec::new(),
             labeled_break_targets: Vec::new(),
             catch_binding_renames: Vec::new(),
+            catch_binding_ordinals: RefCell::new(rustc_hash::FxHashMap::default()),
         }
     }
 
