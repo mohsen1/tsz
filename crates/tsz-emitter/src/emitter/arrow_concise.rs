@@ -32,10 +32,9 @@ impl<'a> Printer<'a> {
         self.emitting_concise_arrow_return_argument = prev_emitting_concise_arrow_return_argument;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
-        if !self.hoisted_assignment_temps.is_empty() {
-            let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
-            self.writer.insert_at(var_insert_pos, &var_decl);
-            self.hoisted_assignment_temps.clear();
+        let prologue = self.take_single_line_hoisted_temp_prologue();
+        if !prologue.is_empty() {
+            self.writer.insert_at(var_insert_pos, &prologue);
         }
 
         self.write(" }");
