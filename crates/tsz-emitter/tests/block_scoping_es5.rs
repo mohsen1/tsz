@@ -355,6 +355,52 @@ fn nested_block_scoped_class_renames_on_outer_var_collision() {
 }
 
 #[test]
+fn nested_block_scoped_class_renames_on_seeded_outer_binding() {
+    // A nested-block class renames when an enclosing function/script scope has
+    // a same-named value binding, even though that binding is registered up
+    // front (seeded) rather than encountered first by the forward walk. This is
+    // the order-independent collision case: tsc renames `class A` to `A_1` when
+    // a module-level `class A`/`function A`/`var A` exists *anywhere* in scope,
+    // including textually after the nested class. Name choice is irrelevant.
+    for name in ["A", "T", "K"] {
+        let mut state = BlockScopeState::new();
+        state.enter_function_scope();
+        // The enclosing scope's visible value binding, seeded before the body.
+        state.register_function_scope_shadowed_name(name);
+
+        state.enter_scope(); // nested block, e.g. inside `if (b) { ... }`
+        assert_eq!(
+            state.register_block_scoped_class(name, false),
+            format!("{name}_1"),
+            "nested-block class renames against a seeded enclosing value binding"
+        );
+        state.exit_scope();
+        state.exit_scope();
+    }
+}
+
+#[test]
+fn function_body_level_class_ignores_seeded_outer_binding() {
+    // A block-scoped class declared *directly* at the function/script body
+    // level lowers to a plain `var` and reuses its name even when an enclosing
+    // scope binds the same name; tsc only renames *nested-block* classes. The
+    // seeded outer binding must therefore not force a body-level rename.
+    for name in ["A", "P", "X"] {
+        let mut state = BlockScopeState::new();
+        state.enter_function_scope();
+        state.register_function_scope_shadowed_name(name);
+
+        // No nested enter_scope(): the class sits at function body level.
+        assert_eq!(
+            state.register_block_scoped_class(name, false),
+            name,
+            "body-level block-scoped class reuses its name despite an outer binding"
+        );
+        state.exit_scope();
+    }
+}
+
+#[test]
 fn top_level_block_scoped_class_redeclaration_reuses_name() {
     // At module/script top level (function-scope mark), a same-name class
     // redeclaration reuses the name (tsc emits `var C` for both of two

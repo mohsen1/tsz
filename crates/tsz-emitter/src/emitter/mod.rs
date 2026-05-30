@@ -29,6 +29,7 @@
 
 mod arrow_concise;
 mod binding_patterns;
+mod block_scope_shadow_seed;
 mod class_temp_reservations;
 mod comments;
 mod core;

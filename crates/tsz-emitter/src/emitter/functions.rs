@@ -409,6 +409,10 @@ impl<'a> Printer<'a> {
         let is_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = false;
         self.ctx.block_scope_state.enter_function_scope();
+        // Seed this function scope's visible value-binding names so a
+        // nested-block ES5 class/let/const lowering renames on collision
+        // regardless of declaration order within the function body.
+        self.seed_block_scope_value_binding_names(&block.statements);
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_pending_new_target_capture();
         self.emit_param_prologue(transforms);

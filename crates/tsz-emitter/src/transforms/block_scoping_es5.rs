@@ -248,7 +248,19 @@ impl BlockScopeState {
         // with a reserved temp name. Sibling-block classes do not conflict
         // because their scopes are popped before this runs, so the common
         // nested-block case reuses `original_name` exactly like tsc.
+        //
+        // `function_scope_shadowed_names` carries hoisted value-binding names
+        // from this (and enclosing) function/script scope, seeded up front so
+        // the collision is order-independent: a nested-block class renames even
+        // when the colliding outer `var`/`function`/`class`/`enum`/`namespace`
+        // is declared *textually after* the class. tsc decides this via its
+        // binder pre-pass; the forward emit walk needs the seed to match.
+        let shadows_outer_value_binding = self
+            .function_scope_shadowed_names
+            .iter()
+            .any(|names| names.contains(original_name));
         let collides = self_referencing
+            || shadows_outer_value_binding
             || self.reserved_names.contains(original_name)
             || self.scope_stack.iter().any(|scope| {
                 scope.contains_key(original_name) || scope.values().any(|v| v == original_name)

@@ -115,6 +115,10 @@ impl<'a> Printer<'a> {
         // Enter root scope for block-scoped variable tracking and `var` scope boundaries.
         // This ensures variables declared throughout the file are tracked for renaming.
         self.ctx.block_scope_state.enter_function_scope();
+        // Seed module-level value-binding names so a nested-block ES5 class/let/const
+        // lowering renames on collision regardless of declaration order (tsc decides
+        // this via its binder pre-pass; our forward walk needs the names up front).
+        self.seed_block_scope_value_binding_names(&source.statements);
 
         // Extract comments. Triple-slash reference directives (/// <reference ...>)
         // are preserved as regular comments in CJS/ESM JS output (tsc behavior).

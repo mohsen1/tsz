@@ -188,6 +188,7 @@ impl<'a> Printer<'a> {
             }
             if is_function_body_block {
                 self.ctx.block_scope_state.enter_function_scope();
+                self.seed_block_scope_value_binding_names(&block.statements);
                 self.register_pending_function_body_parameters();
             } else {
                 self.ctx.block_scope_state.enter_scope();
@@ -241,6 +242,7 @@ impl<'a> Printer<'a> {
         }
         if is_function_body_block {
             self.ctx.block_scope_state.enter_function_scope();
+            self.seed_block_scope_value_binding_names(&block.statements);
             self.register_pending_function_body_parameters();
         } else {
             self.ctx.block_scope_state.enter_scope();
