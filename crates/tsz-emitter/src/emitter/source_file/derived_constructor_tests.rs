@@ -77,6 +77,64 @@ fn derived_constructor_fields_follow_parenthesized_super_call() {
 }
 
 #[test]
+fn super_arg_this_without_fields_captures_this_es5() {
+    // A `this` reference inside the super-call arguments must materialize the
+    // captured `_this` form even when the constructor has no field initializer
+    // and `super(...)` is its only statement. tsc emits
+    // `var _this = _super.call(this, _this) || this; return _this;` rather than
+    // the inlined `return _super.call(this, this) || this;` tail form.
+    let source = "class Base { constructor(t: any) {} }\nclass OnlySuperArg extends Base {\n    constructor() {\n        super(this);\n    }\n}\n";
+
+    let es5_output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        es5_output.contains(
+            "function OnlySuperArg() {\n        var _this = _super.call(this, _this) || this;\n        return _this;\n    }"
+        ),
+        "ES5 derived constructor with `this` in the super-call argument and no fields must capture `_this`.\nOutput:\n{es5_output}"
+    );
+    assert!(
+        !es5_output.contains("return _super.call(this, this) || this;"),
+        "The inline tail-super-return form must not be used when a super-call argument references `this`.\nOutput:\n{es5_output}"
+    );
+}
+
+#[test]
+fn super_arg_this_without_fields_captures_this_es5_renamed() {
+    // Same rule with different class/parameter spellings: the fix keys on the
+    // AST shape (a `this` reference inside super-call arguments), not on any
+    // identifier name.
+    let source = "class Animal { constructor(p: any) {} }\nclass Dog extends Animal {\n    constructor() {\n        super(this);\n    }\n}\n";
+
+    let es5_output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        es5_output.contains(
+            "function Dog() {\n        var _this = _super.call(this, _this) || this;\n        return _this;\n    }"
+        ),
+        "Renamed class/parameter must still capture `_this` when `this` appears in the super-call argument.\nOutput:\n{es5_output}"
+    );
+}
+
+#[test]
+fn super_arg_without_this_keeps_inline_tail_return_es5() {
+    // Negative / fallback case: a super-call argument that does NOT reference
+    // `this` keeps the inline tail-super-return form, proving the capture is
+    // gated on the structural `this`-in-argument shape, not on having any
+    // argument at all.
+    let source = "class Base { constructor(t: any) {} }\nclass NoThisArg extends Base {\n    constructor() {\n        super(42);\n    }\n}\n";
+
+    let es5_output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        es5_output.contains(
+            "function NoThisArg() {\n        return _super.call(this, 42) || this;\n    }"
+        ),
+        "A super-call argument without `this` should keep the inline tail-super-return form.\nOutput:\n{es5_output}"
+    );
+}
+
+#[test]
 fn pre_super_nested_class_emits_legacy_decorators() {
     let source = "declare const decorate: any;\nclass Base {}\nclass Derived extends Base {\n    prop = true;\n    constructor() {\n        @decorate(this)\n        class Inner {\n            @decorate(this)\n            method() {}\n            @decorate(this)\n            prop;\n        }\n        super();\n    }\n}\n";
 
