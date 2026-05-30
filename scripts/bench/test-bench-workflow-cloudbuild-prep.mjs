@@ -49,6 +49,12 @@ assert.match(
 
 assert.match(
   workflow,
+  /"\/bench-prep\/latest\/bench-prep\.env"[\s\S]+"bench-prep\/latest\/bench-prep\.tar"/,
+  "Cloud Build manifest parsing should accept latest prep entries and still validate their manifest target before use",
+);
+
+assert.match(
+  workflow,
   /expected \$\{target_sha\} \/ PGO=1\."\s*\n\s+exit 1/,
   "PGO prep path should report the expected target and exit immediately",
 );
