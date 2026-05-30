@@ -287,6 +287,10 @@ name = "static_field_lowering_trailing_comment_tests"
 path = "tests/static_field_lowering_trailing_comment_tests.rs"
 
 [[test]]
+name = "static_super_destructure_default_target_tests"
+path = "tests/static_super_destructure_default_target_tests.rs"
+
+[[test]]
 name = "wave3_small_emit_fixes_tests"
 path = "tests/wave3_small_emit_fixes_tests.rs"
 
