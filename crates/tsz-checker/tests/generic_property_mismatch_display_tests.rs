@@ -179,7 +179,9 @@ targetBox = emptyBox;
 }
 
 #[test]
-fn generic_primitive_property_mismatch_surfaces_leaf_relation() {
+fn generic_primitive_property_mismatch_surfaces_type_arg_directly() {
+    // tsc elaborates same-generic applications via type-argument comparison,
+    // skipping the intermediate "Types of property 'P' are incompatible." line.
     let diagnostic = ts2322_diagnostic(
         r#"
 interface Box<T> { value: T; }
@@ -197,18 +199,18 @@ stringBox = numberBox;
             .contains("Type 'Box<number>' is not assignable to type 'Box<string>'."),
         "expected generic primitive display, got {diagnostic:#?}"
     );
+    // tsc skips the "Types of property" wrapper for same-generic type-argument mismatches.
     assert!(
-        has_related(&diagnostic, "Types of property 'value' are incompatible."),
-        "expected property-path elaboration, got {diagnostic:#?}"
+        !has_related(&diagnostic, "Types of property 'value' are incompatible."),
+        "same-generic type-arg mismatch must NOT show property-path wrapper, got {diagnostic:#?}"
     );
-    // tsc surfaces the leaf relation beneath the property-path elaboration even
-    // when both sides are instantiations of the same generic base.
+    // The inner type-argument mismatch is nested directly under the outer line.
     assert!(
         has_related(
             &diagnostic,
             "Type 'number' is not assignable to type 'string'."
         ),
-        "expected leaf relation under generic property mismatch, got {diagnostic:#?}"
+        "expected type-argument mismatch nested directly, got {diagnostic:#?}"
     );
     // The leaf must use the property types, never the enclosing application.
     assert!(
@@ -221,9 +223,10 @@ stringBox = numberBox;
 }
 
 #[test]
-fn generic_primitive_property_mismatch_leaf_is_type_parameter_name_independent() {
-    // The same leaf must appear regardless of the type-parameter spelling.
-    for type_param in ["T", "K", "Value"] {
+fn generic_primitive_property_mismatch_is_type_parameter_name_independent() {
+    // The same type-argument mismatch must appear regardless of the type-parameter
+    // spelling, proving the fix is structural and not hardcoded to any name.
+    for type_param in ["T", "K", "Value", "Element"] {
         let source = format!(
             "interface Box<{type_param}> {{ value: {type_param}; }}\n\
              declare let numberBox: Box<number>;\n\
@@ -232,21 +235,51 @@ fn generic_primitive_property_mismatch_leaf_is_type_parameter_name_independent()
         );
         let diagnostic = ts2322_diagnostic(&source);
         assert!(
-            has_related(&diagnostic, "Types of property 'value' are incompatible."),
-            "expected property-path elaboration for param {type_param}, got {diagnostic:#?}"
+            !has_related(&diagnostic, "Types of property 'value' are incompatible."),
+            "same-generic type-arg mismatch must NOT show property-path wrapper for param '{type_param}', got {diagnostic:#?}"
         );
         assert!(
             has_related(
                 &diagnostic,
                 "Type 'number' is not assignable to type 'string'."
             ),
-            "expected leaf relation for param {type_param}, got {diagnostic:#?}"
+            "expected type-argument mismatch for param '{type_param}', got {diagnostic:#?}"
         );
     }
 }
 
 #[test]
-fn generic_mapped_property_mismatch_surfaces_leaf_relation() {
+fn generic_primitive_property_mismatch_is_property_name_independent() {
+    // The skip applies regardless of what the property is named inside the generic.
+    for prop_name in ["value", "item", "data", "inner"] {
+        let source = format!(
+            "interface Container<T> {{ {prop_name}: T; }}\n\
+             declare let n: Container<number>;\n\
+             declare let s: Container<string>;\n\
+             s = n;\n"
+        );
+        let diagnostic = ts2322_diagnostic(&source);
+        assert!(
+            !has_related(
+                &diagnostic,
+                &format!("Types of property '{prop_name}' are incompatible.")
+            ),
+            "same-generic type-arg mismatch must NOT show property-path wrapper for property '{prop_name}', got {diagnostic:#?}"
+        );
+        assert!(
+            has_related(
+                &diagnostic,
+                "Type 'number' is not assignable to type 'string'."
+            ),
+            "expected type-argument mismatch for property '{prop_name}', got {diagnostic:#?}"
+        );
+    }
+}
+
+#[test]
+fn generic_mapped_property_mismatch_surfaces_type_arg_directly() {
+    // Mapped type aliases are also generic applications; tsc skips the
+    // "Types of property" wrapper for same-generic type-argument mismatches.
     let diagnostic = ts2322_diagnostic(
         r#"
 type Wrap<T> = { [K in keyof T]: T[K] };
@@ -259,20 +292,21 @@ target = source;
     );
 
     assert!(
-        has_related(&diagnostic, "Types of property 'a' are incompatible."),
-        "expected property-path elaboration for mapped wrapper, got {diagnostic:#?}"
+        !has_related(&diagnostic, "Types of property 'a' are incompatible."),
+        "same-generic mapped mismatch must NOT show property-path wrapper, got {diagnostic:#?}"
     );
     assert!(
         has_related(
             &diagnostic,
             "Type 'number' is not assignable to type 'string'."
         ),
-        "expected leaf relation under mapped property mismatch, got {diagnostic:#?}"
+        "expected type-argument mismatch nested directly for mapped wrapper, got {diagnostic:#?}"
     );
 }
 
 #[test]
-fn generic_multi_argument_property_mismatch_surfaces_leaf_relation() {
+fn generic_multi_argument_property_mismatch_surfaces_type_arg_directly() {
+    // Multi-argument same-generic: tsc still skips the "Types of property" wrapper.
     let diagnostic = ts2322_diagnostic(
         r#"
 interface Pair<A, B> { a: A; b: B; }
@@ -285,15 +319,69 @@ target = source;
     );
 
     assert!(
-        has_related(&diagnostic, "Types of property 'a' are incompatible."),
-        "expected property-path elaboration for multi-arg generic, got {diagnostic:#?}"
+        !has_related(&diagnostic, "Types of property 'a' are incompatible."),
+        "same-generic multi-arg mismatch must NOT show property-path wrapper, got {diagnostic:#?}"
     );
     assert!(
         has_related(
             &diagnostic,
             "Type 'number' is not assignable to type 'string'."
         ),
-        "expected leaf relation under multi-arg generic property mismatch, got {diagnostic:#?}"
+        "expected type-argument mismatch nested directly for multi-arg generic, got {diagnostic:#?}"
+    );
+}
+
+#[test]
+fn generic_class_property_mismatch_surfaces_type_arg_directly() {
+    // Exact repro from issue #11778: class Box<T> { v!: T }.
+    // tsc: "Type 'Box<number>' is not assignable to type 'Box<string>'.\n  Type 'number' is not assignable to type 'string'."
+    // (no intermediate "Types of property 'v' are incompatible." line)
+    let diagnostic = ts2322_diagnostic(
+        r#"
+class Box<T> { v!: T; }
+declare const b: Box<number>;
+const n: Box<string> = b;
+"#,
+    );
+
+    assert!(
+        diagnostic
+            .message_text
+            .contains("Type 'Box<number>' is not assignable to type 'Box<string>'."),
+        "expected class generic display, got {diagnostic:#?}"
+    );
+    assert!(
+        !has_related(&diagnostic, "Types of property 'v' are incompatible."),
+        "same-generic class mismatch must NOT show property-path wrapper, got {diagnostic:#?}"
+    );
+    assert!(
+        has_related(
+            &diagnostic,
+            "Type 'number' is not assignable to type 'string'."
+        ),
+        "expected type-argument mismatch nested directly for class generic, got {diagnostic:#?}"
+    );
+}
+
+#[test]
+fn different_generic_types_keep_property_path() {
+    // Negative case: when source and target are DIFFERENT generic types,
+    // structural property elaboration must still appear.
+    let diagnostic = ts2322_diagnostic(
+        r#"
+interface Box<T> { value: T; }
+interface Bag<T> { value: T; }
+
+declare let numBox: Box<number>;
+declare let strBag: Bag<string>;
+
+strBag = numBox;
+"#,
+    );
+
+    assert!(
+        has_related(&diagnostic, "Types of property 'value' are incompatible."),
+        "different-generic mismatch must still show property-path elaboration, got {diagnostic:#?}"
     );
 }
 
