@@ -210,6 +210,21 @@ impl<'a> AstToIr<'a> {
         )
     }
 
+    /// The ES5 receiver a `super` keyword lowers to in this member context:
+    /// `_super.prototype` for an instance member home, `_super` for a static
+    /// one. The choice is keyed on the static/instance context of the enclosing
+    /// member, not on the spelling of the property that follows `super`.
+    pub(super) fn es5_super_receiver_base(&self) -> IRNode {
+        if self.is_static.get() {
+            IRNode::id(self.super_name.clone())
+        } else {
+            IRNode::PropertyAccess {
+                object: Box::new(IRNode::id(self.super_name.clone())),
+                property: "prototype".to_string().into(),
+            }
+        }
+    }
+
     /// Check if a call expression callee is super.method or super[expr] and transform to
     /// _super.prototype.method.call(this, args) or _super.prototype[expr].call(this, args)
     fn try_convert_super_method_call(
@@ -227,21 +242,10 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let method_name = get_identifier_text(self.arena, access.name_or_argument)?;
-                let super_proto_method = if self.is_static.get() {
-                    // Static: _super.method
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id(self.super_name.clone())),
-                        property: method_name.into(),
-                    }
-                } else {
-                    // Instance: _super.prototype.method
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id(self.super_name.clone())),
-                            property: "prototype".to_string().into(),
-                        }),
-                        property: method_name.into(),
-                    }
+                // Static: `_super.method`; instance: `_super.prototype.method`.
+                let super_proto_method = IRNode::PropertyAccess {
+                    object: Box::new(self.es5_super_receiver_base()),
+                    property: method_name.into(),
                 };
                 if is_optional_call {
                     return Some(self.convert_optional_super_method_call(super_proto_method, args));
@@ -266,16 +270,8 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static.get() {
-                    IRNode::id(self.super_name.clone())
-                } else {
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id(self.super_name.clone())),
-                        property: "prototype".to_string().into(),
-                    }
-                };
                 let super_proto_elem = IRNode::ElementAccess {
-                    object: Box::new(super_base),
+                    object: Box::new(self.es5_super_receiver_base()),
                     index: Box::new(index_expr),
                 };
                 if is_optional_call {
@@ -406,21 +402,18 @@ impl<'a> AstToIr<'a> {
             // Check for super.property → _super.prototype.property (instance) or _super.property (static)
             if let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
-                && let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
             {
-                return if self.is_static.get() {
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id(self.super_name.clone())),
-                        property: name.into(),
-                    }
-                } else {
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id(self.super_name.clone())),
-                            property: "prototype".to_string().into(),
-                        }),
-                        property: name.into(),
-                    }
+                // A bare `super` recovers as `super.<missing>` (TS1034). tsc still
+                // substitutes the `super` receiver with `_super.prototype`
+                // (instance) / `_super` (static) and emits the dangling member
+                // access verbatim, yielding `_super.prototype.` / `_super.`. The
+                // receiver substitution is keyed on the base being the `super`
+                // keyword, independent of whether a property name is present.
+                let property =
+                    get_identifier_text(self.arena, access.name_or_argument).unwrap_or_default();
+                return IRNode::PropertyAccess {
+                    object: Box::new(self.es5_super_receiver_base()),
+                    property: property.into(),
                 };
             }
 
@@ -456,16 +449,8 @@ impl<'a> AstToIr<'a> {
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
             {
                 let index = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static.get() {
-                    IRNode::id(self.super_name.clone())
-                } else {
-                    IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id(self.super_name.clone())),
-                        property: "prototype".to_string().into(),
-                    }
-                };
                 return IRNode::ElementAccess {
-                    object: Box::new(super_base),
+                    object: Box::new(self.es5_super_receiver_base()),
                     index: Box::new(index),
                 };
             }

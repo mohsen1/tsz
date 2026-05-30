@@ -46,3 +46,5 @@ mod empty_statement_comment_elision_tests;
 mod es5_emit_tests;
 #[cfg(test)]
 mod es5_for_of_destructure_temp_order_tests;
+#[cfg(test)]
+mod es5_super_recovery_tests;
