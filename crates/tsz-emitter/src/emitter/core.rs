@@ -1099,7 +1099,7 @@ impl<'a> Printer<'a> {
 
             // Call expression
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                self.emit_call_expression(node);
+                self.emit_call_expression(idx, node);
             }
 
             // New expression
