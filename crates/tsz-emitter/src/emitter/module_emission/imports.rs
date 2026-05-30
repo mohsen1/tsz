@@ -1440,8 +1440,11 @@ impl<'a> Printer<'a> {
                         && let Some(clause_node) = self.arena.get(export.export_clause)
                         && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     {
-                        return self
-                            .import_equals_declaration_needs_node_esm_create_require(clause_node);
+                        // When an IMPORT_EQUALS_DECLARATION is the clause of an
+                        // EXPORT_DECLARATION, the ExportKeyword is on the outer statement,
+                        // not on the inner clause node. The declaration is always exported,
+                        // so only check whether it is an external (require) reference.
+                        return self.import_equals_declaration_is_external(clause_node);
                     }
                     false
                 })

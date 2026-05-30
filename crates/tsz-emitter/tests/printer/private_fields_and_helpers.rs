@@ -1057,15 +1057,16 @@ fn test_private_field_call_complex_receiver() {
 "#;
     let output = parse_lower_print(source, PrintOptions::es6());
     // Each call site gets its own temp (_a, _b, …) so both calls can coexist safely.
+    // tsc wraps the receiver assignment in parens: `(_a = expr)`.
     assert!(
-        output.contains("__classPrivateFieldGet(_a = Foo.getInstance(), _Foo_fn, \"f\").call(_a)"),
-        "First call should capture receiver in temp and reuse it in .call()\nOutput:\n{output}"
+        output.contains("__classPrivateFieldGet((_a = Foo.getInstance()), _Foo_fn, \"f\").call(_a)"),
+        "First call should capture receiver in temp (with parens) and reuse it in .call()\nOutput:\n{output}"
     );
     assert!(
         output.contains(
-            "__classPrivateFieldGet(_b = Foo.getInstance(), _Foo_fn, \"f\").call(_b, 1, 2)"
+            "__classPrivateFieldGet((_b = Foo.getInstance()), _Foo_fn, \"f\").call(_b, 1, 2)"
         ),
-        "Second call should use its own temp and reuse it in .call()\nOutput:\n{output}"
+        "Second call should use its own temp (with parens) and reuse it in .call()\nOutput:\n{output}"
     );
     // Confirm the receiver is never emitted raw in a .call() position.
     assert!(
