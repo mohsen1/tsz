@@ -1113,6 +1113,51 @@ fn test_export_resolution_multiple_wildcards() {
     assert!(result.is_none(), "Should not resolve nonExistent");
 }
 
+/// Test that `export type *` sets `is_type_only=true` and `export *` sets `is_type_only=false`
+/// in `wildcard_reexports`. These are tested at the binder level by parsing real source text
+/// so the flag comes from the actual import/export binding pass.
+#[test]
+fn test_wildcard_reexport_type_only_flag_from_binding() {
+    // A file with both `export *` (value) and `export type *` (type-only)
+    let source = r#"
+export * from './value-module';
+export type * from './type-only-module';
+"#;
+
+    let mut parser = ParserState::new("barrel.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.set_debug_file("barrel.ts");
+    binder.bind_source_file(arena, root);
+
+    let entries = binder
+        .wildcard_reexports
+        .get("barrel.ts")
+        .expect("barrel.ts should have wildcard_reexports");
+
+    assert_eq!(entries.len(), 2, "expected 2 wildcard entries: {entries:?}");
+
+    let value_entry = entries
+        .iter()
+        .find(|(m, _)| m == "./value-module")
+        .expect("./value-module not found");
+    assert!(
+        !value_entry.1,
+        "`export *` should have is_type_only=false"
+    );
+
+    let type_only_entry = entries
+        .iter()
+        .find(|(m, _)| m == "./type-only-module")
+        .expect("./type-only-module not found");
+    assert!(
+        type_only_entry.1,
+        "`export type *` should have is_type_only=true"
+    );
+}
+
 // =============================================================================
 // Lib Symbol Merging Tests (SymbolId Collision Fix)
 // =============================================================================
