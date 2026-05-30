@@ -512,12 +512,13 @@ fn system_module_nested_object_export_destructuring_reuses_identifier_source() {
 }
 
 /// Structural rule: when a System module has both `export * from "..."` and
-/// hoisted function declarations, tsc places `exportStar_1` helper immediately
-/// after `"use strict"` (with other helpers), BEFORE `var __moduleName` and
-/// BEFORE hoisted function bodies. Two name variants prove the rule is not
-/// bound to a specific identifier spelling.
+/// hoisted function declarations, tsc places the `exportStar_1` helper at the
+/// tail of the register-factory prologue — AFTER `var __moduleName` and AFTER
+/// the hoisted function bodies, immediately before `return {`. (Verified
+/// against tsc 6.0.3 baselines systemModule9/11/16.) Two name variants prove
+/// the rule is not bound to a specific identifier spelling.
 #[test]
-fn system_export_star_helper_appears_before_var_module_name() {
+fn system_export_star_helper_appears_after_var_module_name() {
     for func_name in &["foo", "bar"] {
         let src = format!("export * from \"a\";\nexport function {func_name}() {{}}\n");
         let output = emit_system_es2015(&src);
@@ -533,14 +534,21 @@ fn system_export_star_helper_appears_before_var_module_name() {
             .unwrap_or_else(|| {
                 panic!("hoisted function {func_name} missing in output:\n{output}")
             });
+        let return_pos = output
+            .find("return {")
+            .unwrap_or_else(|| panic!("`return {{` missing in output:\n{output}"));
 
         assert!(
-            helper_pos < module_name_pos,
-            "exportStar_1 must appear BEFORE var __moduleName (func={func_name}).\nOutput:\n{output}"
+            module_name_pos < helper_pos,
+            "var __moduleName must appear BEFORE the exportStar_1 helper (func={func_name}).\nOutput:\n{output}"
         );
         assert!(
-            module_name_pos < func_pos,
-            "var __moduleName must appear BEFORE hoisted function {func_name}.\nOutput:\n{output}"
+            func_pos < helper_pos,
+            "hoisted function {func_name} must appear BEFORE the exportStar_1 helper.\nOutput:\n{output}"
+        );
+        assert!(
+            helper_pos < return_pos,
+            "exportStar_1 helper must appear BEFORE `return {{` (func={func_name}).\nOutput:\n{output}"
         );
     }
 }
