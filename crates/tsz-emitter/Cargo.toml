@@ -31,6 +31,10 @@ name = "es5_super_object_literal_accessor_tests"
 path = "tests/es5_super_object_literal_accessor_tests.rs"
 
 [[test]]
+name = "es5_super_arrow_this_capture_tests"
+path = "tests/es5_super_arrow_this_capture_tests.rs"
+
+[[test]]
 name = "super_missing_member_recovery_tests"
 path = "tests/super_missing_member_recovery_tests.rs"
 

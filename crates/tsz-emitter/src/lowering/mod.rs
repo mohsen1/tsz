@@ -45,6 +45,7 @@ mod helpers_private_fields;
 mod import_usage;
 mod name_helpers;
 mod parameter_prologue;
+mod super_capture;
 mod visit_children;
 
 pub use self::core::LoweringPass;
