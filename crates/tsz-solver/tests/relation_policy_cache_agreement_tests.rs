@@ -1485,3 +1485,102 @@ fn assignability_cache_in_callback_param_check_matches_uncached_relation_policy(
         "ordinary method slot must remain intact after the callback-mode lookup",
     );
 }
+
+#[test]
+fn assignability_cache_disable_method_bivariance_matches_uncached_method_parameter_count() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let mut source_shape = FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    );
+    source_shape.is_method = true;
+    let source = interner.function(source_shape);
+
+    let mut target_shape =
+        FunctionShape::new(vec![ParamInfo::unnamed(TypeId::STRING)], TypeId::VOID);
+    target_shape.is_method = true;
+    let target = interner.function(target_shape);
+
+    let bivariant_method = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT,
+    );
+    let sound_method = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES
+            | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
+            | RelationFlags::DISABLE_METHOD_BIVARIANCE,
+    );
+    let bivariant_key =
+        RelationCacheKey::for_assignability(source, target, bivariant_method.cache_config());
+    let sound_key =
+        RelationCacheKey::for_assignability(source, target, sound_method.cache_config());
+
+    assert_ne!(
+        bivariant_key, sound_key,
+        "method-bivariant and sound-method parameter-count policies must occupy distinct assignability cache slots",
+    );
+
+    let bivariant_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_method,
+        RelationContext::default(),
+    )
+    .is_related();
+    let sound_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        sound_method,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        bivariant_uncached,
+        "method bivariance should allow extra required method parameters when the count exception is enabled",
+    );
+    assert!(
+        !sound_uncached,
+        "disabling method bivariance should also disable the method parameter-count exception",
+    );
+
+    let bivariant_cached = db.is_assignable_to_with_policy(source, target, bivariant_method);
+    assert_eq!(
+        bivariant_cached, bivariant_uncached,
+        "cached method-bivariant parameter-count policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_key),
+        Some(bivariant_cached),
+        "method-bivariant parameter-count result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(sound_key),
+        None,
+        "sound-method lookup must not hit the method-bivariant parameter-count slot",
+    );
+
+    let sound_cached = db.is_assignable_to_with_policy(source, target, sound_method);
+    assert_eq!(
+        sound_cached, sound_uncached,
+        "cached sound-method parameter-count policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(sound_key),
+        Some(sound_cached),
+        "sound-method parameter-count result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_key),
+        Some(bivariant_cached),
+        "method-bivariant parameter-count slot must remain intact after the sound-method lookup",
+    );
+}
