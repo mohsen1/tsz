@@ -1638,9 +1638,10 @@ impl<'a> CheckerState<'a> {
                     {
                         return app;
                     }
-                    if query::lazy_def_id(self.ctx.types, return_type).is_none()
-                        && self.ctx.types.get_display_alias(return_type).is_none()
-                    {
+                    if query::should_synthesize_explicit_new_display_alias(
+                        self.ctx.types,
+                        return_type,
+                    ) {
                         let factory = self.ctx.types.factory();
                         let app = factory.application(return_type, resolved_args);
                         self.ctx.types.store_display_alias(return_type, app);

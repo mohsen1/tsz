@@ -49,6 +49,18 @@ pub(crate) fn application_infos_for_type(
     applications
 }
 
+/// Explicit `new D<T>()` display aliases are only needed when the return type is
+/// still a bare, alias-free reference. Generic construct signatures already
+/// return an applied type, and wrapping those again double-prints type args.
+pub(crate) fn should_synthesize_explicit_new_display_alias(
+    db: &dyn TypeDatabase,
+    return_type: TypeId,
+) -> bool {
+    lazy_def_id(db, return_type).is_none()
+        && db.get_display_alias(return_type).is_none()
+        && !tsz_solver::query::is_generic_application(db, return_type)
+}
+
 pub(crate) fn instantiate_type_params_to_constraints(
     db: &dyn QueryDatabase,
     type_id: TypeId,
