@@ -931,13 +931,6 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            // Do not suppress for mapped types and indexed access types -
-            // they should still produce TS2322 when the source is not assignable.
-            if crate::query_boundaries::common::is_mapped_type(self.ctx.types, type_id)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id)
-            {
-                return false;
-            }
             // Also check for union types containing indexed access types.
             // For example, `(S & State<T>)["a"] | undefined` is a union where
             // one member is an indexed access type. We should not suppress TS2322
@@ -1097,8 +1090,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Pre-compute for two uses: the intersection-suppression guard and an early-exit
+        // before the more expensive should_suppress_for_complex_type call for structural targets.
+        let target_is_structural = is_structural_target_that_must_not_be_suppressed(target);
+
         matches!(source, TypeId::ERROR)
-            || source_is_intersection_with_indexed_access()
+            // Suppress for intersection-with-indexed-access sources only when the target is NOT
+            // a structural type requiring property-level checking (mapped, intersection,
+            // conditional, index-access, string intrinsic). For those targets the solver handles
+            // the check directly and this suppression would hide real property mismatches.
+            || (source_is_intersection_with_indexed_access() && !target_is_structural)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
             // any is assignable to everything except never — tsc reports TS2322 for any→never
@@ -1119,7 +1120,8 @@ impl<'a> CheckerState<'a> {
             // outer type parameter (for example Assign<T, U> receiving a concrete U).
             // EXCEPTION: Don't suppress when target contains indexed access types - these
             // may resolve to incompatible concrete types that should produce TS2322.
-            || (should_suppress_for_complex_type(target)
+            || (!target_is_structural
+                && should_suppress_for_complex_type(target)
                 && contains_type_parameters(source)
                 && !is_callable_or_function(target)
                 && !target_contains_indexed_access()
