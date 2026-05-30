@@ -2042,24 +2042,25 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             // Insert any temps hoisted while emitting field initializers (e.g.
-            // `_a` for a class expression lowered inside a private-field init) at
-            // the top of this synthesized constructor body, then drop the scope.
-            if !self.hoisted_assignment_temps.is_empty() {
-                let indent = self
-                    .writer
-                    .indent_string_at(synth_ctor_hoist_anchor.indent_level);
-                let var_decl = format!(
-                    "{}var {};",
-                    indent,
-                    self.hoisted_assignment_temps.join(", ")
-                );
-                self.writer.insert_line_at(
-                    synth_ctor_hoist_anchor.byte_offset,
-                    synth_ctor_hoist_anchor.line_no,
-                    &var_decl,
-                );
-                self.hoisted_assignment_temps.clear();
-            }
+            // `_a` for a class expression lowered inside a private-field init, or
+            // a `??=` read-cache temp) at the top of this synthesized constructor
+            // body, then drop the scope. Value temps are inserted last so they
+            // land on the first line.
+            let synth_ctor_indent = self
+                .writer
+                .indent_string_at(synth_ctor_hoist_anchor.indent_level);
+            let assignment_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+            self.insert_hoisted_var_line(
+                &assignment_temps,
+                &synth_ctor_hoist_anchor,
+                &synth_ctor_indent,
+            );
+            let value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+            self.insert_hoisted_var_line(
+                &value_temps,
+                &synth_ctor_hoist_anchor,
+                &synth_ctor_indent,
+            );
             self.pop_temp_scope();
             self.decrease_indent();
             self.write("}");

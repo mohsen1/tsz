@@ -1051,7 +1051,15 @@ impl<'a> Printer<'a> {
         {
             self.map_opening_brace(block_node);
             self.write("{ ");
+            let var_insert_pos = self.writer.len();
             self.emit(block.statements.nodes[0]);
+            // A `??=` read-cache temp (or optional-chaining temp) can be created
+            // while emitting the single statement; declare it inline so the body
+            // stays runnable instead of referencing an undeclared `_a`.
+            let prologue = self.take_single_line_hoisted_temp_prologue();
+            if !prologue.is_empty() {
+                self.writer.insert_at(var_insert_pos, &prologue);
+            }
             self.map_closing_brace(block_node);
             self.write(" }");
             return;
@@ -1186,23 +1194,17 @@ impl<'a> Printer<'a> {
             self.end_constructor_using_region(region);
         }
 
-        // Insert any hoisted temps created during statement emit (e.g., `_a` from `??` lowering).
-        if !self.hoisted_assignment_temps.is_empty() {
-            let indent = self
-                .writer
-                .indent_string_at(hoisted_var_anchor.indent_level);
-            let var_decl = format!(
-                "{}var {};",
-                indent,
-                self.hoisted_assignment_temps.join(", ")
-            );
-            self.writer.insert_line_at(
-                hoisted_var_anchor.byte_offset,
-                hoisted_var_anchor.line_no,
-                &var_decl,
-            );
-            self.hoisted_assignment_temps.clear();
-        }
+        // Insert any hoisted temps created during statement emit (e.g., `_a` from
+        // `??`/`??=` lowering). Assignment-target temps and logical-assignment
+        // value temps are inserted at the same anchor (value temps end up on the
+        // first line, matching `insert_function_body_hoisted_temps_at`).
+        let hoisted_indent = self
+            .writer
+            .indent_string_at(hoisted_var_anchor.indent_level);
+        let assignment_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+        self.insert_hoisted_var_line(&assignment_temps, &hoisted_var_anchor, &hoisted_indent);
+        let value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+        self.insert_hoisted_var_line(&value_temps, &hoisted_var_anchor, &hoisted_indent);
 
         self.decrease_indent();
         self.write("}");

@@ -210,14 +210,17 @@ impl<'a> Printer<'a> {
                 self.emit(stmt_idx);
             }
             // Inject hoisted temp vars inline for single-line function bodies.
-            // Temps like `_a` are created during emit (e.g. optional chaining lowering),
-            // so we insert `var _a; ` at the position right after `{ `.
-            if let Some(byte_offset) = var_insert_pos
-                && !self.hoisted_assignment_temps.is_empty()
-            {
-                let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
-                self.writer.insert_at(byte_offset, &var_decl);
-                self.hoisted_assignment_temps.clear();
+            // Temps like `_a` are created during emit (e.g. optional chaining
+            // lowering or `??=` read-cache lowering), so we insert
+            // `var _a; ` at the position right after `{ `. Both assignment-target
+            // temps and logical-assignment value temps must be declared, otherwise
+            // the value temp is referenced without a binding (non-runnable
+            // strict-mode output).
+            if let Some(byte_offset) = var_insert_pos {
+                let prologue = self.take_single_line_hoisted_temp_prologue();
+                if !prologue.is_empty() {
+                    self.writer.insert_at(byte_offset, &prologue);
+                }
             }
             self.map_closing_brace(node);
             self.write(" }");
@@ -721,6 +724,61 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
+    }
+
+    /// Build the inline `var _a; ` prologue for a *single-line* function/method
+    /// body (e.g. `m() { o.v ??= 1; }`) and clear the underlying pools.
+    ///
+    /// Mirrors the multi-line [`Self::emit_function_body_hoisted_temps`] ordering
+    /// (logical-assignment value temps first, then assignment-target/for-of
+    /// temps). The single-line block emitters historically flushed only
+    /// `hoisted_assignment_temps`, which dropped the `var` declaration for
+    /// nullish-assignment (`??=`) read-cache temps and produced non-runnable
+    /// strict-mode output (`ReferenceError: _a is not defined`).
+    pub(in crate::emitter) fn take_single_line_hoisted_temp_prologue(&mut self) -> String {
+        let mut prologue = String::new();
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            prologue.push_str("var ");
+            prologue.push_str(&self.hoisted_assignment_value_temps.join(", "));
+            prologue.push_str("; ");
+            self.hoisted_assignment_value_temps.clear();
+        }
+
+        if !self.hoisted_assignment_temps.is_empty() || !self.hoisted_for_of_temps.is_empty() {
+            let ref_vars: Vec<&str> = self
+                .hoisted_assignment_temps
+                .iter()
+                .chain(self.hoisted_for_of_temps.iter())
+                .map(String::as_str)
+                .collect();
+            prologue.push_str("var ");
+            prologue.push_str(&ref_vars.join(", "));
+            prologue.push_str("; ");
+            self.hoisted_assignment_temps.clear();
+            self.hoisted_for_of_temps.clear();
+        }
+
+        prologue
+    }
+
+    /// Insert a `var <names>;` line for a multi-line function/constructor body at
+    /// `anchor`, indented by `indent`. Inserting the assignment-target temps and
+    /// the logical-assignment value temps at the *same* anchor (assignment first,
+    /// value second) leaves the value temps on the first line, matching
+    /// [`Self::emit_function_body_hoisted_temps`]. No-op when `names` is empty.
+    pub(in crate::emitter) fn insert_hoisted_var_line(
+        &mut self,
+        names: &[String],
+        anchor: &HoistAnchor,
+        indent: &str,
+    ) {
+        if names.is_empty() {
+            return;
+        }
+        let var_decl = format!("{indent}var {};", names.join(", "));
+        self.writer
+            .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
     }
 
     pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(

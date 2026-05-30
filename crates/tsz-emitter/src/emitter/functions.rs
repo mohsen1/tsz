@@ -382,12 +382,11 @@ impl<'a> Printer<'a> {
             }
             self.emit(stmt_idx);
         }
-        if let Some(byte_offset) = var_insert_pos
-            && !self.hoisted_assignment_temps.is_empty()
-        {
-            let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
-            self.writer.insert_at(byte_offset, &var_decl);
-            self.hoisted_assignment_temps.clear();
+        if let Some(byte_offset) = var_insert_pos {
+            let prologue = self.take_single_line_hoisted_temp_prologue();
+            if !prologue.is_empty() {
+                self.writer.insert_at(byte_offset, &prologue);
+            }
         }
         self.write(" }");
     }
@@ -1426,6 +1425,101 @@ mod tests {
             "Async arrow inside class method should pass `this` to __awaiter.\nOutput:\n{}",
             result.code
         );
+    }
+
+    /// Lowering `??=` on a member-access target below ES2020 introduces a
+    /// read-cache temp (`(_a = obj.p) !== null && _a !== void 0 ? _a : ...`).
+    /// That temp lives in `hoisted_assignment_value_temps` and must be declared
+    /// as `var _a;` at the top of the enclosing function body — including for
+    /// *single-line* bodies, where the prologue is injected inline. Without the
+    /// declaration the output references an undeclared `_a` and throws
+    /// `ReferenceError` at runtime under strict mode. These tests vary the object
+    /// and property spellings so the fix is keyed on structure, not names.
+    fn emit_es2015(source: &str) -> String {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+        let (parser, root) = parse_test_source(source);
+        lower_and_print(&parser.arena, root, PrintOptions::es6()).code
+    }
+
+    /// Every generated `(_x = ...)` read-cache temp must have a matching
+    /// `var _x;` declaration in the output, otherwise the emit is non-runnable.
+    fn assert_value_temp_declared(output: &str, temp: &str) {
+        assert!(
+            output.contains(&format!("({temp} = ")),
+            "expected read-cache temp `{temp}` to be used.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(&format!("var {temp};"))
+                || output.contains(&format!("var {temp},"))
+                || output.contains(&format!(", {temp};"))
+                || output.contains(&format!(", {temp},")),
+            "read-cache temp `{temp}` is used but never declared (`var {temp};` missing).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_assign_in_single_line_function_declares_value_temp() {
+        let output = emit_es2015("function f() { box.value ??= 1; }");
+        assert_value_temp_declared(&output, "_a");
+    }
+
+    #[test]
+    fn nullish_assign_in_single_line_method_declares_value_temp() {
+        // Different object/property spelling than the function case.
+        let output = emit_es2015("class Counter { bump() { this.count ??= 0; } }");
+        assert_value_temp_declared(&output, "_a");
+    }
+
+    #[test]
+    fn nullish_assign_on_super_property_declares_value_temp() {
+        let source = "class Base { get slot() { return 0; } set slot(v: number) {} }\n\
+            class Derived extends Base { run() { super.slot ??= 3; } }";
+        let output = emit_es2015(source);
+        assert_value_temp_declared(&output, "_a");
+        assert!(
+            output.contains("(_a = super.slot)"),
+            "super-property read-cache temp must wrap the `super` read.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_assign_in_single_line_constructor_declares_value_temp() {
+        let output = emit_es2015("class C { constructor() { store.flag ??= 1; } }");
+        assert_value_temp_declared(&output, "_a");
+    }
+
+    #[test]
+    fn nullish_assign_in_multiline_constructor_declares_value_temp() {
+        let source = "class C {\n    constructor() {\n        const y = 1;\n        store.flag ??= y;\n    }\n}";
+        let output = emit_es2015(source);
+        assert_value_temp_declared(&output, "_a");
+    }
+
+    #[test]
+    fn nullish_assign_in_field_initializer_declares_value_temp() {
+        // Synthesized constructor path for a field initializer that lowers `??=`.
+        let output = emit_es2015("class C { x = (bag.item ??= 2); }");
+        assert_value_temp_declared(&output, "_a");
+    }
+
+    #[test]
+    fn nullish_assign_complex_receiver_declares_both_temps() {
+        // A non-simple receiver also allocates an assignment-target temp `_b`;
+        // both the value temp `_a` and the receiver temp `_b` must be declared.
+        let output = emit_es2015("function f() { make().value ??= 1; }");
+        assert_value_temp_declared(&output, "_a");
+        assert!(
+            output.contains("var _b;")
+                || output.contains(", _b;")
+                || output.contains("var _a, _b;"),
+            "receiver temp `_b` must be declared.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_assign_in_block_body_arrow_declares_value_temp() {
+        let output = emit_es2015("const f = () => { box.value ??= 1; };");
+        assert_value_temp_declared(&output, "_a");
     }
 
     #[test]
