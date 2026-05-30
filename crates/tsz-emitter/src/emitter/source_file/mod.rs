@@ -1,5 +1,8 @@
 mod const_enums;
 mod emit;
+mod import_helpers_class_scan;
+#[cfg(test)]
+mod import_helpers_class_scan_tests;
 mod recovery;
 #[cfg(test)]
 mod tc39_decorator_tests;
