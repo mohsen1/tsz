@@ -1,5 +1,6 @@
 mod bang_module_reference;
 mod system_emit;
+mod system_emit_using;
 mod system_export_star;
 mod system_helpers;
 mod system_hoist;
