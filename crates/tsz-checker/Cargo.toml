@@ -1867,6 +1867,10 @@ name = "structural_dispatch_void_tests"
 path = "tests/structural_dispatch_void_tests.rs"
 
 [[test]]
+name = "recursive_generic_property_order_tests"
+path = "tests/recursive_generic_property_order_tests.rs"
+
+[[test]]
 name = "optional_property_required_elaboration_tests"
 path = "tests/optional_property_required_elaboration_tests.rs"
 

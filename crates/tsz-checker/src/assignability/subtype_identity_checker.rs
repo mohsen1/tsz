@@ -6,10 +6,12 @@
 //! - `are_var_decl_types_compatible` (TS2403)
 
 use crate::query_boundaries::assignability::{
-    is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
-    mutable_array_element_for_redeclaration, subtype_cache_key,
+    are_types_structurally_identical, is_redeclaration_identical_with_resolver,
+    is_relation_cacheable, is_subtype_with_resolver, mutable_array_element_for_redeclaration,
+    subtype_cache_key,
 };
 use crate::state::CheckerState;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -345,6 +347,13 @@ impl<'a> CheckerState<'a> {
         let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
         let current_type = self.array_application_to_array_for_redeclaration(current_type);
 
+        if self.recursive_generic_applications_have_distinct_redeclaration_args(
+            prev_type,
+            current_type,
+        ) {
+            return false;
+        }
+
         if self.recursive_mapped_alias_applications_have_distinct_args(prev_type, current_type) {
             return false;
         }
@@ -490,6 +499,73 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         self.symbol_declares_recursive_mapped_alias(sym_id)
+    }
+
+    fn recursive_generic_applications_have_distinct_redeclaration_args(
+        &self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> bool {
+        let Some(prev_app) =
+            crate::query_boundaries::common::type_application(self.ctx.types, prev_type)
+        else {
+            return false;
+        };
+        let Some(current_app) =
+            crate::query_boundaries::common::type_application(self.ctx.types, current_type)
+        else {
+            return false;
+        };
+        if prev_app.args == current_app.args {
+            return false;
+        }
+        if !self.application_base_declares_recursive_generic_type(prev_app.base)
+            && !self.application_base_declares_recursive_generic_type(current_app.base)
+        {
+            return false;
+        }
+        if prev_app.args.len() != current_app.args.len() {
+            return true;
+        }
+        prev_app
+            .args
+            .iter()
+            .zip(current_app.args.iter())
+            .any(|(&prev_arg, &current_arg)| {
+                prev_arg != current_arg
+                    && !are_types_structurally_identical(
+                        self.ctx.types,
+                        &self.ctx,
+                        prev_arg,
+                        current_arg,
+                    )
+            })
+    }
+
+    fn application_base_declares_recursive_generic_type(&self, base: TypeId) -> bool {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return false;
+        };
+        self.symbol_declares_recursive_generic_type(sym_id)
+    }
+
+    fn symbol_declares_recursive_generic_type(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol
+            .has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS | symbol_flags::TYPE_ALIAS)
+        {
+            return false;
+        }
+        symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.type_node_contains_type_reference_to_symbol(decl_idx, sym_id))
     }
 
     fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
