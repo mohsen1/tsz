@@ -683,7 +683,14 @@ impl<'a> Printer<'a> {
                             && let Ok(cp) = u32::from_str_radix(hex, 16)
                             && cp <= 0x10FFFF
                         {
-                            self.push_downleveled_codepoint(&mut out, cp, quote_char);
+                            // Null codepoint followed by an ASCII digit: use \x00 so the
+                            // output does not look like an octal escape sequence.
+                            // e.g. \u{0}1 → "\x001" not "\01" (which is octal 1).
+                            if cp == 0 && j + 1 < bytes.len() && bytes[j + 1].is_ascii_digit() {
+                                out.push_str("\\x00");
+                            } else {
+                                self.push_downleveled_codepoint(&mut out, cp, quote_char);
+                            }
                             i = j + 1;
                             continue;
                         }
@@ -833,13 +840,22 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_escaped_string(&mut self, s: &str, quote_char: char) {
-        for ch in s.chars() {
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
             match ch {
                 '\n' => self.write("\\n"),
                 '\r' => self.write("\\r"),
                 '\t' => self.write("\\t"),
                 '\\' => self.write("\\\\"),
-                '\0' => self.write("\\0"),
+                '\0' => {
+                    // Use \x00 when the next character is a digit to avoid
+                    // creating an octal escape sequence in the output.
+                    if chars.peek().is_some_and(|&next| next.is_ascii_digit()) {
+                        self.write("\\x00");
+                    } else {
+                        self.write("\\0");
+                    }
+                }
                 c if c == quote_char => {
                     self.write_char('\\');
                     self.write_char(c);
@@ -1447,5 +1463,69 @@ const separatedHex = 0x0_ABCDEFn;
             output.contains("line 1"),
             "Output should contain the string literal.\nGot: {output}"
         );
+    }
+
+    /// When a null codepoint (`\u{0}`) is downleveled to ES5, and the
+    /// immediately following character is an ASCII digit, emit `\x00` instead
+    /// of `\0` to avoid creating an octal escape sequence in the output.
+    ///
+    /// Structural rule: when `cp == 0` and the next source byte is 0-9,
+    /// use `\x00`; otherwise use `\0`.
+    #[test]
+    fn null_codepoint_followed_by_digit_uses_x00_escape() {
+        use tsz_common::ScriptTarget;
+        // All digits 0-9 must trigger \x00 when they immediately follow \u{0}.
+        // Two different hex forms for null to prove the rule isn't spelling-dependent.
+        let cases = [
+            ("var x = \"\\u{0}0\";", "\\x000"),
+            ("var x = \"\\u{0}1\";", "\\x001"),
+            ("var x = \"\\u{0}5\";", "\\x005"),
+            ("var x = \"\\u{0}9\";", "\\x009"),
+            ("var x = \"\\u{00}3\";", "\\x003"),
+            ("var x = \"\\u{000}7\";", "\\x007"),
+        ];
+        for (source, expected) in cases {
+            let (parser, root) = parse_test_source(source);
+            let opts = PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected),
+                "null codepoint before digit should use \\x00 escape.\nSource: {source}\nExpected fragment: {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    /// When a null codepoint (`\u{0}`) is NOT followed by an ASCII digit, the
+    /// standard `\0` escape is correct and must be used.
+    #[test]
+    fn null_codepoint_not_followed_by_digit_uses_standard_escape() {
+        use tsz_common::ScriptTarget;
+        let cases = [
+            ("var x = \"\\u{0}a\";", "\\0a"),
+            ("var x = \"\\u{0}z\";", "\\0z"),
+            ("var x = \"\\u{0}\";", "\\0"),
+            ("var x = \"a\\u{0}b\";", "\\0b"),
+        ];
+        for (source, expected) in cases {
+            let (parser, root) = parse_test_source(source);
+            let opts = PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected),
+                "null codepoint not before digit should use standard \\0.\nSource: {source}\nExpected fragment: {expected}\nGot: {output}"
+            );
+        }
     }
 }
