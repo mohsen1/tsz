@@ -7,6 +7,7 @@ use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::construct_signatures::has_construct_overloads;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -910,7 +911,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.no_implicit_any,
             )
         };
-        let check_excess_properties = true;
+        let check_excess_properties =
+            !has_construct_overloads(self.ctx.types, constructor_shape_type);
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
         // Preserve literal types in array literals during generic constructor
         // argument collection — mirroring the function call path. This ensures
