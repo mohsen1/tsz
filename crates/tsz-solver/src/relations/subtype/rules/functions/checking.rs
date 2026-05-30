@@ -864,10 +864,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
         }
-
         if !self.are_this_parameters_compatible(
             source_instantiated.this_type,
             target_instantiated.this_type,
+            source_instantiated.is_method || target_instantiated.is_method,
         ) {
             self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
