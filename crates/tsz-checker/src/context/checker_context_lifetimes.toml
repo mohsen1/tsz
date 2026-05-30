@@ -110,6 +110,8 @@ all_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "Diagno
 nullable_type_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 emitted_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+ts2353_2561_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "auxiliary O(log n) suppression index: sorted positions of TS2353/TS2561 diagnostics; rebuilt after speculation rollbacks" }
+ts2322_msg_spans = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "auxiliary O(k) suppression index: TS2322 spans grouped by message hash; rebuilt after speculation rollbacks" }
 no_overload_call_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
 callback_return_type_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 modules_with_ts2307_emitted = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
