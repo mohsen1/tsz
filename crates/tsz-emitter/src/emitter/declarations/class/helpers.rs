@@ -2,7 +2,7 @@ use super::super::super::Printer;
 use super::AutoAccessorEmitOptions;
 use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -225,30 +225,6 @@ impl<'a> Printer<'a> {
             && let Some(paren) = self.arena.get_parenthesized(expr_node)
         {
             return self.is_computed_name_expr_side_effect_free(paren.expression);
-        }
-        false
-    }
-
-    pub(in crate::emitter) fn expression_directly_contains_private_identifier(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> bool {
-        let mut stack = vec![expr_idx];
-        while let Some(current) = stack.pop() {
-            let Some(node) = self.arena.get(current) else {
-                continue;
-            };
-            if node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                return true;
-            }
-            if current != expr_idx
-                && (node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION)
-            {
-                continue;
-            }
-            stack.extend(self.arena.get_children(current));
         }
         false
     }
