@@ -1274,6 +1274,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 contextual_arg_type
             };
+            // When the union-contextual pass typed this argument against a union of
+            // overload signatures, the resulting type may contain TypeParameters from
+            // the caller's own signature (e.g. `Op<A, string>` where A is pipe's
+            // type parameter).  Those leaked TypeParameters must be replaced by the
+            // corresponding inference placeholders (e.g. ph_A) before the type is
+            // used for Round 1 constraint collection.
+            //
+            // Without this, constraining `Op<A, string>` against `Op<ph_A, ph_B]`
+            // adds the outer TypeParameter `A` as a candidate for ph_A, which causes
+            // BCT to produce `A` (or `number | A`) instead of the correct `number`,
+            // poisoning the downstream argument-compatibility check.
+            //
+            // Applying {A → ph_A, B → ph_B} to the source type yields
+            // `Op<ph_A, string>`; constraining that against `Op<ph_A, ph_B>` then
+            // skips ph_A (source == target) and only adds `string` for ph_B. ✓
+            let source_for_inference = if !substitution.is_empty()
+                && self.type_references_substitution_keys(source_for_inference, &substitution)
+            {
+                instantiate_type(self.interner, source_for_inference, &substitution)
+            } else {
+                source_for_inference
+            };
             let source_arg_shape = Self::get_contextual_signature_cached(self.interner, arg_type);
             let original_arg_is_generic_function_like = source_arg_shape
                 .as_ref()
@@ -1393,6 +1415,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // arg_type <: target_type
+            tracing::debug!(
+                i,
+                "constrain arg_type={:?} (data={:?}) against target={:?} (data={:?}), source_for_inference={:?} (data={:?})",
+                arg_type,
+                self.interner.lookup(arg_type),
+                contextual_target_type,
+                self.interner.lookup(contextual_target_type),
+                source_for_inference,
+                self.interner.lookup(source_for_inference),
+            );
             self.constrain_types_for_arg_source(
                 i,
                 &mut infer_ctx,

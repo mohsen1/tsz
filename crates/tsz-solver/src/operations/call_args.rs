@@ -1696,11 +1696,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Check if a function arg type contains `TypeParameter`s whose names match the
+    /// Check if an arg type contains `TypeParameter`s whose names match the
     /// caller's type parameter names (from the substitution). This detects when the
-    /// checker's contextual typing leaked unresolved type parameters from overload
-    /// signatures into arg types. Only checks function parameter positions, since
-    /// those are the ones that cause inference poisoning in Round 1.
+    /// checker's union-contextual pass leaked unresolved type parameters from overload
+    /// signatures into arg types.
     pub(crate) fn arg_contains_callers_type_params(
         &self,
         arg_type: TypeId,
@@ -1712,14 +1711,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if arg_type.is_intrinsic() {
             return false;
         }
-        // Only check function types - the issue is specifically when contextual typing
-        // leaks caller type params into a function arg's parameter types.
         match self.interner.lookup(arg_type) {
+            // Function types: check parameter types (most common leak path via callbacks).
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 shape.params.iter().any(|param| {
                     self.type_references_substitution_keys(param.type_id, substitution)
                 })
+            }
+            // Application types (e.g. Op<A, string> where A is the caller's type param)
+            // also carry caller TypeParameters in their type args.
+            Some(TypeData::Application(_)) => {
+                self.type_references_substitution_keys(arg_type, substitution)
             }
             _ => false,
         }
@@ -1727,7 +1730,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Recursively check if a type references any `TypeParameter` whose name is a key
     /// in the given substitution (i.e., one of the caller's type parameter names).
-    fn type_references_substitution_keys(
+    pub(crate) fn type_references_substitution_keys(
         &self,
         ty: TypeId,
         substitution: &crate::instantiation::instantiate::TypeSubstitution,
@@ -1761,6 +1764,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 app.args
                     .iter()
                     .any(|&a| self.type_references_substitution_keys(a, substitution))
+            }
+            // Function signatures extracted from Application types (e.g. from
+            // `Op<A, string>` → `fn(source: A) -> string`) carry caller TypeParameters
+            // in their parameter or return types.
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                shape
+                    .params
+                    .iter()
+                    .any(|p| self.type_references_substitution_keys(p.type_id, substitution))
+                    || self.type_references_substitution_keys(shape.return_type, substitution)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| {
+                        sig.params.iter().any(|p| {
+                            self.type_references_substitution_keys(p.type_id, substitution)
+                        }) || self.type_references_substitution_keys(sig.return_type, substitution)
+                    })
             }
             _ => false,
         }

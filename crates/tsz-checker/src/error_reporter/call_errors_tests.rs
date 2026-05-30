@@ -1699,3 +1699,97 @@ let x3 = f3(x => x);
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_error_on_object_prototype_methods_for_unconstrained_type_param() {
+    // When a type parameter has no explicit constraint it implicitly extends `{}` / `Object`,
+    // so `Object.prototype` methods like `toString`, `valueOf`, `hasOwnProperty` are
+    // accessible and must not produce TS2339.
+    // Two name variants guard against hardcoded-name regressions.
+    for tp_name in &["T", "U"] {
+        let source =
+            format!("function f<{tp_name}>(x: {tp_name}): string {{ return x.toString(); }}");
+        let diagnostics = check_source_with_strict_null(&source);
+        let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+        assert!(
+            ts2339.is_empty(),
+            "Unconstrained type parameter {tp_name} must allow Object.prototype methods (no TS2339), \
+             got: {:?}",
+            ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn no_ts2339_multiple_object_prototype_methods_on_unconstrained_tp() {
+    let source = r#"
+function useAll<V>(x: V): void {
+    x.toString();
+    x.valueOf();
+    x.hasOwnProperty("key");
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "All Object.prototype methods must be accessible on unconstrained type params, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2345_pipe_overload_with_interface_callable_operators() {
+    for iface_name in &["Op", "Operator"] {
+        let source = format!(
+            r#"
+interface {iface_name}<A, B> {{ (source: A): B; }}
+declare function lift<A, B>(fn: (a: A) => B): {iface_name}<A, B>;
+declare function pipe<A, B>(op1: {iface_name}<A, B>): {iface_name}<A, B>;
+declare function pipe<A, B, C>(op1: {iface_name}<A, B>, op2: {iface_name}<B, C>): {iface_name}<A, C>;
+const r = pipe(lift((x: number) => x + 1), lift((y: number) => y.toString()));
+"#
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == 2345 || d.code == 2322)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "pipe overload with interface callable {iface_name} must not produce TS2345/TS2322, \
+             got: {:?}",
+            errors
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn no_ts2345_pipe_overload_with_aliased_interface_callable_operators() {
+    let source = r#"
+interface OperatorFunction<T, R> { (source: T): R; }
+declare function map<T, R>(fn: (t: T) => R): OperatorFunction<T, R>;
+declare function filter<T>(pred: (t: T) => boolean): OperatorFunction<T, T>;
+declare function pipe<A, B>(op1: OperatorFunction<A, B>): OperatorFunction<A, B>;
+declare function pipe<A, B, C>(op1: OperatorFunction<A, B>, op2: OperatorFunction<B, C>): OperatorFunction<A, C>;
+const myMap = map;
+const myFilter = filter;
+const result = pipe(myMap((x: number) => x + 1), myFilter(y => y > 0));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "pipe overload with aliased interface callable operators must not produce errors, got: {:?}",
+        errors
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
