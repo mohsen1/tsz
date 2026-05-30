@@ -132,6 +132,13 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
+        // A comment in the source seam between the function name and `(`
+        // (e.g. `function clone /* <T> */(a, b)`) belongs right after the name,
+        // before `(`. Emit it here so it is not later re-emitted inside the
+        // parameter list.
+        if func.name.is_some() {
+            self.emit_name_to_paren_seam_comments(func.name, node.end);
+        }
         // Skip comments inside the type parameter list
         if func.type_parameters.is_some() {
             let tp_skip_start = if func.name.is_some() {

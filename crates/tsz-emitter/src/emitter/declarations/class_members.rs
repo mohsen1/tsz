@@ -234,6 +234,12 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
+        // A comment in the source seam between the method name and `(`
+        // (e.g. `duplicate /* <V> */(x, y)`) belongs right after the name,
+        // before `(`. Emit it here so it does not leak into the parameter list.
+        if !self.ctx.flags.in_declaration_emit && method.name.is_some() {
+            self.emit_name_to_paren_seam_comments(method.name, node.end);
+        }
         // Skip comments inside the type parameter list
         if !self.ctx.flags.in_declaration_emit && method.type_parameters.is_some() {
             let tp_skip_start = if method.name.is_some() {
@@ -1413,6 +1419,12 @@ impl<'a> Printer<'a> {
         self.write("get ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
 
+        // A comment in the source seam between the accessor name and `(`
+        // (e.g. `get val /* g */()`) belongs right after the name, before `(`.
+        if !self.ctx.flags.in_declaration_emit && accessor.name.is_some() {
+            self.emit_name_to_paren_seam_comments(accessor.name, node.end);
+        }
+
         // Emit type parameters for error recovery (e.g., `get foo<T>() {}`)
         // Getters cannot legally have type parameters, but tsc preserves them in JS output.
         if let Some(ref type_params) = accessor.type_parameters
@@ -1448,6 +1460,12 @@ impl<'a> Printer<'a> {
 
         self.write("set ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
+
+        // A comment in the source seam between the accessor name and `(`
+        // (e.g. `set val /* s */(v)`) belongs right after the name, before `(`.
+        if !self.ctx.flags.in_declaration_emit && accessor.name.is_some() {
+            self.emit_name_to_paren_seam_comments(accessor.name, node.end);
+        }
 
         // Emit type parameters for error recovery (e.g., `set foo<T>(v) {}`)
         // Setters cannot legally have type parameters, but tsc preserves them in JS output.
