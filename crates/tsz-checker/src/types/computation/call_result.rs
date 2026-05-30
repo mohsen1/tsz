@@ -6,7 +6,7 @@ use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use tsz_common::diagnostics::{diagnostic_codes, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -267,15 +267,10 @@ impl<'a> CheckerState<'a> {
             actual_display = generic_actual_display;
             target_display = generic_target_display;
         }
-        let message = format_message(
-            diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-            &[&actual_display, &target_display],
-        );
-        self.error_at_node(
-            arg_idx,
-            &message,
-            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-        );
+        let (code, msg_template) =
+            self.argument_not_assignable_code_and_template(arg_type, param_type);
+        let message = format_message(msg_template, &[&actual_display, &target_display]);
+        self.error_at_node(arg_idx, &message, code);
     }
 
     fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
