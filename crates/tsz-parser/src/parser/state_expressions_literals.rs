@@ -1994,6 +1994,7 @@ impl ParserState {
 
         if self.parse_optional(SyntaxKind::ColonToken) {
             let expr = self.parse_assignment_expression();
+            let mut end_pos = self.token_end();
             let initializer = if expr.is_none() {
                 // Emit TS1109 for missing property value: { prop: }
                 self.error_expression_expected();
@@ -2001,15 +2002,19 @@ impl ParserState {
                     self.suppress_object_literal_comma_once = true;
                 }
                 name // Use property name as fallback for error recovery
-            } else if let Some(recovered) =
-                self.recover_object_literal_computed_indexer_tail(name, expr)
-            {
-                recovered
             } else {
+                // Recover a stray-annotation computed-indexer tail
+                // (`{ [s: symbol]: "" }`): emits the diagnostics, consumes the
+                // recovered `]`/`:`, and re-parses the remainder as a fresh
+                // member. Because that advances the scanner onto the next
+                // member, pin this member's end to its parsed value so the
+                // emitter's source-line layout (this member's end vs. the next
+                // member's start) keeps the recovered members on one line.
+                if self.recover_object_literal_computed_indexer_tail(name) {
+                    end_pos = self.arena.get(expr).map_or(end_pos, |node| node.end);
+                }
                 expr
             };
-
-            let end_pos = self.token_end();
             // Regular property assignment with explicit value
             self.arena.add_property_assignment(
                 syntax_kind_ext::PROPERTY_ASSIGNMENT,
@@ -2066,17 +2071,27 @@ impl ParserState {
         }
     }
 
-    fn recover_object_literal_computed_indexer_tail(
-        &mut self,
-        name: NodeIndex,
-        left: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let name_node = self.arena.get(name)?;
-        let name_end = name_node.end;
+    /// Recover the malformed tail of an object-literal member whose computed
+    /// name carried a stray type annotation (`{ [s: symbol]: "" }`).
+    ///
+    /// Rule: when a member's computed name `[expr]` was just closed by a
+    /// recovered `]` (the scanner is *on* a `CloseBracketToken` after a parsed
+    /// value) and that `]` is immediately followed by `:`, tsc does not fold the
+    /// tail into the current member. It closes the member with the parsed value,
+    /// reports `','`/`Property assignment` expected at the `]`/`:`, consumes
+    /// both, then re-reads the remainder as a fresh member. This helper performs
+    /// that as side effects, suppresses the next comma requirement so the outer
+    /// loop re-enters element parsing on the remaining token, and returns `true`
+    /// when it fired so the caller keeps the parsed value (and its source end)
+    /// as the member's initializer instead of the post-recovery scanner position.
+    fn recover_object_literal_computed_indexer_tail(&mut self, name: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name) else {
+            return false;
+        };
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME
             || !self.is_token(SyntaxKind::CloseBracketToken)
         {
-            return None;
+            return false;
         }
 
         let snapshot = self.scanner.save_state();
@@ -2086,45 +2101,28 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         if !has_colon_after_bracket {
-            return None;
+            return false;
         }
 
+        // `']' expected` was already emitted while parsing the computed name; the
+        // recovered `]` now closes the current member's value. tsc reports a
+        // missing separator at the `]` and a missing property at the following
+        // `:`, then re-reads the remaining tokens as a new member.
         self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
-        self.next_token();
+        self.next_token(); // consume the `]`
         self.parse_error_at_current_token(
             "Property assignment expected.",
             diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
         );
-        self.next_token();
-        let right = self.parse_assignment_expression();
-        if right.is_none() {
-            return Some(left);
-        }
-        // tsc does not fold the trailing value into a comma expression; it
-        // re-reads it as the property name of a fresh object member that then
-        // expects a `:`. When that recovered tail butts directly against the
-        // object's closing `}` (no comma/semicolon separator), tsc reports
-        // TS1005 "':' expected." at the `}` for the missing property colon.
-        // Mirror that here so the recovered comma-expression AST is preserved
-        // while the trailing diagnostic still matches tsc.
-        if self.is_token(SyntaxKind::CloseBraceToken) {
-            self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
-        }
-        let left_start = self.arena.get(left).map_or(name_end, |node| node.pos);
-        let end_pos = self
-            .arena
-            .get(right)
-            .map_or(self.token_end(), |node| node.end);
-        Some(self.arena.add_binary_expr(
-            syntax_kind_ext::BINARY_EXPRESSION,
-            left_start,
-            end_pos,
-            crate::parser::node::BinaryExprData {
-                left,
-                operator_token: SyntaxKind::CommaToken as u16,
-                right,
-            },
-        ))
+        self.next_token(); // consume the stray `:`
+
+        // Let the outer object-literal loop re-enter element parsing on the
+        // remaining token without requiring a comma separator. The trailing
+        // `':' expected` (when the new member's name butts against `}`) and any
+        // missing-comma diagnostic then fall out of normal member parsing,
+        // matching tsc instead of being synthesized here.
+        self.suppress_object_literal_comma_once = true;
+        true
     }
 
     /// Look ahead to check if get/set/async is a method vs property name
