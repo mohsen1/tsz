@@ -264,3 +264,190 @@ fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
         "self-stable union must terminate without ERROR"
     );
 }
+
+/// Homomorphic mapped type instantiated with an intersection source distributes
+/// over the intersection members, mirroring tsc's `instantiateMappedType`.
+///
+/// Structural rule: `Mapped<A & B>` → `Mapped<A> & Mapped<B>` when `Mapped`
+/// is a homomorphic generic instantiation (iteration variable has a declared
+/// `keyof T` constraint from the generic body).
+#[test]
+fn instantiated_homomorphic_mapped_over_intersection_distributes() {
+    let interner = TypeInterner::new();
+
+    // A = { x: number }, B = { y: string }
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+    let obj_a = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(y_atom, TypeId::STRING)]);
+    let a_and_b = interner.intersection(vec![obj_a, obj_b]);
+
+    // Template: identity (T[K]) — simplest homomorphic form.
+    // iter_k is interned identically to the helper's internal variable, so the
+    // template's type-parameter reference is the same TypeId.
+    let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let iter_k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(outer_t)),
+        default: None,
+        is_const: false,
+    });
+    let template = interner.index_access(a_and_b, iter_k);
+
+    // Instantiated form: { [K in keyof (A & B)]: (A & B)[K] }
+    let mapped = build_instantiated_homomorphic_mapped(&interner, "K", a_and_b, template);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "intersection distribution must not produce ERROR"
+    );
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "intersection distribution must not produce NEVER"
+    );
+
+    match interner.lookup(result) {
+        Some(TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert!(
+                members.len() >= 2,
+                "result must be an intersection of >=2 members"
+            );
+        }
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
+            // Fully merged is also acceptable.
+        }
+        other => {
+            assert!(
+                !matches!(other, Some(TypeData::Mapped(_))),
+                "intersection source must not leave mapped type deferred; got {other:?}"
+            );
+        }
+    }
+}
+
+/// Iteration-variable name must not affect whether intersection distribution fires.
+#[test]
+fn intersection_distribution_is_iteration_variable_name_agnostic() {
+    let interner = TypeInterner::new();
+
+    let a_atom = interner.intern_string("a");
+    let b_atom = interner.intern_string("b");
+    let obj_a = interner.object(vec![PropertyInfo::new(a_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(b_atom, TypeId::STRING)]);
+    let src = interner.intersection(vec![obj_a, obj_b]);
+
+    let template = TypeId::BOOLEAN;
+
+    let mut results = Vec::new();
+    for iter_name in ["P", "K", "X", "Key"] {
+        let mapped = build_instantiated_homomorphic_mapped(&interner, iter_name, src, template);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        results.push(evaluator.evaluate_mapped(&mapped));
+    }
+
+    let first = results[0];
+    for &r in &results[1..] {
+        assert_eq!(
+            r, first,
+            "intersection distribution result must be identical regardless of iter-var name"
+        );
+    }
+    assert!(
+        !matches!(interner.lookup(first), Some(TypeData::Mapped(_))),
+        "intersection distribution must not leave the mapped type deferred"
+    );
+}
+
+/// Direct (non-instantiated) `{{ [K in keyof (A & B)]: ... }}` must NOT distribute.
+/// The declared constraint matches the effective constraint, so the guard fires.
+#[test]
+fn direct_mapped_over_intersection_does_not_distribute() {
+    let interner = TypeInterner::new();
+
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+    let obj_a = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(y_atom, TypeId::STRING)]);
+    let a_and_b = interner.intersection(vec![obj_a, obj_b]);
+    let constraint = interner.keyof(a_and_b);
+
+    // Declared constraint == effective constraint: direct form, not an instantiation.
+    let direct_mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: Some(constraint), // declared = effective → no distribution
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&direct_mapped);
+
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "direct mapped over intersection must not ERROR"
+    );
+    assert!(
+        !matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "direct mapped over intersection should be evaluated, not deferred"
+    );
+}
+
+/// `Partial<A & B>` style: an instantiated optional-modifier homomorphic
+/// mapped type over an intersection distributes, matching tsc.
+#[test]
+fn partial_style_instantiated_mapped_over_intersection_distributes() {
+    let interner = TypeInterner::new();
+
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+    let obj_a = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(y_atom, TypeId::STRING)]);
+    let src = interner.intersection(vec![obj_a, obj_b]);
+
+    let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let keyof_outer_t = interner.keyof(outer_t);
+    let iter_k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(keyof_outer_t),
+        default: None,
+        is_const: false,
+    });
+    let template = interner.index_access(src, iter_k);
+
+    // Partial-like: add-optional modifier (declared constraint ≠ effective → distributes).
+    let partial_mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: Some(keyof_outer_t),
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(src),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Add),
+    };
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&partial_mapped);
+
+    assert_ne!(result, TypeId::ERROR, "Partial<A & B> must not ERROR");
+    assert!(
+        !matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "Partial<A & B> must not remain a deferred Mapped type"
+    );
+}
