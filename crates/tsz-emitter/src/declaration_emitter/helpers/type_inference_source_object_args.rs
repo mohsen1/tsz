@@ -200,6 +200,18 @@ impl<'a> DeclarationEmitter<'a> {
                 self.with_symbol_declarations(alias_sym_id, |alias_arena, decl_idx| {
                     let decl_node = alias_arena.get(decl_idx)?;
                     let alias = alias_arena.get_type_alias(decl_node)?;
+                    let alias_body_node = alias_arena.get(alias.type_node)?;
+                    let body_is_structural = matches!(
+                        alias_body_node.kind,
+                        k if k == syntax_kind_ext::TYPE_LITERAL
+                            || k == syntax_kind_ext::MAPPED_TYPE
+                            || k == syntax_kind_ext::INTERSECTION_TYPE
+                            || k == syntax_kind_ext::UNION_TYPE
+                            || k == syntax_kind_ext::PARENTHESIZED_TYPE
+                    );
+                    if !body_is_structural {
+                        return None;
+                    }
                     let alias_type_params = alias.type_parameters.as_ref()?;
                     let alias_args = type_ref.type_arguments.as_ref()?;
                     let mut next_aliases = aliases.to_vec();
