@@ -1477,3 +1477,103 @@ export {};
         "verbatimModuleSyntax must preserve the original import clause.\nOutput:\n{output}"
     );
 }
+
+fn emit_esnext(source: &str, opts_init: impl FnOnce(&mut PrinterOptions)) -> String {
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    opts_init(&mut options);
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+/// `import Foo, * as ns from "x"; Foo();` - an unused namespace binding beside
+/// a used default must drop only the namespace, mirroring the unused-default
+/// elision rule.
+#[test]
+fn esnext_unused_namespace_beside_used_default_is_elided() {
+    let output = emit_esnext(
+        "import Foo, * as ns from \"./dep\";\nFoo();\nexport {};\n",
+        |_| {},
+    );
+    assert!(
+        output.contains("import Foo from \"./dep\""),
+        "Used default binding must be preserved without the unused namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("* as ns"),
+        "Unused namespace binding should be elided.\nOutput:\n{output}"
+    );
+}
+
+/// Negative: a USED namespace binding beside a used default must be kept.
+#[test]
+fn esnext_used_namespace_beside_used_default_is_kept() {
+    let output = emit_esnext(
+        "import Foo, * as ns from \"./dep\";\nFoo();\nns.bar();\nexport {};\n",
+        |_| {},
+    );
+    assert!(
+        output.contains("import Foo, * as ns from \"./dep\""),
+        "Both used bindings must be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Bound-name choice must not matter - the namespace elision is name-agnostic.
+#[test]
+fn esnext_unused_namespace_elision_is_name_agnostic() {
+    let output = emit_esnext(
+        "import Defaulted, * as everything from \"./dep\";\nDefaulted();\nexport {};\n",
+        |_| {},
+    );
+    assert!(
+        output.contains("import Defaulted from \"./dep\""),
+        "Used default must be preserved under a renamed namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("everything"),
+        "Unused namespace binding should be elided regardless of its name.\nOutput:\n{output}"
+    );
+}
+
+/// Negative: verbatimModuleSyntax must keep the source clause exactly - the
+/// unused namespace binding must NOT be elided.
+#[test]
+fn esnext_verbatim_module_syntax_keeps_unused_namespace() {
+    let output = emit_esnext(
+        "import Foo, * as ns from \"./dep\";\nFoo();\nexport {};\n",
+        |o| o.verbatim_module_syntax = true,
+    );
+    assert!(
+        output.contains("import Foo, * as ns from \"./dep\""),
+        "verbatimModuleSyntax must preserve the original import clause.\nOutput:\n{output}"
+    );
+}
+
+/// Negative: a namespace binding named like the classic JSX factory root is
+/// referenced implicitly by JSX and must NOT be elided when the file has JSX.
+#[test]
+fn esnext_jsx_factory_namespace_binding_is_kept() {
+    let source = "import * as React from \"react\";\nconst el = <div />;\nexport {};\n";
+    // JSX requires a `.tsx` source for the parser to enable JSX parsing.
+    let mut parser = ParserState::new("main.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        jsx: crate::emitter::JsxEmit::Preserve,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+    assert!(
+        output.contains("import * as React from \"react\""),
+        "JSX-factory namespace binding must be preserved when the file uses JSX.\nOutput:\n{output}"
+    );
+}
