@@ -103,6 +103,10 @@ name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
 [[test]]
+name = "class_protected_widening_assignability_tests"
+path = "tests/class_protected_widening_assignability_tests.rs"
+
+[[test]]
 name = "generic_default_branch_independence_tests"
 path = "tests/generic_default_branch_independence_tests.rs"
 

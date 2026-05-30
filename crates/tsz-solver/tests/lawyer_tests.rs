@@ -1070,3 +1070,88 @@ fn test_constructor_accessibility_with_overrides() {
         "Same type should be assignable (structural fallback)"
     );
 }
+
+/// Builds a single-property class instance shape with the given member
+/// visibility and declaring-class symbol. Mirrors the shapes the checker
+/// produces for class instance types.
+fn class_shape_with_member(
+    interner: &TypeInterner,
+    member: tsz_common::interner::Atom,
+    visibility: Visibility,
+    declaring_class: tsz_binder::SymbolId,
+) -> TypeId {
+    interner.object(vec![PropertyInfo {
+        visibility,
+        parent_id: Some(declaring_class),
+        ..PropertyInfo::new(member, TypeId::NUMBER)
+    }])
+}
+
+/// A `protected` member declared on a base class is satisfied by a *derived*
+/// class that widens the member to `public`. The derived-class relationship is
+/// proven through the inheritance graph (mirrors tsc's
+/// `isPropertyInClassDerivedFrom`).
+#[test]
+fn test_protected_widened_in_derived_class_is_assignable() {
+    use crate::classes::inheritance::InheritanceGraph;
+
+    let interner = TypeInterner::new();
+    let p = interner.intern_string("p");
+
+    let base_sym = tsz_binder::SymbolId(1);
+    let derived_sym = tsz_binder::SymbolId(2);
+
+    // Base declares `protected p`; Derived widens to `public p`.
+    let base = class_shape_with_member(&interner, p, Visibility::Protected, base_sym);
+    let derived = class_shape_with_member(&interner, p, Visibility::Public, derived_sym);
+
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(derived_sym, &[base_sym]);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_inheritance_graph(Some(&graph));
+
+    assert!(
+        checker.is_assignable(derived, base),
+        "a derived class widening a protected member to public must be assignable to its base"
+    );
+
+    // The reverse is NOT assignable: Base is not derived from Derived.
+    assert!(
+        !checker.is_assignable(base, derived),
+        "base must not be assignable to a derived class' protected member origin"
+    );
+}
+
+/// Even with both classes registered in the inheritance graph, two *unrelated*
+/// classes (no derivation edge) are not assignable through a protected member —
+/// the derived-class relationship is required.
+#[test]
+fn test_protected_unrelated_classes_with_graph_still_rejected() {
+    use crate::classes::inheritance::InheritanceGraph;
+
+    let interner = TypeInterner::new();
+    let p = interner.intern_string("p");
+
+    let left_sym = tsz_binder::SymbolId(1);
+    let right_sym = tsz_binder::SymbolId(2);
+    let common_root = tsz_binder::SymbolId(3);
+
+    let left = class_shape_with_member(&interner, p, Visibility::Protected, left_sym);
+    let right = class_shape_with_member(&interner, p, Visibility::Public, right_sym);
+
+    // Both derive from an unrelated common root, but neither derives from the
+    // other — so `right`'s `p` is not declared in `left` or a class derived
+    // from `left`.
+    let graph = InheritanceGraph::new();
+    graph.add_inheritance(left_sym, &[common_root]);
+    graph.add_inheritance(right_sym, &[common_root]);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_inheritance_graph(Some(&graph));
+
+    assert!(
+        !checker.is_assignable(right, left),
+        "unrelated classes must not satisfy a protected member even when both are in the graph"
+    );
+}

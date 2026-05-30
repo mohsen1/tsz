@@ -966,9 +966,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
 
             if let Some(sp) = s_prop {
-                // Check nominal identity for private/protected properties
+                // Check nominal identity for private/protected properties.
+                // `protected` is hierarchical (shared `nominal_member_origin_ok`).
                 if t_prop.visibility != Visibility::Public {
-                    if sp.parent_id != t_prop.parent_id {
+                    if !self.nominal_member_origin_ok(
+                        sp.parent_id,
+                        t_prop.parent_id,
+                        t_prop.visibility,
+                    ) {
                         return Some(SubtypeFailureReason::PropertyNominalMismatch {
                             property_name: t_prop.name,
                         });
@@ -1235,11 +1240,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(sp) =
                 self.lookup_property(&source_shape.properties, Some(source_shape_id), t_prop.name)
             {
-                // Check nominal identity for private/protected properties
-                // Private and protected members are nominally typed - they must
-                // originate from the same declaration (same parent_id)
+                // Check nominal identity for private/protected properties.
+                // `private` requires the same declaration; `protected` is
+                // hierarchical (a derived class may widen it to public) —
+                // decided by the shared `nominal_member_origin_ok`.
                 if t_prop.visibility != Visibility::Public {
-                    if sp.parent_id != t_prop.parent_id {
+                    if !self.nominal_member_origin_ok(
+                        sp.parent_id,
+                        t_prop.parent_id,
+                        t_prop.visibility,
+                    ) {
                         return Some(SubtypeFailureReason::PropertyNominalMismatch {
                             property_name: t_prop.name,
                         });

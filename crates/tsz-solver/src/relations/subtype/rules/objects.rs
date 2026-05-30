@@ -374,6 +374,49 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
+    /// Decide whether a source property satisfies a *nominal* (private or
+    /// protected) target property, given the two declaring-class symbols
+    /// (`parent_id`s) and the target member's visibility.
+    ///
+    /// - `private` requires *declaration identity*: the source property must
+    ///   originate from the exact same declaration.
+    /// - `protected` is *hierarchical*: tsc accepts the member when the source
+    ///   property is declared in the target's protected-declaring class or in a
+    ///   class derived from it (`isPropertyInClassDerivedFrom`). The source may
+    ///   also legally widen the member from `protected` to `public`, so its own
+    ///   visibility is not consulted.
+    ///
+    /// Falls back to declaration identity when class symbols or the inheritance
+    /// graph are unavailable, preserving the previous strict nominal behavior
+    /// for shapes that carry no hierarchy information. This is the single source
+    /// of truth shared by the structural property check and the `CompatChecker`
+    /// nominal-brand override.
+    pub(crate) fn nominal_member_origin_ok(
+        &self,
+        source_parent: Option<tsz_binder::SymbolId>,
+        target_parent: Option<tsz_binder::SymbolId>,
+        target_visibility: Visibility,
+    ) -> bool {
+        // Same declaration satisfies both private and protected (covers the
+        // inherited-without-override case, where both sides resolve to the
+        // original declaring class).
+        if source_parent == target_parent {
+            return true;
+        }
+        // `private` requires strict declaration identity, which just failed.
+        if target_visibility != Visibility::Protected {
+            return false;
+        }
+        // `protected`: the source's declaring class must derive from (or equal)
+        // the target's protected-declaring class.
+        match (source_parent, target_parent, self.inheritance_graph) {
+            (Some(src_class), Some(tgt_class), Some(graph)) => {
+                graph.is_derived_from(src_class, tgt_class)
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a source property is compatible with a target property.
     ///
     /// This validates property compatibility for structural object subtyping:
@@ -450,9 +493,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_receiver: Option<TypeId>,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        // Rule: Private and Protected properties are nominal.
+        // Rule: Private and Protected properties are nominal, but with different
+        // strictness — `private` demands declaration identity, while `protected`
+        // is hierarchical (a derived class may widen it to `public`). Both are
+        // decided by the shared `nominal_member_origin_ok`.
         if target.visibility != Visibility::Public {
-            if source.parent_id != target.parent_id {
+            if !self.nominal_member_origin_ok(source.parent_id, target.parent_id, target.visibility)
+            {
                 // Trace: Property nominal mismatch
                 if let Some(tracer) = &mut self.tracer
                     && !tracer.on_mismatch_dyn(
@@ -1217,9 +1264,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(sp) =
                 self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)
             {
-                // Visibility check (Nominal)
+                // Visibility check (Nominal) — `private` needs declaration
+                // identity, `protected` is hierarchical (shared helper).
                 if t_prop.visibility != Visibility::Public {
-                    if sp.parent_id != t_prop.parent_id {
+                    if !self.nominal_member_origin_ok(
+                        sp.parent_id,
+                        t_prop.parent_id,
+                        t_prop.visibility,
+                    ) {
                         return SubtypeResult::False;
                     }
                 } else if sp.visibility != Visibility::Public {
