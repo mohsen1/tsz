@@ -1106,6 +1106,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                                 effective_asserted,
                                             );
                                     }
+                                    // Constrained-type-parameter assertion (#10676):
+                                    // `source as T extends C` is comparable when
+                                    // source's required members fit C structurally.
+                                    if !have_overlap {
+                                        have_overlap = self
+                                            .checker
+                                            .assertion_source_fits_constrained_type_param(
+                                                expr_type,
+                                                asserted_type,
+                                            );
+                                    }
                                     if have_overlap
                                         && self
                                             .object_literal_this_property_blocks_assertion_overlap(
