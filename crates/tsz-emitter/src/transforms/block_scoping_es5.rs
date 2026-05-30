@@ -926,6 +926,71 @@ fn visit_children<F: FnMut(NodeIndex)>(arena: &NodeArena, node: &Node, mut visit
                 visitor(ret.expression);
             }
         }
+        // A labeled statement (`label: stmt`) is transparent to capture
+        // analysis: the labeled body can be a loop or block whose closures
+        // capture an outer loop variable, so we must descend into it.
+        k if k == syntax_kind_ext::LABELED_STATEMENT => {
+            if let Some(labeled) = arena.get_labeled_statement(node) {
+                visitor(labeled.statement);
+            }
+        }
+        // `new Expr(args)` shares the call-expression payload. A captured loop
+        // variable can appear in the callee or any argument
+        // (e.g. `new Foo(() => x)`), so descend like a call expression.
+        k if k == syntax_kind_ext::NEW_EXPRESSION => {
+            if let Some(new_expr) = arena.get_call_expr(node) {
+                visitor(new_expr.expression);
+                if let Some(ref args) = new_expr.arguments {
+                    for &arg_idx in &args.nodes {
+                        visitor(arg_idx);
+                    }
+                }
+            }
+        }
+        // Template substitutions (`${...}`) are real child expressions. A
+        // template head has no expression, but each `TemplateSpan` carries one
+        // (`\`a${expr}b\``), so a captured loop variable referenced only inside
+        // a substitution must be visited like any other expression.
+        k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+            if let Some(template) = arena.get_template_expr(node) {
+                for &span_idx in &template.template_spans.nodes {
+                    visitor(span_idx);
+                }
+            }
+        }
+        k if k == syntax_kind_ext::TEMPLATE_SPAN => {
+            if let Some(span) = arena.get_template_span(node) {
+                visitor(span.expression);
+            }
+        }
+        // A tagged template (`` tag`a${expr}b` ``) wraps both a tag expression
+        // and the template literal; closures capturing a loop variable can live
+        // in either, so descend into both.
+        k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+            if let Some(tagged) = arena.get_tagged_template(node) {
+                visitor(tagged.tag);
+                visitor(tagged.template);
+            }
+        }
+        // Unary operators (`-x`, `!x`, `x++`, `++x`) and the await/yield/
+        // non-null/spread family all wrap a single operand expression that may
+        // contain a capturing closure.
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+        {
+            if let Some(unary) = arena.get_unary_expr(node) {
+                visitor(unary.operand);
+            }
+        }
+        k if k == syntax_kind_ext::AWAIT_EXPRESSION
+            || k == syntax_kind_ext::YIELD_EXPRESSION
+            || k == syntax_kind_ext::NON_NULL_EXPRESSION
+            || k == syntax_kind_ext::SPREAD_ELEMENT =>
+        {
+            if let Some(unary) = arena.get_unary_expr_ex(node) {
+                visitor(unary.expression);
+            }
+        }
         // Add more node types as needed
         _ => {}
     }
