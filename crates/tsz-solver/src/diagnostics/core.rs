@@ -172,6 +172,8 @@ pub enum SubtypeFailureReason {
         index_kind: &'static str, // "string" or "number"
         source_value_type: TypeId,
         target_value_type: TypeId,
+        /// Nested failure explaining why the value types are incompatible.
+        nested_reason: Option<Box<Self>>,
     },
     /// Missing index signature.
     MissingIndexSignature { index_kind: &'static str },
@@ -819,6 +821,7 @@ impl SubtypeFailureReason {
                 index_kind: _,
                 source_value_type,
                 target_value_type,
+                nested_reason: _,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![source.into(), target.into()],

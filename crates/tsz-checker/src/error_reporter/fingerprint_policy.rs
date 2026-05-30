@@ -635,6 +635,7 @@ impl<'a> CheckerState<'a> {
                 index_kind,
                 source_value_type,
                 target_value_type,
+                nested_reason: _,
             } => {
                 let source_str = self.format_type_for_diagnostic_role(
                     *source_value_type,
