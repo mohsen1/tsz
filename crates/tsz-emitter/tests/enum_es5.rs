@@ -842,6 +842,65 @@ fn empty_string_literal_member_name_emits_when_first() {
     );
 }
 
+/// At an ES5/ES3 target, an arrow-function expression that appears inside an
+/// enum member initializer (e.g. an immediately-invoked arrow `(() => ...)()`)
+/// must be downleveled to function-expression form, exactly like the
+/// `emit_enum_declaration` path does. The `EnumES5Emitter` previously built its
+/// `IRPrinter` without propagating the ES5 target, so the nested AST printer
+/// used for `ASTRef` arrow nodes defaulted to native ES2015 arrow emission.
+#[test]
+fn enum_member_arrow_iife_downlevels_to_function_expression_at_es5() {
+    let source = "enum E { A = (() => 5)() }";
+    let output = emit_enum_legacy_configured(source, |emitter| {
+        emitter.set_source_text(source);
+        emitter.set_target_es5(true);
+    });
+    assert!(
+        output.contains("(function () { return 5; })()"),
+        "arrow IIFE in enum initializer must downlevel to a function expression at es5, got:\n{output}"
+    );
+    assert!(
+        !output.contains("=>"),
+        "no arrow syntax should survive at es5, got:\n{output}"
+    );
+}
+
+/// Same rule, different identifier spellings and a nested arrow, proving the
+/// downleveling keys on the arrow-function node kind rather than any specific
+/// identifier name or rendered text (§25/§26 anti-hardcoding).
+#[test]
+fn enum_member_arrow_iife_downlevels_with_renamed_identifiers_at_es5() {
+    let source = "enum Renamed { Member = (() => [1].map(q => q + 1))() }";
+    let output = emit_enum_legacy_configured(source, |emitter| {
+        emitter.set_source_text(source);
+        emitter.set_target_es5(true);
+    });
+    assert!(
+        !output.contains("=>"),
+        "no arrow syntax (outer or nested) should survive at es5, got:\n{output}"
+    );
+    assert!(
+        output.contains("function () {") && output.contains("function (q) {"),
+        "both the outer IIFE arrow and the nested `q => ...` callback must downlevel, got:\n{output}"
+    );
+}
+
+/// Negative case: at an ES2015+ target the same arrow IIFE must be preserved
+/// verbatim — the downleveling is gated on the ES5 target, not applied
+/// unconditionally.
+#[test]
+fn enum_member_arrow_iife_preserved_at_es2015() {
+    let source = "enum E { A = (() => 5)() }";
+    let output = emit_enum_legacy_configured(source, |emitter| {
+        emitter.set_source_text(source);
+        emitter.set_target_es5(false);
+    });
+    assert!(
+        output.contains("(() => 5)()"),
+        "arrow IIFE must be preserved at es2015, got:\n{output}"
+    );
+}
+
 #[test]
 fn empty_string_member_emits_but_invalid_char_member_is_skipped() {
     // The empty-string literal member (legitimate, name node = StringLiteral)
