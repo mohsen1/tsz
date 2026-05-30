@@ -1902,5 +1902,9 @@ path = "tests/recursive_generic_property_order_tests.rs"
 name = "optional_property_required_elaboration_tests"
 path = "tests/optional_property_required_elaboration_tests.rs"
 
+[[test]]
+name = "variadic_tuple_arity_inference_tests"
+path = "tests/variadic_tuple_arity_inference_tests.rs"
+
 [lints]
 workspace = true

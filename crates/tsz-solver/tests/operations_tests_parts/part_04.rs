@@ -785,19 +785,18 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    // TODO: T should be inferred as the rest element type pattern from the
-    // tuple argument (a tuple with [...string[]]), but generic tuple rest
-    // inference is not fully implemented. Currently the result does not match
-    // the ideal expected tuple; verify the inference does not produce it.
+    // T should be inferred from the rest portion of the argument tuple.
+    // The source rest element is `string[]` so T = string[] (the interner normalises
+    // `[...string[]]` to `string[]`, so ideal_expected equals `string_array`).
     let ideal_expected = interner.tuple(vec![TupleElement {
         type_id: string_array,
         name: None,
         optional: false,
         rest: true,
     }]);
-    assert_ne!(
+    assert_eq!(
         result, ideal_expected,
-        "Generic tuple rest inference is not yet fully implemented"
+        "T should be inferred as string[] from the rest argument"
     );
 }
 

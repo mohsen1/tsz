@@ -432,6 +432,9 @@ mod mapped_empty_keyspace_subtype_tests;
 #[path = "../tests/matching_tests.rs"]
 mod matching_tests;
 #[cfg(test)]
+#[path = "../tests/matching_variadic_tuple_tests.rs"]
+mod matching_variadic_tuple_tests;
+#[cfg(test)]
 #[path = "../tests/narrowing_comprehensive_tests.rs"]
 mod narrowing_comprehensive_tests;
 #[cfg(test)]

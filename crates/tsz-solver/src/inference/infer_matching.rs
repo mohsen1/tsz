@@ -1161,23 +1161,6 @@ impl<'a> InferenceContext<'a> {
         Ok(())
     }
 
-    /// Infer from tuple types
-    fn infer_tuples(
-        &mut self,
-        source_elems: TupleListId,
-        target_elems: TupleListId,
-        priority: InferencePriority,
-    ) -> Result<(), InferenceError> {
-        let source_list = self.interner.tuple_list(source_elems);
-        let target_list = self.interner.tuple_list(target_elems);
-
-        for (source_elem, target_elem) in source_list.iter().zip(target_list.iter()) {
-            self.infer_from_types(source_elem.type_id, target_elem.type_id, priority)?;
-        }
-
-        Ok(())
-    }
-
     /// Infer from callable types, handling signatures and properties
     fn infer_callables(
         &mut self,
