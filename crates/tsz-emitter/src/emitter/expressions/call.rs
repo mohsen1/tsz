@@ -5,7 +5,7 @@ use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(in crate::emitter) fn emit_call_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_call_expression(&mut self, idx: NodeIndex, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
@@ -362,11 +362,11 @@ impl<'a> Printer<'a> {
         {
             match self.ctx.original_module_kind {
                 Some(ModuleKind::System) => {
-                    self.emit_system_dynamic_import_call(node, call.arguments.as_ref());
+                    self.emit_system_dynamic_import_call(call.arguments.as_ref());
                     return;
                 }
                 Some(ModuleKind::AMD | ModuleKind::UMD) => {
-                    self.emit_amd_or_umd_dynamic_import_call(call.arguments.as_ref());
+                    self.emit_amd_or_umd_dynamic_import_call(idx, call.arguments.as_ref());
                     return;
                 }
                 _ => {}
@@ -392,40 +392,15 @@ impl<'a> Printer<'a> {
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == SyntaxKind::ImportKeyword as u16
         {
-            // Get the first valid argument (the module specifier)
+            // Get the first valid argument (the module specifier). String
+            // literals (and the no-argument case) lower to
+            // `Promise.resolve().then(() => __importStar(require("mod")))`;
+            // expression specifiers use the `Promise.resolve(`${spec}`)` form.
             let first_arg = call
                 .arguments
                 .as_ref()
                 .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
-            let first_arg_node = first_arg.and_then(|idx| self.arena.get(idx));
-            let is_string_literal_or_none = first_arg_node
-                .map(|n| {
-                    n.kind == SyntaxKind::StringLiteral as u16
-                        || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                        // Missing/error-recovered nodes have zero length
-                        || n.end <= n.pos
-                })
-                .unwrap_or(true); // no args => treat as simple path
-
-            if is_string_literal_or_none {
-                // Simple string or no args:
-                //   Promise.resolve().then(() => __importStar(require("mod")))
-                //   Promise.resolve().then(() => __importStar(require()))
-                self.emit_dynamic_import_commonjs_branch(first_arg, None);
-            } else {
-                // Expression specifier with rewrite helper wrapping
-                self.write("Promise.resolve(`${");
-                if self.ctx.options.rewrite_relative_import_extensions {
-                    if let Some(first) = first_arg {
-                        self.emit_rewrite_helper_call(first);
-                    }
-                } else if let Some(first) = first_arg {
-                    self.emit_dynamic_import_template_specifier(first);
-                }
-                self.write("}`).then(s => ");
-                self.write_helper("__importStar");
-                self.write("(require(s)))");
-            }
+            self.emit_dynamic_import_commonjs_promise(first_arg, None);
             return;
         }
 
@@ -807,22 +782,52 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_system_dynamic_import_call(
-        &mut self,
-        node: &Node,
-        args: Option<&tsz_parser::parser::NodeList>,
-    ) {
-        self.write("context_1.import");
-        self.emit_call_arguments(node, args);
+    /// Emit a dynamic `import()` for System output as `context_1.import(spec)`.
+    ///
+    /// The System loader's `import` hook only accepts the module id, so `tsc`
+    /// drops any options/attributes (`import(spec, { with: ... })`) argument.
+    fn emit_system_dynamic_import_call(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        self.write("context_1.import(");
+        if let Some(first) = self.first_dynamic_import_argument(args) {
+            self.emit_maybe_rewritten_module_specifier_arg(first);
+        }
+        self.write(")");
     }
 
-    fn emit_amd_or_umd_dynamic_import_call(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+    /// Emit a downlevel dynamic `import()` for AMD/UMD output.
+    ///
+    /// AMD emits a single `new Promise(...).then(__importStar)` call expression.
+    /// UMD additionally guards it with `__syncRequire ? <cjs> : <amd>`, a
+    /// `ConditionalExpression`. Because UMD repeats the specifier across both
+    /// branches, a specifier that is neither a string literal nor a bare
+    /// identifier is captured once into a hoisted temp (`_a = spec, ...`),
+    /// turning the substitution into a comma `SequenceExpression`; this mirrors
+    /// `tsc`. AMD never captures, and string-literal/identifier specifiers are
+    /// repeated inline.
+    fn emit_amd_or_umd_dynamic_import_call(
+        &mut self,
+        call_idx: NodeIndex,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
         let first_arg = self.first_dynamic_import_argument(args);
-        let needs_temp = first_arg.is_some_and(|arg| !self.dynamic_import_arg_is_string_like(arg));
-        let temp = needs_temp.then(|| self.make_unique_name_hoisted());
+        let is_umd = matches!(self.ctx.original_module_kind, Some(ModuleKind::UMD));
+        let capture = is_umd
+            && first_arg.is_some_and(|arg| {
+                !self.dynamic_import_arg_is_string_like(arg)
+                    && !self.dynamic_import_arg_is_identifier(arg)
+            });
 
-        if let Some(temp_name) = temp.as_deref() {
-            self.write(temp_name);
+        // A captured specifier yields a comma sequence, which needs parentheses
+        // in more parent positions than a bare conditional, so the paren
+        // decision depends on which substitution form is emitted.
+        let needs_parens = is_umd && self.umd_dynamic_import_needs_parens(call_idx, capture);
+        if needs_parens {
+            self.write("(");
+        }
+
+        let temp = if capture {
+            let temp = self.make_unique_name_hoisted();
+            self.write(&temp);
             self.write(" = ");
             if self.ctx.options.rewrite_relative_import_extensions {
                 if let Some(first) = first_arg {
@@ -832,14 +837,114 @@ impl<'a> Printer<'a> {
                 self.emit(first);
             }
             self.write(", ");
-        }
+            Some(temp)
+        } else {
+            None
+        };
 
-        if matches!(self.ctx.original_module_kind, Some(ModuleKind::UMD)) {
+        if is_umd {
             self.write("__syncRequire ? ");
-            self.emit_dynamic_import_commonjs_branch(first_arg, temp.as_deref());
+            self.emit_dynamic_import_commonjs_promise(first_arg, temp.as_deref());
             self.write(" : ");
         }
         self.emit_dynamic_import_amd_branch(first_arg, temp.as_deref());
+
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    /// Whether a UMD dynamic-`import()` substitution must be parenthesized for
+    /// the parent expression it sits in, matching `tsc`'s parenthesizer.
+    ///
+    /// Statement-level parents (expression statement, `return`, `throw`, `for`
+    /// headers) accept a full expression — including a comma sequence — so
+    /// neither form needs parentheses. Parents that bind tighter than `?:`
+    /// (operand of `await`/`yield`/unary/binary, object of a member access,
+    /// callee of a call/new, condition of another conditional) always need
+    /// parentheses. Remaining assignment-level parents (variable initializer,
+    /// call argument, array element, property value, arrow body, …) accept a
+    /// bare conditional but require parentheses around a comma sequence, so
+    /// `is_sequence` decides those.
+    fn umd_dynamic_import_needs_parens(&self, call_idx: NodeIndex, is_sequence: bool) -> bool {
+        let Some(parent_idx) = self.arena.parent_of(call_idx) else {
+            return false;
+        };
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent) = self.arena.get(parent_idx) else {
+            return false;
+        };
+        let k = parent.kind;
+        if k == syntax_kind_ext::EXPRESSION_STATEMENT
+            || k == syntax_kind_ext::RETURN_STATEMENT
+            || k == syntax_kind_ext::THROW_STATEMENT
+            || k == syntax_kind_ext::FOR_STATEMENT
+        {
+            return false;
+        }
+        let tighter_than_conditional = match k {
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION
+                || k == syntax_kind_ext::YIELD_EXPRESSION
+                || k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::TYPE_OF_EXPRESSION
+                || k == syntax_kind_ext::VOID_EXPRESSION
+                || k == syntax_kind_ext::DELETE_EXPRESSION
+                || k == syntax_kind_ext::BINARY_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena
+                    .get_access_expr(parent)
+                    .is_some_and(|access| access.expression == call_idx)
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.arena
+                    .get_call_expr(parent)
+                    .is_some_and(|call| call.expression == call_idx)
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .arena
+                .get_conditional_expr(parent)
+                .is_some_and(|cond| cond.condition == call_idx),
+            _ => false,
+        };
+        tighter_than_conditional || is_sequence
+    }
+
+    /// Emit the CommonJS branch of a downlevel dynamic import as a Promise.
+    ///
+    /// A captured temp, a string literal, or the no-argument case lets the
+    /// `require` reference the value directly via
+    /// `Promise.resolve().then(() => require(x))`. A bare identifier specifier
+    /// (never captured) is coerced through a template so the runtime `require`
+    /// receives a string: `Promise.resolve(`${id}`).then(s => require(s))`.
+    fn emit_dynamic_import_commonjs_promise(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if temp.is_some() || first_arg.is_none_or(|arg| self.dynamic_import_arg_is_string_like(arg))
+        {
+            self.emit_dynamic_import_commonjs_branch(first_arg, temp);
+            return;
+        }
+        self.write("Promise.resolve(`${");
+        if self.ctx.options.rewrite_relative_import_extensions {
+            if let Some(first) = first_arg {
+                self.emit_rewrite_helper_call(first);
+            }
+        } else if let Some(first) = first_arg {
+            self.emit_dynamic_import_template_specifier(first);
+        }
+        self.write("}`).then(s => ");
+        self.write_helper("__importStar");
+        self.write("(require(s)))");
     }
 
     fn first_dynamic_import_argument(
@@ -860,6 +965,10 @@ impl<'a> Printer<'a> {
                 || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || node.end <= node.pos
         })
+    }
+
+    fn dynamic_import_arg_is_identifier(&self, arg: NodeIndex) -> bool {
+        self.arena.get(arg).is_some_and(|node| node.is_identifier())
     }
 
     fn emit_dynamic_import_commonjs_branch(

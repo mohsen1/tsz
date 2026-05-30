@@ -391,9 +391,9 @@ import(path);
     );
     assert!(
         output.contains(
-            "_a = path, new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+            "new Promise((resolve_1, reject_1) => { require([path], resolve_1, reject_1); }).then(__importStar);"
         ),
-        "AMD dynamic import should use async require with one eager specifier evaluation.\nOutput:\n{output}"
+        "AMD dynamic import inlines a bare identifier specifier without a temp, matching tsc.\nOutput:\n{output}"
     );
 }
 
@@ -440,9 +440,9 @@ fn exported_async_function_dynamic_import_keeps_amd_wrapper_kind() {
     );
     assert!(
         output.contains(
-            "return _a = path, new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+            "return new Promise((resolve_1, reject_1) => { require([path], resolve_1, reject_1); }).then(__importStar);"
         ),
-        "Dynamic import inside the CJS-export-masked async body should use AMD async require.\nOutput:\n{output}"
+        "Dynamic import inside the CJS-export-masked async body should use AMD async require, inlining the identifier specifier.\nOutput:\n{output}"
     );
     assert!(
         !output.contains("Promise.resolve().then(() => __importStar(require(path)))"),
@@ -488,9 +488,9 @@ fn exported_async_function_dynamic_import_keeps_umd_wrapper_kind() {
     );
     assert!(
         output.contains(
-            "return _a = path, __syncRequire ? Promise.resolve().then(() => __importStar(require(_a))) : new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+            "return __syncRequire ? Promise.resolve(`${path}`).then(s => __importStar(require(s))) : new Promise((resolve_1, reject_1) => { require([path], resolve_1, reject_1); }).then(__importStar);"
         ),
-        "Dynamic import inside the CJS-export-masked async body should use the UMD loader branch.\nOutput:\n{output}"
+        "Dynamic import inside the CJS-export-masked async body should use the UMD loader branch, coercing the bare identifier specifier through a template without a temp.\nOutput:\n{output}"
     );
 }
 

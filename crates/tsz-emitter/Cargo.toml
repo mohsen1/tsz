@@ -298,6 +298,10 @@ path = "tests/wave3_small_emit_fixes_tests.rs"
 name = "legacy_decorator_member_order_tests"
 path = "tests/legacy_decorator_member_order_tests.rs"
 
+[[test]]
+name = "dynamic_import_amd_umd_parity_tests"
+path = "tests/dynamic_import_amd_umd_parity_tests.rs"
+
 [lints]
 workspace = true
 
