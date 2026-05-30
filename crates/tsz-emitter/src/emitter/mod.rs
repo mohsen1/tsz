@@ -35,6 +35,7 @@ mod comments;
 mod core;
 mod core_setup;
 pub(crate) mod declarations;
+mod decorator_static_super_hoist;
 mod es5;
 mod expressions;
 mod function_parameters;

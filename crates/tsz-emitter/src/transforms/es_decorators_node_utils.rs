@@ -44,6 +44,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub(super) fn plain_static_field_assignment(
         &self,
+        member_idx: NodeIndex,
         member_node: &tsz_parser::parser::node::Node,
         class_ref: &str,
         indent: &str,
@@ -68,7 +69,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         let (property_access, property_key) = self.static_field_assignment_name(prop.name)?;
         let value = if prop.initializer.is_some() {
-            if class_ref == "_classThis" && self.node_is_this_keyword(prop.initializer) {
+            if let Some(text) = self.hoisted_static_field_value_texts.get(&member_idx) {
+                // The initializer references `super`; raw source text would
+                // hoist a bare `super.x` outside the class body. The main
+                // emitter already rendered the scoped-static-super rewrite.
+                text.clone()
+            } else if class_ref == "_classThis" && self.node_is_this_keyword(prop.initializer) {
                 class_ref.to_string()
             } else {
                 self.node_text(prop.initializer)

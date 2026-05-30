@@ -193,6 +193,15 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Static member text rendered by the main emitter when raw source text
     /// would miss scoped static `super` rewrites in field initializers.
     static_member_texts: FxHashMap<NodeIndex, String>,
+    /// Value-only initializer text for plain static fields whose initializer
+    /// references `super`. When a TC39-decorated class is lowered for a
+    /// pre-ES2022 target, plain static fields are hoisted to
+    /// `_classThis.<name> = <init>` statements *outside* the class body, where
+    /// `super` is no longer a valid token. The main emitter renders the
+    /// scoped-static-super rewrite (`Reflect.get`/`Reflect.set` against
+    /// `_classSuper`/`_classThis`) here so the hoisted assignment stays
+    /// runnable.
+    hoisted_static_field_value_texts: FxHashMap<NodeIndex, String>,
     /// Extends expression text rendered by the main emitter when raw source
     /// text would preserve type-only syntax or named-evaluation-sensitive forms.
     extends_text: Option<String>,
@@ -221,6 +230,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             decorator_expression_texts: FxHashMap::default(),
             static_block_texts: FxHashMap::default(),
             static_member_texts: FxHashMap::default(),
+            hoisted_static_field_value_texts: FxHashMap::default(),
             extends_text: None,
             outer_this_var: None,
             use_define_for_class_fields: false,
@@ -285,6 +295,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_static_member_text(&mut self, member_idx: NodeIndex, text: String) {
         self.static_member_texts.insert(member_idx, text);
+    }
+
+    /// Record the scoped-static-super-rewritten value text used by the hoisted
+    /// `_classThis.<name> = <value>` assignment for a plain static field whose
+    /// initializer references `super` (pre-ES2022 decorated-class lowering).
+    pub fn set_hoisted_static_field_value_text(&mut self, member_idx: NodeIndex, text: String) {
+        self.hoisted_static_field_value_texts
+            .insert(member_idx, text);
     }
 
     pub fn set_extends_text(&mut self, text: String) {
