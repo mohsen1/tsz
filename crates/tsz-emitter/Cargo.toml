@@ -39,6 +39,10 @@ name = "super_missing_member_recovery_tests"
 path = "tests/super_missing_member_recovery_tests.rs"
 
 [[test]]
+name = "static_super_object_rest_assignment_target_tests"
+path = "tests/static_super_object_rest_assignment_target_tests.rs"
+
+[[test]]
 name = "class_temp_dedup_hoist_buckets_tests"
 path = "tests/class_temp_dedup_hoist_buckets_tests.rs"
 
