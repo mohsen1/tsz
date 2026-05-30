@@ -207,7 +207,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        if let Some(distributed) = self.try_distribute_mapped_over_union_source(mapped) {
+        if let Some(distributed) = self.try_distribute_mapped_over_composite_source(mapped) {
             return distributed;
         }
 
@@ -1161,25 +1161,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
-    fn try_distribute_mapped_over_union_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
-        // Direct `{ [K in keyof (A | B)]: ... }` uses the mapped
-        // parameter's own declared constraint. Only distribute when a
-        // homomorphic alias instantiation has replaced the effective source.
+    /// Distribute a homomorphic mapped type over a union or intersection source.
+    ///
+    /// When a homomorphic generic like `Partial<T>` is instantiated with a
+    /// composite source (`A | B` or `A & B`), tsc distributes:
+    /// - `Partial<A | B>` → `Partial<A> | Partial<B>`
+    /// - `Partial<A & B>` → `Partial<A> & Partial<B>`
+    ///
+    /// Only fires for instantiated forms where the effective constraint differs
+    /// from the declared one. Direct `{ [K in keyof (A | B)]: ... }` is excluded.
+    fn try_distribute_mapped_over_composite_source(
+        &mut self,
+        mapped: &MappedType,
+    ) -> Option<TypeId> {
         if mapped.type_param.constraint == Some(mapped.constraint) {
             return None;
         }
 
         let source = self.extract_source_from_keyof(mapped.constraint)?;
         let resolved_source = self.evaluate(source);
-        let Some(TypeData::Union(list_id)) = self.interner().lookup(resolved_source) else {
-            return None;
+        let (members, is_union): (Vec<TypeId>, bool) = match self.interner().lookup(resolved_source)
+        {
+            Some(TypeData::Union(list_id)) => (self.interner().type_list(list_id).to_vec(), true),
+            Some(TypeData::Intersection(list_id)) => {
+                (self.interner().type_list(list_id).to_vec(), false)
+            }
+            _ => return None,
         };
 
-        let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
         if members.len() < 2 {
             return None;
         }
 
+        let results = self.distribute_mapped_over_members(mapped, source, members);
+        Some(if is_union {
+            self.interner().union(results)
+        } else {
+            self.interner().intersection(results)
+        })
+    }
+
+    /// Shared loop body for union/intersection distribution.
+    ///
+    /// For each member, substitutes `source` → `member` in the template (and
+    /// name_type if present), builds a per-member mapped type, and evaluates it.
+    fn distribute_mapped_over_members(
+        &mut self,
+        mapped: &MappedType,
+        source: TypeId,
+        members: Vec<TypeId>,
+    ) -> Vec<TypeId> {
         let mut results = Vec::with_capacity(members.len());
         for member in members {
             let member_keyof = self.interner().keyof(member);
@@ -1200,8 +1231,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
             results.push(self.evaluate_mapped(&member_mapped));
         }
-
-        Some(self.interner().union(results))
+        results
     }
 
     /// Try to evaluate a mapped type over a single array/tuple-like type.
