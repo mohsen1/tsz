@@ -244,29 +244,50 @@ impl<'a> CheckerState<'a> {
         param_str = Self::trim_single_unbalanced_trailing_type_arg_close(param_str);
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
-        let message = format_message(
-            diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-            &[&arg_str, &param_str],
-        );
+        let (code, msg_template) =
+            self.argument_not_assignable_code_and_template(arg_type, param_type);
+        let message = format_message(msg_template, &[&arg_str, &param_str]);
 
         let request = if let Some(reason) = analysis.failure_reason {
             DiagnosticRenderRequest::with_failure_reason(
                 DiagnosticAnchorKind::Exact,
-                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                code,
                 message,
                 reason,
                 arg_type,
                 param_type,
             )
         } else {
-            DiagnosticRenderRequest::simple(
-                DiagnosticAnchorKind::Exact,
-                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-                message,
-            )
+            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message)
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    /// Pick the diagnostic code and message template for an argument-not-assignable error.
+    ///
+    /// Under `exactOptionalPropertyTypes`, when the only reason the argument doesn't fit
+    /// the parameter is that the argument has an explicit `| undefined` on a property
+    /// the parameter declares as `?`-optional-without-undefined, tsc emits TS2379 with the
+    /// "with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types
+    /// of the target's properties." helper text instead of TS2345. This mirrors the
+    /// TS2375 (vs. TS2322) split on the assignment-context path.
+    pub(crate) fn argument_not_assignable_code_and_template(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+    ) -> (u32, &'static str) {
+        if self.has_exact_optional_property_mismatch(arg_type, param_type) {
+            (
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE_WITH_EXACTOPTIONALPROPER,
+                diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE_WITH_EXACTOPTIONALPROPER,
+            )
+        } else {
+            (
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            )
+        }
     }
 
     fn should_suppress_promise_then_nullable_callback_arg_mismatch(

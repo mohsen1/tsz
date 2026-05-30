@@ -1910,5 +1910,9 @@ path = "tests/variadic_tuple_arity_inference_tests.rs"
 name = "diagnostic_index_suppression_tests"
 path = "tests/diagnostic_index_suppression_tests.rs"
 
+[[test]]
+name = "ts2379_exact_optional_argument_tests"
+path = "tests/ts2379_exact_optional_argument_tests.rs"
+
 [lints]
 workspace = true
