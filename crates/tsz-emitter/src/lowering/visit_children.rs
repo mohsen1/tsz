@@ -69,6 +69,10 @@ impl<'a> LoweringPass<'a> {
                                     {
                                         self.arena.get(decl.name).is_some_and(|name_node| {
                                             name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                                && self
+                                                    .arena
+                                                    .get_binding_pattern(name_node)
+                                                    .is_some_and(|p| !p.elements.nodes.is_empty())
                                         })
                                     } else {
                                         false
