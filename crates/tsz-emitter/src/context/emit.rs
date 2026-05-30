@@ -276,6 +276,17 @@ pub struct EmitContext {
     /// File-level counter for generated `arguments_N` capture bindings.
     pub arguments_capture_counter: u32,
 
+    /// When set, a `this` keyword emitted inside an ES5 converted-loop
+    /// (`_loop_N`) IIFE body is rewritten to this captured binding name
+    /// (e.g. `this_1`). The converted loop is a `function`, so a lexical
+    /// `this` reference in its body would otherwise lose its binding; tsc
+    /// captures the enclosing function's `this` into `var this_N = this;`
+    /// at the real function scope and substitutes the body references.
+    pub loop_this_capture_name: Option<String>,
+
+    /// File-level counter for generated `this_N` converted-loop captures.
+    pub loop_this_capture_counter: u32,
+
     /// Async ES2015+ lowering emits a nested `function*`. When a `var`
     /// declaration in that generator redeclares an async parameter, tsc hoists
     /// the declaration and leaves an assignment at the original site.
@@ -336,6 +347,8 @@ impl EmitContext {
             rewrite_arguments_to_arguments_1: false,
             arguments_capture_name: None,
             arguments_capture_counter: 0,
+            loop_this_capture_name: None,
+            loop_this_capture_counter: 0,
             async_generator_shadowed_parameter_names: Vec::new(),
             auto_detect_module: false,
             module_none_out_file: false,

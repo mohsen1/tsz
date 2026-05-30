@@ -828,7 +828,11 @@ fn expr_object_literal() {
 }
 
 #[test]
-fn object_literal_private_indexer_tail_recovers_as_comma_initializer() {
+fn object_literal_private_indexer_tail_recovers_as_two_members() {
+    // `{ private [x: string]: string; }`: the stray type annotation in the
+    // computed-name member is recovered as the computed-name property
+    // (`[x]: string`) followed by a fresh member parsed from the trailing
+    // token (`string`). tsc emits this as `{ [x]: string, string }`.
     let source = "const x = { private [x: string]: string; };";
     let (parser, root) = parse_source(source);
     let arena = parser.get_arena();
@@ -839,18 +843,33 @@ fn object_literal_private_indexer_tail_recovers_as_comma_initializer() {
         .expect("object literal expression");
     assert_eq!(
         object_data.elements.nodes.len(),
-        1,
-        "malformed indexer tail should stay on one object property"
+        2,
+        "recovered indexer tail should split into two object members"
     );
 
-    let prop = arena
+    // Member 1: computed-name property assignment `[x]: string`.
+    let prop0 = arena
         .get(object_data.elements.nodes[0])
-        .expect("property assignment");
+        .expect("first member");
+    assert_eq!(prop0.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
     let assignment = arena
-        .get_property_assignment(prop)
+        .get_property_assignment(prop0)
         .expect("property assignment data");
-    let (_, op, _) = get_binary(arena, assignment.initializer);
-    assert_eq!(op, SyntaxKind::CommaToken as u16);
+    let name0 = arena.get(assignment.name).expect("computed name");
+    assert_eq!(name0.kind, syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+    // The first member's source end must stop at its parsed value so source
+    // layout stays accurate; it must not extend onto the recovered tail.
+    let value0 = arena.get(assignment.initializer).expect("member value");
+    assert_eq!(
+        prop0.end, value0.end,
+        "first member must end at its parsed value, not the recovered tail"
+    );
+
+    // Member 2: a fresh member parsed from the trailing token.
+    let prop1 = arena
+        .get(object_data.elements.nodes[1])
+        .expect("second member");
+    assert_eq!(prop1.kind, syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT);
 
     let codes: Vec<u32> = parser
         .get_diagnostics()
@@ -865,9 +884,11 @@ fn object_literal_private_indexer_tail_recovers_as_comma_initializer() {
 fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() {
     // parserSymbolIndexer5-shaped input: a malformed computed-indexer member
     // (`[name: type]: value`) whose recovered tail butts directly against the
-    // object's closing `}`. tsc still reports TS1005 "':' expected." at the
-    // `}` for the missing property colon. Vary the computed-name identifier
-    // (here `q`, not `s`) so the assertion keys on the structure, not a name.
+    // object's closing `}`. tsc recovers two members — `[q]: symbol` and a
+    // fresh member whose name is the trailing `""` — and reports TS1005
+    // "':' expected." at the `}` for that second member's missing colon.
+    // Vary the computed-name identifier (here `q`, not `s`) so the assertion
+    // keys on the structure, not a name.
     let source = "var x = {\n    [q: symbol]: \"\"\n}";
     let (parser, root) = parse_source(source);
     let arena = parser.get_arena();
@@ -878,19 +899,34 @@ fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() 
         .expect("object literal expression");
     assert_eq!(
         object_data.elements.nodes.len(),
-        1,
-        "malformed indexer tail should stay on one object property"
+        2,
+        "recovered indexer tail should split into two object members"
     );
 
-    // The recovered initializer is still the comma-expression from #10701.
-    let prop = arena
+    // Member 1: computed-name property `[q]: symbol`; its end must stop at the
+    // parsed value (`symbol`) so the recovered second member stays on the same
+    // source line in emit, matching tsc's `[q]: symbol, "":` output.
+    let prop0 = arena
         .get(object_data.elements.nodes[0])
-        .expect("property assignment");
+        .expect("first member");
+    assert_eq!(prop0.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
     let assignment = arena
-        .get_property_assignment(prop)
+        .get_property_assignment(prop0)
         .expect("property assignment data");
-    let (_, op, _) = get_binary(arena, assignment.initializer);
-    assert_eq!(op, SyntaxKind::CommaToken as u16);
+    let name0 = arena.get(assignment.name).expect("computed name");
+    assert_eq!(name0.kind, syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+    let value0 = arena.get(assignment.initializer).expect("member value");
+    assert_eq!(
+        prop0.end, value0.end,
+        "first member must end at its parsed value, not the recovered tail"
+    );
+
+    // Member 2: a fresh member whose name is the trailing string literal `""`,
+    // which (lacking a `:`) requires a colon.
+    let prop1 = arena
+        .get(object_data.elements.nodes[1])
+        .expect("second member");
+    assert_eq!(prop1.kind, syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT);
 
     // The trailing "':' expected." must land at the closing `}` position.
     let close_brace_pos = source.rfind('}').expect("closing brace") as u32;
@@ -903,7 +939,7 @@ fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() 
         parser.get_diagnostics()
     );
 
-    // The earlier recovery diagnostics from #10701 must remain.
+    // The earlier recovery diagnostics must remain.
     let codes: Vec<u32> = parser
         .get_diagnostics()
         .iter()
@@ -911,6 +947,89 @@ fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() 
         .collect();
     assert!(codes.contains(&diagnostic_codes::EXPECTED));
     assert!(codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED));
+}
+
+#[test]
+fn object_literal_computed_indexer_tail_identifier_value_then_close_brace() {
+    // Same recovery rule with a renamed iteration identifier (`k`) and an
+    // identifier trailing token instead of a string literal. The tail `done`
+    // becomes a shorthand member; because it is an identifier (not a literal
+    // requiring a colon) and butts against `}`, no "':' expected." fires here.
+    // Proves the recovery is keyed on the `[expr]` `]:` shape, not a name.
+    let source = "var y = {\n    [k: number]: done\n}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        2,
+        "recovered indexer tail should split into two object members"
+    );
+
+    let prop0 = arena
+        .get(object_data.elements.nodes[0])
+        .expect("first member");
+    assert_eq!(prop0.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
+    let assignment = arena
+        .get_property_assignment(prop0)
+        .expect("property assignment data");
+    let name0 = arena.get(assignment.name).expect("computed name");
+    assert_eq!(name0.kind, syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+    let value0 = arena.get(assignment.initializer).expect("member value");
+    assert_eq!(
+        prop0.end, value0.end,
+        "first member must end at its parsed value, not the recovered tail"
+    );
+
+    let prop1 = arena
+        .get(object_data.elements.nodes[1])
+        .expect("second member");
+    assert_eq!(prop1.kind, syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT);
+
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED));
+}
+
+#[test]
+fn object_literal_well_formed_computed_member_is_not_split() {
+    // Negative/fallback case: a well-formed computed member (`[k]: 0`) must
+    // not trigger the stray-annotation recovery. The object stays a single
+    // member with no recovery diagnostics. Proves the recovery only fires on
+    // the `]:` mis-shape, not on every computed member.
+    let source = "var z = { [k]: 0 }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        1,
+        "well-formed computed member must remain a single object property"
+    );
+    let prop0 = arena
+        .get(object_data.elements.nodes[0])
+        .expect("only member");
+    assert_eq!(prop0.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
+    assert!(
+        !parser
+            .get_diagnostics()
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED),
+        "well-formed computed member must not emit recovery diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
 }
 
 #[test]
