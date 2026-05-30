@@ -5,4 +5,5 @@ mod system_emit_var_hoisting;
 mod system_export_star_order;
 mod system_import_export_order;
 mod system_live_exports;
+mod system_top_level_await;
 mod wrapped_helpers;

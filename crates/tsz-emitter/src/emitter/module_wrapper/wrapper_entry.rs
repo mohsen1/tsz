@@ -3,6 +3,7 @@ use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -532,22 +533,7 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.emit_system_setters(&system_dependencies, &dep_vars, &system_plan);
         self.write_line();
-        let execute_is_async = source.statements.nodes.iter().any(|&stmt_idx| {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                return false;
-            };
-            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-                return false;
-            }
-            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
-                return false;
-            };
-            var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
-                self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
-                    tsz_parser::parser::node_flags::is_await_using(decl_list_node.flags as u32)
-                })
-            })
-        });
+        let execute_is_async = self.system_execute_needs_async(&source.statements);
         if execute_is_async {
             self.write("execute: async function () {");
         } else {
@@ -571,6 +557,87 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
         self.write("});");
         self.write_line();
+    }
+
+    /// Decide whether a `System.register` module's `execute` body must be an
+    /// `async function`.
+    ///
+    /// The wrapper's `execute` callback inlines the module's top-level
+    /// statements. If any of those statements use top-level `await` — directly
+    /// (`await x`), via an `await using` declaration, or via a `for await...of`
+    /// loop whose downleveled iteration emits `await iterator.next()` /
+    /// `await iterator.return()` — the inlined body contains `await` operators
+    /// and the callback must therefore be `async`. Emitting a plain
+    /// `function () {` around top-level `await` produces non-runnable JS.
+    ///
+    /// The walk descends through nested control flow (top-level `if`/`for`/
+    /// `while`/`try`/blocks) but stops at function-like boundaries: a nested
+    /// function/method/arrow/accessor/constructor opens its own async context,
+    /// so an `await` inside it does not require the module wrapper to be async.
+    fn system_execute_needs_async(&self, statements: &tsz_parser::parser::base::NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+
+            // Top-level `await <expr>`.
+            if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+                return true;
+            }
+
+            // `for await (... of ...)` — its downleveled form emits `await`.
+            if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && self
+                    .arena
+                    .get_for_in_of(node)
+                    .is_some_and(|for_in_of| for_in_of.await_modifier)
+            {
+                return true;
+            }
+
+            // `await using` declaration list.
+            if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_stmt) = self.arena.get_variable(node) {
+                    let has_await_using =
+                        var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+                            self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
+                                tsz_parser::parser::node_flags::is_await_using(
+                                    decl_list_node.flags as u32,
+                                )
+                            })
+                        });
+                    if has_await_using {
+                        return true;
+                    }
+                }
+            }
+
+            // A nested function-like declaration opens a fresh async context;
+            // do not descend into its body.
+            if self.is_system_async_context_boundary(node.kind) {
+                continue;
+            }
+
+            stack.extend(self.arena.get_children(idx));
+        }
+        false
+    }
+
+    /// Function-like node kinds that introduce a new async/await context. An
+    /// `await` (or `for await`) nested inside one of these does not force the
+    /// enclosing `System.register` `execute` callback to be async.
+    const fn is_system_async_context_boundary(&self, kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::ARROW_FUNCTION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
     }
 
     fn collect_system_hoisted_function_names(
