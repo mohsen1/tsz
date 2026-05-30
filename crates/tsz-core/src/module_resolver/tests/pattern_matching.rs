@@ -172,3 +172,25 @@ fn test_apply_wildcard_substitution_star_pattern_with_dir_target() {
         "./types/"
     );
 }
+
+#[test]
+fn test_export_pattern_specificity_prefix_and_suffix() {
+    // Primary sort: longer prefix wins.
+    assert!(export_pattern_specificity("./abc/*") > export_pattern_specificity("./*"));
+    // Secondary sort: equal prefix, longer suffix wins.
+    assert!(export_pattern_specificity("./*-b") > export_pattern_specificity("./*"));
+    // Equal specificity.
+    assert_eq!(
+        export_pattern_specificity("./*-a"),
+        export_pattern_specificity("./*-b")
+    );
+    // No wildcard: treated as (pattern.len(), 0).
+    assert_eq!(export_pattern_specificity("./lib"), (5, 0));
+    assert_eq!(export_pattern_specificity("./lib/*"), (6, 0));
+    assert_eq!(export_pattern_specificity("./*-suffix"), (2, 7));
+    // Longer prefix beats longer suffix.
+    // "./abc/*" has prefix.len=6, suffix.len=0 → (6, 0)
+    // "./*-suffix" has prefix.len=2, suffix.len=7 → (2, 7)
+    // (6, 0) > (2, 7) because 6 > 2
+    assert!(export_pattern_specificity("./abc/*") > export_pattern_specificity("./*-suffix"));
+}

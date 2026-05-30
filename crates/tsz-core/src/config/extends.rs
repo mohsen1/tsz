@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::module_resolver_helpers::{
-    PackageExports, PackageJson, match_export_pattern, parse_package_specifier,
-    substitute_wildcard_in_exports,
+    PackageExports, PackageJson, find_best_export_pattern, match_export_pattern,
+    parse_package_specifier, substitute_wildcard_in_exports,
 };
 
 use super::{CompilerOptions, TsConfig};
@@ -145,21 +145,9 @@ fn resolve_package_extends_exports(
                 return resolve_package_extends_export_value(package_dir, value, CONDITIONS);
             }
 
-            let mut best_match: Option<(usize, &str, String, &PackageExports)> = None;
-            for (pattern, value) in map {
-                if let Some(wildcard) = match_export_pattern(pattern, subpath) {
-                    let specificity = pattern.len();
-                    let is_better = match &best_match {
-                        None => true,
-                        Some((best_len, _, _, _)) => specificity > *best_len,
-                    };
-                    if is_better {
-                        best_match = Some((specificity, pattern.as_str(), wildcard, value));
-                    }
-                }
-            }
-
-            if let Some((_, pattern, wildcard, value)) = best_match {
+            if let Some((pattern, wildcard, value)) =
+                find_best_export_pattern(map.iter(), |p| match_export_pattern(p, subpath))
+            {
                 // Directory-match keys end in `/` and have no `*`; only
                 // those should append the wildcard to a `/`-ending target.
                 let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');

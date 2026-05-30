@@ -3,6 +3,7 @@
 //! Pure helper functions for package.json parsing, path manipulation,
 //! semver comparison, and pattern matching used by the module resolver.
 
+use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -115,6 +116,52 @@ pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<Strin
     }
 
     Some(subpath[start..end].to_string())
+}
+
+/// Returns the specificity of an export/import pattern for tie-breaking.
+///
+/// Per Node.js `PACKAGE_IMPORTS_EXPORTS_RESOLVE` spec, when multiple patterns
+/// match a subpath, the most specific one wins. Specificity is defined as:
+///
+/// 1. **Primary**: length of the prefix (characters before `*`). A longer prefix
+///    means the pattern is more anchored to the start of the subpath.
+/// 2. **Secondary**: length of the suffix (characters after `*`). A longer suffix
+///    means the pattern is more anchored to the end of the subpath.
+///
+/// Exact (non-wildcard) and directory patterns use `(pattern.len(), 0)` since
+/// they always beat a wildcard match of the same or shorter length.
+///
+/// When two patterns have equal `(prefix_len, suffix_len)`, the first one in
+/// JSON source order wins — callers must iterate in insertion order (use
+/// `IndexMap`) and update `best_match` only on strict improvement (`>`).
+pub(crate) fn export_pattern_specificity(pattern: &str) -> (usize, usize) {
+    if let Some(star_pos) = pattern.find('*') {
+        (star_pos, pattern.len() - star_pos - 1)
+    } else {
+        (pattern.len(), 0)
+    }
+}
+
+/// Find the most-specific pattern entry that matches `target`.
+///
+/// Iterates `patterns` in order and returns the entry whose `(prefix_len, suffix_len)`
+/// specificity is largest. Equal-specificity ties resolve to the first entry in
+/// iteration order — callers must use an insertion-order map (`IndexMap`) to get
+/// deterministic JSON-source-order tie-breaking per the Node.js/TypeScript spec.
+pub(crate) fn find_best_export_pattern<'a>(
+    patterns: impl Iterator<Item = (&'a String, &'a PackageExports)>,
+    match_fn: impl Fn(&str) -> Option<String>,
+) -> Option<(&'a str, String, &'a PackageExports)> {
+    let mut best: Option<((usize, usize), &'a str, String, &'a PackageExports)> = None;
+    for (pattern, value) in patterns {
+        if let Some(matched) = match_fn(pattern) {
+            let specificity = export_pattern_specificity(pattern);
+            if best.as_ref().map_or(true, |(s, _, _, _)| specificity > *s) {
+                best = Some((specificity, pattern.as_str(), matched, value));
+            }
+        }
+    }
+    best.map(|(_, p, m, v)| (p, m, v))
 }
 
 /// Match an imports pattern against a specifier (#-prefixed)
@@ -449,7 +496,7 @@ pub(crate) fn substitute_wildcard_in_exports(
                         substitute_wildcard_in_exports(v, wildcard, is_directory_match),
                     )
                 })
-                .collect(),
+                .collect::<IndexMap<_, _>>(),
         ),
         PackageExports::Array(elements) => PackageExports::Array(
             elements
@@ -604,7 +651,7 @@ pub(crate) struct PackageJson {
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub package_type: Option<String>,
     pub exports: Option<PackageExports>,
-    pub imports: Option<FxHashMap<String, PackageExports>>,
+    pub imports: Option<IndexMap<String, PackageExports>>,
     /// TypeScript typesVersions field for version-specific type definitions
     #[serde(rename = "typesVersions")]
     pub types_versions: Option<serde_json::Value>,
@@ -621,12 +668,14 @@ where
 /// Package exports field can be a string, map, or conditional
 ///
 /// Map variant: keys start with "." (subpath patterns like ".", "./foo")
+///   Uses `IndexMap` to preserve JSON key order — required for deterministic
+///   pattern-matching tie-breaking when two wildcard patterns have equal specificity.
 /// Conditional variant: keys don't start with "." (condition names like "import", "default")
 ///   Uses Vec to preserve JSON key order (required for correct condition matching)
 #[derive(Debug, Clone)]
 pub(crate) enum PackageExports {
     String(String),
-    Map(FxHashMap<String, Self>),
+    Map(IndexMap<String, Self>),
     Conditional(Vec<(String, Self)>),
     /// Array of fallback targets — Node.js tries each element in order until one resolves
     Array(Vec<Self>),
@@ -686,7 +735,11 @@ impl<'de> serde::Deserialize<'de> for PackageExports {
             where
                 A: de::MapAccess<'de>,
             {
-                let mut map_entries = FxHashMap::default();
+                // IndexMap preserves JSON insertion order for the subpath Map variant.
+                // This is required for deterministic pattern-matching tie-breaking:
+                // when two wildcard patterns have equal specificity, the first one
+                // in JSON source order must win (per Node.js/TypeScript spec).
+                let mut map_entries = IndexMap::default();
                 let mut cond_entries = Vec::new();
                 let mut is_subpath_map = None;
 

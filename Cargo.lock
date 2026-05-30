@@ -1555,6 +1555,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "criterion",
+ "indexmap",
  "once_cell",
  "rayon",
  "rustc-hash",
