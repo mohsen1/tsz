@@ -870,7 +870,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: intern/core/interner.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "intern" / "core" / "interner.rs",
-        2086,
+        2105,
     ),
     (
         "CLI boundary: bin/tsz_server/tests_navigation.rs size ratchet",
@@ -895,6 +895,11 @@ FILE_LINE_LIMIT_CHECKS = [
         2031,
     ),
     (
+        "Solver boundary: caches/query_cache.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs",
+        2022,
+    ),
+    (
         "LSP boundary: hover/core.rs size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "hover" / "core.rs",
         2029,
@@ -913,7 +918,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: evaluation/evaluate.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "evaluation" / "evaluate.rs",
-        2019,
+        2048,
     ),
     (
         "Emitter boundary: transforms/module_commonjs.rs size ratchet",

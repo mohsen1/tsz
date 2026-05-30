@@ -25,7 +25,7 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     if type_id.is_intrinsic() {
         return false;
     }
-    // Fast path: check top-level type directly before creating ContainsTypeChecker
+    // Fast path: check top-level type directly before any cache/walk work.
     match db.lookup(type_id) {
         Some(
             TypeData::TypeParameter(_)
@@ -44,7 +44,39 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
         ) => return false,
         _ => {}
     }
-    contains_type_matching(db, type_id, |key| {
+    // The "sticky bit" decision (does this type still need instantiation?) is
+    // asked thousands of times for the same closed subtrees while recursive
+    // mapped/conditional bodies expand. The answer is immutable per `TypeId`
+    // within one interner, so memoize the deep walk in a project-wide cache and
+    // consult it for every child `TypeId` too. Without this the fan-out is
+    // dominated by re-walking shared closed leaves across fresh evaluators.
+    if let Some(cached) = db.contains_type_params_cached(type_id) {
+        return cached;
+    }
+    contains_content_cached(db, type_id, &TypeParamPredicate)
+}
+
+/// A project-stable content predicate over a single type node, plus the
+/// interner cache slot that memoizes the deep walk that uses it.
+///
+/// All implementors check a property that is immutable for a `TypeId` within
+/// one interner (e.g. "contains a type parameter", "contains `infer`"), so the
+/// deep walk's per-node answer can be cached project-wide and shared across the
+/// many fresh evaluators created during instantiation. See
+/// [`contains_content_cached`].
+trait ContentPredicate {
+    /// Whether this node *itself* satisfies the predicate. When `true`, the
+    /// walker short-circuits without descending into children.
+    fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool;
+    /// Look up a cached deep-walk result for `type_id`.
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool>;
+    /// Store a deep-walk result for `type_id`.
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool);
+}
+
+struct TypeParamPredicate;
+impl ContentPredicate for TypeParamPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
         matches!(
             key,
             TypeData::TypeParameter(_)
@@ -52,7 +84,321 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         )
-    })
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_type_params_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_type_params_cache(type_id, result);
+    }
+}
+
+struct InferPredicate;
+impl ContentPredicate for InferPredicate {
+    fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        match key {
+            TypeData::Infer(_) => true,
+            TypeData::TypeParameter(tp) => {
+                let name = db.resolve_atom_ref(tp.name);
+                name.starts_with("__infer_") || name.starts_with("__infer_src_")
+            }
+            _ => false,
+        }
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_infer_types_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_infer_types_cache(type_id, result);
+    }
+}
+
+struct TypeQueryPredicate;
+impl ContentPredicate for TypeQueryPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::TypeQuery(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_type_query_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_type_query_cache(type_id, result);
+    }
+}
+
+struct LazyOrRecursivePredicate;
+impl ContentPredicate for LazyOrRecursivePredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_lazy_or_recursive_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_lazy_or_recursive_cache(type_id, result);
+    }
+}
+
+struct ThisTypePredicate;
+impl ContentPredicate for ThisTypePredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        matches!(key, TypeData::ThisType)
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_this_type_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_this_type_cache(type_id, result);
+    }
+}
+
+/// Deeply-cached `contains ThisType` walk. Backs
+/// `visitor_predicates::contains_this_type` so the per-node answers are
+/// memoized in the shared `contains_this` cache rather than only the top level.
+pub fn contains_this_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_content_cached(db, type_id, &ThisTypePredicate)
+}
+
+struct SubstitutionDependentPredicate;
+impl ContentPredicate for SubstitutionDependentPredicate {
+    fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        // Nodes whose evaluation depends on the *substitution environment* (the
+        // bound `this`, the active type-parameter mapper). Unlike `Lazy`/
+        // `TypeQuery`/`UnresolvedTypeName` — which resolve identically for the
+        // single fixed resolver of one project run — these can evaluate to
+        // different results for the same `TypeId` depending on the enclosing
+        // instantiation, so a type containing them is not safely cacheable by
+        // `TypeId` alone.
+        matches!(
+            key,
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+        )
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_resolver_dependent_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_resolver_dependent_cache(type_id, result);
+    }
+}
+
+/// Whether evaluating `type_id` depends on the substitution environment.
+///
+/// Returns `true` if the type (recursively) contains any `TypeParameter`/
+/// `Infer`/`ThisType`/`BoundParameter`. A `false` answer means the type's
+/// evaluation depends only on the project's fixed resolver (via any `Lazy`/
+/// `TypeQuery`/`UnresolvedTypeName` refs it contains), so the result for this
+/// `TypeId` is stable across evaluator instances — the input gate for the
+/// project-wide `closed_eval_cache`.
+pub fn is_substitution_dependent_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_content_cached(db, type_id, &SubstitutionDependentPredicate)
+}
+
+/// Run a deep, project-cached content walk for `predicate` over `type_id`.
+///
+/// Mirrors the child enumeration of `ContainsTypeChecker.check_key` (the generic
+/// walker) but consults and populates the predicate's persistent project-wide
+/// cache at every node. A subtree result is only written to the persistent cache
+/// when its computation did NOT touch an in-progress (cycle) node — the
+/// `cycle_tainted` flag tracks this so a provisional cycle-break answer is never
+/// cached as if it were final.
+fn contains_content_cached<P: ContentPredicate>(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    predicate: &P,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(cached) = predicate.cached(db, type_id) {
+        return cached;
+    }
+    let mut walker = CachedContentWalker {
+        db,
+        predicate,
+        visiting: FxHashSet::default(),
+    };
+    walker.check(type_id)
+}
+
+struct CachedContentWalker<'a, P: ContentPredicate> {
+    db: &'a dyn TypeDatabase,
+    predicate: &'a P,
+    visiting: FxHashSet<TypeId>,
+}
+
+impl<P: ContentPredicate> CachedContentWalker<'_, P> {
+    /// Returns `(predicate_holds, cycle_tainted)`.
+    fn check_tracked(&mut self, type_id: TypeId) -> (bool, bool) {
+        if type_id.is_intrinsic() {
+            return (false, false);
+        }
+        if let Some(cached) = self.predicate.cached(self.db, type_id) {
+            return (cached, false);
+        }
+        if !self.visiting.insert(type_id) {
+            // Re-entering an in-progress node: this path contributes nothing new
+            // (the matching node, if any, is found on the ancestor still being
+            // computed). Mark tainted so the ancestor does not persist a
+            // possibly-incomplete answer.
+            return (false, true);
+        }
+        let result = self.check_key_tracked(type_id);
+        self.visiting.remove(&type_id);
+        if !result.1 {
+            // Only persist fully-resolved (untainted) subtree results.
+            self.predicate.set_cache(self.db, type_id, result.0);
+        }
+        result
+    }
+
+    fn check(&mut self, type_id: TypeId) -> bool {
+        self.check_tracked(type_id).0
+    }
+
+    fn check_key_tracked(&mut self, type_id: TypeId) -> (bool, bool) {
+        let Some(key) = self.db.lookup(type_id) else {
+            return (false, false);
+        };
+        // Direct match on the node itself short-circuits: the answer is `true`
+        // and untainted regardless of any child subtree.
+        if self.predicate.matches_node(self.db, &key) {
+            return (true, false);
+        }
+        // Collect children, then walk with a short-circuiting loop. Collecting
+        // first keeps the borrow of `self.db` out of the recursive `self`
+        // mutation that follows.
+        let children = self.collect_children(&key);
+        let mut tainted = false;
+        for child in children {
+            let (child_found, child_tainted) = self.check_tracked(child);
+            tainted |= child_tainted;
+            if child_found {
+                // A `true` answer is never tainted: a found match is a
+                // definite fact independent of any in-flight cycle node.
+                return (true, false);
+            }
+        }
+        (false, tainted)
+    }
+
+    /// Enumerate the child `TypeId`s a cached content walk must descend into for
+    /// a given node. Mirrors `ContainsTypeChecker.check_key`'s child set exactly
+    /// so the cached walker stays semantically identical to the generic walker.
+    fn collect_children(&self, key: &TypeData) -> Vec<TypeId> {
+        let mut out = Vec::new();
+        match key {
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => {}
+            // `ContainsTypeChecker` descends into a type parameter's constraint
+            // and default (e.g. `infer V` inside `T extends Bar<infer V>`). The
+            // self-match short-circuit in `check_key_tracked` already handles
+            // predicates for which the parameter node itself matches.
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+                if let Some(c) = info.constraint {
+                    out.push(c);
+                }
+                if let Some(d) = info.default {
+                    out.push(d);
+                }
+            }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.db.object_shape(*shape_id);
+                out.extend(shape.properties.iter().map(|p| p.type_id));
+                if let Some(i) = shape.string_index.as_ref() {
+                    out.push(i.value_type);
+                }
+                if let Some(i) = shape.number_index.as_ref() {
+                    out.push(i.value_type);
+                }
+            }
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                out.extend(self.db.type_list(*list_id).iter().copied());
+            }
+            TypeData::Array(elem) => out.push(*elem),
+            TypeData::Tuple(list_id) => {
+                out.extend(self.db.tuple_list(*list_id).iter().map(|e| e.type_id));
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.db.function_shape(*shape_id);
+                out.extend(shape.params.iter().map(|p| p.type_id));
+                out.push(shape.return_type);
+                if let Some(t) = shape.this_type {
+                    out.push(t);
+                }
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.db.callable_shape(*shape_id);
+                for s in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    out.extend(s.params.iter().map(|p| p.type_id));
+                    out.push(s.return_type);
+                    if let Some(t) = s.this_type {
+                        out.push(t);
+                    }
+                }
+                out.extend(shape.properties.iter().map(|p| p.type_id));
+            }
+            TypeData::Application(app_id) => {
+                // Only check args, not base. The base type's own type parameters
+                // are bound by the application arguments.
+                out.extend(self.db.type_application(*app_id).args.iter().copied());
+            }
+            TypeData::Conditional(cond_id) => {
+                let cond = self.db.get_conditional(*cond_id);
+                out.push(cond.check_type);
+                out.push(cond.extends_type);
+                out.push(cond.true_type);
+                out.push(cond.false_type);
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.db.get_mapped(*mapped_id);
+                if let Some(c) = mapped.type_param.constraint {
+                    out.push(c);
+                }
+                if let Some(d) = mapped.type_param.default {
+                    out.push(d);
+                }
+                out.push(mapped.constraint);
+                out.push(mapped.template);
+                if let Some(n) = mapped.name_type {
+                    out.push(n);
+                }
+            }
+            TypeData::IndexAccess(obj, idx) => {
+                out.push(*obj);
+                out.push(*idx);
+            }
+            TypeData::TemplateLiteral(list_id) => {
+                for span in self.db.template_list(*list_id).iter() {
+                    if let crate::types::TemplateSpan::Type(child) = span {
+                        out.push(*child);
+                    }
+                }
+            }
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+                out.push(*inner);
+            }
+            TypeData::StringIntrinsic { type_arg, .. } => out.push(*type_arg),
+            TypeData::Enum(_def_id, member_type) => out.push(*member_type),
+        }
+        out
+    }
 }
 
 /// Check if a type contains named type parameters or canonical bound
@@ -300,43 +646,9 @@ pub fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Delegates to `visitor_predicates::contains_type_matching` with an `Infer`-only
 /// predicate.
 pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Fast path: intrinsic types never contain infer
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    if let Some(cached) = db.contains_infer_types_cached(type_id) {
-        return cached;
-    }
-    // Fast path: leaf types (Literal, Object, Function, etc.) that don't
-    // contain nested types can't contain Infer. Only composite types
-    // (Union, Intersection, Application, etc.) need traversal.
-    let result = match db.lookup(type_id) {
-        Some(TypeData::Infer(_)) => true,
-        Some(TypeData::TypeParameter(tp)) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") || name.starts_with("__infer_src_")
-        }
-        Some(
-            TypeData::Literal(_)
-            | TypeData::Intrinsic(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::Recursive(_),
-        ) => false,
-        _ => contains_type_matching(db, type_id, |key| match key {
-            TypeData::Infer(_) => true,
-            TypeData::TypeParameter(tp) => {
-                let name = db.resolve_atom_ref(tp.name);
-                name.starts_with("__infer_") || name.starts_with("__infer_src_")
-            }
-            _ => false,
-        }),
-    };
-    db.set_contains_infer_types_cache(type_id, result);
-    result
+    // The deep walk is memoized per node in the project-wide `contains_infer`
+    // cache, so repeated checks over the same shapes stay O(1).
+    contains_content_cached(db, type_id, &InferPredicate)
 }
 
 /// Check if a type contains any unresolved `TypeQuery` references.
@@ -346,28 +658,9 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `TypeQuery` may resolve to a different type once the referenced symbol's type is available
 /// in the `TypeEnvironment`.
 pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    if let Some(cached) = db.contains_type_query_cached(type_id) {
-        return cached;
-    }
-    let result = match db.lookup(type_id) {
-        Some(TypeData::TypeQuery(_)) => true,
-        Some(
-            TypeData::Literal(_)
-            | TypeData::Intrinsic(_)
-            | TypeData::Error
-            | TypeData::ThisType
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::Recursive(_),
-        ) => false,
-        _ => contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_))),
-    };
-    db.set_contains_type_query_cache(type_id, result);
-    result
+    // The deep walk is memoized per node in the project-wide `contains_type_query`
+    // cache, so repeated checks over the same shapes stay O(1).
+    contains_content_cached(db, type_id, &TypeQueryPredicate)
 }
 
 /// Check if a type contains unresolved type parameters other than tsz's internal
@@ -392,9 +685,10 @@ pub fn contains_non_infer_type_parameters_db(db: &dyn TypeDatabase, type_id: Typ
 /// This is used by checker query boundaries that need to reason about deferred
 /// or cyclic types without matching on `TypeData` directly.
 pub fn contains_lazy_or_recursive_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
-    })
+    // The deep walk is memoized per node in the project-wide
+    // `contains_lazy_or_recursive` cache, so repeated checks over the same
+    // shapes stay O(1).
+    contains_content_cached(db, type_id, &LazyOrRecursivePredicate)
 }
 
 /// Check whether a type is itself a bare unresolved infer placeholder, not a

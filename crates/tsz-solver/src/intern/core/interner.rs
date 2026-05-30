@@ -549,6 +549,13 @@ pub struct TypeInterner {
     /// Cache for `contains_type_query_db` checks. Results are immutable per
     /// `TypeId` and shared across evaluator instances.
     pub(crate) contains_type_query_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Per-`TypeId` caches for deep `contains_*` content walks (immutable per
+    /// `TypeId`; O(1) on repeat shapes). `contains_resolver_dependent_cache`
+    /// backs `is_substitution_dependent_type`, the `closed_eval_cache` gate.
+    pub(crate) contains_type_params_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    pub(crate) contains_lazy_or_recursive_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    pub(crate) contains_unresolved_application_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    pub(crate) contains_resolver_dependent_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -689,6 +696,10 @@ impl TypeInterner {
             contains_this_cache: DashMap::with_hasher(FxBuildHasher),
             contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
             contains_type_query_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_type_params_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_lazy_or_recursive_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_unresolved_application_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_resolver_dependent_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
@@ -748,6 +759,14 @@ impl TypeInterner {
     #[inline]
     pub(crate) fn set_union_too_complex(&self) {
         self.union_too_complex.store(true, Ordering::Relaxed);
+    }
+
+    /// Peek at the union-too-complex flag without clearing it (so the checker
+    /// still observes it). The evaluator uses this to skip caching an evaluation
+    /// that tripped the `TS2590` limit.
+    #[inline]
+    pub fn is_union_too_complex(&self) -> bool {
+        self.union_too_complex.load(Ordering::Relaxed)
     }
 
     /// Atomically read and clear the "tuple too large" flag.
