@@ -666,35 +666,14 @@ impl<'a> CheckerState<'a> {
                 index_kind,
                 source_value_type,
                 target_value_type,
-            } => {
-                if depth == 0 {
-                    let source_str = self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    );
-                    let target_str = self.format_assignability_type_for_message(target, source);
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    return Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-                }
-                let source_str = self.format_type_diagnostic(*source_value_type);
-                let target_str = self.format_type_diagnostic(*target_value_type);
-                let message = format!(
-                    "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
-            }
+                nested_reason,
+            } => self.render_index_signature_mismatch(
+                &rctx,
+                index_kind,
+                *source_value_type,
+                *target_value_type,
+                nested_reason.as_deref(),
+            ),
 
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {
                 if depth == 0 {

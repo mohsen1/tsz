@@ -1070,6 +1070,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
+    /// Build the `IndexSignatureMismatch` reason for a failing index-to-index or
+    /// property-to-index check, applying the `MissingProperty` priority rule:
+    /// when the nested failure is `MissingProperty` or `MissingProperties`,
+    /// bubble it up directly so the diagnostic reports the missing property
+    /// rather than wrapping it in an index-signature incompatibility.
+    fn make_index_sig_reason(
+        &mut self,
+        index_kind: &'static str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let nested = self.explain_failure(source_value_type, target_value_type);
+        if matches!(
+            nested,
+            Some(
+                SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+            )
+        ) {
+            return nested;
+        }
+        Some(SubtypeFailureReason::IndexSignatureMismatch {
+            index_kind,
+            source_value_type,
+            target_value_type,
+            nested_reason: nested.map(Box::new),
+        })
+    }
+
     /// Explain why an indexed object type assignment failed.
     fn explain_indexed_object_failure(
         &mut self,
@@ -1104,22 +1133,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .check_subtype(s_string_idx.value_type, t_string_idx.value_type)
                         .is_true()
                     {
-                        // Check if the failure is due to missing properties
-                        if let Some(reason) =
-                            self.explain_failure(s_string_idx.value_type, t_string_idx.value_type)
-                            && matches!(
-                                reason,
-                                SubtypeFailureReason::MissingProperty { .. }
-                                    | SubtypeFailureReason::MissingProperties { .. }
-                            )
-                        {
-                            return Some(reason);
-                        }
-                        return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                            index_kind: "string",
-                            source_value_type: s_string_idx.value_type,
-                            target_value_type: t_string_idx.value_type,
-                        });
+                        return self.make_index_sig_reason(
+                            "string",
+                            s_string_idx.value_type,
+                            t_string_idx.value_type,
+                        );
                     }
                 }
                 None => {
@@ -1144,22 +1162,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             .check_subtype(prop_type, t_string_idx.value_type)
                             .is_true()
                         {
-                            // Check if the failure is due to missing properties
-                            if let Some(reason) =
-                                self.explain_failure(prop_type, t_string_idx.value_type)
-                                && matches!(
-                                    reason,
-                                    SubtypeFailureReason::MissingProperty { .. }
-                                        | SubtypeFailureReason::MissingProperties { .. }
-                                )
-                            {
-                                return Some(reason);
-                            }
-                            return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                                index_kind: "string",
-                                source_value_type: prop_type,
-                                target_value_type: t_string_idx.value_type,
-                            });
+                            return self.make_index_sig_reason(
+                                "string",
+                                prop_type,
+                                t_string_idx.value_type,
+                            );
                         }
                     }
                 }
@@ -1179,22 +1186,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
                     .is_true()
                 {
-                    // Check if the failure is due to missing properties
-                    if let Some(reason) =
-                        self.explain_failure(s_number_idx.value_type, t_number_idx.value_type)
-                        && matches!(
-                            reason,
-                            SubtypeFailureReason::MissingProperty { .. }
-                                | SubtypeFailureReason::MissingProperties { .. }
-                        )
-                    {
-                        return Some(reason);
-                    }
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "number",
-                        source_value_type: s_number_idx.value_type,
-                        target_value_type: t_number_idx.value_type,
-                    });
+                    return self.make_index_sig_reason(
+                        "number",
+                        s_number_idx.value_type,
+                        t_number_idx.value_type,
+                    );
                 }
             } else if let Some(ref s_string_idx) = source_shape.string_index {
                 if s_string_idx.readonly && !t_number_idx.readonly {
@@ -1207,22 +1203,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .check_subtype(s_string_idx.value_type, t_number_idx.value_type)
                     .is_true()
                 {
-                    // Check if the failure is due to missing properties
-                    if let Some(reason) =
-                        self.explain_failure(s_string_idx.value_type, t_number_idx.value_type)
-                        && matches!(
-                            reason,
-                            SubtypeFailureReason::MissingProperty { .. }
-                                | SubtypeFailureReason::MissingProperties { .. }
-                        )
-                    {
-                        return Some(reason);
-                    }
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "number",
-                        source_value_type: s_string_idx.value_type,
-                        target_value_type: t_number_idx.value_type,
-                    });
+                    return self.make_index_sig_reason(
+                        "number",
+                        s_string_idx.value_type,
+                        t_number_idx.value_type,
+                    );
                 }
             } else if self.shape_or_type_requires_declared_index_signature(source_shape, source) {
                 return Some(SubtypeFailureReason::MissingIndexSignature {
@@ -1353,10 +1338,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
+                    let nested_reason = self
+                        .explain_failure_with_method_variance(
+                            number_idx.value_type,
+                            target_type,
+                            t_prop.is_method,
+                        )
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::IndexSignatureMismatch {
                         index_kind: "number",
                         source_value_type: number_idx.value_type,
                         target_value_type: target_type,
+                        nested_reason,
                     });
                 }
             }
@@ -1376,10 +1369,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
+                    let nested_reason = self
+                        .explain_failure_with_method_variance(
+                            string_idx.value_type,
+                            target_type,
+                            t_prop.is_method,
+                        )
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::IndexSignatureMismatch {
                         index_kind: "string",
                         source_value_type: string_idx.value_type,
                         target_value_type: target_type,
+                        nested_reason,
                     });
                 }
             }
@@ -1434,21 +1435,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         )
                         .is_true()
                     {
-                        // Check if the failure is due to missing properties
-                        if let Some(reason) = self.explain_failure(prop_type, number_idx.value_type)
-                            && matches!(
-                                reason,
-                                SubtypeFailureReason::MissingProperty { .. }
-                                    | SubtypeFailureReason::MissingProperties { .. }
-                            )
-                        {
-                            return Some(reason);
-                        }
-                        return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                            index_kind: "number",
-                            source_value_type: prop_type,
-                            target_value_type: number_idx.value_type,
-                        });
+                        return self.make_index_sig_reason(
+                            "number",
+                            prop_type,
+                            number_idx.value_type,
+                        );
                     }
                 }
             }
@@ -1467,21 +1458,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
-                    // Check if the failure is due to missing properties
-                    if let Some(reason) = self.explain_failure(prop_type, string_idx.value_type)
-                        && matches!(
-                            reason,
-                            SubtypeFailureReason::MissingProperty { .. }
-                                | SubtypeFailureReason::MissingProperties { .. }
-                        )
-                    {
-                        return Some(reason);
-                    }
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "string",
-                        source_value_type: prop_type,
-                        target_value_type: string_idx.value_type,
-                    });
+                    return self.make_index_sig_reason("string", prop_type, string_idx.value_type);
                 }
             }
         }
