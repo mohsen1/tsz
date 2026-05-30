@@ -265,6 +265,282 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn type_alias_body_references_default_reset_recursive_alias(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+        declarations.into_iter().any(|decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .is_some_and(|alias| {
+                            self.type_node_references_default_reset_recursive_alias(
+                                alias.type_node,
+                                alias_sid,
+                            )
+                        })
+            })
+        })
+    }
+
+    pub(crate) fn type_alias_conditional_check_references_defaulted_alias_with_omitted_args(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+        declarations.into_iter().any(|decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .and_then(|alias| {
+                            self.ctx
+                                .arena
+                                .get(alias.type_node)
+                                .and_then(|body| self.ctx.arena.get_conditional_type(body))
+                        })
+                        .is_some_and(|conditional| {
+                            self.type_node_references_defaulted_alias_with_omitted_args(
+                                conditional.check_type,
+                                alias_sid,
+                            )
+                        })
+            })
+        })
+    }
+
+    fn type_node_references_defaulted_alias_with_omitted_args(
+        &mut self,
+        node_idx: NodeIndex,
+        owner_alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(ref_sid) = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId)
+            && ref_sid != owner_alias_sid
+            && self.type_reference_omits_defaulted_alias_arg(ref_sid, type_ref)
+            && self.type_alias_has_default_omitting_recursive_conditional_body(ref_sid)
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_references_defaulted_alias_with_omitted_args(
+                    child_idx,
+                    owner_alias_sid,
+                )
+            })
+    }
+
+    fn type_reference_omits_defaulted_alias_arg(
+        &self,
+        alias_sid: tsz_binder::SymbolId,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+        let Some(decl_idx) = symbol.primary_declaration() else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+            return false;
+        };
+        let Some(type_parameters) = alias.type_parameters.as_ref() else {
+            return false;
+        };
+
+        let supplied = type_ref
+            .type_arguments
+            .as_ref()
+            .map_or(0, |args| args.nodes.len());
+        type_parameters
+            .nodes
+            .iter()
+            .copied()
+            .skip(supplied)
+            .any(|param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                    .is_some_and(|param| param.default != NodeIndex::NONE)
+            })
+    }
+
+    fn type_node_references_default_reset_recursive_alias(
+        &mut self,
+        node_idx: NodeIndex,
+        owner_alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(ref_sid) = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId)
+            && ref_sid != owner_alias_sid
+            && (self.type_alias_has_default_reset_recursive_conditional_body(ref_sid)
+                || self.type_alias_has_default_omitting_recursive_conditional_body(ref_sid))
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_references_default_reset_recursive_alias(child_idx, owner_alias_sid)
+            })
+    }
+
+    fn type_alias_has_default_omitting_recursive_conditional_body(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+        declarations.into_iter().any(|decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .is_some_and(|alias| {
+                            self.ctx
+                                .arena
+                                .kind_at(alias.type_node)
+                                .is_some_and(|kind| kind == syntax_kind_ext::CONDITIONAL_TYPE)
+                                && self.type_node_has_default_omitting_recursive_alias_ref(
+                                    alias.type_node,
+                                    alias_sid,
+                                )
+                        })
+            })
+        })
+    }
+
+    fn type_node_has_default_omitting_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid)
+                && let Some(type_args) = &type_ref.type_arguments
+                && self.type_args_omit_defaulted_alias_params_with_alias_transform(
+                    alias_sid, type_args,
+                )
+            {
+                return true;
+            }
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_has_default_omitting_recursive_alias_ref(child_idx, alias_sid)
+            })
+    }
+
+    fn type_args_omit_defaulted_alias_params_with_alias_transform(
+        &self,
+        alias_sid: tsz_binder::SymbolId,
+        type_args: &NodeList,
+    ) -> bool {
+        let Some(type_param_nodes) = self.alias_type_parameter_nodes_for_depth_check(alias_sid)
+        else {
+            return false;
+        };
+        let supplied_count = type_args.nodes.len();
+        if supplied_count >= type_param_nodes.len() {
+            return false;
+        }
+        let alias_param_names = self.alias_type_parameter_names_for_depth_check(alias_sid);
+        let omitted = &type_param_nodes[supplied_count..];
+        if omitted.is_empty()
+            || !omitted.iter().copied().all(|param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.default != NodeIndex::NONE
+                            && !self.type_node_contains_alias_type_parameter_name_for_depth_check(
+                                param.default,
+                                &alias_param_names,
+                            )
+                    })
+            })
+        {
+            return false;
+        }
+
+        type_args
+            .nodes
+            .iter()
+            .copied()
+            .enumerate()
+            .any(|(arg_index, arg_idx)| {
+                self.type_node_contains_alias_type_parameter_name_for_depth_check(
+                    arg_idx,
+                    &alias_param_names,
+                ) && self
+                    .type_node_passthrough_reference_name_for_depth_check(arg_idx)
+                    .is_none_or(|name| {
+                        alias_param_names
+                            .get(arg_index)
+                            .is_none_or(|param_name| param_name != name)
+                    })
+            })
+    }
+
     fn type_node_has_default_reset_recursive_alias_ref(
         &mut self,
         node_idx: NodeIndex,

@@ -75,6 +75,39 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn type_node_is_outside_symbol_declarations(
+        &self,
+        node_idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return true;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        !symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|decl| node.pos >= decl.pos && node.end <= decl.end)
+        })
+    }
+
+    fn def_body_involves_depth_poisoned_def(&self, def_id: tsz_solver::DefId) -> bool {
+        if !self.ctx.definition_store.has_any_depth_poisoned() {
+            return false;
+        }
+
+        self.ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .is_some_and(|body| self.ctx.type_involves_depth_poisoned_def(body))
+    }
+
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         // Fuel check: prevent infinite loops in circular type references
@@ -366,6 +399,13 @@ impl<'a> CheckerState<'a> {
                         && self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
                     let default_reset_recursive_alias = is_type_alias
                         && self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
+                    let default_reset_dependency_alias = is_type_alias
+                        && !default_reset_recursive_alias
+                        && self.type_alias_body_references_default_reset_recursive_alias(sym_id);
+                    let default_reset_conditional_check_alias = is_type_alias
+                        && !default_reset_recursive_alias
+                        && self
+                            .type_alias_conditional_check_references_defaulted_alias_with_omitted_args(sym_id);
                     let should_check_depth =
                         is_class || !args_have_type_params || default_reset_recursive_alias;
                     if should_check_depth {
@@ -429,7 +469,18 @@ impl<'a> CheckerState<'a> {
                                     })
                                 });
 
-                        if exceeded || circular_mapped || tuple_too_large {
+                        let suppress_depth_cascade = exceeded
+                            && (default_reset_dependency_alias
+                                || default_reset_conditional_check_alias
+                                || (!default_reset_recursive_alias
+                                    && base_def_id.is_some_and(|def_id| {
+                                        self.def_body_involves_depth_poisoned_def(def_id)
+                                    })));
+
+                        if (exceeded && !suppress_depth_cascade)
+                            || circular_mapped
+                            || tuple_too_large
+                        {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             let (message, code) = if tuple_too_large
                                 || (exceeded
@@ -454,8 +505,20 @@ impl<'a> CheckerState<'a> {
                                 self.emit_ts2615_for_circular_mapped_type(idx, type_id);
                             }
 
+                            if code
+                                == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                                && default_reset_recursive_alias
+                                && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                                && let Some(base_def_id) = base_def_id
+                            {
+                                self.ctx.definition_store.mark_depth_poisoned(base_def_id);
+                                self.ctx.clear_type_evaluation_caches_for_def(base_def_id);
+                            }
+
                             // tsc returns `any` for excessively deep types to
                             // suppress cascading errors (e.g., TS2322).
+                            return TypeId::ANY;
+                        } else if suppress_depth_cascade {
                             return TypeId::ANY;
                         }
                     }
@@ -1231,6 +1294,12 @@ impl<'a> CheckerState<'a> {
                             self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
                         let default_reset_recursive_alias =
                             self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
+                        let default_reset_dependency_alias = !default_reset_recursive_alias
+                            && self
+                                .type_alias_body_references_default_reset_recursive_alias(sym_id);
+                        let default_reset_conditional_check_alias = !default_reset_recursive_alias
+                            && self
+                                .type_alias_conditional_check_references_defaulted_alias_with_omitted_args(sym_id);
                         if !args_have_type_params || default_reset_recursive_alias {
                             // Clear overflow flags before probing.
                             self.ctx.types.take_tuple_too_large();
@@ -1285,7 +1354,18 @@ impl<'a> CheckerState<'a> {
                                     self.type_alias_is_unconditional_tuple_spread(ref_sym)
                                 });
 
-                            if exceeded || circular_mapped || tuple_too_large {
+                            let suppress_depth_cascade = exceeded
+                                && (default_reset_dependency_alias
+                                    || default_reset_conditional_check_alias
+                                    || (!default_reset_recursive_alias
+                                        && app_def_id.is_some_and(|def_id| {
+                                            self.def_body_involves_depth_poisoned_def(def_id)
+                                        })));
+
+                            if (exceeded && !suppress_depth_cascade)
+                                || circular_mapped
+                                || tuple_too_large
+                            {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                                 let (message, code) = if tuple_too_large
                                     || (exceeded && tuple_spread_alias)
@@ -1308,8 +1388,20 @@ impl<'a> CheckerState<'a> {
                                     self.emit_ts2615_for_circular_mapped_type(idx, result);
                                 }
 
+                                if code
+                                    == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                                    && default_reset_recursive_alias
+                                    && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                                    && let Some(app_def_id) = app_def_id
+                                {
+                                    self.ctx.definition_store.mark_depth_poisoned(app_def_id);
+                                    self.ctx.clear_type_evaluation_caches_for_def(app_def_id);
+                                }
+
                                 // tsc returns `any` for excessively deep types to
                                 // suppress cascading errors (e.g., TS2322).
+                                result = TypeId::ANY;
+                            } else if suppress_depth_cascade {
                                 result = TypeId::ANY;
                             }
                         }
