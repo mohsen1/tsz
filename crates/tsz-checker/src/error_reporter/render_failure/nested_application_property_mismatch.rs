@@ -67,8 +67,8 @@ impl<'a> CheckerState<'a> {
             db: &dyn tsz_solver::construction::TypeDatabase,
             ty: TypeId,
         ) -> bool {
-            crate::query_boundaries::common::is_object_like_type(db, ty)
-                || crate::query_boundaries::common::is_callable_type(db, ty)
+            crate::query_boundaries::dispatch::is_object_like_type(db, ty)
+                || crate::query_boundaries::dispatch::is_callable_type(db, ty)
         }
 
         let source_eval = self.evaluate_type_for_assignability(source);
