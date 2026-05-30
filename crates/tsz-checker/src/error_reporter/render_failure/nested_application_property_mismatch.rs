@@ -279,13 +279,36 @@ impl<'a> CheckerState<'a> {
             );
             if self.should_render_nested_application_property_mismatch(source, target)
                 && let Some(nested) = nested_reason
-                && !Self::nested_reason_is_plain_type_mismatch(nested)
             {
                 let (nested_source, nested_target) = Self::nested_failure_display_types(
                     nested,
                     source_property_type,
                     target_property_type,
                 );
+                if Self::nested_reason_is_plain_type_mismatch(nested) {
+                    // When source and target are both applications of the same generic
+                    // (e.g. `Box<number>` vs `Box<string>`), tsc elaborates via
+                    // type-argument comparison rather than structural property traversal.
+                    // It emits the outer mismatch followed directly by the inner
+                    // type-argument mismatch — no intermediate
+                    // "Types of property 'P' are incompatible." line.
+                    let nested_diag = self.render_failure_reason(
+                        nested,
+                        nested_source,
+                        nested_target,
+                        idx,
+                        depth + 1,
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
+                    return diag;
+                }
                 if self.nested_reason_reuses_enclosing_application_source(nested_source, source) {
                     let prop_name = self.ctx.types.resolve_atom_ref(property_name);
                     let detail = format_message(
@@ -394,13 +417,6 @@ impl<'a> CheckerState<'a> {
                     source_property_type,
                     target_property_type,
                 );
-                // Same-base generic application property mismatches still surface
-                // the leaf relation (e.g. `Type 'number' is not assignable to type
-                // 'string'.`) beneath the `Types of property 'p' are incompatible.`
-                // elaboration, matching tsc. The only chain tsc collapses here is a
-                // nested failure that would re-display the enclosing application
-                // itself (recursive same-base reuse, e.g. `Deep<T>.next`), which the
-                // reuse guard below continues to suppress.
                 if !self.nested_reason_reuses_enclosing_application_source(nested_source, source) {
                     let nested_diag = self.render_failure_reason(
                         nested,
