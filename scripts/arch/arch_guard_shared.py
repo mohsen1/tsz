@@ -1133,7 +1133,14 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # live direct-reference count.
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        3266,
+        #
+        # Bumped by 3 for the intersection-target missing-property elaboration
+        # (#11480): `render_missing_property` adds two `is_intersection_type`
+        # guards picking the matched intersection plus an
+        # `intersection_members` + `find_property_by_str` member lookup, all
+        # matching the existing direct-call pattern already used throughout this
+        # file. The helpers are only exposed via `query_boundaries::common`.
+        3269,
     ),
 ]
 
