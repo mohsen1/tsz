@@ -95,7 +95,7 @@ fn is_always_emit_grammar_code(code: u32) -> bool {
 pub(crate) struct DiagnosticSnapshot {
     /// Length of `ctx.diagnostics` at snapshot time (truncation point).
     pub diagnostics_len: usize,
-    /// Clone of `ctx.emitted_diagnostics` for dedup restoration.
+    /// Clone of `ctx.diagnostic_indices.emitted` for dedup restoration.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
     /// Clone of nested no-overload call markers for recovery-aware overload
     /// candidate rejection.
@@ -186,7 +186,7 @@ impl<'a> CheckerContext<'a> {
     pub(crate) fn snapshot_diagnostics(&self) -> DiagnosticSnapshot {
         DiagnosticSnapshot {
             diagnostics_len: self.diagnostics.len(),
-            emitted_diagnostics: self.emitted_diagnostics.clone(),
+            emitted_diagnostics: self.diagnostic_indices.emitted.clone(),
             no_overload_call_nodes: self.no_overload_call_nodes.clone(),
             deferred_ts2454_len: self.deferred_ts2454_errors.len(),
         }
@@ -267,13 +267,14 @@ impl<'a> CheckerContext<'a> {
             .cloned()
             .collect();
         self.diagnostics.truncate(truncate_at);
-        self.emitted_diagnostics
+        self.diagnostic_indices
+            .emitted
             .clone_from(&snap.emitted_diagnostics);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
         for diag in preserved {
             let key = self.diagnostic_dedup_key(&diag);
-            self.emitted_diagnostics.insert(key);
+            self.diagnostic_indices.emitted.insert(key);
             self.diagnostics.push(diag);
         }
         self.truncate_deferred_ts2454(snap);
@@ -327,7 +328,8 @@ impl<'a> CheckerContext<'a> {
     ) {
         let split_at = self.clamped_diag_len(snap);
         let speculative = self.diagnostics.split_off(split_at);
-        self.emitted_diagnostics
+        self.diagnostic_indices
+            .emitted
             .clone_from(&snap.emitted_diagnostics);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
@@ -340,7 +342,7 @@ impl<'a> CheckerContext<'a> {
             // the caller's filter — see `ALWAYS_EMIT_GRAMMAR_CODES`.
             if is_always_emit_grammar_code(diag.code) || keep(&diag) {
                 let key = self.diagnostic_dedup_key(&diag);
-                self.emitted_diagnostics.insert(key);
+                self.diagnostic_indices.emitted.insert(key);
                 self.diagnostics.push(diag);
             } else if diag.code == 2454 {
                 self.emitted_ts2454_errors
@@ -363,7 +365,7 @@ impl<'a> CheckerContext<'a> {
         let start = snap.diagnostics_len.min(self.diagnostics.len());
         for diag in self.diagnostics[start..].iter() {
             let key = self.diagnostic_dedup_key(diag);
-            self.emitted_diagnostics.insert(key);
+            self.diagnostic_indices.emitted.insert(key);
         }
     }
 
@@ -439,14 +441,15 @@ impl<'a> CheckerContext<'a> {
             }
         }
         self.diagnostics.truncate(truncate_at);
-        self.emitted_diagnostics
+        self.diagnostic_indices
+            .emitted
             .clone_from(&snap.emitted_diagnostics);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
         self.truncate_deferred_ts2454(snap);
         for diag in &replacement {
             let key = self.diagnostic_dedup_key(diag);
-            self.emitted_diagnostics.insert(key);
+            self.diagnostic_indices.emitted.insert(key);
         }
         self.diagnostics.extend(replacement);
         // Rebuild auxiliary suppression indices after replacement.

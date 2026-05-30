@@ -39,9 +39,8 @@ impl<'a> CheckerContext<'a> {
     /// - **Diagnostic buffers** (`DiagnosticsOnly` class): diagnostics
     ///   collected during this file's check would otherwise spill into
     ///   the next file's diagnostic stream.
-    /// - **Position-keyed `emitted_diagnostics`** set: positions are
-    ///   file-local indices, so retaining them would suppress a
-    ///   genuine duplicate in the next file.
+    /// - **Diagnostic indices**: positions are file-local, so retaining
+    ///   them would suppress a genuine duplicate in the next file.
     /// - **`NodeIndex`-keyed caches** (`request_node_types`,
     ///   `class_instance_type_cache`, `class_constructor_type_cache`):
     ///   raw `NodeIndex` collides across files; carrying entries
@@ -100,7 +99,7 @@ impl<'a> CheckerContext<'a> {
 
         // Diagnostic buffers.
         self.diagnostics.clear();
-        self.emitted_diagnostics.clear();
+        self.diagnostic_indices.clear();
         self.callback_return_type_errors.clear();
         self.modules_with_ts2307_emitted.clear();
         self.deferred_truthiness_diagnostics.clear();
@@ -539,17 +538,17 @@ mod tests {
             "test".to_string(),
             0,
         ));
-        ctx.emitted_diagnostics.insert((0, 1));
+        ctx.diagnostic_indices.emitted.insert((0, 1));
         ctx.instantiation_depth.set(7);
 
         assert_eq!(ctx.diagnostics.len(), 1);
-        assert_eq!(ctx.emitted_diagnostics.len(), 1);
+        assert_eq!(ctx.diagnostic_indices.emitted.len(), 1);
         assert_eq!(ctx.instantiation_depth.get(), 7);
 
         ctx.reset_for_next_file();
 
         assert!(ctx.diagnostics.is_empty());
-        assert!(ctx.emitted_diagnostics.is_empty());
+        assert!(ctx.diagnostic_indices.emitted.is_empty());
         assert_eq!(ctx.instantiation_depth.get(), 0);
     }
 

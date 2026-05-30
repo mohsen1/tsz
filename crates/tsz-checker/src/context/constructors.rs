@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::context::{CheckerContext, TypeCache};
+use crate::context::{CheckerContext, DiagnosticIndices, TypeCache};
 use crate::control_flow::FlowGraph;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::BinderState;
@@ -158,9 +158,7 @@ impl<'a> CheckerContext<'a> {
             all_parse_error_positions: Vec::new(),
             nullable_type_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
-            emitted_diagnostics: FxHashSet::default(),
-            ts2353_2561_positions: std::collections::BTreeSet::new(),
-            ts2322_msg_spans: FxHashMap::default(),
+            diagnostic_indices: DiagnosticIndices::default(),
             no_overload_call_nodes: FxHashSet::default(),
             callback_return_type_errors: Vec::new(),
             modules_with_ts2307_emitted: FxHashSet::default(),
