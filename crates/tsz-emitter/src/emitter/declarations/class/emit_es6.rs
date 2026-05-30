@@ -1,6 +1,7 @@
 use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
 use super::replace_identifier;
+use super::static_field_erasure::static_no_init_field_is_erased;
 use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
 use crate::emitter::core::{PrivateMemberInfo, PrivateMethodDef};
 use crate::transforms::private_fields_es5::{
@@ -1812,12 +1813,12 @@ impl<'a> Printer<'a> {
                     };
 
                     if self.has_effective_static_modifier_js(&prop.modifiers) {
-                        // At ES2022+, static fields are emitted as `static { this.f = v; }`
-                        // blocks inside the class body, not as external assignments.
-                        if !needs_static_block_lowering {
-                            // Don't collect for external emission; these will be
-                            // emitted inline as static initialization blocks.
-                        } else {
+                        // `tsc` erases a no-init static field (see `static_field_erasure`).
+                        let erased = static_no_init_field_is_erased(
+                            prop.initializer.is_none(),
+                            self.ctx.options.use_define_for_class_fields,
+                        );
+                        if needs_static_block_lowering && !erased {
                             static_field_inits.push((
                                 name_emit,
                                 prop.initializer,
