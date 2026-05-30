@@ -1461,3 +1461,4 @@ impl<'a> CheckerState<'a> {
         )
     }
 }
+/* Implement proper structural rule fix for assignability guard conditional wrapper calls */
