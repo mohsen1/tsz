@@ -323,12 +323,18 @@ impl<'a> CheckerState<'a> {
                 fallback,
                 &filled,
             );
-            let fallback_name = self.format_type_diagnostic(instantiated);
-            let resolved_fallback = self
-                .is_well_known_lib_type_name(&fallback_name)
-                .then(|| self.resolve_lib_type_by_name(&fallback_name))
-                .flatten()
-                .unwrap_or(instantiated);
+            let fallback_name = self
+                .named_type_display_name(instantiated)
+                .unwrap_or_default();
+            // Only resolve to the lib's canonical type when `instantiated` is a
+            // bare named reference (e.g., plain `Promise`). A generic application
+            // (`Promise<string>`) is already fully specified; resolving it to the
+            // unparameterized lib type would discard the type arguments.
+            let resolved_fallback = (!common::is_generic_type(self.ctx.types, instantiated)
+                && self.is_well_known_lib_type_name(&fallback_name))
+            .then(|| self.resolve_lib_type_by_name(&fallback_name))
+            .flatten()
+            .unwrap_or(instantiated);
             let evaluated = self.evaluate_type_with_env(resolved_fallback);
             let contextual_fallback =
                 if evaluated == TypeId::ANY && resolved_fallback != TypeId::ANY {

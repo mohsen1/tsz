@@ -1353,7 +1353,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an ES5-compatible class expression by wrapping the class IIFE in an expression.
-    pub(in crate::emitter) fn emit_class_expression_es5(&mut self, class_node: NodeIndex) {
+    pub(in crate::emitter) fn emit_class_expression_es5_inner(&mut self, class_node: NodeIndex) {
         let Some(node) = self.arena.get(class_node) else {
             return;
         };
