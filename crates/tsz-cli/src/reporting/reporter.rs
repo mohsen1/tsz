@@ -312,7 +312,11 @@ impl Reporter {
     /// Format related information in non-pretty mode.
     /// tsc format: `  message` (no file/line/code prefix — just indented text).
     fn format_related_plain(&mut self, out: &mut String, related: &DiagnosticRelatedInformation) {
-        out.push_str("  ");
+        // tsc indents each nested elaboration level by 2 more spaces than its
+        // parent. `depth == 0` is the first level (2 spaces); deeper chain
+        // links carry their nesting depth so the chain structure is visible.
+        let indent = 2 * (related.depth as usize + 1);
+        out.push_str(&" ".repeat(indent));
         let message = self.translate_message(related.code, &related.message_text);
         out.push_str(&message);
     }

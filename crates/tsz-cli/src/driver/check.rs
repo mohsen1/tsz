@@ -379,6 +379,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         start: 0,
                         length: 0,
                         message_text: "The file is in the program because:".to_string(),
+                        depth: 0,
                     });
                 ts6504
                     .related_information
@@ -389,6 +390,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         start: 0,
                         length: 0,
                         message_text: "Root file specified for compilation".to_string(),
+                        depth: 0,
                     });
                 diagnostics.push(ts6504);
             }

@@ -20,6 +20,19 @@ pub enum DiagnosticCategory {
     Message,
 }
 
+impl DiagnosticCategory {
+    /// Map a cached numeric category (as serialized by the incremental cache)
+    /// back to a [`DiagnosticCategory`]; unknown values fall back to `Message`.
+    pub const fn from_cache_index(index: u8) -> Self {
+        match index {
+            0 => Self::Warning,
+            1 => Self::Error,
+            2 => Self::Suggestion,
+            _ => Self::Message,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticMessage {
     pub code: u32,
@@ -43,6 +56,12 @@ pub struct DiagnosticRelatedInformation {
     pub start: u32,
     pub length: u32,
     pub message_text: String,
+    /// Nesting depth of this entry within a diagnostic's elaboration message
+    /// chain, used to render `tsc`-style progressive indentation in plain
+    /// output. `0` is the first elaboration level (rendered at 2 spaces); each
+    /// deeper level adds 2 more spaces. Genuine cross-location related
+    /// information (not part of an elaboration chain) stays at `0`.
+    pub depth: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +126,28 @@ impl Diagnostic {
         }
     }
 
+    /// Build a `Message`-category related entry at the first elaboration depth
+    /// (rendered at 2 spaces). Use this for elaboration/related lines that are
+    /// not part of a deeper chain so the `depth` field need not be spelled out
+    /// at every call site.
+    pub fn related_message(
+        code: u32,
+        file: impl Into<String>,
+        start: u32,
+        length: u32,
+        message_text: impl Into<String>,
+    ) -> DiagnosticRelatedInformation {
+        DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code,
+            file: file.into(),
+            start,
+            length,
+            message_text: message_text.into(),
+            depth: 0,
+        }
+    }
+
     pub fn with_related(
         mut self,
         file: impl Into<String>,
@@ -121,6 +162,7 @@ impl Diagnostic {
             start,
             length,
             message_text: message.into(),
+            depth: 0,
         });
         self
     }

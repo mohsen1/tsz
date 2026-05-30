@@ -560,6 +560,7 @@ impl<'a> CheckerState<'a> {
                 start: anchor.start,
                 length: anchor.length,
                 message_text: detail,
+                depth: 0,
             }];
 
             self.emit_render_request_at_anchor(

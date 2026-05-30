@@ -34,6 +34,7 @@ fn test_convert_diagnostic_with_related_info() {
         message_text: "Related here".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     };
     let related_other = DiagnosticRelatedInformation {
         file: "other.ts".to_string(),
@@ -42,6 +43,7 @@ fn test_convert_diagnostic_with_related_info() {
         message_text: "Ignored".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     };
     let diag = Diagnostic {
         file: "test.ts".to_string(),
@@ -276,6 +278,7 @@ fn test_ts_diagnostic_with_related_information() {
         message_text: "The expected type comes from property 'x'.".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     });
     let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
     assert_eq!(ts_diag.code, 2322);
@@ -433,6 +436,7 @@ fn test_convert_diagnostic_all_related_info_from_other_files_filtered_out() {
         message_text: "From another file".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     });
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);
     assert!(
@@ -698,6 +702,7 @@ fn test_convert_to_ts_diagnostic_related_info_filtered_by_file() {
         message_text: "from other file".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     });
     let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
     assert!(
@@ -1227,6 +1232,7 @@ fn test_diagnostic_with_related_info_same_file() {
         message_text: "Declared here".to_string(),
         category: DiagnosticCategory::Message,
         code: 0,
+        depth: 0,
     });
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);
     let _ = lsp_diag;
@@ -1337,6 +1343,7 @@ fn test_diagnostic_multiple_related_info() {
             message_text: format!("Related {i}"),
             category: DiagnosticCategory::Message,
             code: 0,
+            depth: 0,
         });
     }
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);

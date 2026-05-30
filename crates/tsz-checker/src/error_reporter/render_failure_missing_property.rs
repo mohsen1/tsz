@@ -267,6 +267,7 @@ impl<'a> CheckerState<'a> {
                     message_text: elaboration,
                     category: DiagnosticCategory::Message,
                     code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    depth: 0,
                 });
             }
             return diag;
