@@ -91,6 +91,10 @@ name = "computed_name_no_init_define_field_tests"
 path = "tests/computed_name_no_init_define_field_tests.rs"
 
 [[test]]
+name = "static_no_init_field_erasure_tests"
+path = "tests/static_no_init_field_erasure_tests.rs"
+
+[[test]]
 name = "jsx_spread_tests"
 path = "tests/jsx_spread_tests.rs"
 

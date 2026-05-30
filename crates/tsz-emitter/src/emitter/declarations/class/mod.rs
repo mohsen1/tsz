@@ -6,6 +6,7 @@ mod emit_es6;
 mod helpers;
 mod private_method_defs;
 mod static_block_self_alias;
+mod static_field_erasure;
 
 use super::super::core::PropertyNameEmit;
 use tsz_parser::parser::NodeIndex;
