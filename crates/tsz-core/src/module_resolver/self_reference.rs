@@ -74,6 +74,7 @@ impl ModuleResolver {
                                 exports,
                                 &subpath_key,
                                 conditions,
+                                false,
                             )
                         {
                             // Self-reference resolved successfully via exports.

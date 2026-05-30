@@ -128,7 +128,7 @@ impl<'a> CheckerContext<'a> {
                     continue;
                 };
                 for target in targets.iter().filter_map(|value| value.as_str()) {
-                    let target = target.replace('*', &wildcard);
+                    let target = target.replacen('*', &wildcard, 1);
                     candidates.push((pattern.len(), target));
                 }
             }
