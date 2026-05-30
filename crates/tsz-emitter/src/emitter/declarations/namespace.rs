@@ -141,11 +141,13 @@ impl<'a> Printer<'a> {
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
+            es5_emitter.set_iife_param_rename_counter(self.namespace_iife_param_counter.clone());
             let output = if use_cjs {
                 es5_emitter.emit_exported_namespace(idx)
             } else {
                 es5_emitter.emit_namespace(idx)
             };
+            self.namespace_iife_param_counter = es5_emitter.take_iife_param_rename_counter();
             self.next_disposable_env_id = es5_emitter.disposable_env_counter();
             for generated_name in es5_emitter.take_generated_disposable_env_names() {
                 self.generated_temp_names.insert(generated_name);
@@ -716,161 +718,12 @@ impl<'a> Printer<'a> {
         if self.namespace_block_contains_instantiated_module_named(body_node, ns_name) {
             return true;
         }
-        if let Some(text) = self.source_text {
-            let mut mask_ranges = self.collect_declare_statement_ranges(body_node);
-            mask_ranges.extend(self.collect_enum_decl_ranges(body_node));
-            return match crate::safe_slice::slice(
-                text,
-                body_node.pos as usize,
-                body_node.end as usize,
-            ) {
-                Ok(body_text) => {
-                    let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &mask_ranges);
-                    Self::text_has_non_namespace_binding_named(&masked, ns_name)
-                }
-                Err(_) => false,
-            };
-        }
-        false
-    }
-
-    /// Scan for runtime bindings while skipping `namespace`/`module` declarations.
-    /// Nested sub-namespaces have their own IIFE scope and should not force the
-    /// enclosing namespace's IIFE parameter to be renamed.
-    fn text_has_non_namespace_binding_named(text: &str, name: &str) -> bool {
-        let stripped = Self::strip_comments(text);
-        let text = &stripped;
-        let name_bytes = name.as_bytes();
-        let text_bytes = text.as_bytes();
-        let name_len = name_bytes.len();
-
-        let mut i = 0;
-        while i + name_len <= text_bytes.len() {
-            if let Some(pos) = text[i..].find(name) {
-                let abs = i + pos;
-                let before_ok = abs == 0
-                    || (!text_bytes[abs - 1].is_ascii_alphanumeric()
-                        && text_bytes[abs - 1] != b'_'
-                        && text_bytes[abs - 1] != b'$');
-                let after_end = abs + name_len;
-                let after_ok = after_end >= text_bytes.len()
-                    || (!text_bytes[after_end].is_ascii_alphanumeric()
-                        && text_bytes[after_end] != b'_'
-                        && text_bytes[after_end] != b'$');
-
-                if before_ok && after_ok {
-                    // Look at the first non-whitespace character *after* the
-                    // name. A name immediately followed by `.` is a qualified /
-                    // member reference (`N.foo`) and is never a binding. This
-                    // rejection is unconditional — no binding form places `.`
-                    // directly after the bound identifier.
-                    let mut a = after_end;
-                    while a < text_bytes.len() && text_bytes[a].is_ascii_whitespace() {
-                        a += 1;
-                    }
-                    let followed_by_dot = a < text_bytes.len() && text_bytes[a] == b'.';
-                    let followed_by_paren = a < text_bytes.len() && text_bytes[a] == b'(';
-                    if followed_by_dot {
-                        i = abs + 1;
-                        continue;
-                    }
-                    let mut p = abs;
-                    while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
-                        p -= 1;
-                    }
-                    if p > 0 {
-                        let prev_char = text_bytes[p - 1];
-                        // Bare `(`/`,` before the name only counts as a binding
-                        // when the name is NOT immediately followed by `(`. A
-                        // name followed by `(` here is a callee (`if (N.f())`,
-                        // `foo(N())`), not a parameter/binding. Genuine
-                        // parameter bindings (`function f(N)`, `f(a, N)`) are
-                        // followed by `)`, `,`, `:`, `=`, etc. — never `(`.
-                        // Function/class declarations like `function N(` are
-                        // handled by the keyword checks below, which run
-                        // independently of this guard.
-                        if (prev_char == b'(' || prev_char == b',') && !followed_by_paren {
-                            return true;
-                        }
-                        let preceding = &text[..p];
-                        let binding_keywords: &[&str] =
-                            &["var", "let", "const", "function", "class", "import"];
-                        for &kw in binding_keywords {
-                            if preceding.ends_with(kw) {
-                                let kw_start = p - kw.len();
-                                let kw_before_ok = kw_start == 0
-                                    || (!text_bytes[kw_start - 1].is_ascii_alphanumeric()
-                                        && text_bytes[kw_start - 1] != b'_'
-                                        && text_bytes[kw_start - 1] != b'$');
-                                if kw_before_ok {
-                                    return true;
-                                }
-                            }
-                        }
-                        let parameter_modifier_keywords: &[&str] =
-                            &["private", "public", "protected", "readonly", "override"];
-                        for &kw in parameter_modifier_keywords {
-                            if preceding.ends_with(kw) {
-                                let kw_start = p - kw.len();
-                                let kw_before_ok = kw_start == 0
-                                    || (!text_bytes[kw_start - 1].is_ascii_alphanumeric()
-                                        && text_bytes[kw_start - 1] != b'_'
-                                        && text_bytes[kw_start - 1] != b'$');
-                                if kw_before_ok
-                                    && Self::keyword_is_in_parameter_context(text_bytes, kw_start)
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                i = abs + 1;
-            } else {
-                break;
-            }
-        }
-        false
-    }
-
-    fn keyword_is_in_parameter_context(text_bytes: &[u8], kw_start: usize) -> bool {
-        let mut p = kw_start;
-        loop {
-            while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
-                p -= 1;
-            }
-            if p == 0 {
-                return false;
-            }
-            let prev_char = text_bytes[p - 1];
-            if prev_char == b'(' || prev_char == b',' {
-                return true;
-            }
-            if !prev_char.is_ascii_alphanumeric() && prev_char != b'_' && prev_char != b'$' {
-                return false;
-            }
-
-            let ident_end = p;
-            let mut ident_start = ident_end - 1;
-            while ident_start > 0
-                && (text_bytes[ident_start - 1].is_ascii_alphanumeric()
-                    || text_bytes[ident_start - 1] == b'_'
-                    || text_bytes[ident_start - 1] == b'$')
-            {
-                ident_start -= 1;
-            }
-            let Ok(ident) = std::str::from_utf8(&text_bytes[ident_start..ident_end]) else {
-                return false;
-            };
-            if !matches!(
-                ident,
-                "private" | "public" | "protected" | "readonly" | "override"
-            ) {
-                return false;
-            }
-            p = ident_start;
-        }
+        crate::transforms::namespace_iife_binding_scan::namespace_body_text_has_binding_named(
+            self.arena,
+            self.source_text,
+            body_node,
+            ns_name,
+        )
     }
 
     fn namespace_body_has_name_conflict(
@@ -916,31 +769,17 @@ impl<'a> Printer<'a> {
         if self.namespace_block_contains_instantiated_module_named(body_node, ns_name) {
             return true;
         }
-        // Use source text scan for bindings in nested functions/classes at any depth.
-        // Nested namespace/module declarations have their own IIFE scope and do not
-        // shadow this IIFE parameter at call sites, so exclude those keywords here.
-        if let Some(text) = self.source_text {
-            // safe_slice: C → migrated. A bad span here would silently report
-            // "no binding found", which can change namespace shadowing
-            // decisions and emit incorrectly. Surface span errors instead of
-            // returning a false-negative; fall back to false only when source
-            // text is literally unavailable.
-            let mut mask_ranges = self.collect_declare_statement_ranges(body_node);
-            mask_ranges.extend(self.collect_enum_decl_ranges(body_node));
-            return match crate::safe_slice::slice(
-                text,
-                body_node.pos as usize,
-                body_node.end as usize,
-            ) {
-                Ok(body_text) => {
-                    let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &mask_ranges);
-                    Self::text_has_non_namespace_binding_named(&masked, ns_name)
-                }
-                Err(_) => false,
-            };
-        }
-        false
+        // Use source text scan for bindings in nested functions/classes at any
+        // depth. Nested namespace/module declarations have their own IIFE scope
+        // and do not shadow this IIFE parameter at call sites, so they are
+        // excluded by the masking inside the shared scan. This scan is shared
+        // with the ES5 IR transform path so both targets agree.
+        crate::transforms::namespace_iife_binding_scan::namespace_body_text_has_binding_named(
+            self.arena,
+            self.source_text,
+            body_node,
+            ns_name,
+        )
     }
 
     fn namespace_block_contains_instantiated_module_named(
@@ -996,144 +835,6 @@ impl<'a> Printer<'a> {
             return self.module_decl_chain_contains_instantiated_name(module.body, ns_name);
         }
         self.namespace_block_contains_instantiated_module_named(body_node, ns_name)
-    }
-
-    /// Collect (pos, end) byte ranges of every statement inside a namespace
-    /// body that is type-only (`declare`). Their bodies are erased at emit
-    /// time, so identifiers introduced inside them — including a same-named
-    /// inner namespace — must not be counted when deciding whether to rename
-    /// the IIFE parameter.
-    fn collect_declare_statement_ranges(
-        &self,
-        body_node: &tsz_parser::parser::node::Node,
-    ) -> Vec<(usize, usize)> {
-        let mut ranges: Vec<(usize, usize)> = Vec::new();
-        let Some(block) = self.arena.get_module_block(body_node) else {
-            return ranges;
-        };
-        let Some(stmts) = &block.statements else {
-            return ranges;
-        };
-        for &stmt_idx in &stmts.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            // Resolve the inner declaration. `export declare ...` parses as an
-            // EXPORT_DECLARATION wrapping the real decl, whose modifier list
-            // carries `declare`.
-            let (decl_node, decl_pos, decl_end) = if stmt_node.kind
-                == syntax_kind_ext::EXPORT_DECLARATION
-                && let Some(export) = self.arena.get_export_decl(stmt_node)
-                && let Some(inner) = self.arena.get(export.export_clause)
-            {
-                (inner, stmt_node.pos as usize, stmt_node.end as usize)
-            } else {
-                (stmt_node, stmt_node.pos as usize, stmt_node.end as usize)
-            };
-            let modifiers = match decl_node.kind {
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
-                    .arena
-                    .get_variable(decl_node)
-                    .and_then(|v| v.modifiers.clone()),
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .arena
-                    .get_function(decl_node)
-                    .and_then(|f| f.modifiers.clone()),
-                k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                    .arena
-                    .get_class(decl_node)
-                    .and_then(|c| c.modifiers.clone()),
-                k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                    .arena
-                    .get_enum(decl_node)
-                    .and_then(|e| e.modifiers.clone()),
-                k if k == syntax_kind_ext::MODULE_DECLARATION => self
-                    .arena
-                    .get_module(decl_node)
-                    .and_then(|m| m.modifiers.clone()),
-                _ => None,
-            };
-            if self
-                .arena
-                .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
-            {
-                ranges.push((decl_pos, decl_end));
-            }
-        }
-        ranges
-    }
-
-    /// Collect `(pos, end)` byte ranges of top-level constructs whose source
-    /// text the binding scan cannot interpret correctly and that introduce no
-    /// IIFE-function-scope binding. Currently:
-    ///
-    /// * Enum declarations — enum members are *properties* of the enum object,
-    ///   not function-scope bindings, so an enum member whose name equals the
-    ///   namespace name (e.g. `enum Reservation { ..., TypeScript = 4, ... }`
-    ///   inside `namespace TypeScript`) must not be treated as a shadowing
-    ///   binding. The enum *name* itself is independently checked by the
-    ///   AST-based `declaration_conflicts_iife_param`, so masking the whole
-    ///   span loses no genuine collision.
-    /// * `export import M = Z.M` — emits as `M.M = Z.M`, reusing the IIFE
-    ///   parameter with no local binding, but its `import M` keyword would be
-    ///   misclassified by the scan. A plain `import M = Z.M` *does* bind a
-    ///   local `var M`, so it is intentionally left unmasked.
-    fn collect_enum_decl_ranges(
-        &self,
-        body_node: &tsz_parser::parser::node::Node,
-    ) -> Vec<(usize, usize)> {
-        let mut ranges: Vec<(usize, usize)> = Vec::new();
-        self.collect_enum_decl_ranges_into(body_node, &mut ranges);
-        ranges
-    }
-
-    fn collect_enum_decl_ranges_into(
-        &self,
-        body_node: &tsz_parser::parser::node::Node,
-        ranges: &mut Vec<(usize, usize)>,
-    ) {
-        let Some(block) = self.arena.get_module_block(body_node) else {
-            return;
-        };
-        let Some(stmts) = &block.statements else {
-            return;
-        };
-        for &stmt_idx in &stmts.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            // `export enum E {}` parses as an EXPORT_DECLARATION wrapping the
-            // real enum declaration; resolve through to the inner decl.
-            let decl_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                && let Some(export) = self.arena.get_export_decl(stmt_node)
-                && let Some(inner) = self.arena.get(export.export_clause)
-            {
-                inner
-            } else {
-                stmt_node
-            };
-            let is_export_qualified = stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION;
-            if decl_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                ranges.push((decl_node.pos as usize, decl_node.end as usize));
-            } else if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                && is_export_qualified
-            {
-                // `export import M = Z.M` emits as `M.M = Z.M`: it reuses the
-                // IIFE parameter and introduces no local binding, so its text
-                // (which contains the `import M` keyword the scan would
-                // otherwise treat as a binding) must be masked. A *plain*
-                // `import M = Z.M` does emit `var M = Z.M`, so it is left
-                // visible and still forces a rename.
-                ranges.push((stmt_node.pos as usize, stmt_node.end as usize));
-            } else if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                && let Some(module) = self.arena.get_module(decl_node)
-                && let Some(inner_body) = self.arena.get(module.body)
-            {
-                // Recurse into sub-namespace bodies so a nested enum member
-                // sharing the outer namespace name is masked too.
-                self.collect_enum_decl_ranges_into(inner_body, ranges);
-            }
-        }
     }
 
     fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {
@@ -1233,64 +934,6 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
-    }
-
-    /// Replace bytes inside `ranges` (absolute source positions) with spaces in
-    /// `body_text`, where `body_text` starts at absolute offset `body_pos`.
-    /// Used to neutralize identifiers that come from `declare` (ambient)
-    /// declarations before running the source-text binding scan.
-    fn mask_ranges_static(body_text: &str, body_pos: usize, ranges: &[(usize, usize)]) -> String {
-        if ranges.is_empty() {
-            return body_text.to_string();
-        }
-        let mut bytes = body_text.as_bytes().to_vec();
-        for &(start, end) in ranges {
-            let local_start = start.saturating_sub(body_pos);
-            let local_end = end.saturating_sub(body_pos).min(bytes.len());
-            if local_start >= bytes.len() {
-                continue;
-            }
-            for b in &mut bytes[local_start..local_end] {
-                if !b.is_ascii_whitespace() {
-                    *b = b' ';
-                }
-            }
-        }
-        String::from_utf8(bytes).unwrap_or_else(|_| body_text.to_string())
-    }
-
-    /// Strip single-line and block comments from text, replacing them with spaces.
-    fn strip_comments(text: &str) -> String {
-        let bytes = text.as_bytes();
-        let mut result = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-                // Single-line comment: replace with spaces until newline
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    result.push(b' ');
-                    i += 1;
-                }
-            } else if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                // Block comment: replace with spaces
-                result.push(b' ');
-                result.push(b' ');
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    result.push(b' ');
-                    i += 1;
-                }
-                if i + 1 < bytes.len() {
-                    result.push(b' ');
-                    result.push(b' ');
-                    i += 2;
-                }
-            } else {
-                result.push(bytes[i]);
-                i += 1;
-            }
-        }
-        String::from_utf8(result).unwrap_or_default()
     }
 
     /// Collect exported *variable* names from a namespace body for identifier qualification.

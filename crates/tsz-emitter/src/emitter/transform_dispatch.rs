@@ -398,11 +398,13 @@ impl<'a> Printer<'a> {
                             .collect(),
                     );
                 }
+                ns_emitter.set_iife_param_rename_counter(self.namespace_iife_param_counter.clone());
                 let output = if use_cjs {
                     ns_emitter.emit_exported_namespace(namespace_node)
                 } else {
                     ns_emitter.emit_namespace(namespace_node)
                 };
+                self.namespace_iife_param_counter = ns_emitter.take_iife_param_rename_counter();
                 self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                 self.write(output.trim_end_matches('\n'));
                 // Skip comments within the namespace range - the ES5 namespace emitter
@@ -1992,7 +1994,9 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter
                     .set_should_declare_var(*should_declare_var && !self.in_top_level_using_scope);
+                ns_emitter.set_iife_param_rename_counter(self.namespace_iife_param_counter.clone());
                 let output = ns_emitter.emit_exported_namespace(*namespace_node);
+                self.namespace_iife_param_counter = ns_emitter.take_iife_param_rename_counter();
                 self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                 self.write(output.trim_end_matches('\n'));
                 // Advance comment cursor past comments inside the namespace body,

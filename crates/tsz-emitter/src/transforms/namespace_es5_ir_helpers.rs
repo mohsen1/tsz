@@ -948,22 +948,6 @@ pub(super) fn collect_member_names_from_node(
     }
 }
 
-/// Generate a unique parameter name by appending `_1`, `_2`, etc.
-/// Ensures the generated name doesn't collide with any existing member name.
-pub(super) fn generate_unique_param_name(
-    ns_name: &str,
-    member_names: &std::collections::HashSet<String>,
-) -> String {
-    let mut suffix = 1;
-    loop {
-        let candidate = format!("{ns_name}_{suffix}");
-        if !member_names.contains(&candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
 /// Rename namespace references in body IR nodes.
 /// Updates `NamespaceExport.namespace` and nested `NamespaceIIFE.parent_name`
 /// from `old_name` to `new_name`.
@@ -995,12 +979,32 @@ pub(super) fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, n
     }
 }
 
-/// Detect collision between namespace name and body member names,
-/// and if found, rename the body's namespace references and return the new parameter name.
-pub(super) fn detect_and_apply_param_rename(body: &mut [IRNode], ns_name: &str) -> Option<String> {
+/// Detect a collision between the innermost namespace name and the names bound
+/// in the namespace body, and if found rename the body's namespace references
+/// and return the new IIFE parameter name.
+///
+/// `collect_body_member_names` only sees *top-level* declarations of the
+/// namespace body (functions/classes/vars/enums). A binding that shadows the
+/// namespace name from a *nested* scope — e.g. a parameter `function f(N) {}`
+/// or a binding declared inside a nested function body — is invisible to that
+/// scan but still forces `tsc` to rename the IIFE parameter. Callers pass
+/// `extra_conflict = true` when the source-text binding scan
+/// (`namespace_iife_binding_scan`) found such a nested binding, so the
+/// reference rewrite still runs.
+///
+/// `make_renamed` supplies the new parameter name (`schema_1`, `schema_2`, ...)
+/// and is only invoked when a rename is required. It is provided by the caller
+/// so the suffix can continue a monotonic counter shared across namespace
+/// reopenings, matching `tsc`.
+pub(super) fn detect_and_apply_param_rename_with_extra(
+    body: &mut [IRNode],
+    ns_name: &str,
+    extra_conflict: bool,
+    make_renamed: impl FnOnce() -> String,
+) -> Option<String> {
     let member_names = collect_body_member_names(body);
-    member_names.contains(ns_name).then(|| {
-        let renamed = generate_unique_param_name(ns_name, &member_names);
+    (member_names.contains(ns_name) || extra_conflict).then(|| {
+        let renamed = make_renamed();
         rename_namespace_refs_in_body(body, ns_name, &renamed);
         renamed
     })
