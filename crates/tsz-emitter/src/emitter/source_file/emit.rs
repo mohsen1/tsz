@@ -1,9 +1,9 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -2401,48 +2401,6 @@ impl<'a> Printer<'a> {
                 .arguments
                 .as_ref()
                 .is_some_and(|args| args.nodes.len() >= 2)
-    }
-
-    pub(in crate::emitter) fn import_helpers_need_tslib_binding_for_class_emit(
-        &self,
-        statements: &NodeList,
-    ) -> bool {
-        self.ctx.options.import_helpers
-            && statements
-                .nodes
-                .iter()
-                .copied()
-                .any(|idx| self.node_needs_tslib_binding_for_class_emit(idx))
-    }
-
-    fn node_needs_tslib_binding_for_class_emit(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if matches!(
-            node.kind,
-            k if k == syntax_kind_ext::CLASS_DECLARATION
-                || k == syntax_kind_ext::CLASS_EXPRESSION
-        ) && let Some(class_data) = self.arena.get_class(node)
-        {
-            let needs_extends_helper = self.ctx.target_es5
-                && crate::transforms::emit_utils::get_extends_expression_index(
-                    self.arena,
-                    &class_data.heritage_clauses,
-                )
-                .is_some();
-            let needs_decorator_helper =
-                self.ctx.options.legacy_decorators && self.class_has_decorators(class_data);
-            if needs_extends_helper || needs_decorator_helper {
-                return true;
-            }
-        }
-
-        self.arena
-            .get_children(idx)
-            .into_iter()
-            .any(|child_idx| self.node_needs_tslib_binding_for_class_emit(child_idx))
     }
 }
 

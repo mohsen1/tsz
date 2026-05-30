@@ -180,3 +180,98 @@ fn pre_super_this_capture_stops_at_ordinary_functions() {
         "Nested class expressions should also evaluate their heritage expression with the pre-super receiver capture.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn es5_super_lowered_catch_keeps_typed_binding_identifier() {
+    // A `catch` binding is parsed as a VariableDeclaration; the ES5 class IR
+    // lowering must keep the binding identifier while erasing its type
+    // annotation, regardless of the chosen binding name or annotation type.
+    for (binding, annotation) in [("e", "unknown"), ("caught", "any"), ("problem", "Error")] {
+        let source = format!(
+            "class Base {{ constructor(x: boolean) {{}} }}\n\
+             class Derived extends Base {{\n\
+            \x20   constructor() {{\n\
+            \x20       try {{\n\
+            \x20           super(true);\n\
+            \x20       }} catch ({binding}: {annotation}) {{\n\
+            \x20           super(false);\n\
+            \x20       }}\n\
+            \x20   }}\n\
+             }}\n"
+        );
+
+        let output = emit(&source, ScriptTarget::ES5);
+
+        assert!(
+            output.contains(&format!("catch ({binding}) {{")),
+            "ES5 super-lowered catch must keep the binding `{binding}` and erase `: {annotation}`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("catch {"),
+            "ES5 super-lowered catch must not drop the binding parens for `catch ({binding}: {annotation})`.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn es5_super_lowered_catch_drops_redundant_type_assertion_parens() {
+    // `(x as T).member` only needs parens for the TS assertion; once the
+    // assertion is erased the parens are redundant, so the ES5 class IR must
+    // emit `x.member`, not `(x).member`. Vary the binding name to prove the
+    // rule is structural, not keyed on a specific identifier.
+    for binding in ["e", "failure"] {
+        let source = format!(
+            "class Base {{ constructor(x: boolean) {{}} }}\n\
+             class Derived extends Base {{\n\
+            \x20   constructor() {{\n\
+            \x20       try {{\n\
+            \x20           super(true);\n\
+            \x20       }} catch ({binding}: unknown) {{\n\
+            \x20           console.log(({binding} as Error).message);\n\
+            \x20           super(false);\n\
+            \x20       }}\n\
+            \x20   }}\n\
+             }}\n"
+        );
+
+        let output = emit(&source, ScriptTarget::ES5);
+
+        assert!(
+            output.contains(&format!("console.log({binding}.message);")),
+            "Redundant type-assertion parens should be dropped, emitting `{binding}.message`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(&format!("({binding}).message")),
+            "ES5 class IR must not re-wrap the erased assertion in parens.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn es5_super_lowered_catch_keeps_untyped_binding_and_meaningful_parens() {
+    // Negative/guard cases: an untyped binding must still be kept, and parens
+    // that are NOT solely scoping a type assertion (e.g. wrapping a binary
+    // expression) must be preserved.
+    let source = "class Base { constructor(x: boolean) {} }\n\
+         class Derived extends Base {\n\
+        \x20   constructor() {\n\
+        \x20       try {\n\
+        \x20           super(true);\n\
+        \x20       } catch (err) {\n\
+        \x20           console.log((1 + 2) * 3);\n\
+        \x20           super(false);\n\
+        \x20       }\n\
+        \x20   }\n\
+         }\n";
+
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("catch (err) {"),
+        "An untyped catch binding must be kept by the ES5 super lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(1 + 2) * 3"),
+        "Parens scoping a binary expression are load-bearing and must be preserved.\nOutput:\n{output}"
+    );
+}

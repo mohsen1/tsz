@@ -1,8 +1,8 @@
 //! Core implementation for class instance type resolution.
 
 use super::helpers::{
-    can_skip_base_instantiation, declaration_is_module_augmentation,
-    exceeds_class_inheritance_depth_limit,
+    AccessorAggregate, MethodAggregate, can_skip_base_instantiation,
+    declaration_is_module_augmentation, exceeds_class_inheritance_depth_limit,
 };
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
@@ -102,24 +102,6 @@ impl<'a> CheckerState<'a> {
                 class_type_params = jsdoc_params;
                 class_type_param_updates.extend(jsdoc_updates);
             }
-        }
-
-        struct MethodAggregate {
-            overload_signatures: Vec<CallSignature>,
-            impl_signatures: Vec<CallSignature>,
-            overload_optional: bool,
-            impl_optional: bool,
-            visibility: Visibility,
-            declaration_order: u32,
-            is_symbol_named: bool,
-        }
-
-        struct AccessorAggregate {
-            getter: Option<TypeId>,
-            setter: Option<TypeId>,
-            visibility: Visibility,
-            declaration_order: u32,
-            is_symbol_named: bool,
         }
 
         struct DeferredAccessor<'b> {
@@ -1471,6 +1453,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(base_instance_type) =
                             self.base_instance_type_from_expression(expr_idx, type_arguments)
                         {
+                            self.record_heritage_extends(current_sym, expr_idx, base_instance_type);
                             tracing::debug!(
                                 ?base_instance_type,
                                 "heritage: resolved base instance type from expression"
@@ -1574,6 +1557,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(base_instance_type) =
                         self.base_instance_type_from_expression(expr_idx, type_arguments)
                     {
+                        self.record_heritage_extends(current_sym, expr_idx, base_instance_type);
                         self.merge_base_instance_properties(
                             base_instance_type,
                             &mut properties,
@@ -1977,9 +1961,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
         }
-        // Register the mapping from instance type to class declaration.
-        // This allows get_class_decl_from_type to correctly identify the class
-        // for derived classes that have no private/protected members (and thus no brand).
+        // Keep class lookup working for structurally unbranded derived instances.
         self.ctx
             .class_decl_miss_cache
             .borrow_mut()
@@ -1990,6 +1972,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = current_sym {
             self.register_final_class_instance_type(sym_id, instance_type, &class_type_params);
+            self.refresh_constructor_instance_return_if_stale(class_idx, sym_id, instance_type);
         }
 
         self.pop_type_parameters(class_type_param_updates);

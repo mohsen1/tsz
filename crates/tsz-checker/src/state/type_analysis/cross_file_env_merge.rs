@@ -11,6 +11,7 @@ impl<'a> CheckerState<'a> {
     ) {
         let child_defs = child_env.snapshot_def_types();
         let child_class_instances = child_env.snapshot_class_instance_types();
+        let child_class_extends = child_env.snapshot_class_extends();
 
         if !child_defs.is_empty() {
             if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
@@ -28,6 +29,11 @@ impl<'a> CheckerState<'a> {
         if !child_class_instances.is_empty() {
             self.merge_class_instances_into_type_env(&child_class_instances, context);
             self.merge_class_instances_into_type_environment(&child_class_instances, context);
+        }
+
+        if !child_class_extends.is_empty() {
+            self.merge_class_extends_into_type_env(&child_class_extends, context);
+            self.merge_class_extends_into_type_environment(&child_class_extends, context);
         }
     }
 
@@ -63,6 +69,42 @@ impl<'a> CheckerState<'a> {
         } else {
             tracing::warn!(
                 "{context}: could not borrow parent type_environment for class-instance merge"
+            );
+        }
+    }
+
+    fn merge_class_extends_into_type_env(
+        &self,
+        child_class_extends: &rustc_hash::FxHashMap<u32, DefId>,
+        context: &'static str,
+    ) {
+        if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
+            for (&def_id_raw, &parent_def_id) in child_class_extends {
+                let def_id = DefId(def_id_raw);
+                if parent_env.get_class_extends_def(def_id).is_none() {
+                    parent_env.register_class_extends(def_id, parent_def_id);
+                }
+            }
+        } else {
+            tracing::warn!("{context}: could not borrow parent type_env for class-extends merge");
+        }
+    }
+
+    fn merge_class_extends_into_type_environment(
+        &self,
+        child_class_extends: &rustc_hash::FxHashMap<u32, DefId>,
+        context: &'static str,
+    ) {
+        if let Ok(mut parent_env) = self.ctx.type_environment.try_borrow_mut() {
+            for (&def_id_raw, &parent_def_id) in child_class_extends {
+                let def_id = DefId(def_id_raw);
+                if parent_env.get_class_extends_def(def_id).is_none() {
+                    parent_env.register_class_extends(def_id, parent_def_id);
+                }
+            }
+        } else {
+            tracing::warn!(
+                "{context}: could not borrow parent type_environment for class-extends merge"
             );
         }
     }

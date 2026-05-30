@@ -7,7 +7,9 @@ use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamInfo};
+use tsz_solver::{
+    CallSignature, CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamInfo, Visibility,
+};
 
 /// Bookkeeping record for a single type parameter pushed into
 /// `type_parameter_scope`: the parameter name, its previous binding in that
@@ -15,6 +17,24 @@ use tsz_solver::{CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamIn
 /// whether the push shadowed an enclosing class's type parameter (so the pop
 /// can restore the class scope entry too).
 type ScopeUpdate = (String, Option<TypeId>, bool);
+
+pub(super) struct MethodAggregate {
+    pub(super) overload_signatures: Vec<CallSignature>,
+    pub(super) impl_signatures: Vec<CallSignature>,
+    pub(super) overload_optional: bool,
+    pub(super) impl_optional: bool,
+    pub(super) visibility: Visibility,
+    pub(super) declaration_order: u32,
+    pub(super) is_symbol_named: bool,
+}
+
+pub(super) struct AccessorAggregate {
+    pub(super) getter: Option<TypeId>,
+    pub(super) setter: Option<TypeId>,
+    pub(super) visibility: Visibility,
+    pub(super) declaration_order: u32,
+    pub(super) is_symbol_named: bool,
+}
 
 pub(in crate::types_domain) const fn can_skip_base_instantiation(
     base_type_param_count: usize,
