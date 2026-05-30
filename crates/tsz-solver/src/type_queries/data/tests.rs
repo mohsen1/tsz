@@ -1291,3 +1291,78 @@ fn contains_application_unknown_arg_rejects_non_application_unknown() {
     ));
     assert!(!contains_application_unknown_arg(&interner, app));
 }
+
+/// `is_substitution_dependent_type` must treat only substitution-bound nodes
+/// (`TypeParameter`/`Infer`/`ThisType`/`BoundParameter`) as dependent, NOT
+/// `Lazy`/`TypeQuery` references (which resolve identically for a project's
+/// single fixed resolver). This is the input gate for the closed-eval cache.
+#[test]
+fn is_substitution_dependent_type_classifies_lazy_vs_type_param() {
+    let interner = TypeInterner::new();
+
+    // A bare Lazy ref is NOT substitution-dependent (resolver-fixed).
+    let lazy = interner.lazy(crate::def::DefId(7));
+    assert!(!is_substitution_dependent_type(&interner, lazy));
+
+    // An application over a Lazy base with concrete args stays independent.
+    let app_concrete = interner.application(lazy, vec![TypeId::STRING, TypeId::NUMBER]);
+    assert!(!is_substitution_dependent_type(&interner, app_concrete));
+
+    // An IndexAccess over concrete operands is independent.
+    let idx_concrete = interner.index_access(app_concrete, TypeId::STRING);
+    assert!(!is_substitution_dependent_type(&interner, idx_concrete));
+
+    // A type parameter (any spelling) IS substitution-dependent.
+    for name in ["T", "K", "Element"] {
+        let tp = interner.type_param(crate::types::TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        assert!(is_substitution_dependent_type(&interner, tp));
+        // Buried inside an application argument it still propagates up.
+        let app_generic = interner.application(lazy, vec![tp]);
+        assert!(is_substitution_dependent_type(&interner, app_generic));
+        // And inside an index access.
+        let idx_generic = interner.index_access(app_concrete, tp);
+        assert!(is_substitution_dependent_type(&interner, idx_generic));
+    }
+
+    // Intrinsics are never substitution-dependent.
+    assert!(!is_substitution_dependent_type(&interner, TypeId::ANY));
+}
+
+/// The deeply-cached `contains_type_parameters_db` must agree with the
+/// non-cached generic walker for the same shapes, regardless of the iteration
+/// variable's spelling (anti-hardcoding: the rule is structural, not name-based).
+/// The second call exercises the persistent interner cache path.
+#[test]
+fn contains_type_parameters_db_is_name_agnostic_and_cache_stable() {
+    let interner = TypeInterner::new();
+
+    for name in ["T", "K", "P", "Element"] {
+        let tp = interner.type_param(crate::types::TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        // Bury the param under array/union/index-access wrappers.
+        let arr = interner.array(tp);
+        let union = interner.union2(TypeId::STRING, arr);
+        let idx = interner.index_access(union, TypeId::NUMBER);
+
+        // First (cold) and second (cached) calls must both report `true`.
+        assert!(contains_type_parameters_db(&interner, idx));
+        assert!(contains_type_parameters_db(&interner, idx));
+
+        // A fully concrete sibling shape must report `false` both times.
+        let concrete = interner.index_access(
+            interner.union2(TypeId::STRING, interner.array(TypeId::NUMBER)),
+            TypeId::NUMBER,
+        );
+        assert!(!contains_type_parameters_db(&interner, concrete));
+        assert!(!contains_type_parameters_db(&interner, concrete));
+    }
+}

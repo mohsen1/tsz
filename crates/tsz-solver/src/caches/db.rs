@@ -82,6 +82,46 @@ pub trait TypePredicateCache {
     /// Record the result of `contains_type_query_db(type_id)` in the shared
     /// interner cache. Default impl is a no-op.
     fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_type_parameters_db(type_id)` result if
+    /// available. Default impl returns `None` (no caching).
+    fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_type_parameters_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_type_params_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_lazy_or_recursive_db(type_id)` result.
+    /// Default impl returns `None` (no caching).
+    fn contains_lazy_or_recursive_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_lazy_or_recursive_db(type_id)` in the
+    /// shared interner cache. Default impl is a no-op.
+    fn set_contains_lazy_or_recursive_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_unresolved_application(type_id)` result.
+    /// Default impl returns `None` (no caching).
+    fn contains_unresolved_application_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_unresolved_application(type_id)` in the
+    /// shared interner cache. Default impl is a no-op.
+    fn set_contains_unresolved_application_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `is_resolver_dependent_type(type_id)` result.
+    /// Default impl returns `None` (no caching).
+    fn contains_resolver_dependent_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `is_resolver_dependent_type(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_resolver_dependent_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
 /// Narrow signal for tuple-size overflow discovered during solver evaluation.
@@ -174,6 +214,15 @@ pub trait TypeDisplayProvenance {
         false
     }
 
+    /// Peek at the "union too complex" flag without clearing it.
+    ///
+    /// Used by the evaluator to skip caching an evaluation that tripped the
+    /// `TS2590` limit, so a cached read cannot suppress the diagnostic on
+    /// re-evaluation. Default is `false`.
+    fn is_union_too_complex(&self) -> bool {
+        false
+    }
+
     /// Mark the current operation as having produced a too-complex union.
     ///
     /// This mirrors `take_union_too_complex` for solver paths that discover the
@@ -230,6 +279,32 @@ pub trait TypeApplicationEvalCache {
         &self,
         _def_id: DefId,
         _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Look up a cached evaluation result for a *closed* type (one with no free
+    /// type parameters, `this`, `infer`, or type-query operands).
+    ///
+    /// Evaluating a closed type is resolver-independent and deterministic per
+    /// interner, so the result can be memoized project-wide and reused across
+    /// the many fresh `TypeEvaluator` instances created during instantiation
+    /// (`evaluate_index_access`, `evaluate_keyof`, …). The key is keyed by both
+    /// the `TypeId` and `no_unchecked_indexed_access` because the latter changes
+    /// `T[K]` results. Default returns `None` so non-cache backends opt out.
+    fn lookup_closed_eval_cache(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluation result for a closed type. Default is a no-op.
+    fn insert_closed_eval_cache(
+        &self,
+        _type_id: TypeId,
         _no_unchecked_indexed_access: bool,
         _result: TypeId,
     ) {
@@ -455,6 +530,47 @@ impl TypePredicateCache for TypeInterner {
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.contains_type_query_cache.insert(type_id, result);
     }
+
+    fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_params_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_params_cache.insert(type_id, result);
+    }
+
+    fn contains_lazy_or_recursive_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_lazy_or_recursive_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_lazy_or_recursive_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_lazy_or_recursive_cache
+            .insert(type_id, result);
+    }
+
+    fn contains_unresolved_application_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_unresolved_application_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_unresolved_application_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_unresolved_application_cache
+            .insert(type_id, result);
+    }
+
+    fn contains_resolver_dependent_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_resolver_dependent_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_resolver_dependent_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_resolver_dependent_cache
+            .insert(type_id, result);
+    }
 }
 
 impl TypeTupleLimitSignal for TypeInterner {
@@ -510,6 +626,10 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn take_union_too_complex(&self) -> bool {
         Self::take_union_too_complex(self)
+    }
+
+    fn is_union_too_complex(&self) -> bool {
+        Self::is_union_too_complex(self)
     }
 
     fn mark_union_too_complex(&self) {
