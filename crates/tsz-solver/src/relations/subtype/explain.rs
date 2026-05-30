@@ -1071,7 +1071,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Build the `IndexSignatureMismatch` reason for a failing index-to-index or
-    /// property-to-index check, applying the MissingProperty priority rule:
+    /// property-to-index check, applying the `MissingProperty` priority rule:
     /// when the nested failure is `MissingProperty` or `MissingProperties`,
     /// bubble it up directly so the diagnostic reports the missing property
     /// rather than wrapping it in an index-signature incompatibility.
