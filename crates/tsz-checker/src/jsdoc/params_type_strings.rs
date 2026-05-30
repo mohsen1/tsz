@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn is_plain_jsdoc_type_name(name: &str) -> bool {
+    pub(crate) fn is_plain_jsdoc_type_name(name: &str) -> bool {
         let mut chars = name.chars();
         let Some(first) = chars.next() else {
             return false;
@@ -619,7 +619,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Only extracts immediate child properties (one level of nesting).
     #[cfg(test)]
-    fn extract_jsdoc_nested_param_properties(
+    pub(crate) fn extract_jsdoc_nested_param_properties(
         jsdoc: &str,
         parent_name: &str,
     ) -> Vec<(String, String, bool)> {
@@ -940,7 +940,7 @@ impl<'a> CheckerState<'a> {
 
     /// Like `extract_jsdoc_param_type_expr_from_param_tag`, but returns the matching type expression
     /// and its byte offset within a full JSDoc block.
-    fn extract_jsdoc_param_type_expr_with_span(
+    pub(crate) fn extract_jsdoc_param_type_expr_with_span(
         jsdoc: &str,
         param_name: &str,
     ) -> Option<(String, usize)> {
