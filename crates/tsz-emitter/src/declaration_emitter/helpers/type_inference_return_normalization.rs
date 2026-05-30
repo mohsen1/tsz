@@ -263,6 +263,13 @@ impl<'a> DeclarationEmitter<'a> {
         if !source_type_text.contains('<') {
             return false;
         }
+        // A name that is only visible inside a function body is not a real,
+        // module-visible reference for a `.d.ts`. Preserving it by name would
+        // emit an undeclared identifier; tsc expands the alias structurally
+        // instead. Reject so the inferred type id is printed (and expanded).
+        if self.type_text_starts_with_function_local_type_alias(source_type_text) {
+            return false;
+        }
         let printed = self.print_type_id(inferred_return_type);
         if printed == source_type_text || !printed.contains('<') {
             return false;

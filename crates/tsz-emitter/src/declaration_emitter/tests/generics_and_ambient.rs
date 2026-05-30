@@ -1326,3 +1326,108 @@ export class C2 extends Probe {
         "Expected a non-class same-named member to not be treated as a class constructor: {with_value}"
     );
 }
+
+// =============================================================================
+// Function-local type-alias nameability for inferred declaration emit.
+//
+// Rule: a type alias declared inside a function body is not visible at module
+// scope, so it can never be referenced by name in a `.d.ts`. When such an alias
+// appears in an inferred return type, tsc expands it structurally (eliding any
+// recursive arm to `/*elided*/ any`) rather than printing the bare local name.
+// The fix keys on this structural function-local fact, not on the spelling of
+// the alias or any enclosing type parameter. These tests exercise the structural
+// detector directly; the full inferred-emit pipeline is covered by the emit
+// corpus baseline `declarationEmitInferredTypeAlias4`.
+// =============================================================================
+
+fn function_local_alias_detector_for(source: &str, alias_name: &str) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    // `name_is_function_local_type_alias` only depends on the binder symbol table
+    // and AST parentage, so it does not require an emit pass; still drive `emit`
+    // so the emitter is in the same configured state as production callers.
+    let _ = emitter.emit(root);
+    emitter.name_is_function_local_type_alias(alias_name)
+}
+
+#[test]
+fn function_local_type_alias_is_detected_for_inferred_emit() {
+    // Alias declared inside a function body -> function-local -> must expand.
+    assert!(
+        function_local_alias_detector_for(
+            "function f<A>() {\n    type Foo<T> = T | { x: Foo<T> };\n    var x: Foo<A[]>;\n    return x;\n}\n",
+            "Foo",
+        ),
+        "a type alias declared inside a function body must be flagged function-local"
+    );
+}
+
+#[test]
+fn function_local_type_alias_detection_keys_on_scope_not_name() {
+    // Same structural scenario with every binder-bound name changed
+    // (Q/Bar/U/z instead of A/Foo/T/x). If the detector were keyed on the
+    // spelling `Foo`, this renamed variant would slip through.
+    assert!(
+        function_local_alias_detector_for(
+            "function g<Q>() {\n    type Bar<U> = U | { y: Bar<U> };\n    var z: Bar<Q[]>;\n    return z;\n}\n",
+            "Bar",
+        ),
+        "renaming the alias/type-parameter must not change the function-local verdict"
+    );
+}
+
+#[test]
+fn function_local_non_generic_type_alias_is_detected() {
+    // Non-generic function-local alias used in an inferred return must also be
+    // flagged so it is expanded structurally rather than named.
+    assert!(
+        function_local_alias_detector_for(
+            "export function makeWidget() {\n  type Local = { kind: \"widget\"; size: number };\n  const w: Local = { kind: \"widget\", size: 3 };\n  return w;\n}\n",
+            "Local",
+        ),
+        "a non-generic function-local alias must be flagged function-local"
+    );
+}
+
+#[test]
+fn module_level_type_alias_is_not_function_local() {
+    // Negative case: an identically shaped alias declared at module scope IS
+    // nameable in the `.d.ts` and must be preserved by name, so the detector
+    // must report it as NOT function-local.
+    assert!(
+        !function_local_alias_detector_for(
+            "type Foo<T> = T | { x: Foo<T> };\nexport function f<A>() {\n    var x: Foo<A[]>;\n    return x;\n}\n",
+            "Foo",
+        ),
+        "a module-level alias must not be treated as function-local"
+    );
+    assert!(
+        !function_local_alias_detector_for(
+            "type Widget = { kind: \"widget\"; size: number };\nexport function makeWidget() {\n  const w: Widget = { kind: \"widget\", size: 3 };\n  return w;\n}\n",
+            "Widget",
+        ),
+        "a module-level non-generic alias must not be treated as function-local"
+    );
+}
+
+#[test]
+fn unresolved_function_body_type_reference_is_not_function_local_alias() {
+    // A missing global type reference inside a function body may still have a
+    // binder symbol, but it is not a type-alias declaration. The function-local
+    // detector must not treat unresolved references as local aliases or
+    // transpileDeclaration emits a spurious TS7056.
+    assert!(
+        !function_local_alias_detector_for(
+            "export const fn = (a: MissingGlobalType) => null! as MissingGlobalType;\n",
+            "MissingGlobalType",
+        ),
+        "unresolved type references inside a function are not local aliases"
+    );
+}

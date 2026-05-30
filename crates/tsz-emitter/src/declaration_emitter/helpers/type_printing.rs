@@ -54,8 +54,18 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    fn symbol_is_function_local_type_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_is_function_local_type_alias(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
         symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+
             let mut current = decl_idx;
             for _ in 0..32 {
                 let Some(parent_idx) = self.arena.parent_of(current) else {
@@ -180,12 +190,24 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(alias_name) = Self::leading_type_reference_name_for_emit(type_text) else {
             return false;
         };
+        self.name_is_function_local_type_alias(alias_name)
+    }
+
+    /// True when `name` resolves to a type alias whose declaration lives inside
+    /// a function body. Such an alias is not visible at module scope, so it
+    /// cannot be referenced by name in a `.d.ts`; the inferred type must be
+    /// expanded structurally (with recursive arms elided) instead. Keyed on the
+    /// structural function-local fact, never on the spelling of `name`.
+    pub(in crate::declaration_emitter) fn name_is_function_local_type_alias(
+        &self,
+        name: &str,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };
 
         binder.symbols.iter().any(|symbol| {
-            symbol.escaped_name == alias_name
+            symbol.escaped_name == name
                 && symbol.flags & symbol_flags::TYPE_ALIAS != 0
                 && self.symbol_is_function_local_type_alias(symbol)
         })
