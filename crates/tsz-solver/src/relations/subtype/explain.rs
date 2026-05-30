@@ -217,6 +217,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         resolved_source = self.resolve_type_query_for_explain(resolved_source);
         resolved_target = self.resolve_type_query_for_explain(resolved_target);
 
+        // Same-generic application (`C<A..>` vs `C<B..>`): tsc elaborates the
+        // differing type arguments directly rather than recursing into a
+        // structural property comparison. Detect this before expanding the
+        // applications below — expansion would replace them with object shapes
+        // and route into the `Types of property 'x' are incompatible.` path
+        // that tsc does not emit for same-generic argument mismatches.
+        if let Some(reason) =
+            self.explain_same_generic_type_arguments(resolved_source, resolved_target)
+        {
+            return Some(reason);
+        }
+
         // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
             && let Some(expanded) = self.try_expand_application(app_id)

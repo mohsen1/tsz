@@ -942,6 +942,9 @@ mod ts18048_unary_arithmetic_nullish_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
+#[path = "tests/ts2322_same_generic_type_argument_elaboration_tests.rs"]
+mod ts2322_same_generic_type_argument_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/ts2339_js_this_function_name_display_tests.rs"]
 mod ts2339_js_this_function_name_display_tests;
 #[cfg(test)]

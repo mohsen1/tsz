@@ -1793,6 +1793,30 @@ pub(crate) fn analyze_assignability_failure_with_context<
     }
 }
 
+/// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) via the
+/// differing type arguments, mirroring tsc.
+///
+/// Must be called on the **raw** (unevaluated) operands so the application
+/// structure survives; returns `None` unless the failure reliably reduces to a
+/// concrete type argument, in which case the structural analysis should run.
+pub(crate) fn same_generic_application_failure_reason<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
+    db: &dyn TypeDatabase,
+    ctx: &crate::context::CheckerContext<'_>,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> Option<SubtypeFailureReason> {
+    tsz_solver::relations::relation_queries::explain_same_generic_application_with_resolver(
+        db,
+        resolver,
+        source,
+        target,
+        |checker| ctx.configure_compat_checker(checker),
+    )
+}
+
 /// Variance-aware Application-to-Application assignability check.
 ///
 /// When both source and target are Applications with the same base type,

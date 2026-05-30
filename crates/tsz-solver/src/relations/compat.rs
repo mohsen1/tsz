@@ -1658,6 +1658,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) by the
+    /// differing type arguments, mirroring tsc. Returns `None` unless the inputs
+    /// are applications of the same generic target whose variance reliably
+    /// pins the failure to a concrete type argument (see
+    /// [`SubtypeChecker::explain_same_generic_type_arguments`]).
+    ///
+    /// Must be called on the **raw** (unevaluated) operands so the application
+    /// structure is still present; once the applications are expanded to object
+    /// shapes the type-argument identity is lost and the structural path runs.
+    pub fn explain_same_generic_type_arguments(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        if source == target {
+            return None;
+        }
+        self.configure_subtype(self.strict_function_types);
+        self.subtype
+            .explain_same_generic_type_arguments(source, target)
+    }
+
     const fn configure_subtype(&mut self, strict_function_types: bool) {
         self.subtype.strict_function_types = strict_function_types;
         self.subtype.allow_void_return = true;

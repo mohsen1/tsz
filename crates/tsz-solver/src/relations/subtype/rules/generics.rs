@@ -10,15 +10,17 @@
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 pub(crate) use super::mapped_chain::flatten_mapped_chain;
 use crate::def::DefId;
+use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo};
-use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
+use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId, Variance};
 use crate::visitor::{
     application_id, array_element_type, contains_type_parameter_named, index_access_parts,
     intersection_list_id, is_empty_object_type, keyof_inner_type, mapped_type_id, object_shape_id,
     object_with_index_shape_id, tuple_list_id, type_param_info, union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
+use std::sync::Arc;
 
 /// Maximum nesting depth, per generic `DefId`, for the one-sided application
 /// expansion relation paths (`App <: T` and `T <: App`).
@@ -164,6 +166,152 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             _ => None,
         }
+    }
+
+    /// Resolve the per-type-parameter variance mask for a generic definition,
+    /// preferring declared/cached variances and computing (and caching) them
+    /// only when missing. Shared by the variance-aware relation fast path and
+    /// the same-generic error-elaboration path so both observe identical
+    /// variance facts.
+    pub(crate) fn resolve_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        use crate::caches::db::QueryDatabase;
+        self.resolver
+            .get_type_param_variance(def_id)
+            .or_else(|| {
+                self.query_db
+                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+            })
+            .or_else(|| {
+                let computed =
+                    crate::relations::variance::compute_type_param_variances_with_resolver(
+                        self.interner,
+                        self.resolver,
+                        def_id,
+                    );
+                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
+                    db.insert_type_param_variance(def_id, variances.clone());
+                }
+                computed
+            })
+    }
+
+    /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) by
+    /// comparing the differing type **arguments** directly, mirroring tsc.
+    ///
+    /// Structural rule: when source and target are applications of the same
+    /// generic target whose variances are reliably measured (no mapped-modifier
+    /// structural fallback, no unreliable rejection) and whose arguments are
+    /// concrete (no embedded type parameters), tsc reports the first
+    /// variance-failing type argument as a direct nested line — e.g.
+    /// `Type 'number' is not assignable to type 'string'.` — without the
+    /// `Types of property 'x' are incompatible.` wrapper that structural
+    /// expansion would produce.
+    ///
+    /// Returns `None` (so the caller falls back to structural elaboration)
+    /// whenever the relation itself would fall through to structural
+    /// comparison, keeping the existing property-based elaboration for those
+    /// shapes. This mirrors the conclusive-rejection conditions in
+    /// [`Self::check_application_to_application_subtype`].
+    pub(crate) fn explain_same_generic_type_arguments(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        // Callers may pass raw (lazy) references or already-resolved types;
+        // resolve lazy aliases so a `Lazy(DefId)` wrapping an application is
+        // recognised, while leaving direct applications untouched.
+        let resolved_source = self.resolve_lazy_type(source);
+        let resolved_target = self.resolve_lazy_type(target);
+        let s_app_id = application_id(self.interner, resolved_source)?;
+        let t_app_id = application_id(self.interner, resolved_target)?;
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+
+        if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
+            return None;
+        }
+
+        // Type-parameter arguments make a variance rejection inconclusive: the
+        // expanded structural forms can introduce implicit index signatures
+        // (homomorphic mapped types) that change the outcome. The relation
+        // falls through to structural comparison for these, so the explanation
+        // must do the same.
+        if args_contain_type_parameters(self.interner, &s_app.args) {
+            return None;
+        }
+
+        let def_id = self.application_base_def_id(s_app.base)?;
+        let variances = self.resolve_application_variances(def_id)?;
+        if variances.len() != s_app.args.len() {
+            return None;
+        }
+
+        // Mapped-modifier (`needs_structural_fallback`) and indexed-access /
+        // intersection-normalization (`rejection_unreliable`) variances make a
+        // variance-based rejection unreliable; tsc reports those structurally
+        // (its variance carries the structural-fallback marker), so keep the
+        // property-based elaboration for them.
+        if variances
+            .iter()
+            .any(|v| v.needs_structural_fallback() || v.rejection_unreliable())
+        {
+            return None;
+        }
+
+        // `s_app`/`t_app` are owned `Arc`s, independent of `self`, so the
+        // arguments can be indexed directly across the `&mut self` relation
+        // calls below without cloning the argument vectors.
+        for (i, variance) in variances.iter().enumerate() {
+            let s_arg = s_app.args[i];
+            let t_arg = t_app.args[i];
+
+            // Orient the failing relation by the parameter's variance, matching
+            // the per-argument direction used by the relation fast path.
+            let failing_pair = if variance.is_invariant() {
+                if !self.check_subtype(s_arg, t_arg).is_true() {
+                    Some((s_arg, t_arg))
+                } else if !self.check_subtype(t_arg, s_arg).is_true() {
+                    Some((t_arg, s_arg))
+                } else {
+                    None
+                }
+            } else if variance.is_covariant() {
+                (!self.check_subtype(s_arg, t_arg).is_true()).then_some((s_arg, t_arg))
+            } else if variance.is_contravariant() {
+                (!self.check_subtype(t_arg, s_arg).is_true()).then_some((t_arg, s_arg))
+            } else {
+                // Independent: argument does not constrain the relation.
+                None
+            };
+
+            if let Some((fail_src, fail_tgt)) = failing_pair {
+                // The type-argument elaboration is only reliable when this
+                // parameter's variance comes from a *direct* usage (a property,
+                // function parameter, or return type). Variances synthesized
+                // purely from mapped-type / indexed-access positions lack
+                // `DIRECT_USAGE`: there the differing arguments can normalize to
+                // structurally distinct shapes, and tsc reports the structural
+                // member difference (e.g. a missing property) rather than the
+                // raw argument relation. Fall back to structural elaboration for
+                // those, matching tsc.
+                if !variance.has_direct_usage() {
+                    return None;
+                }
+                let nested = self.explain_failure(fail_src, fail_tgt).unwrap_or(
+                    SubtypeFailureReason::TypeMismatch {
+                        source_type: fail_src,
+                        target_type: fail_tgt,
+                    },
+                );
+                return Some(SubtypeFailureReason::TypeArgumentMismatch {
+                    source_arg: fail_src,
+                    target_arg: fail_tgt,
+                    nested_reason: Box::new(nested),
+                });
+            }
+        }
+
+        None
     }
 
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -507,26 +655,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let def_id = variance_def_id;
 
             if let Some(def_id) = def_id {
-                use crate::caches::db::QueryDatabase;
-                let variances = self
-                    .resolver
-                    .get_type_param_variance(def_id)
-                    .or_else(|| {
-                        self.query_db
-                            .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-                    })
-                    .or_else(|| {
-                        let computed =
-                            crate::relations::variance::compute_type_param_variances_with_resolver(
-                                self.interner,
-                                self.resolver,
-                                def_id,
-                            );
-                        if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
-                            db.insert_type_param_variance(def_id, variances.clone());
-                        }
-                        computed
-                    });
+                let variances = self.resolve_application_variances(def_id);
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
                     if variances.len() == s_app.args.len() {

@@ -2133,6 +2133,26 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Same-generic application (`C<A..>` vs `C<B..>`): tsc elaborates the
+        // differing type arguments directly. The structural pipeline evaluates
+        // the applications to object shapes (losing the type-argument identity)
+        // and would emit a `Types of property 'x' are incompatible.` wrapper
+        // that tsc does not produce, so detect it on the raw operands first.
+        if let Some(reason) =
+            crate::query_boundaries::assignability::same_generic_application_failure_reason(
+                self.ctx.types,
+                &self.ctx,
+                &self.ctx,
+                source,
+                target,
+            )
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
+
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`

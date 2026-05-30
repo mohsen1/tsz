@@ -520,6 +520,68 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
+    /// Render a same-generic type-argument mismatch (`C<A..>` vs `C<B..>`).
+    ///
+    /// Emits the top-level `Type 'C<A..>' is not assignable to type 'C<B..>'.`
+    /// line followed directly by the failing argument relation, with no
+    /// intermediate `Types of property 'x' are incompatible.` wrapper — tsc
+    /// elaborates same-generic argument failures straight into the differing
+    /// argument. Deeper argument failures (e.g. nested generic arguments) keep
+    /// elaborating through the structured `nested_reason`.
+    pub(super) fn render_type_argument_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_arg: TypeId,
+        target_arg: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+
+        let (source_str, target_str) = if depth == 0 {
+            self.format_top_level_assignability_message_types_at(source, target, idx)
+        } else {
+            (
+                self.format_type_diagnostic(source),
+                self.format_type_diagnostic(target),
+            )
+        };
+        let base = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            file_name,
+            start,
+            length,
+            base,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+
+        // The failing argument relation is rendered as the immediate child of
+        // this line (no intermediate wrapper), so it sits at the current
+        // elaboration depth — one indent level beneath the application line.
+        if depth < 5 {
+            let (nested_source, nested_target) =
+                Self::nested_failure_display_types(nested_reason, source_arg, target_arg);
+            let nested_diag = self.render_failure_reason(
+                nested_reason,
+                nested_source,
+                nested_target,
+                idx,
+                depth + 1,
+            );
+            Self::push_nested_chain(&mut diag, nested_diag, depth);
+        }
+
+        diag
+    }
+
     /// Append the inner element failure line beneath a tuple element mismatch.
     ///
     /// Uses the structured `nested_reason` when present so deeply nested element

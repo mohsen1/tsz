@@ -336,6 +336,28 @@ where
     }
 }
 
+/// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) via the
+/// differing type arguments, mirroring tsc's elaboration.
+///
+/// Returns `Some` only when `source`/`target` are applications of the same
+/// generic target whose variance reliably pins the failure to a concrete type
+/// argument; otherwise `None` so the caller falls back to the structural
+/// failure analysis. Must be called on the **raw** (unevaluated) operands.
+pub fn explain_same_generic_application_with_resolver<'a, R: TypeResolver, F>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    configure: F,
+) -> Option<crate::SubtypeFailureReason>
+where
+    F: FnOnce(&mut CompatChecker<'a, R>),
+{
+    let mut checker = CompatChecker::with_resolver(interner, resolver);
+    configure(&mut checker);
+    checker.explain_same_generic_type_arguments(source, target)
+}
+
 /// Query a relation using a no-op resolver and no overrides.
 pub fn query_relation(
     interner: &dyn TypeDatabase,

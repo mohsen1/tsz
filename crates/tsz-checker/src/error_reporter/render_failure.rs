@@ -554,6 +554,16 @@ impl<'a> CheckerState<'a> {
                 *target_return,
                 nested_reason.as_deref(),
             ),
+            SubtypeFailureReason::TypeArgumentMismatch {
+                source_arg,
+                target_arg,
+                nested_reason,
+            } => self.render_type_argument_mismatch(
+                &rctx,
+                *source_arg,
+                *target_arg,
+                nested_reason.as_ref(),
+            ),
             SubtypeFailureReason::TooManyParameters {
                 source_count,
                 target_count,
