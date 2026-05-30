@@ -79,8 +79,8 @@ const bad: R = { keep: "z", cb: () => {} };
     assert!(codes.contains(&2353), "got {codes:?}");
 }
 
-/// Rename remap (`as `p_${K}``) — the remapped key space is entirely renamed, so
-/// any unprefixed function-valued property is excess.
+/// Rename remap (template-literal name type `p_${K}`) — the remapped key space
+/// is entirely renamed, so any unprefixed function-valued property is excess.
 #[test]
 fn excess_arrow_property_on_rename_remapped_mapped_target_is_only_ts2353() {
     let source = r#"
