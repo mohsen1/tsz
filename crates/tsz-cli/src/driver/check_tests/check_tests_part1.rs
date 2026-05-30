@@ -1045,6 +1045,94 @@ export function freeze<T>(value: T): Readonly<T> {
     }
 
     #[test]
+    fn arbitrary_extension_html_import_preserves_dom_class_constructor_heritage() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&[
+            "es5.d.ts",
+            "es2015.iterable.d.ts",
+            "es2015.symbol.d.ts",
+            "es2015.symbol.wellknown.d.ts",
+            "es2020.d.ts",
+            "dom.d.ts",
+        ]);
+        assert!(
+            !lib_files.is_empty(),
+            "DOM libs must be available for this regression"
+        );
+
+        let files = [
+            (
+                "/p/component.d.html.ts",
+                r#"
+declare var doc: Document;
+export default doc;
+export const blogPost: Element;
+export class HTML5Element extends HTMLElement {
+    connectedCallback(): void;
+}
+"#,
+            ),
+            (
+                "/p/file.ts",
+                r#"
+import * as mod from "./component.html";
+
+window.customElements.define("my-html5-element", mod.HTML5Element);
+
+if (document !== mod.default) {
+    document.body.appendChild(mod.blogPost);
+}
+const instance: HTMLElement = new mod.HTML5Element();
+"#,
+            ),
+        ];
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            allow_arbitrary_extensions: false,
+            ..ResolvedCompilerOptions::default()
+        };
+        let diagnostics =
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options);
+        let ts2345 = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2345)
+            .collect::<Vec<_>>();
+
+        assert!(
+            ts2345.is_empty(),
+            "imported HTML declaration classes should stay assignable to CustomElementConstructor. Got: {ts2345:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn class_extends_identity_shortcut_preserves_member_relation_checks() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "test.ts",
+            r#"
+class C {
+    foo(x: number) { }
+}
+
+class D extends C {
+    foo() { }
+}
+
+class E extends D {
+    foo(x?: string) { }
+}
+
+declare var c: C;
+declare var e: E;
+c = e;
+"#,
+        )]);
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.code == 2322),
+            "class ancestry identity must not bypass structural member checks. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn file_session_reuse_preserves_multifile_diagnostics() {
         let files = [
             (

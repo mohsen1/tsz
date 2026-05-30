@@ -142,6 +142,11 @@ pub trait TypeResolver {
         false
     }
 
+    /// Whether this `DefId` originates from an actual or checker-cloned standard lib declaration.
+    fn is_actual_or_cloned_lib_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
     /// resolver has access to a wider binder graph than the lowering pass
     /// did. Used by the type evaluator to recover from
@@ -274,6 +279,15 @@ pub trait TypeResolver {
         None
     }
 
+    /// Reverse-lookup: get the declaration `DefId` that produced a resolved `TypeId`.
+    ///
+    /// This is broader than `class_def_for_instance_type`: interface instance
+    /// types and other named structural forms can also be backed by a
+    /// declaration identity.
+    fn def_for_type(&self, _type_id: TypeId) -> Option<DefId> {
+        None
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// Used by the Best Common Type (BCT) algorithm to find common base classes.
@@ -356,6 +370,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).is_builtin_readonly_array_def(def_id)
     }
 
+    fn is_actual_or_cloned_lib_def(&self, def_id: DefId) -> bool {
+        (**self).is_actual_or_cloned_lib_def(def_id)
+    }
+
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         (**self).get_boxed_type(kind)
     }
@@ -410,6 +428,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
         (**self).class_def_for_instance_type(type_id)
+    }
+
+    fn def_for_type(&self, type_id: TypeId) -> Option<DefId> {
+        (**self).def_for_type(type_id)
     }
 
     fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
@@ -843,6 +865,14 @@ impl TypeEnvironment {
                 changed = true;
             }
         }
+        for (&child, &parent) in &self.class_extends {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                target.class_extends.entry(child)
+            {
+                entry.insert(parent);
+                changed = true;
+            }
+        }
         if changed {
             target.bump_generation();
         }
@@ -856,6 +886,11 @@ impl TypeEnvironment {
     /// Snapshot the local class DefId -> instance TypeId cache for cross-checker merge-back.
     pub fn snapshot_class_instance_types(&self) -> FxHashMap<u32, TypeId> {
         self.class_instance_types.clone()
+    }
+
+    /// Snapshot the local class DefId -> parent class/interface DefId cache for cross-checker merge-back.
+    pub fn snapshot_class_extends(&self) -> FxHashMap<u32, DefId> {
+        self.class_extends.clone()
     }
 
     /// Snapshot the local DefId -> type params cache for downstream consumers like declaration emit.
@@ -1196,7 +1231,17 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
-        self.class_def_for_instance(type_id)
+        self.class_def_for_instance(type_id).or_else(|| {
+            let store = self.definition_store.as_ref()?;
+            let def_id = store.find_def_for_type(type_id)?;
+            matches!(self.get_def_kind(def_id), Some(crate::def::DefKind::Class)).then_some(def_id)
+        })
+    }
+
+    fn def_for_type(&self, type_id: TypeId) -> Option<DefId> {
+        self.definition_store
+            .as_ref()
+            .and_then(|store| store.find_def_for_type(type_id))
     }
 }
 

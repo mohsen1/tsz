@@ -18,15 +18,49 @@
 //!    must always resolve without a TS6263 flag warning.
 //! 5. `probe_file_name_index` bare-path probe for project-relative paths.
 
+use std::sync::{Arc, OnceLock};
+
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::module_resolution::{FileNameIndex, probe_file_name_index};
-use tsz_checker::test_utils::check_multi_file;
+use tsz_checker::test_utils::{check_multi_file, check_multi_file_with_libs};
+use tsz_common::common::ModuleKind;
 
 fn diagnostic_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
     check_multi_file(files, entry, CheckerOptions::default())
         .into_iter()
         .map(|d| d.code)
         .collect()
+}
+
+fn dom_libs() -> &'static Vec<Arc<LibFile>> {
+    static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    LIBS.get_or_init(|| {
+        tsz_checker::test_utils::load_lib_files(&[
+            "es5.d.ts",
+            "es2015.iterable.d.ts",
+            "es2015.symbol.d.ts",
+            "es2015.symbol.wellknown.d.ts",
+            "dom.d.ts",
+        ])
+    })
+}
+
+fn diagnostic_codes_with_dom(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+    check_multi_file_with_libs(
+        files,
+        entry,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        dom_libs(),
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| d.code)
+    .collect()
 }
 
 #[test]
@@ -144,6 +178,64 @@ const s: string = style;
     assert!(
         codes.is_empty(),
         "default export from arbitrary-ext decl should resolve: {codes:?}",
+    );
+}
+
+#[test]
+fn arbitrary_ext_decl_class_export_keeps_lib_heritage_for_constructor_value() {
+    let decl = r#"
+declare var doc: Document;
+export default doc;
+export const blogPost: Element;
+export class HTML5Element extends HTMLElement {
+    connectedCallback(): void;
+}
+"#;
+    let consumer = r#"
+import * as mod from "./component.html";
+window.customElements.define("my-html5-element", mod.HTML5Element);
+document.body.appendChild(mod.blogPost);
+const importedDocument: Document = mod.default;
+const ctor: new (...params: any[]) => HTMLElement = mod.HTML5Element;
+const instance: HTMLElement = new mod.HTML5Element();
+"#;
+    let codes = diagnostic_codes_with_dom(
+        &[
+            ("/proj/component.d.html.ts", decl),
+            ("/proj/main.ts", consumer),
+        ],
+        "/proj/main.ts",
+    );
+    assert!(
+        !codes.contains(&2345) && !codes.contains(&2322),
+        "arbitrary-ext lib-typed exports should preserve DOM heritage: {codes:?}",
+    );
+}
+
+#[test]
+fn arbitrary_ext_decl_class_export_keeps_renamed_lib_heritage() {
+    let decl = r#"
+export class FancyWidget extends HTMLDivElement {
+    activate(): void;
+}
+"#;
+    let consumer = r#"
+import * as bundle from "./Widget.svelte";
+window.customElements.define("fancy-widget", bundle.FancyWidget);
+const ctor: new (...params: any[]) => HTMLDivElement = bundle.FancyWidget;
+const div: HTMLDivElement = new bundle.FancyWidget();
+const element: HTMLElement = new bundle.FancyWidget();
+"#;
+    let codes = diagnostic_codes_with_dom(
+        &[
+            ("/proj/Widget.d.svelte.ts", decl),
+            ("/proj/main.ts", consumer),
+        ],
+        "/proj/main.ts",
+    );
+    assert!(
+        !codes.contains(&2345) && !codes.contains(&2322),
+        "renamed arbitrary-ext class should preserve inherited lib constructor surface: {codes:?}",
     );
 }
 
