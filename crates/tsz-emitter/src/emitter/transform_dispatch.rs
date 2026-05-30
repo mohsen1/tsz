@@ -15,6 +15,9 @@ use tsz_parser::parser::node::NodeAccess;
 #[path = "transform_dispatch_chain.rs"]
 mod transform_dispatch_chain;
 
+#[path = "transform_dispatch_class_binding.rs"]
+mod transform_dispatch_class_binding;
+
 enum EmitDirective {
     Identity,
     ES5Class {
@@ -936,19 +939,6 @@ impl<'a> Printer<'a> {
         self.ctx
             .block_scope_state
             .reserve_names(es5_emitter.block_scope_reserved_names());
-    }
-
-    fn register_es5_class_binding_name(&mut self, class_node: NodeIndex) -> Option<String> {
-        let class_data = self
-            .arena
-            .get(class_node)
-            .and_then(|node| self.arena.get_class(node))?;
-        let original_name = self.get_identifier_text_opt(class_data.name)?;
-        let emitted_name = self
-            .ctx
-            .block_scope_state
-            .register_block_scoped_class(&original_name);
-        (emitted_name != original_name).then_some(emitted_name)
     }
 
     fn emit_es5_class_output(
