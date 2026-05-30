@@ -557,7 +557,7 @@ pub(crate) fn match_imports_subpath(pattern: &str, subpath_key: &str) -> Option<
 
 pub(crate) fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
-        target.replace('*', wildcard)
+        target.replacen('*', wildcard, 1)
     } else if target.ends_with('/') {
         // Trailing-slash directory pattern: append the matched portion
         format!("{target}{wildcard}")
