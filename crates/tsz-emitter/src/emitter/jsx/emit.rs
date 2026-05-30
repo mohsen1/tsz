@@ -1071,6 +1071,13 @@ impl<'a> Printer<'a> {
         self.write(factory);
     }
 
+    /// Emit `text` as a double-quoted JS string with JSX-name escaping.
+    fn emit_jsx_double_quoted_js_string(&mut self, text: &str) {
+        self.write("\"");
+        self.write(&escape_jsx_text_for_js_with_quote(text, '"'));
+        self.write("\"");
+    }
+
     /// Emit a JSX tag name as a function argument.
     /// Intrinsic elements (lowercase) -> string literal.
     /// Component elements (uppercase/dotted/namespaced) -> identifier/expression.
@@ -1085,9 +1092,7 @@ impl<'a> Printer<'a> {
             if let Some(ident) = self.arena.get_identifier(node) {
                 let text = self.arena.resolve_identifier_text(ident);
                 if text.starts_with(|c: char| c.is_ascii_lowercase()) {
-                    self.write("\"");
-                    self.write(text);
-                    self.write("\"");
+                    self.emit_jsx_double_quoted_js_string(text);
                 } else {
                     self.emit(tag_name);
                 }
@@ -1112,9 +1117,9 @@ impl<'a> Printer<'a> {
                 .map(|i| self.arena.resolve_identifier_text(i))
                 .unwrap_or("");
             self.write("\"");
-            self.write(ns_text);
+            self.write(&escape_jsx_text_for_js_with_quote(ns_text, '"'));
             self.write(":");
-            self.write(name_text);
+            self.write(&escape_jsx_text_for_js_with_quote(name_text, '"'));
             self.write("\"");
             return;
         }
@@ -1713,9 +1718,7 @@ impl<'a> Printer<'a> {
         {
             let processed = process_jsx_text(&text.text);
             let decoded = decode_jsx_entities(&processed);
-            self.write("\"");
-            self.write(&escape_jsx_text_for_js_with_quote(&decoded, '"'));
-            self.write("\"");
+            self.emit_jsx_double_quoted_js_string(&decoded);
             return;
         }
 
@@ -1806,12 +1809,12 @@ impl<'a> Printer<'a> {
         self.write(" }");
     }
 
-    /// Emit a property name, quoting if needed.
+    /// Emit a property name, quoting (with JS-escape) if it isn't a valid JS
+    /// identifier; otherwise pass through verbatim to preserve any source
+    /// `\uXXXX` spelling.
     pub(in super::super) fn emit_jsx_prop_name(&mut self, name: &str) {
         if needs_quoting(name) {
-            self.write("\"");
-            self.write(name);
-            self.write("\"");
+            self.emit_jsx_double_quoted_js_string(name);
         } else {
             self.write(name);
         }
