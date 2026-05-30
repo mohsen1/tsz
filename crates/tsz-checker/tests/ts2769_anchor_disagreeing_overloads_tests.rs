@@ -105,10 +105,8 @@ fn assert_first_argument_anchored(type_param_a: &str, type_param_b: &str) {
 }}
 interface Holder {{ asn: Asn; }}
 declare var h: Holder;
-const wrap = <{a}, {b}>(x: {a}, y: {b}) => h.asn(x, y);
+const wrap = <{type_param_a}, {type_param_b}>(x: {type_param_a}, y: {type_param_b}) => h.asn(x, y);
 "#,
-        a = type_param_a,
-        b = type_param_b,
     );
     let diags = get_diagnostics(&source);
     let ts2769: Vec<_> = diags.iter().filter(|(code, _, _)| *code == 2769).collect();
