@@ -135,11 +135,6 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_node_with_request(call.expression, &callee_request)
         };
 
-        trace!(
-            callee_type = ?callee_type,
-            callee_expr = ?call.expression,
-            "Call expression callee type resolved"
-        );
         self.report_checked_js_nullable_this_property_method_call(call.expression);
         let callee_missing_value = callee_type == TypeId::ERROR
             && self.callee_suppresses_contextual_any(call.expression, &callee_diag_snap);
