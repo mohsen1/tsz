@@ -1,3 +1,4 @@
+pub(crate) mod block_scoped_hoist;
 pub(in crate::emitter) mod class;
 mod class_members;
 mod class_members_async_generator;

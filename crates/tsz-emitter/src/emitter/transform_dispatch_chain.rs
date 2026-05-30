@@ -535,6 +535,7 @@ impl<'a> Printer<'a> {
 
         let mut enum_emitter = EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.writer.indent_level());
+        enum_emitter.set_target_es5(self.ctx.target_es5);
         enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
         if let Some(text) = self.source_text_for_map() {
             enum_emitter.set_source_text(text);
@@ -580,6 +581,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_es5_enum_directive(&mut self, node: &Node, enum_node: NodeIndex) {
         let mut enum_emitter = EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.writer.indent_level());
+        enum_emitter.set_target_es5(self.ctx.target_es5);
         enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
         if let Some(text) = self.source_text {
             enum_emitter.set_source_text(text);

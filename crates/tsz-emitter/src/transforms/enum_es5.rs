@@ -89,6 +89,11 @@ pub struct EnumES5Transformer<'a> {
     prior_string_values: HashMap<String, HashMap<String, String>>,
     /// Whether this enum should emit its own `var E;` declaration.
     emit_var_declaration: bool,
+    /// Whether the emit target downlevels block-scoped declarations to `var`
+    /// (ES5/ES3). Only then does a block-scoped enum's hoisted binding need the
+    /// `= void 0` reset; at ES2015+ the caller upgrades the binding to `let`,
+    /// which is properly block-scoped and needs no reset.
+    target_es5: bool,
     /// Structured module export fold for the enum IIFE tail.
     export_fold: Option<EnumExportFold>,
 }
@@ -142,12 +147,17 @@ impl<'a> EnumES5Transformer<'a> {
             prior_string_members: HashMap::new(),
             prior_string_values: HashMap::new(),
             emit_var_declaration: true,
+            target_es5: false,
             export_fold: None,
         }
     }
 
     pub const fn set_preserve_const_enums(&mut self, value: bool) {
         self.preserve_const_enums = value;
+    }
+
+    pub const fn set_target_es5(&mut self, value: bool) {
+        self.target_es5 = value;
     }
 
     pub const fn set_emit_var_declaration(&mut self, value: bool) {
@@ -297,11 +307,20 @@ impl<'a> EnumES5Transformer<'a> {
         // Build IR for: var E; (function (E) { ... })(E || (E = {}));
         let mut statements = Vec::new();
 
-        // var E;
+        // var E;  — or `var E = void 0;` for a block-scoped enum, resetting the
+        // hoisted binding so a stale value cannot leak across re-entry to the
+        // enclosing control-flow / standalone block (matches `tsc`). This ES5
+        // path always uses the `var` keyword, so the reset always applies when
+        // the structural block-scope condition holds.
         if self.emit_var_declaration {
+            let initializer = (self.target_es5
+                && crate::emitter::declarations::block_scoped_hoist::block_scoped_hoist_needs_void_zero(
+                    self.arena, enum_idx,
+                ))
+            .then(|| Box::new(IRNode::Undefined));
             statements.push(IRNode::VarDecl {
                 name: name.clone().into(),
-                initializer: None,
+                initializer,
             });
         }
 
@@ -1911,6 +1930,13 @@ impl<'a> EnumES5Emitter<'a> {
     /// Set source text for raw expression extraction
     pub const fn set_source_text(&mut self, text: &'a str) {
         self.transformer.set_source_text(text);
+    }
+
+    /// Set whether the emit target downlevels block-scoped declarations to
+    /// `var` (ES5/ES3), enabling the `var E = void 0;` reset for block-scoped
+    /// enums.
+    pub const fn set_target_es5(&mut self, value: bool) {
+        self.transformer.set_target_es5(value);
     }
 
     /// Set whether const enums should be preserved (emitted instead of erased)

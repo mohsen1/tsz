@@ -1107,6 +1107,7 @@ impl<'a> Printer<'a> {
                     {
                         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
                         enum_emitter.set_indent_level(self.writer.indent_level());
+                        enum_emitter.set_target_es5(self.ctx.target_es5);
                         enum_emitter
                             .set_preserve_const_enums(self.ctx.options.preserve_const_enums);
                         if let Some(text) = self.source_text {
@@ -1135,6 +1136,7 @@ impl<'a> Printer<'a> {
                         // and named exports are orthogonal in CJS.
                         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
                         enum_emitter.set_indent_level(self.writer.indent_level());
+                        enum_emitter.set_target_es5(self.ctx.target_es5);
                         enum_emitter
                             .set_preserve_const_enums(self.ctx.options.preserve_const_enums);
                         if let Some(text) = self.source_text {

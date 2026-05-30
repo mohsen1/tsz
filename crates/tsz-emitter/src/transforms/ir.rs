@@ -631,6 +631,12 @@ pub enum IRNode {
         /// Whether to emit the `var name;` declaration for this namespace.
         /// Set to false when merging with a class/function/enum that already declared it.
         should_declare_var: bool,
+        /// When true, the hoisted namespace binding is emitted as
+        /// `var name = void 0;` instead of `var name;`. Set for instantiated
+        /// namespaces downleveled to `var` while nested in a control-flow /
+        /// standalone block (not a function body, namespace body, or top level),
+        /// matching `tsc`'s reset of block-scoped hoisted bindings.
+        hoist_var_void_zero: bool,
         /// When true, namespace merges with default-exported fn in CJS.
         default_export_merge: bool,
         /// Parent namespace name for qualified binding: `NS = Parent.NS || (Parent.NS = {})`

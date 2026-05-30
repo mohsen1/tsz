@@ -433,6 +433,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
+            hoist_var_void_zero: should_declare_var
+                && crate::emitter::declarations::block_scoped_hoist::block_scoped_hoist_needs_void_zero(
+                    self.arena, ns_idx,
+                ),
             default_export_merge,
             parent_name: None,
             param_name: param_name.map(Into::into),
@@ -1689,6 +1693,9 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
+            // Nested namespaces live directly inside a `MODULE_BLOCK`, which is a
+            // scope top, so their hoisted binding is never reset.
+            hoist_var_void_zero: false,
             default_export_merge: false,
             parent_name: is_exported.then(|| parent_ns.to_string().into()),
             param_name: param_name.map(Into::into),
