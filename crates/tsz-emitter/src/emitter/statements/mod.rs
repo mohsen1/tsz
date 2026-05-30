@@ -3,6 +3,7 @@ mod control_flow;
 mod core;
 mod expression_statement_helpers;
 mod for_recovery;
+mod labeled_for_await;
 mod recovered_expression_statement_helpers;
 mod recovered_generated_member_helpers;
 mod recovered_variable_statement;

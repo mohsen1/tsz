@@ -1287,6 +1287,12 @@ impl<'a> Printer<'a> {
             self.emit_comments_before_pos(actual_start);
         }
 
+        // If this for-await-of is the body of a `LabeledStatement`, the label
+        // attaches to this inner lowered `for` loop (the actual iteration
+        // statement), not the wrapping `try`. Otherwise `continue <label>` would
+        // target the `try` and produce non-runnable JavaScript.
+        self.emit_downlevel_for_await_loop_label(for_of_idx);
+
         // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield/yield __await(...)] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
         self.write("for (var ");
         self.write(&loop_guard_name);
