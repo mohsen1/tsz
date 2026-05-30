@@ -159,6 +159,8 @@ impl<'a> CheckerContext<'a> {
             nullable_type_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            ts2353_2561_positions: std::collections::BTreeSet::new(),
+            ts2322_msg_spans: FxHashMap::default(),
             no_overload_call_nodes: FxHashSet::default(),
             callback_return_type_errors: Vec::new(),
             modules_with_ts2307_emitted: FxHashSet::default(),

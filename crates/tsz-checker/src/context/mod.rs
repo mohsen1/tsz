@@ -774,6 +774,13 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Sorted positions of emitted TS2353/TS2561 diagnostics.
+    /// Enables O(log n) range queries for the TS2322 overlap-suppression check.
+    pub ts2353_2561_positions: std::collections::BTreeSet<u32>,
+    /// Spans of emitted TS2322 diagnostics grouped by 64-bit message hash.
+    /// Key: `FxHasher` hash of the message text; Value: (start, end) pairs.
+    /// Enables O(k) per-group overlap checks instead of O(n) full-list scans.
+    pub ts2322_msg_spans: FxHashMap<u64, Vec<(u32, u32)>>,
     /// Call-expression nodes that resolved to TS2769 during the current
     /// speculative context. Used so overload resolution can reject outer
     /// candidates whose callback bodies contain a failed nested overload even

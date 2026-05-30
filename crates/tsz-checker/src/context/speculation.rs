@@ -277,6 +277,8 @@ impl<'a> CheckerContext<'a> {
             self.diagnostics.push(diag);
         }
         self.truncate_deferred_ts2454(snap);
+        // Rebuild auxiliary suppression indices to match the restored diagnostic state.
+        self.rebuild_diagnostic_aux_indices();
     }
 
     /// Roll back to a full snapshot, discarding speculative diagnostics and
@@ -345,6 +347,8 @@ impl<'a> CheckerContext<'a> {
                     .retain(|&(pos, _)| pos != diag.start);
             }
         }
+        // Rebuild auxiliary suppression indices after filtered rollback.
+        self.rebuild_diagnostic_aux_indices();
     }
 
     /// Commit speculative diagnostics: update the dedup set to include all
@@ -407,6 +411,8 @@ impl<'a> CheckerContext<'a> {
         self.truncate_deferred_ts2454(snap);
         self.no_overload_call_nodes
             .clone_from(&snap.no_overload_call_nodes);
+        // Rebuild auxiliary suppression indices after removing the speculative diagnostics.
+        self.rebuild_diagnostic_aux_indices();
         taken
     }
 
@@ -443,6 +449,8 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.insert(key);
         }
         self.diagnostics.extend(replacement);
+        // Rebuild auxiliary suppression indices after replacement.
+        self.rebuild_diagnostic_aux_indices();
     }
 
     // -----------------------------------------------------------------------

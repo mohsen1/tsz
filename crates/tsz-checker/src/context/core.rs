@@ -1452,6 +1452,60 @@ impl<'a> CheckerContext<'a> {
         self.diagnostic_dedup_key_from_parts(diag.start, diag.code, &diag.message_text)
     }
 
+    /// Compute a 64-bit hash of a TS2322 message for the overlap-suppression index.
+    ///
+    /// Using a non-truncated hash (vs. the 32-bit dedup key) makes false positives
+    /// negligible (~2^-64 per pair). The index only needs stability within a single
+    /// compilation session, so the hash need not be deterministic across runs.
+    fn ts2322_message_hash(message: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        message.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Rebuild the auxiliary suppression indices from the current `diagnostics` list.
+    ///
+    /// Called after any operation that truncates or replaces `diagnostics` (rollbacks,
+    /// filtered rollbacks, etc.) to keep `ts2353_2561_positions` and `ts2322_msg_spans`
+    /// consistent with the live diagnostic vector.
+    pub(crate) fn rebuild_diagnostic_aux_indices(&mut self) {
+        self.ts2353_2561_positions.clear();
+        self.ts2322_msg_spans.clear();
+        for diag in &self.diagnostics {
+            Self::update_aux_indices_for(
+                &mut self.ts2353_2561_positions,
+                &mut self.ts2322_msg_spans,
+                diag.code,
+                diag.start,
+                diag.start.saturating_add(diag.length),
+                &diag.message_text,
+            );
+        }
+    }
+
+    /// Update the auxiliary indices for a single diagnostic being added.
+    fn update_aux_indices_for(
+        ts2353_2561_positions: &mut std::collections::BTreeSet<u32>,
+        ts2322_msg_spans: &mut rustc_hash::FxHashMap<u64, Vec<(u32, u32)>>,
+        code: u32,
+        start: u32,
+        end: u32,
+        message: &str,
+    ) {
+        match code {
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+            | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID => {
+                ts2353_2561_positions.insert(start);
+            }
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE => {
+                let hash = Self::ts2322_message_hash(message);
+                ts2322_msg_spans.entry(hash).or_default().push((start, end));
+            }
+            _ => {}
+        }
+    }
+
     pub fn rebuild_emitted_diagnostics_from_current(&mut self) {
         self.emitted_diagnostics.clear();
         // Also synchronize the TS2454 dedup set: remove entries for TS2454
@@ -1470,6 +1524,7 @@ impl<'a> CheckerContext<'a> {
             let key = self.diagnostic_dedup_key(diag);
             self.emitted_diagnostics.insert(key);
         }
+        self.rebuild_diagnostic_aux_indices();
     }
 
     /// Add an error diagnostic (with deduplication).
@@ -1496,11 +1551,9 @@ impl<'a> CheckerContext<'a> {
         // TS2301 already exists at the same position, since TS2301
         // ("Initializer of instance member cannot reference identifier declared in constructor")
         // already explains the problem more precisely.
+        // O(1): use the emitted_diagnostics HashSet instead of a linear scan.
         if (code == 2304 || code == 2552 || code == 2663)
-            && self
-                .diagnostics
-                .iter()
-                .any(|diag| diag.start == start && diag.code == 2301)
+            && self.emitted_diagnostics.contains(&(start, 2301))
         {
             return;
         }
@@ -1550,6 +1603,15 @@ impl<'a> CheckerContext<'a> {
             message = %message,
             "diagnostic"
         );
+        let end = start.saturating_add(length);
+        Self::update_aux_indices_for(
+            &mut self.ts2353_2561_positions,
+            &mut self.ts2322_msg_spans,
+            code,
+            start,
+            end,
+            &message,
+        );
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
             start,
@@ -1577,11 +1639,10 @@ impl<'a> CheckerContext<'a> {
     ///   variable/function name span.
     pub fn push_diagnostic(&mut self, mut diag: Diagnostic) {
         diag.message_text = Self::normalize_diagnostic_message(diag.code, diag.message_text);
+        // O(1): use the emitted_diagnostics HashSet instead of a linear scan.
+        // TS2301's dedup key is (start, 2301) — a standard non-hashed key.
         if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
-            && self
-                .diagnostics
-                .iter()
-                .any(|existing| existing.start == diag.start && existing.code == 2301)
+            && self.emitted_diagnostics.contains(&(diag.start, 2301))
         {
             return;
         }
@@ -1606,26 +1667,27 @@ impl<'a> CheckerContext<'a> {
                 .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
             self.emitted_diagnostics.remove(&(diag.start, 2304));
         }
-        if diag.code == 2322 {
+        if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
             let diag_end = diag.start.saturating_add(diag.length);
             // TS2353/TS2561 on a property inside an object literal should suppress
             // a redundant enclosing TS2322 on the whole literal.
-            if self.diagnostics.iter().any(|existing| {
-                (existing.code
-                    == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
-                    || existing.code
-                        == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID)
-                    && existing.start >= diag.start
-                    && existing.start < diag_end
-            }) {
+            // O(log n): BTreeSet range query instead of a full linear scan.
+            if self
+                .ts2353_2561_positions
+                .range(diag.start..diag_end)
+                .next()
+                .is_some()
+            {
                 return;
             }
-            if self.diagnostics.iter().any(|existing| {
-                existing.code == 2322 && existing.message_text == diag.message_text && {
-                    let existing_end = existing.start.saturating_add(existing.length);
-                    (existing.start <= diag.start && existing_end >= diag_end)
-                        || (diag.start <= existing.start && diag_end >= existing_end)
-                }
+            // Suppress a TS2322 when an overlapping TS2322 with the same message already
+            // exists (prevents duplicate errors for nested assignment spans).
+            // O(k) per message group (k ≪ n in practice) instead of O(n).
+            let hash = Self::ts2322_message_hash(&diag.message_text);
+            if self.ts2322_msg_spans.get(&hash).is_some_and(|spans| {
+                spans.iter().any(|&(s, e)| {
+                    (s <= diag.start && e >= diag_end) || (diag.start <= s && diag_end >= e)
+                })
             }) {
                 return;
             }
@@ -1651,6 +1713,14 @@ impl<'a> CheckerContext<'a> {
             file = %diag.file,
             message = %diag.message_text,
             "diagnostic"
+        );
+        Self::update_aux_indices_for(
+            &mut self.ts2353_2561_positions,
+            &mut self.ts2322_msg_spans,
+            diag.code,
+            diag.start,
+            diag.start.saturating_add(diag.length),
+            &diag.message_text,
         );
         self.diagnostics.push(diag);
     }
