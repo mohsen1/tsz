@@ -213,10 +213,18 @@ impl<'a> CheckerState<'a> {
             let anchor_idx = match actual_matches.as_slice() {
                 [single] => *single,
                 [] => {
-                    let [single] = expected_mismatch_matches.as_slice() else {
-                        return None;
-                    };
-                    *single
+                    // tsc's `getSignatureApplicabilityError` walks arguments in
+                    // source order and stops at the *first* argument that is not
+                    // assignable to the corresponding parameter, anchoring the
+                    // overload's diagnostic there. When the solver's reported
+                    // `actual_type` cannot be matched to a single argument by
+                    // type identity — e.g. a generic argument whose type
+                    // parameter (`a: T` in `Object.assign(a, b)`) is a distinct
+                    // `TypeId` from the one cached for the argument node — fall
+                    // back to that first-failing-argument rule. `arg_nodes` is in
+                    // source order and mismatches are pushed in order, so the
+                    // first entry is the first failing argument.
+                    *expected_mismatch_matches.first()?
                 }
                 _ => return None,
             };
