@@ -1720,6 +1720,11 @@ impl<'a> Printer<'a> {
                 {
                     let name = std::sync::Arc::clone(capture_name);
                     self.write(&name);
+                } else if let Some(loop_this) = self.ctx.loop_this_capture_name.clone() {
+                    // Inside an ES5 converted-loop (`_loop_N`) IIFE body, a
+                    // lexical `this` is rewritten to the captured `this_N`
+                    // binding declared at the real function scope.
+                    self.write(&loop_this);
                 } else if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
                     self.write(&alias);
                 } else {

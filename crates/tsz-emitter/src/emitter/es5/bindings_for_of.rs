@@ -267,7 +267,7 @@ impl<'a> Printer<'a> {
                 if body_temp_count > 0 {
                     self.preallocate_hoisted_temp_names(body_temp_count);
                 }
-                self.emit_loop_function(
+                let this_capture = self.emit_loop_function(
                     &loop_fn_name,
                     &param_vars,
                     for_in_of.statement,
@@ -275,6 +275,9 @@ impl<'a> Printer<'a> {
                     &init_vars,
                 );
                 self.write_line();
+                if let Some(capture_name) = this_capture {
+                    self.emit_loop_this_capture_decl(&capture_name);
+                }
                 if !body_info.var_decl_names.is_empty() {
                     self.write("var ");
                     for (i, name) in body_info.var_decl_names.iter().enumerate() {
