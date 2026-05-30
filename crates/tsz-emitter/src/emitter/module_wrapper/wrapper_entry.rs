@@ -479,7 +479,6 @@ impl<'a> Printer<'a> {
         self.write("\"use strict\";");
         self.write_line();
         self.emit_system_helpers_if_needed(source);
-        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
         let mut dep_vars =
             self.collect_system_dependency_vars(&system_dependencies, source, &system_plan);
         for (dep, actions) in &system_plan.actions {
@@ -519,6 +518,14 @@ impl<'a> Printer<'a> {
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
         self.ctx.options.module = prev_module;
         self.ctx.original_module_kind = prev_original;
+
+        // The `exportStar_1` re-export helper (and its `exportedNames_1`
+        // exclusion map) is emitted after the hoisted `var` declarations,
+        // the `__moduleName` binding, and the hoisted function declarations,
+        // immediately before the `return { setters, execute }` object. TSC
+        // emits these helpers at the tail of the register-factory prologue so
+        // they sit just above `return`, not before the hoisted bindings.
+        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
         self.write_line();
