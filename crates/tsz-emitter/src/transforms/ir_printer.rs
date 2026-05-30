@@ -815,7 +815,31 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::CommaExpr(exprs) => {
                 self.write("(");
-                self.emit_comma_separated(exprs);
+                for (i, expr) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        if self.last_emit_ended_with_line_comment {
+                            // A trailing line comment makes inline ", " a syntax error.
+                            // Put the separator comma on its own line, one indent level
+                            // shallower than the surrounding context (matching tsc).
+                            self.write_line();
+                            self.write_indent_level(self.indent_level.saturating_sub(1));
+                            self.last_emit_ended_with_line_comment = false;
+                            self.write(",");
+                            self.write_line();
+                            self.write_indent();
+                        } else {
+                            self.last_emit_ended_with_line_comment = false;
+                            self.write(", ");
+                        }
+                    }
+                    self.last_emit_ended_with_line_comment = false;
+                    self.emit_node(expr);
+                }
+                if self.last_emit_ended_with_line_comment {
+                    self.write_line();
+                    self.write_indent();
+                    self.last_emit_ended_with_line_comment = false;
+                }
                 self.write(")");
             }
             IRNode::CommaExprMultiline(exprs) => {

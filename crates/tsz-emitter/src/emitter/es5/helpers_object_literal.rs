@@ -570,12 +570,22 @@ impl<'a> Printer<'a> {
         source_range: Option<(u32, u32)>,
         has_trailing_comma: bool,
     ) {
+        // Use multiline layout when any element is an accessor: tsc always emits
+        // Object.defineProperty for accessors, and that descriptor spans multiple
+        // lines, so the whole comma expression must be multiline. Simple
+        // methods/properties stay inline.
+        let has_accessor = elements.iter().any(|&idx| {
+            self.arena.get(idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || node.kind == syntax_kind_ext::SET_ACCESSOR
+            })
+        });
         self.emit_object_literal_without_spread_es5_with_layout(
             elements,
             source_range,
             has_trailing_comma,
             true,
-            true,
+            has_accessor,
         );
     }
 

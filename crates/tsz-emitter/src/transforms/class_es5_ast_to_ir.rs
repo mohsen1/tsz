@@ -1262,7 +1262,18 @@ impl<'a> AstToIr<'a> {
         // Final reference to temp
         comma_parts.push(IRNode::id(temp));
 
-        IRNode::CommaExprMultiline(comma_parts)
+        // Accessors lower to Object.defineProperty call expressions whose descriptor
+        // arguments span multiple lines. Use CommaExprMultiline for those so each
+        // element gets its own indented line (matching tsc). Simple assignments
+        // (method shorthand, property) stay on one line with CommaExpr.
+        let has_call_expr = comma_parts
+            .iter()
+            .any(|part| matches!(part, IRNode::CallExpr { .. }));
+        if has_call_expr {
+            IRNode::CommaExprMultiline(comma_parts)
+        } else {
+            IRNode::CommaExpr(comma_parts)
+        }
     }
 
     /// Lower a single object property to an ES5 assignment or Object.defineProperty call
