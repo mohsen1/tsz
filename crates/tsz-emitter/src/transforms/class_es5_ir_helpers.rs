@@ -254,6 +254,26 @@ pub(super) fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<S
     }
 }
 
+/// Resolve the binding-name identifier text of a `catch` clause's
+/// `VariableDeclaration` node.
+///
+/// A catch binding is always parsed as a `VariableDeclaration` whose `name`
+/// field holds the binding (`catch (e)` and `catch (e: unknown)` differ only by
+/// the erased `type_annotation`). The es5 class-transform IR keeps just the
+/// binding identifier, so the type annotation is dropped while the identifier
+/// is preserved. Returns `None` for destructuring binding patterns, which this
+/// IR path does not lower as a simple catch parameter.
+pub(super) fn catch_binding_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    // A catch binding is a `VariableDeclaration`; descend to its `name` so the
+    // type annotation is erased but the binding identifier is kept.
+    if let Some(var_decl) = arena.get_variable_declaration(node) {
+        return get_identifier_text(arena, var_decl.name);
+    }
+    // Defensive: if the binding is already a bare identifier, accept it.
+    get_identifier_text(arena, idx)
+}
+
 /// Collect accessor pairs (getter/setter) from class members.
 /// When `collect_static` is true, collects static accessors; otherwise collects instance accessors.
 pub(super) fn has_effective_static_modifier(

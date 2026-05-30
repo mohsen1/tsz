@@ -4,7 +4,10 @@
 //! Extracted from `class_es5_ast_to_ir.rs` so the central AST→IR conversion
 //! file stays under the §19 2000-line cap. Behavior is unchanged.
 
-use super::{AstToIr, IRCatchClause, IRNode, IRSwitchCase, get_identifier_text};
+use super::{
+    AstToIr, IRCatchClause, IRNode, IRSwitchCase, catch_binding_identifier_text,
+    get_identifier_text,
+};
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> AstToIr<'a> {
@@ -37,7 +40,7 @@ impl<'a> AstToIr<'a> {
                 let param = if catch.variable_declaration.is_none() {
                     None
                 } else {
-                    get_identifier_text(self.arena, catch.variable_declaration)
+                    catch_binding_identifier_text(self.arena, catch.variable_declaration)
                 };
                 let catch_block = self.arena.get(catch.block);
                 let body = if let Some(block_node) = catch_block

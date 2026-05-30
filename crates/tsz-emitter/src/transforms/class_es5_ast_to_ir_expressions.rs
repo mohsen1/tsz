@@ -625,9 +625,78 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(paren) = self.arena.get_parenthesized(node) {
+            // Parentheses that exist only to scope a type assertion become
+            // redundant once the assertion is erased: `(e as Error).message`
+            // emits `e.message`, not `(e).message`. Mirror the normal emitter's
+            // policy of dropping such parens when the erased inner expression is
+            // a simple primary whose meaning cannot change without parens.
+            if self.parenthesized_wraps_erasable_simple_primary(paren.expression) {
+                return self.convert_expression(paren.expression);
+            }
             IRNode::Parenthesized(Box::new(self.convert_expression(paren.expression)))
         } else {
             IRNode::ASTRef(idx)
+        }
+    }
+
+    /// True when a parenthesized expression directly wraps a type assertion
+    /// (`as`/`<T>`/satisfies) whose underlying expression, after erasing the
+    /// assertion, is a simple primary that does not require the parentheses.
+    fn parenthesized_wraps_erasable_simple_primary(&self, inner_idx: NodeIndex) -> bool {
+        let Some(inner) = self.arena.get(inner_idx) else {
+            return false;
+        };
+        // Only the type-assertion forms make the wrapping parens purely
+        // syntactic. Everything else keeps its parens.
+        if !(inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            return false;
+        }
+        // Peel the type-assertion chain to the underlying expression.
+        let mut cur = inner_idx;
+        loop {
+            let Some(node) = self.arena.get(cur) else {
+                return false;
+            };
+            let is_assertion = node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION;
+            if is_assertion {
+                let Some(assertion) = self.arena.get_type_assertion(node) else {
+                    return false;
+                };
+                cur = assertion.expression;
+                continue;
+            }
+            // `node` is the erased underlying expression. An optional-chain
+            // member is load-bearing in access position, so never strip those.
+            if node.is_optional_chain()
+                || self
+                    .arena
+                    .get_access_expr(node)
+                    .is_some_and(|a| a.question_dot_token)
+            {
+                return false;
+            }
+            return matches!(
+                node.kind,
+                k if k == SyntaxKind::Identifier as u16
+                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    || k == SyntaxKind::ThisKeyword as u16
+                    || k == SyntaxKind::SuperKeyword as u16
+                    || k == SyntaxKind::NullKeyword as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+                    || k == SyntaxKind::StringLiteral as u16
+                    || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+            );
         }
     }
 
