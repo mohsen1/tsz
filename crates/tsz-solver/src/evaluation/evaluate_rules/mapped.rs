@@ -1204,7 +1204,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Shared loop body for union/intersection distribution.
     ///
     /// For each member, substitutes `source` → `member` in the template (and
-    /// name_type if present), builds a per-member mapped type, and evaluates it.
+    /// `name_type` if present), builds a per-member mapped type, and evaluates it.
     fn distribute_mapped_over_members(
         &mut self,
         mapped: &MappedType,
