@@ -185,17 +185,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        // tsc always joins a single-line @type comment to the following declaration,
+        // regardless of whether the declared type is itself multiline.
         let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
             && kind == syntax_kind_ext::VARIABLE_STATEMENT
             && !self.inside_declare_namespace
-            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos)
-            && self
-                .jsdoc_type_text_for_node(stmt_idx)
-                .is_none_or(|type_text| {
-                    !self
-                        .jsdoc_type_text_for_declaration_emit(&type_text)
-                        .contains('\n')
-                });
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.

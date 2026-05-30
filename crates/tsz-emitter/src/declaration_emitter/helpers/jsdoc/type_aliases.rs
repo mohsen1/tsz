@@ -692,7 +692,15 @@ impl<'a> DeclarationEmitter<'a> {
         decl: &JsdocTypeAliasDecl,
         exported: bool,
     ) -> Option<String> {
-        let type_text = self.jsdoc_type_alias_text_for_declaration_emit(&decl.type_text);
+        let type_text = if decl.render_verbatim {
+            // Pre-formatted type text (e.g. from @property tags) already has proper
+            // TypeScript syntax with semicolons. Only apply portability rewrites; skip
+            // the object-type reformatter which expects comma-separated members.
+            let portable = self.rewrite_ambient_module_relative_import_type_text(&decl.type_text);
+            self.rewrite_jsdoc_bare_module_import_type_text(&portable)
+        } else {
+            self.jsdoc_type_alias_text_for_declaration_emit(&decl.type_text)
+        };
         Self::render_jsdoc_type_alias_decl_with_type_text(decl, exported, &type_text)
     }
 
