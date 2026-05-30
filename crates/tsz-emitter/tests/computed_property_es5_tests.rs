@@ -1,9 +1,7 @@
 //! Integration tests for ES5 computed property object literal formatting.
 //!
-//! tsc always formats the lowered comma expression as multi-line:
-//!   (_a = {},
-//!       _a[key] = value,
-//!       _a);
+//! tsc always formats the lowered comma expression as single-line:
+//!   (_a = {}, _a[key] = value, _a)
 
 use tsz_common::common::ScriptTarget;
 use tsz_emitter::output::printer::PrintOptions;
@@ -57,36 +55,27 @@ fn assert_comment_forced_comma_is_outdented(output: &str, assignment_fragment: &
     );
 }
 
-/// Multiple computed properties should be emitted multi-line, one per line.
+/// Multiple computed properties should be emitted on a single line.
 #[test]
-fn computed_property_multiline_multiple_keys() {
+fn computed_property_single_line_multiple_keys() {
     let source = r#"var v = { [p1]: 0, [p2]: 1, [p3]: 2 };"#;
     let output = emit_es5(source);
-    // Each assignment should be on its own line (multi-line format)
+    // All assignments should appear on one line (single-line format matching tsc)
     assert!(
-        output.contains("_a[p1] = 0,\n"),
-        "Each computed property assignment should be on its own line.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("_a[p2] = 1,\n"),
-        "Each computed property assignment should be on its own line.\nOutput:\n{output}"
+        output.contains("_a[p1] = 0, _a[p2] = 1, _a[p3] = 2"),
+        "Each computed property assignment should be on the same line as the others.\nOutput:\n{output}"
     );
 }
 
-/// Single computed property should also be emitted multi-line.
+/// Single computed property should be emitted on a single line.
 #[test]
-fn computed_property_multiline_single_key() {
+fn computed_property_single_line_single_key() {
     let source = r#"var o = { [+"foo"]: "", [+"bar"]: 0 };"#;
     let output = emit_es5(source);
-    // Should have comma + newline between assignments
+    // Should be all on one line (single-line format matching tsc)
     assert!(
-        output.contains(",\n"),
-        "Computed property comma expression should use multi-line format.\nOutput:\n{output}"
-    );
-    // Should NOT be all on one line
-    assert!(
-        !output.contains("_a = {}, _a"),
-        "Computed property assignments should NOT be on a single line.\nOutput:\n{output}"
+        output.contains("_a = {}, _a"),
+        "Computed property comma expression should use single-line format.\nOutput:\n{output}"
     );
 }
 

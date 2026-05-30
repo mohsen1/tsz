@@ -1417,6 +1417,18 @@ impl IRNode {
         }
     }
 
+    /// Create an object-literal comma expression with accessor-aware layout.
+    pub fn object_literal_comma_expr(parts: Vec<Self>) -> Self {
+        if parts
+            .iter()
+            .any(|part| matches!(part, Self::CallExpr { .. }))
+        {
+            Self::CommaExprMultiline(parts)
+        } else {
+            Self::CommaExpr(parts)
+        }
+    }
+
     /// Create the `_a.trys.push([...])` IR for a state-machine try region.
     /// Picks the variant that matches the sparse-slot shape expected by tsc:
     /// `[s, c, f, e]`, `[s, c, , e]`, or `[s, , f, e]`.
