@@ -854,18 +854,34 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Whether the parent `await` keyword is lowered to a `yield` keyword in
+    /// the current emit context, mirroring `emit_await_expression`.
+    ///
+    /// A `yield` operand binds looser than `?:`, so `yield a ? b : c` already
+    /// parses as `yield (a ? b : c)`; a native `await` binds tighter than `?:`,
+    /// so `await a ? b : c` parses as `(await a) ? b : c` and needs parens.
+    /// This decides whether an `await`-parented UMD conditional needs wrapping.
+    const fn await_parent_emits_as_yield(&self) -> bool {
+        self.ctx.emit_await_as_yield
+            || self.ctx.emit_await_as_yield_await
+            || (self.ctx.needs_async_lowering && self.function_scope_depth > 0)
+    }
+
     /// Whether a UMD dynamic-`import()` substitution must be parenthesized for
     /// the parent expression it sits in, matching `tsc`'s parenthesizer.
     ///
     /// Statement-level parents (expression statement, `return`, `throw`, `for`
     /// headers) accept a full expression — including a comma sequence — so
     /// neither form needs parentheses. Parents that bind tighter than `?:`
-    /// (operand of `await`/`yield`/unary/binary, object of a member access,
+    /// (operand of native `await`/unary/binary, object of a member access,
     /// callee of a call/new, condition of another conditional) always need
-    /// parentheses. Remaining assignment-level parents (variable initializer,
-    /// call argument, array element, property value, arrow body, …) accept a
-    /// bare conditional but require parentheses around a comma sequence, so
-    /// `is_sequence` decides those.
+    /// parentheses. A `yield` operand — whether a source-level `yield` or an
+    /// `await` downleveled to `yield` for async-to-generator lowering — binds
+    /// looser than `?:`, so a bare conditional there needs no parentheses.
+    /// Remaining assignment-level parents (variable initializer, call argument,
+    /// array element, property value, arrow body, …) accept a bare conditional
+    /// but require parentheses around a comma sequence, so `is_sequence` decides
+    /// those.
     fn umd_dynamic_import_needs_parens(&self, call_idx: NodeIndex, is_sequence: bool) -> bool {
         let Some(parent_idx) = self.arena.parent_of(call_idx) else {
             return false;
@@ -885,9 +901,14 @@ impl<'a> Printer<'a> {
             return false;
         }
         let tighter_than_conditional = match k {
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION
-                || k == syntax_kind_ext::YIELD_EXPRESSION
-                || k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            // A source-level `yield` operand binds looser than `?:`; a bare
+            // conditional needs no parens (only a comma sequence does).
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => false,
+            // `await` binds tighter than `?:` and needs parens, but when async
+            // lowering rewrites it to `yield` the operand binds looser, so the
+            // bare conditional needs no parens.
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => !self.await_parent_emits_as_yield(),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
                 || k == syntax_kind_ext::TYPE_OF_EXPRESSION
                 || k == syntax_kind_ext::VOID_EXPRESSION
