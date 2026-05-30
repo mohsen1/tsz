@@ -366,20 +366,39 @@ impl<'a> DeclarationEmitter<'a> {
                 if self.referenced_declared_annotation_is_multiline_object_type(returned_identifier)
                     && let Some(type_id) = self.reference_declared_type_id(returned_identifier)
                 {
-                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                    return Some(self.print_inferred_declaration_in_function_scope(func, type_id));
                 }
                 let type_text =
                     self.reference_declared_source_type_annotation_text(returned_identifier)?;
                 if let Some(type_id) = self.reference_declared_type_id(returned_identifier)
                     && self.printed_type_uses_non_emittable_local_alias_root(&type_text)
                 {
-                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                    return Some(self.print_inferred_declaration_in_function_scope(func, type_id));
                 }
                 Some(type_text)
             })?;
         let (type_text, _) =
             self.function_source_return_type_text_for_declaration_scope(func, &type_text);
         Some(type_text)
+    }
+
+    /// Print an inferred declaration type while keeping the enclosing function's
+    /// type parameters nameable. When the function is generic, the inferred type
+    /// can legitimately reference an outer type parameter (e.g. expanding a
+    /// function-local alias `Foo<T>` instantiated with `A[]` keeps `A`), so the
+    /// outer-type-param-aware printer must be used; otherwise the parameter would
+    /// widen to `unknown`. Non-generic functions use the plain inferred printer.
+    fn print_inferred_declaration_in_function_scope(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        match func.type_parameters.as_ref() {
+            Some(type_params) if !type_params.nodes.is_empty() => {
+                self.print_type_id_with_outer_type_params(type_id, type_params)
+            }
+            _ => self.print_type_id_for_inferred_declaration(type_id),
+        }
     }
 
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(

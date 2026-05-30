@@ -221,10 +221,6 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         printed_type_text: &str,
     ) -> bool {
-        if self.current_source_file_idx.is_none() {
-            return false;
-        }
-
         let mut visited_names = rustc_hash::FxHashSet::default();
         self.type_text_uses_non_emittable_local_alias_root(printed_type_text, &mut visited_names)
     }
@@ -319,6 +315,10 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        // A function-local alias is never module-visible (tsc expands it).
+        if self.name_is_function_local_type_alias(ident) {
+            return true;
+        }
         self.current_file_declaration_requires_serialization_guard(ident, visited_names)
     }
 
