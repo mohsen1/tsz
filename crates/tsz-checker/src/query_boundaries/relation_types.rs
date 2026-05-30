@@ -297,6 +297,17 @@ impl RelationFailure {
                 target_param,
                 target_constraint,
             },
+            // The same-generic argument failure is rendered directly from the
+            // solver reason; this checker-facing classification only needs the
+            // failing argument pair (used for drift/heuristic inspection).
+            SubtypeFailureReason::TypeArgumentMismatch {
+                source_arg,
+                target_arg,
+                ..
+            } => Self::TypeMismatch {
+                source_type: source_arg,
+                target_type: target_arg,
+            },
         }
     }
 }

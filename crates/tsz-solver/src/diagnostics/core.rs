@@ -252,6 +252,24 @@ pub enum SubtypeFailureReason {
     /// target types come from the diagnostic context, so this variant carries
     /// no payload.
     AbstractConstructorAssignment,
+    /// Two applications of the **same generic target** (`C<A..>` vs `C<B..>`)
+    /// whose differing type **arguments** are the cause of the failure.
+    ///
+    /// tsc elaborates this by comparing the failing type argument directly,
+    /// emitting a single nested line (e.g. `Type 'number' is not assignable to
+    /// type 'string'.`) beneath the top-level TS2322/TS2345 message, with no
+    /// intermediate `Types of property 'x' are incompatible.` wrapper that a
+    /// structural-member walk would otherwise produce.
+    ///
+    /// `source_arg`/`target_arg` are the failing argument pair, already
+    /// oriented for the parameter's variance (for a contravariant parameter
+    /// these are the target/source arguments respectively). `nested_reason`
+    /// explains that argument relation and is rendered one level deeper.
+    TypeArgumentMismatch {
+        source_arg: TypeId,
+        target_arg: TypeId,
+        nested_reason: Box<Self>,
+    },
 }
 
 /// Diagnostic severity level.
@@ -575,6 +593,7 @@ impl SubtypeFailureReason {
             | Self::ParameterCountMismatch { .. }
             | Self::TooManyParameters { .. }
             | Self::IndexAccessTypeParameterMismatch { .. }
+            | Self::TypeArgumentMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
@@ -945,6 +964,23 @@ impl SubtypeFailureReason {
                     codes::ABSTRACT_CONSTRUCTOR_ASSIGNMENT,
                     vec![],
                 ))
+            }
+            Self::TypeArgumentMismatch {
+                source_arg,
+                target_arg,
+                nested_reason,
+            } => {
+                // Top-level TS2322 for the application pair, then the failing
+                // type argument relation directly beneath it. tsc does not emit
+                // a `Types of property` wrapper for same-generic argument
+                // mismatches, so the nested argument failure is the only
+                // elaboration line.
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                );
+                diag = diag.with_related(nested_reason.to_diagnostic(*source_arg, *target_arg));
+                diag
             }
         }
     }

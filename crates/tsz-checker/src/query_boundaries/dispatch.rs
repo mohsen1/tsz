@@ -8,6 +8,10 @@ pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::is_object_like_type(db, type_id)
 }
 
+pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_callable_type(db, type_id)
+}
+
 pub(crate) fn get_index_access_types(
     db: &dyn TypeDatabase,
     type_id: TypeId,

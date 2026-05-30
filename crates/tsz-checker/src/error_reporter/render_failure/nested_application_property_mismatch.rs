@@ -58,6 +58,25 @@ impl<'a> CheckerState<'a> {
         nested_base == enclosing_base
     }
 
+    fn same_generic_mismatch_keeps_application_top_level(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        fn structural_display_type(
+            db: &dyn tsz_solver::construction::TypeDatabase,
+            ty: TypeId,
+        ) -> bool {
+            crate::query_boundaries::dispatch::is_object_like_type(db, ty)
+                || crate::query_boundaries::dispatch::is_callable_type(db, ty)
+        }
+
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(target);
+        structural_display_type(self.ctx.types, source_eval)
+            || structural_display_type(self.ctx.types, target_eval)
+    }
+
     const fn nested_reason_is_plain_type_mismatch(
         reason: &tsz_solver::SubtypeFailureReason,
     ) -> bool {
@@ -531,6 +550,96 @@ impl<'a> CheckerState<'a> {
                 target_element,
                 nested_reason,
             );
+        }
+
+        diag
+    }
+
+    /// Render a same-generic type-argument mismatch (`C<A..>` vs `C<B..>`).
+    ///
+    /// Emits the top-level `Type 'C<A..>' is not assignable to type 'C<B..>'.`
+    /// line followed directly by the failing argument relation, with no
+    /// intermediate `Types of property 'x' are incompatible.` wrapper — tsc
+    /// elaborates same-generic argument failures straight into the differing
+    /// argument. Deeper argument failures (e.g. nested generic arguments) keep
+    /// elaborating through the structured `nested_reason`.
+    pub(super) fn render_type_argument_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_arg: TypeId,
+        target_arg: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+
+        let (source_str, target_str) = if depth == 0
+            && !self.same_generic_mismatch_keeps_application_top_level(source, target)
+        {
+            let (source_str, _) =
+                self.format_top_level_assignability_message_types_at(source, target, idx);
+            (
+                source_str,
+                self.format_type_for_assignability_message_skip_application_alias(target_arg),
+            )
+        } else if depth == 0 {
+            self.format_top_level_assignability_message_types_at(source, target, idx)
+        } else {
+            (
+                self.format_type_diagnostic(source),
+                self.format_type_diagnostic(target),
+            )
+        };
+        let base = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            file_name,
+            start,
+            length,
+            base,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+
+        // The failing argument relation is rendered as the immediate child of
+        // this line (no intermediate wrapper), so it sits at the current
+        // elaboration depth — one indent level beneath the application line.
+        if depth < 5 {
+            let (nested_source, nested_target) =
+                Self::nested_failure_display_types(nested_reason, source_arg, target_arg);
+            if Self::nested_reason_is_plain_type_mismatch(nested_reason) {
+                let source_str = self
+                    .format_type_for_assignability_message_skip_application_alias(nested_source);
+                let target_str = self
+                    .format_type_for_assignability_message_skip_application_alias(nested_target);
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start,
+                    length,
+                    message_text: format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    ),
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth: depth.min(u8::MAX as u32) as u8,
+                });
+            } else {
+                let nested_diag = self.render_failure_reason(
+                    nested_reason,
+                    nested_source,
+                    nested_target,
+                    idx,
+                    depth + 1,
+                );
+                Self::push_nested_chain(&mut diag, nested_diag, depth);
+            }
         }
 
         diag
