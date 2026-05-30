@@ -1,6 +1,6 @@
 //! Tests for type expression parsing in the parser.
 use crate::parser::syntax_kind_ext;
-use crate::parser::test_fixture::{parse_source, parse_source_named};
+use crate::parser::test_fixture::{assert_span, assert_span_on, parse_source, parse_source_named};
 
 #[test]
 fn parse_complex_type_expressions_have_no_errors() {
@@ -384,46 +384,6 @@ fn parse_type_predicate_does_not_overshoot_into_following_arrow() {
         syntax_kind_ext::TYPE_PREDICATE,
         "x is string",
     );
-}
-
-/// Assert the first node of `kind` at `expected_text` has the correct span.
-/// Error messages include the full source for debugging.
-fn assert_span_on(
-    parser: &crate::parser::ParserState,
-    source: &str,
-    kind: u16,
-    expected_text: &str,
-) {
-    let arena = &parser.arena;
-    let expected_start = source
-        .find(expected_text)
-        .unwrap_or_else(|| panic!("expected_text {expected_text:?} not found in {source:?}"));
-    let expected_end = expected_start + expected_text.len();
-
-    let mut found = false;
-    for i in 0..arena.len() {
-        let Some(node) = arena.get(crate::parser::NodeIndex(i as u32)) else {
-            continue;
-        };
-        if node.kind == kind && node.pos as usize == expected_start {
-            assert_eq!(
-                node.end as usize, expected_end,
-                "span mismatch for kind={kind} in {source:?}: got [{}..{}], expected [{}..{}] ({expected_text:?})",
-                node.pos, node.end, expected_start, expected_end
-            );
-            found = true;
-            break;
-        }
-    }
-    assert!(
-        found,
-        "no node of kind={kind} found at offset {expected_start} in {source:?}"
-    );
-}
-
-fn assert_span(source: &str, kind: u16, expected_text: &str) {
-    let (parser, _) = parse_source(source);
-    assert_span_on(&parser, source, kind, expected_text);
 }
 
 // --- composite type node span tests ---
