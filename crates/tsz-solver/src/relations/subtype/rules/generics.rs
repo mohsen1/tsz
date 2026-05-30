@@ -1479,6 +1479,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
+                // Any generic mapped type is always an object type and is therefore assignable to `{}`.
+                // Checked before the expensive homomorphic/index checks below (O(1)).
+                if is_empty_object_type(self.interner, target) {
+                    return SubtypeResult::True;
+                }
+
                 // Reverse homomorphic mapped type check:
                 // { [K in keyof T]+?: T[K] } (Partial<T>, Readonly<T>, etc.) is
                 // assignable to T. In tsc 6.0, homomorphic mapped types are

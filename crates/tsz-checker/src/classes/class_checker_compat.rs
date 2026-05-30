@@ -913,6 +913,9 @@ impl<'a> CheckerState<'a> {
                                 derived_prop_type,
                                 base_prop_type,
                                 *derived_member_idx,
+                            ) && !self.generic_method_override_is_valid_specialization(
+                                derived_prop_type,
+                                base_prop_type,
                             )
                         };
 
@@ -1808,6 +1811,9 @@ impl<'a> CheckerState<'a> {
                                 derived_method_type,
                                 base_method_type,
                                 *derived_member_idx,
+                            ) && !self.generic_method_override_is_valid_specialization(
+                                derived_method_type,
+                                base_method_type,
                             )
                         } else {
                             should_report_member_type_mismatch(
