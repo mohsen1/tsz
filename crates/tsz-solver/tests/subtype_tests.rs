@@ -26,3 +26,4 @@ include!("subtype_tests_parts/part_12.rs");
 include!("subtype_tests_parts/part_13.rs");
 include!("subtype_tests_parts/part_14.rs");
 include!("subtype_tests_parts/part_15.rs");
+include!("subtype_tests_parts/part_16.rs");

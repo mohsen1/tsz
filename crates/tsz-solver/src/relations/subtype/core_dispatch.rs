@@ -1758,6 +1758,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                         index_kind: "number",
                                         source_value_type: elem_type,
                                         target_value_type: num_idx.value_type,
+                                        nested_reason: None,
                                     },
                                 )
                             {

@@ -685,6 +685,73 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render an `IndexSignatureMismatch` failure.
+    ///
+    /// At `depth == 0` emits the TS2322 top-level message followed by
+    /// `"'{kind}' index signatures are incompatible."` and the value-type
+    /// nested chain. At deeper depths, emits the incompatibility message
+    /// directly and continues the chain.
+    pub(super) fn render_index_signature_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        index_kind: &str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let incompat_message = format_message(
+            diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+            &[index_kind],
+        );
+
+        let mut diag = if ctx.depth == 0 {
+            let (source_str, target_str) = self
+                .format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            let mut diag = Diagnostic::error(
+                ctx.file_name.clone(),
+                ctx.start,
+                ctx.length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            diag.related_information.push(DiagnosticRelatedInformation {
+                file: diag.file.clone(),
+                start: ctx.start,
+                length: ctx.length,
+                message_text: incompat_message,
+                category: DiagnosticCategory::Message,
+                code: diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                depth: 0,
+            });
+            diag
+        } else {
+            Diagnostic::error(
+                ctx.file_name.clone(),
+                ctx.start,
+                ctx.length,
+                incompat_message,
+                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+            )
+        };
+
+        if ctx.depth < 5 {
+            self.push_tuple_element_inner_failure(
+                &mut diag,
+                ctx.idx,
+                ctx.depth,
+                source_value_type,
+                target_value_type,
+                nested_reason,
+            );
+        }
+
+        diag
+    }
+
     /// Flatten a fully-rendered nested failure into `diag`'s related
     /// information: the nested diagnostic's own message line followed by its
     /// related chain. This is the shared shape every elaboration step uses to
