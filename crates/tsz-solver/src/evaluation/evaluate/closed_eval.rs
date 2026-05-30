@@ -4,8 +4,8 @@
 //! `PropertiesReduce<T,P> = { [K in keyof T]: Static<T[K], P> }`) re-evaluate the
 //! same closed subtrees thousands of times across the many fresh `TypeEvaluator`
 //! instances that instantiation and the checker's first/second passes spin up.
-//! This module memoizes the evaluation of *substitution-independent* nodes in a
-//! project-wide cache so that work is O(1) on repeat shapes.
+//! This module memoizes selected *substitution-independent* meta-operations in
+//! a project-wide cache so that work is O(1) on repeat shapes.
 //!
 //! Caching here can only change speed, never results, because of three gates:
 //!  - **Input gate**: the cached node contains no `TypeParameter`/`Infer`/
@@ -94,13 +94,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     ///   `Static<T[K], P> = (T & {params:P})['static']` re-evaluation fan-out and
     ///   carry no application display-alias provenance, so reusing their result
     ///   cannot change a user-facing alias.
-    /// - An `Application` is eligible unless its base resolves to a *bare*
-    ///   homomorphic mapped type (`{ [K in keyof T]: … }`, e.g.
-    ///   `Partial`/`Readonly`). The subtype checker has a dedicated homomorphic
-    ///   relation path that needs the structural mapped form; pre-evaluating and
-    ///   caching the expanded object changed assignability (`mappedTypes5`).
-    ///   User aliases whose body is a conditional/intersection/another
-    ///   application (`Static`, `PropertiesReduce`, `Evaluate`) stay eligible.
+    /// - `Application` itself is intentionally excluded. Application evaluation
+    ///   already has a dedicated cache keyed by `DefId`, expanded arguments, and
+    ///   `noUncheckedIndexedAccess`; caching the outer `TypeId` result here loses
+    ///   context needed by conditional/infer and JSX prop flows.
     /// - `Union`/`Intersection` are excluded: caching a normalized result can
     ///   shrink a cross-product so a later read no longer trips the `TS2590`
     ///   complexity limit (`templateLiteralTypes1`).
@@ -113,7 +110,6 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         match self.interner.lookup(type_id) {
             Some(TypeData::KeyOf(operand)) => self.is_index_object_cacheable(operand),
             Some(TypeData::IndexAccess(obj, _)) => self.is_index_object_cacheable(obj),
-            Some(TypeData::Application(_)) => self.is_application_body_non_mapped(type_id),
             _ => false,
         }
     }
