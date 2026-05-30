@@ -1052,6 +1052,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let tail_tuple = self.interner.tuple(tail);
                         self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
                     }
+                    // Constrain each fixed suffix target element against its matching source
+                    // element. The reversed loop above identified `trailing_count` pairs
+                    // (last-of-target with last-of-source, working backwards), but only used
+                    // them to compute where the middle slice ends. We must still propagate
+                    // the actual type candidates for those positions (e.g. `L` in `[H, ...Mid, L]`).
+                    for (s_suf, t_suf) in source
+                        .iter()
+                        .rev()
+                        .zip(target.iter().rev())
+                        .take(trailing_count)
+                    {
+                        self.constrain_types(ctx, var_map, s_suf.type_id, t_suf.type_id, priority);
+                    }
                     return;
                 }
                 let rest_elem_type = self.rest_element_type(t_elem.type_id);
