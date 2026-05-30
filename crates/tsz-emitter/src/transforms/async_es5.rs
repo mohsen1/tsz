@@ -147,6 +147,14 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.dynamic_import_promise_counter.get()
     }
 
+    pub fn set_catch_binding_ordinals(&mut self, ordinals: rustc_hash::FxHashMap<String, u32>) {
+        self.transformer.set_catch_binding_ordinals(ordinals);
+    }
+
+    pub fn take_catch_binding_ordinals(&self) -> rustc_hash::FxHashMap<String, u32> {
+        self.transformer.take_catch_binding_ordinals()
+    }
+
     pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
         self.transformer.set_downlevel_iteration(enabled);
     }

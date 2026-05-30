@@ -922,6 +922,8 @@ impl<'a> Printer<'a> {
         async_emitter.set_system_import_meta(self.in_system_execute_body);
         async_emitter.set_module_kind(self.ctx.outer_module_kind());
         async_emitter.set_dynamic_import_promise_counter(self.next_dynamic_import_promise_id);
+        async_emitter
+            .set_catch_binding_ordinals(std::mem::take(&mut self.next_catch_binding_ordinals));
         async_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         async_emitter.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
         // The generator body is nested inside `function () { ... }` in the __awaiter
@@ -959,6 +961,7 @@ impl<'a> Printer<'a> {
         self.ctx.destructuring_state.temp_var_counter = async_emitter.temp_var_counter();
         self.next_disposable_env_id = async_emitter.disposable_env_counter();
         self.next_dynamic_import_promise_id = async_emitter.dynamic_import_promise_counter();
+        self.next_catch_binding_ordinals = async_emitter.take_catch_binding_ordinals();
         for generated_name in async_emitter.take_generated_disposable_env_names() {
             self.generated_temp_names.insert(generated_name);
         }
