@@ -33,7 +33,7 @@ mod class_temp_reservations;
 mod comments;
 mod core;
 mod core_setup;
-mod declarations;
+pub(crate) mod declarations;
 mod es5;
 mod expressions;
 mod function_parameters;

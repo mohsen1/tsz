@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod block_scoped_hoist_void_zero_tests;
 mod const_enums;
 mod emit;
 mod import_helpers_class_scan;

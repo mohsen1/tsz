@@ -11,6 +11,9 @@ pub(super) struct NamespaceIifeContext<'a> {
     pub(super) commonjs_export_names: &'a [Cow<'static, str>],
     pub(super) system_export_names: &'a [Cow<'static, str>],
     pub(super) should_declare_var: bool,
+    /// Emit the hoisted `var name = void 0;` form for a block-scoped namespace
+    /// (only meaningful when the declaration keyword is `var`).
+    pub(super) hoist_var_void_zero: bool,
     pub(super) default_export_merge: bool,
     pub(super) parent_name: Option<&'a str>,
     pub(super) param_name: Option<&'a str>,
@@ -190,6 +193,12 @@ impl<'a> IRPrinter<'a> {
             self.write(decl_keyword);
             self.write(" ");
             self.write(current_name);
+            // Block-scoped namespaces downleveled to `var` reset the hoisted
+            // binding to `undefined` so a stale value cannot leak across re-entry
+            // to the enclosing block — matching `tsc`'s `var name = void 0;`.
+            if context.hoist_var_void_zero && decl_keyword == "var" {
+                self.write(" = void 0");
+            }
             self.write(";");
             self.write_line();
             // Need indent after the newline from var declaration
@@ -282,6 +291,9 @@ impl<'a> IRPrinter<'a> {
                     commonjs_export_names: context.commonjs_export_names,
                     system_export_names: &[],
                     should_declare_var: true,
+                    // Nested levels of a dotted namespace sit inside the parent
+                    // IIFE (a scope top), so they never reset their binding.
+                    hoist_var_void_zero: false,
                     default_export_merge: false,
                     parent_name: None,
                     param_name: context.param_name,
