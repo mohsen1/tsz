@@ -17,6 +17,7 @@ use crate::types::{
     TypeId, TypeListId, TypeParamInfo,
 };
 use rustc_hash::FxHashSet;
+use tsz_common::Atom;
 
 /// Returns the declared `this` type only when it constrains the receiver. Per
 /// tsc's `checkApplicableSignature` gate (`thisType !== voidType`, source of
@@ -36,6 +37,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        // Collect the TypeParam TypeIds that belong to this function's own signature.
+        // A TypeParam appearing in an arg type is only a genuine collision if it is
+        // FOREIGN (comes from an outer scope) — not if it is the func's own TypeParam
+        // used in an arg that was contextually typed from this function's parameter
+        // types (e.g., a lambda `y => y.toString()` whose param `y: T` was assigned
+        // the contextual type `T` from `f: (x: T) => R`).
+        //
+        // The same pattern is used by `overload_signature_for_inference` in the checker.
+        let own_tp_names: FxHashSet<Atom> = func.type_params.iter().map(|tp| tp.name).collect();
+        let own_type_param_ids: FxHashSet<TypeId> = func
+            .params
+            .iter()
+            .map(|p| p.type_id)
+            .chain(std::iter::once(func.return_type))
+            .chain(func.this_type)
+            .flat_map(|ty| {
+                crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
+            })
+            .filter(|&ref_ty| {
+                crate::type_param_info(self.interner.as_type_database(), ref_ty)
+                    .is_some_and(|info| own_tp_names.contains(&info.name))
+            })
+            .collect();
+
         let collides = func.type_params.iter().any(|tp| {
             arg_types
                 .iter()
@@ -44,6 +69,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
                 })
                 .any(|referenced| {
+                    if own_type_param_ids.contains(&referenced) {
+                        return false;
+                    }
                     crate::type_param_info(self.interner.as_type_database(), referenced)
                         .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
                 })
