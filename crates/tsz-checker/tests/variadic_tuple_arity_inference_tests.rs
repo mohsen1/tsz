@@ -167,3 +167,26 @@ const bad: { head: string; mid: [string]; last: boolean } = r;
         "sandwich: wrong mid-type should fail",
     );
 }
+
+#[test]
+fn method_this_inference_does_not_treat_second_rest_as_fixed_suffix() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+interface Desc<A extends unknown[], T> {
+    readonly f: (...args: A) => T;
+    bind<T extends unknown[], U extends unknown[], R>(
+        this: Desc<[...T, ...U], R>,
+        ...args: T
+    ): Desc<[...U], R>;
+}
+
+declare const a: Desc<[string, number, boolean], object>;
+const b = a.bind("", 1);
+const ok: Desc<[boolean], object> = b;
+"#,
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "consecutive variadic rest segments should preserve the remaining suffix, got {diagnostics:#?}",
+    );
+}

@@ -49,16 +49,77 @@ impl<'a> InferenceContext<'a> {
         let prefix_count = source_prefix.min(target_prefix);
 
         // How many fixed elements to align from the back.
+        // Variadic rest segments after the first rest are still variable-length
+        // tuple parts; they must not be treated as one fixed suffix element.
+        let source_trailing_fixed = source_list.iter().rev().take_while(|e| !e.rest).count();
+        let target_trailing_fixed = target_list.iter().rev().take_while(|e| !e.rest).count();
+
         // When source has no rest, all elements not consumed by the prefix are
         // available for target's suffix. When source has a rest, only the source
-        // elements after the rest position are available.
-        let available_for_suffix = if let Some(src_rest) = source_rest_idx {
-            source_list.len() - src_rest - 1
+        // fixed elements after the last rest position are available.
+        let available_for_suffix = if source_rest_idx.is_some() {
+            source_trailing_fixed
         } else {
             source_list.len().saturating_sub(prefix_count)
         };
-        let suffix_count =
-            available_for_suffix.min(target_rest_idx.map_or(0, |i| target_list.len() - i - 1));
+        let suffix_count = available_for_suffix.min(target_trailing_fixed);
+
+        if let Some(target_rest_pos) = target_rest_idx
+            && let Some(next_rest_offset) = target_list[target_rest_pos + 1..]
+                .iter()
+                .position(|elem| elem.rest)
+            && let Some(prefix_len) =
+                self.fixed_tuple_candidate_len_for_type(target_list[target_rest_pos].type_id)
+        {
+            let next_rest_pos = target_rest_pos + 1 + next_rest_offset;
+            let prefix_end = target_rest_pos.saturating_add(prefix_len);
+            if prefix_end <= source_list.len() {
+                for i in 0..target_rest_pos {
+                    self.infer_from_types(
+                        source_list[i].type_id,
+                        target_list[i].type_id,
+                        priority,
+                    )?;
+                }
+
+                let suffix_count = source_trailing_fixed.min(
+                    target_list[next_rest_pos + 1..]
+                        .iter()
+                        .rev()
+                        .take_while(|elem| !elem.rest)
+                        .count(),
+                );
+                let end_index = source_list.len().saturating_sub(suffix_count);
+                if prefix_end <= end_index {
+                    for (s, t) in source_list
+                        .iter()
+                        .rev()
+                        .zip(target_list.iter().rev())
+                        .take(suffix_count)
+                    {
+                        self.infer_from_types(s.type_id, t.type_id, priority)?;
+                    }
+
+                    let middle = &source_list[prefix_end..end_index];
+                    let next_rest_type = target_list[next_rest_pos].type_id;
+                    if middle.len() == 1 && middle[0].rest {
+                        self.infer_from_types(middle[0].type_id, next_rest_type, priority)?;
+                    } else {
+                        let middle_tuple = self.interner.tuple(middle.to_vec());
+                        self.infer_from_types(middle_tuple, next_rest_type, priority)?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        if let Some(target_rest_pos) = target_rest_idx
+            && target_list[target_rest_pos + 1..]
+                .iter()
+                .any(|elem| elem.rest)
+        {
+            return Ok(());
+        }
 
         // Prefix inference.
         for i in 0..prefix_count {

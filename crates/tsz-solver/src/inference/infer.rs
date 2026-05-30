@@ -445,6 +445,31 @@ impl<'a> InferenceContext<'a> {
             .map(|(_, v, _)| *v)
     }
 
+    pub(crate) fn fixed_tuple_candidate_len_for_type(&mut self, ty: TypeId) -> Option<usize> {
+        let name = match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.name,
+            _ => return None,
+        };
+        let var = self.find_type_param(name)?;
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .chain(info.contra_candidates.iter())
+            .filter_map(|candidate| {
+                let TypeData::Tuple(list_id) = self.interner.lookup(candidate.type_id)? else {
+                    return None;
+                };
+                let elements = self.interner.tuple_list(list_id);
+                if elements.iter().any(|element| element.rest) {
+                    return None;
+                }
+                Some((candidate.priority, elements.len()))
+            })
+            .min_by_key(|(priority, len)| (*priority, *len))
+            .map(|(_, len)| len)
+    }
+
     /// Record the declared `extends` constraint for an inference variable.
     pub fn set_declared_constraint(&mut self, var: InferenceVar, constraint: TypeId) {
         self.declared_constraints.insert(var, constraint);

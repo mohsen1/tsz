@@ -1006,10 +1006,84 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
                 if var_map.contains_key(&t_elem.type_id) {
+                    if let Some(next_rest_offset) =
+                        target[i + 1..].iter().position(|tail_elem| tail_elem.rest)
+                        && let Some(prefix_len) =
+                            ctx.fixed_tuple_candidate_len_for_type(t_elem.type_id)
+                    {
+                        let next_rest_index = i + 1 + next_rest_offset;
+                        let prefix_end = i.saturating_add(prefix_len);
+                        if prefix_end <= source.len() {
+                            let trailing_count = source
+                                .iter()
+                                .rev()
+                                .take_while(|elem| !elem.rest)
+                                .count()
+                                .min(
+                                    target[next_rest_index + 1..]
+                                        .iter()
+                                        .rev()
+                                        .take_while(|elem| !elem.rest)
+                                        .count(),
+                                );
+                            let end_index = source.len().saturating_sub(trailing_count);
+                            if prefix_end <= end_index {
+                                let tail = source[prefix_end..end_index]
+                                    .iter()
+                                    .map(|s_elem| TupleElement {
+                                        type_id: s_elem.type_id,
+                                        name: s_elem.name,
+                                        optional: s_elem.optional,
+                                        rest: s_elem.rest,
+                                    })
+                                    .collect::<Vec<_>>();
+                                let next_rest = &target[next_rest_index];
+                                if tail.len() == 1 && tail[0].rest {
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        tail[0].type_id,
+                                        next_rest.type_id,
+                                        priority,
+                                    );
+                                } else {
+                                    let tail_tuple = self.interner.tuple(tail);
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        tail_tuple,
+                                        next_rest.type_id,
+                                        priority,
+                                    );
+                                }
+                                for (s_suf, t_suf) in source
+                                    .iter()
+                                    .rev()
+                                    .zip(target.iter().rev())
+                                    .take(trailing_count)
+                                {
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        s_suf.type_id,
+                                        t_suf.type_id,
+                                        priority,
+                                    );
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    if target[i + 1..].iter().any(|tail_elem| tail_elem.rest) {
+                        return;
+                    }
                     let tail = &target[i + 1..];
                     let mut trailing_count = 0usize;
                     let mut source_index = source.len();
                     for tail_elem in tail.iter().rev() {
+                        if tail_elem.rest {
+                            break;
+                        }
                         if source_index <= i {
                             break;
                         }
