@@ -360,6 +360,13 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
 
+        // A `this` reference inside the super-call arguments (`super(this)`)
+        // forces tsc to materialize the captured `_this` form
+        // (`var _this = _super.call(this, _this) || this; return _this;`) so the
+        // argument can thread the captured receiver. The inline tail-super-return
+        // form cannot capture those arguments, so disable it in that case.
+        let super_args_reference_this = super_stmt_idx
+            .is_some_and(|super_idx| self.super_call_arguments_reference_this(super_idx));
         let can_use_tail_super_return = super_stmt_idx.is_some()
             && stmts_after_super == 0
             && instance_props.is_empty()
@@ -369,7 +376,8 @@ impl<'a> ES5ClassTransformer<'a> {
             && !has_auto_accessors
             && !has_private_accessors
             && !needs_pre_super_this_capture
-            && !needs_this_capture;
+            && !needs_this_capture
+            && !super_args_reference_this;
 
         if can_use_tail_super_return {
             let mut prev_stmt_end = body_node.pos;
@@ -1079,6 +1087,30 @@ impl<'a> ES5ClassTransformer<'a> {
             return (callee.kind == SyntaxKind::SuperKeyword as u16).then_some(current);
         }
         None
+    }
+
+    /// Whether any argument of the super-call statement contains a `this`
+    /// keyword reference (respecting lexical-`this` boundaries). When true, an
+    /// ES5 derived constructor must capture `this` into `_this` so the argument
+    /// threads the captured receiver instead of the raw, not-yet-initialized
+    /// `this`.
+    fn super_call_arguments_reference_this(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(call_idx) = self.root_super_call_from_statement(stmt_idx) else {
+            return false;
+        };
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return false;
+        };
+        let Some(call) = self.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let Some(ref call_args) = call.arguments else {
+            return false;
+        };
+        call_args
+            .nodes
+            .iter()
+            .any(|&arg_idx| contains_this_reference(self.arena, arg_idx))
     }
 
     fn is_parenthesized_root_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
