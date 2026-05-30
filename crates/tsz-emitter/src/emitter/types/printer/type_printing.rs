@@ -405,7 +405,11 @@ impl<'a> TypePrinter<'a> {
     pub(crate) fn print_optional_param_type(&self, type_id: TypeId) -> String {
         let display_type = self.optional_param_display_type(type_id);
         let text = self.print_type(display_type);
-        if self.type_param_scope_contains_name(&text) {
+        // Re-add `| undefined` only when `optional_param_display_type` left the
+        // type unchanged AND the printed text is a bare type-parameter name.
+        // When the display type differs from the input (i.e. `| undefined` was
+        // already stripped from a synthesized union), we must NOT re-add it.
+        if display_type == type_id && self.type_param_scope_contains_name(&text) {
             format!("{text} | undefined")
         } else {
             text
