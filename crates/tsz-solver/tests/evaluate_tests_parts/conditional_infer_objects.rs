@@ -1248,7 +1248,11 @@ fn test_conditional_infer_optional_property_missing_object() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::UNDEFINED);
+    // `{}` matches `{ a?: infer R }` (the optional `a` is simply absent), so the
+    // conditional takes its true branch. `a` is absent in the source, so it
+    // contributes no inference candidate; an unconstrained `R` therefore defaults
+    // to `unknown` (tsc's `getInferredType`), not `undefined`.
+    assert_eq!(result, TypeId::UNKNOWN);
 }
 
 #[test]
