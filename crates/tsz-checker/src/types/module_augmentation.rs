@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .wildcard_reexports_for_file(aug_target_binder, aug_target_file_name)
                     .is_some_and(|sources| {
-                        sources.iter().any(|src| {
+                        sources.iter().any(|(src, _is_type_only)| {
                             self.ctx
                                 .resolve_import_target_from_file(aug_target_idx, src)
                                 == Some(source_idx)

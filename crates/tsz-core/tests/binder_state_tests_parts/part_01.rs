@@ -1000,15 +1000,15 @@ export * from './moduleC';
     );
 
     assert!(
-        reexports.contains(&"./moduleA".to_string()),
+        reexports.iter().any(|(m, _)| m == "./moduleA"),
         "Should re-export from ./moduleA"
     );
     assert!(
-        reexports.contains(&"./moduleB".to_string()),
+        reexports.iter().any(|(m, _)| m == "./moduleB"),
         "Should re-export from ./moduleB"
     );
     assert!(
-        reexports.contains(&"./moduleC".to_string()),
+        reexports.iter().any(|(m, _)| m == "./moduleC"),
         "Should re-export from ./moduleC"
     );
 }
@@ -1041,8 +1041,8 @@ export * from './wildcard2';
     );
     let wildcards = wildcards.unwrap();
     assert_eq!(wildcards.len(), 2, "Should have 2 wildcard re-exports");
-    assert!(wildcards.contains(&"./wildcard1".to_string()));
-    assert!(wildcards.contains(&"./wildcard2".to_string()));
+    assert!(wildcards.iter().any(|(m, _)| m == "./wildcard1"));
+    assert!(wildcards.iter().any(|(m, _)| m == "./wildcard2"));
 
     // Check named re-exports
     let named = binder.reexports.get("mixed.ts");
@@ -1092,7 +1092,10 @@ fn test_export_resolution_multiple_wildcards() {
     // Setup index.ts to re-export from both
     Arc::make_mut(&mut binder.wildcard_reexports).insert(
         "./index".to_string(),
-        vec!["./moduleA".to_string(), "./moduleB".to_string()],
+        vec![
+            ("./moduleA".to_string(), false),
+            ("./moduleB".to_string(), false),
+        ],
     );
 
     // Test resolution: funcA should be found via index -> moduleA

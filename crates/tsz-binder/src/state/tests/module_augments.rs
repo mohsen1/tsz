@@ -35,10 +35,6 @@ fn wildcard_reexport_resolution() {
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./b".to_string())
         .or_default()
-        .push("./a".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./b".to_string())
-        .or_default()
         .push(("./a".to_string(), false));
 
     let resolved = binder.resolve_import_if_needed_public("./b", "Widget");
@@ -58,18 +54,10 @@ fn reexport_cycle_does_not_hang() {
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./a".to_string())
         .or_default()
-        .push("./b".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./a".to_string())
-        .or_default()
         .push(("./b".to_string(), false));
 
     // ./b re-exports from ./a (cycle!)
     Arc::make_mut(&mut binder.wildcard_reexports)
-        .entry("./b".to_string())
-        .or_default()
-        .push("./a".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./b".to_string())
         .or_default()
         .push(("./a".to_string(), false));

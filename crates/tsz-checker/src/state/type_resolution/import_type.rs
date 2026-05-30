@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .cloned();
             if let Some(wildcard_sources) = wildcards {
-                for source_module in &wildcard_sources {
+                for (source_module, _is_type_only) in &wildcard_sources {
                     let reexport_target_idx = self
                         .ctx
                         .resolve_import_target_from_file_with_mode(

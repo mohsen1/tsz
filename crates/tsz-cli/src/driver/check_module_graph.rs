@@ -115,30 +115,19 @@ pub(super) fn propagate_module_export_maps(
         if let Some(exports) = program.module_exports.get(target_file_name).cloned() {
             Arc::make_mut(&mut binder.module_exports).insert(current_specifier.clone(), exports);
         }
-        if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
+        if let Some(wildcards) = program.wildcard_reexports.get(target_file_name) {
             Arc::make_mut(&mut binder.wildcard_reexports)
                 .insert(current_specifier.clone(), wildcards.clone());
-        }
-        if let Some(type_only_flags) = program
-            .wildcard_reexports_type_only
-            .get(target_file_name)
-            .cloned()
-        {
-            Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-                .insert(current_specifier.clone(), type_only_flags);
-        }
-        if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
-            Arc::make_mut(&mut binder.reexports).insert(current_specifier.clone(), reexports);
-        }
-
-        if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {
-            for source_module in source_modules {
+            for (source_module, _is_type_only) in wildcards {
                 if let Some(&source_target_idx) =
                     resolved_module_paths.get(&(current_target_idx, source_module.clone()))
                 {
-                    worklist.push((source_module, source_target_idx));
+                    worklist.push((source_module.clone(), source_target_idx));
                 }
             }
+        }
+        if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
+            Arc::make_mut(&mut binder.reexports).insert(current_specifier.clone(), reexports);
         }
 
         // Also follow named re-exports: `export { X } from './other'`

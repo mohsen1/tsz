@@ -30,7 +30,7 @@ use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::state::{
     BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap, SymToDeclIndicesMap,
-    WildcardReexportsMap, WildcardReexportsTypeOnlyMap,
+    WildcardReexportsMap,
 };
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,

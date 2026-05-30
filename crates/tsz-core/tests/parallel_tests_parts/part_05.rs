@@ -561,7 +561,6 @@ var e: Date = c.b();
                 .clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
-            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: std::sync::Arc::clone(&file1_bound.symbol_arenas),
             declaration_arenas,
             sym_to_decl_indices,

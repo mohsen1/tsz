@@ -141,9 +141,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            for source_module in source_modules {
+            for (source_module, _) in source_modules {
                 let normalized_source_module = self.strip_ts_extensions(source_module);
-                let effective_source_module = if normalized_source_module != *source_module {
+                let effective_source_module = if normalized_source_module != source_module.as_str()
+                {
                     normalized_source_module.as_str()
                 } else {
                     source_module.as_str()

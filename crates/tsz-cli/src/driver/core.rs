@@ -2965,7 +2965,6 @@ fn build_program_with_cache(
                     augmentation_target_modules: Default::default(),
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
-                    wildcard_reexports_type_only: Default::default(),
                     lib_binders: std::sync::Arc::new(Vec::new()),
                     lib_arenas: Vec::new(),
                     lib_symbol_ids: Default::default(),

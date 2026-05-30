@@ -747,9 +747,7 @@ impl BinderState {
 
         // Check for wildcard re-exports: `export * from 'bar'`
         // A module can have multiple wildcard re-exports, check all of them.
-        if let Some(source_modules) = self.wildcard_reexports.get(module_specifier) {
-            let source_type_only_flags = self.wildcard_reexports_type_only.get(module_specifier);
-
+        if let Some(entries) = self.wildcard_reexports.get(module_specifier) {
             // When the caller is in value context (`is_type_only = false`), a
             // type-only path found in one wildcard source must not shadow a
             // VALUE export of the same name from a later wildcard source.
@@ -763,11 +761,7 @@ impl BinderState {
             // if no value export is found from any subsequent wildcard source.
             let mut type_only_fallback: Option<(SymbolId, bool)> = None;
 
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let source_is_type_only = source_type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-
+            for (source_module, source_is_type_only) in entries {
                 debug!(
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}' (type_only={})",
                     export_name, module_specifier, source_module, source_is_type_only
@@ -775,7 +769,7 @@ impl BinderState {
                 if let Some(result) = self.resolve_import_with_reexports_inner_type_only(
                     source_module,
                     export_name,
-                    is_type_only || source_is_type_only,
+                    is_type_only || *source_is_type_only,
                     visited,
                 ) {
                     // When in a type-only chain any match is fine; in value

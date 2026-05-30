@@ -191,8 +191,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
-            let source_modules = source_modules.clone();
-            for source_module in &source_modules {
+            for (source_module, _is_type_only) in source_modules {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
@@ -274,8 +273,7 @@ impl<'a> CheckerState<'a> {
 
         // Wildcard re-exports (recursive — includes both value and type-only)
         if let Some(source_modules) = binder.wildcard_reexports.get(&file_name) {
-            let source_modules = source_modules.clone();
-            for source_module in &source_modules {
+            for (source_module, _is_type_only) in source_modules {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)

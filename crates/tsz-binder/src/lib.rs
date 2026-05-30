@@ -25,5 +25,6 @@ pub use state::{
     BinderOptions, BinderState, CrossFileNodeSymbols, DeclarationArenaMap, FileFeatures,
     FileReexports, FileReexportsMap, GlobalAugmentation, LibContext, ModuleAugmentation,
     ReexportTarget, SemanticDefEntry, SemanticDefKind, SymToDeclIndicesMap, ValidationError,
+    WildcardReexportsMap,
 };
 pub use symbols::{StableLocation, Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};

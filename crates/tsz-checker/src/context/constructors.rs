@@ -256,7 +256,6 @@ impl<'a> CheckerContext<'a> {
             global_file_name_index: None,
             program_reexports: None,
             program_wildcard_reexports: None,
-            program_wildcard_reexports_type_only: None,
             program_module_exports: None,
             program_cross_file_node_symbols: None,
             program_alias_partners: None,

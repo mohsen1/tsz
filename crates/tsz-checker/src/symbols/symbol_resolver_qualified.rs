@@ -1470,7 +1470,7 @@ impl<'a> CheckerState<'a> {
             let mut found_result: Option<SymbolId> = None;
             let mut found_count = 0;
 
-            for source_module in source_modules {
+            for (source_module, _is_type_only) in source_modules {
                 if let Some(sym_id) = self.resolve_reexported_member_symbol_inner(
                     source_module,
                     member_name,

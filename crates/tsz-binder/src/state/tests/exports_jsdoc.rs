@@ -525,26 +525,14 @@ fn resolves_wildcard_type_only_reexports_with_provenance() {
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./b".to_string())
         .or_default()
-        .push("./a".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./b".to_string())
-        .or_default()
         .push(("./a".to_string(), true));
 
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./c".to_string())
         .or_default()
-        .push("./b".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./c".to_string())
-        .or_default()
         .push(("./b".to_string(), false));
 
     Arc::make_mut(&mut binder.wildcard_reexports)
-        .entry("./d".to_string())
-        .or_default()
-        .push("./a".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./d".to_string())
         .or_default()
         .push(("./a".to_string(), false));
@@ -1366,5 +1354,106 @@ fn clear_resolution_caches_drops_type_only_cache() {
     assert_eq!(
         binder.resolve_import_with_reexports_type_only("./entry", "Widget"),
         Some((leaf_sym, false))
+    );
+}
+
+#[test]
+fn type_alias_chain_through_value_wildcard_is_type_only() {
+    // `export type * from './a'` in ./b (type-only wildcard)
+    // `export * from './b'` in ./c (value wildcard — but source is type-only)
+    // Symbols reaching ./c from ./a through ./b should remain type-only because
+    // the type-only flag is transitively preserved when traversing chains.
+    let mut binder = BinderState::new();
+
+    let x_sym = binder.symbols.alloc(symbol_flags::CLASS, "X".to_string());
+    let mut a_exports = SymbolTable::new();
+    a_exports.set("X".to_string(), x_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
+
+    // ./b re-exports ./a via `export type *` (type-only)
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./b".to_string())
+        .or_default()
+        .push(("./a".to_string(), true));
+
+    // ./c re-exports ./b via `export *` (value wildcard, not type-only)
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./c".to_string())
+        .or_default()
+        .push(("./b".to_string(), false));
+
+    let (resolved, is_type_only) = binder
+        .resolve_import_with_reexports_type_only("./c", "X")
+        .expect("expected X to resolve through ./b -> ./a");
+    assert_eq!(resolved, x_sym);
+    assert!(
+        is_type_only,
+        "X should be type-only because ./b uses `export type *`"
+    );
+}
+
+#[test]
+fn explicit_type_only_wildcard_marks_exports_type_only() {
+    // `export type * from './a'` should mark all its exports as type-only,
+    // regardless of the name chosen for symbols or the order of declarations.
+    let mut binder = BinderState::new();
+
+    let foo_sym = binder
+        .symbols
+        .alloc(symbol_flags::INTERFACE, "Foo".to_string());
+    let bar_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Bar".to_string());
+    let mut a_exports = SymbolTable::new();
+    a_exports.set("Foo".to_string(), foo_sym);
+    a_exports.set("Bar".to_string(), bar_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
+
+    // ./b uses `export type * from './a'` — is_type_only = true
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./b".to_string())
+        .or_default()
+        .push(("./a".to_string(), true));
+
+    let (resolved_foo, foo_type_only) = binder
+        .resolve_import_with_reexports_type_only("./b", "Foo")
+        .expect("Foo should resolve via type-only wildcard");
+    assert_eq!(resolved_foo, foo_sym);
+    assert!(foo_type_only, "Foo should be type-only via `export type *`");
+
+    let (resolved_bar, bar_type_only) = binder
+        .resolve_import_with_reexports_type_only("./b", "Bar")
+        .expect("Bar should resolve via type-only wildcard");
+    assert_eq!(resolved_bar, bar_sym);
+    assert!(bar_type_only, "Bar should be type-only via `export type *`");
+}
+
+#[test]
+fn value_wildcard_overrides_type_only_wildcard_for_same_source() {
+    // When a source module appears in both `export type *` and `export *`,
+    // the merge reducer produces a single de-duplicated entry with
+    // is_type_only=false (value re-export wins). This test verifies that
+    // a binder with that already-reduced state resolves symbols as values.
+    let mut binder = BinderState::new();
+
+    let val_sym = binder.symbols.alloc(symbol_flags::CLASS, "Val".to_string());
+    let mut a_exports = SymbolTable::new();
+    a_exports.set("Val".to_string(), val_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
+
+    // After merging `export type * from './a'` and `export * from './a'`,
+    // the reducer leaves a single entry with is_type_only=false.
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./b".to_string())
+        .or_default()
+        .push(("./a".to_string(), false)); // value wins after deduplication
+
+    let (resolved, is_type_only) = binder
+        .resolve_import_with_reexports_type_only("./b", "Val")
+        .expect("Val should resolve via value wildcard");
+    assert_eq!(resolved, val_sym);
+    assert!(
+        !is_type_only,
+        "Val should not be type-only because the value `export *` won deduplication"
     );
 }

@@ -160,7 +160,6 @@ impl BinderState {
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
-            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
@@ -231,7 +230,6 @@ impl BinderState {
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports).clear();
-        Arc::make_mut(&mut self.wildcard_reexports_type_only).clear();
         self.clear_resolution_caches();
         Arc::make_mut(&mut self.shorthand_ambient_modules).clear();
         self.module_export_equals_non_module.clear();
@@ -400,7 +398,6 @@ impl BinderState {
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
-            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
@@ -463,7 +460,6 @@ impl BinderState {
             module_declaration_exports_publicly,
             reexports,
             wildcard_reexports,
-            wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
             sym_to_decl_indices,
@@ -526,7 +522,6 @@ impl BinderState {
             module_exports,
             reexports,
             wildcard_reexports,
-            wildcard_reexports_type_only,
             resolved_export_cache: Default::default(),
             resolved_export_type_only_cache: Default::default(),
             resolved_identifier_cache: Default::default(),

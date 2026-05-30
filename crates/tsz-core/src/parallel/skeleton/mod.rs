@@ -452,15 +452,11 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
 
     // Wildcard re-exports
     let mut wildcard_reexports = Vec::new();
-    if let Some(sources) = result.wildcard_reexports.get(&result.file_name) {
-        let type_only_entries = result.wildcard_reexports_type_only.get(&result.file_name);
-        for (i, source_module) in sources.iter().enumerate() {
-            let type_only = type_only_entries
-                .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
-                .unwrap_or(false);
+    if let Some(entries) = result.wildcard_reexports.get(&result.file_name) {
+        for (source_module, type_only) in entries {
             wildcard_reexports.push(SkeletonWildcardReexport {
                 source_module: source_module.clone(),
-                type_only,
+                type_only: *type_only,
             });
         }
     }
