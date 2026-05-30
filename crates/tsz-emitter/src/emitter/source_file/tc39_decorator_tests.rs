@@ -1537,3 +1537,80 @@ class D {
         "ES5 TC39 public accessors should sink decorator/proKey assignments into computed Object.defineProperty keys and use bracket access for computed names.\nOutput:\n{output}"
     );
 }
+
+/// Structural rule: when the ES-decorators transform synthesizes a constructor
+/// for a *derived* class (one with an `extends` heritage clause) that has no
+/// explicit constructor but needs to run member initializers, tsc emits a
+/// zero-parameter constructor whose `super` call forwards the implicit
+/// `arguments` object (`constructor() { super(...arguments); }`), not an
+/// explicit rest parameter (`constructor(...args) { super(...args); }`).
+///
+/// This test varies the base/derived class, decorator, and member names to
+/// prove the behavior is keyed on the structural shape (derived + decorated
+/// member + synthesized ctor), not on a particular spelling.
+#[test]
+fn tc39_synthesized_ctor_for_derived_decorated_class_forwards_arguments_es2022() {
+    let source = "\
+declare var trace: any;
+class Base {}
+class Derived extends Base {
+    @trace
+    run() {}
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES2022,
+            import_helpers: false,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("constructor() {") && output.contains("super(...arguments);"),
+        "Synthesized ctor for a derived decorated class must be zero-parameter and forward `...arguments`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)") && !output.contains("super(...args)"),
+        "Synthesized ctor must not introduce an explicit rest parameter.\nOutput:\n{output}"
+    );
+}
+
+/// Same structural rule under a different target (es2015) and a fresh set of
+/// names (different base/derived/decorator/member identifiers) so a fix that
+/// matched a particular spelling would not satisfy both tests.
+#[test]
+fn tc39_synthesized_ctor_for_derived_decorated_class_forwards_arguments_es2015() {
+    let source = "\
+declare var log: any;
+class Animal {}
+class Dog extends Animal {
+    @log
+    bark() {}
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES2015,
+            import_helpers: false,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("super(...arguments);"),
+        "Synthesized ctor for a derived decorated class (es2015) must forward `...arguments`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)") && !output.contains("super(...args)"),
+        "Synthesized ctor (es2015) must not introduce an explicit rest parameter.\nOutput:\n{output}"
+    );
+}
