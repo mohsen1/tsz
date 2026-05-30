@@ -147,6 +147,81 @@ fn strip_type_only_content_drops_type_alias_block_multiline() {
     assert!(contains_identifier_occurrence(&stripped, "z"));
 }
 
+// Issue: a `type X<...> = {...}` whose `<...>` type-parameter header spans
+// multiple lines must be fully stripped. The header continuation lines
+// previously leaked into the haystack because the stripper only entered skip
+// mode on a brace-balanced opening line.
+#[test]
+fn strip_type_only_content_drops_multiline_type_param_header() {
+    let src = "type Wrapper<\n  TKey,\n  TVal\n> = {\n  k: TKey;\n  v: TVal;\n};\nconst z = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Wrapper"));
+    // Type-parameter names and body identifiers in the multi-line header/body
+    // must NOT survive as value usages.
+    assert!(!contains_identifier_occurrence(&stripped, "TKey"));
+    assert!(!contains_identifier_occurrence(&stripped, "TVal"));
+    assert!(!contains_identifier_occurrence(&stripped, "k"));
+    assert!(contains_identifier_occurrence(&stripped, "z"));
+}
+
+// Renamed bound variables prove the fix keys on structure, not on the names
+// `T`/`U`/`Wrapper`.
+#[test]
+fn strip_type_only_content_drops_multiline_type_param_header_renamed() {
+    let src = "type Box<\n  A,\n  B\n> = {\n  first: A;\n  second: B;\n};\nconst kept = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Box"));
+    assert!(!contains_identifier_occurrence(&stripped, "A"));
+    assert!(!contains_identifier_occurrence(&stripped, "B"));
+    assert!(!contains_identifier_occurrence(&stripped, "first"));
+    assert!(contains_identifier_occurrence(&stripped, "kept"));
+}
+
+// An `interface` with a multi-line type-parameter header must also be fully
+// stripped (same header-spanning shape, different declaration keyword).
+#[test]
+fn strip_type_only_content_drops_multiline_interface_header() {
+    let src = "interface Holder<\n  Item\n> {\n  value: Item;\n}\nconst z = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Holder"));
+    assert!(!contains_identifier_occurrence(&stripped, "Item"));
+    assert!(!contains_identifier_occurrence(&stripped, "value"));
+    assert!(contains_identifier_occurrence(&stripped, "z"));
+}
+
+// Negative (over-consume guard): a brace-less single-line statement that lacks
+// a trailing `;` (`import * as ns from "m"`) must consume ONLY its own line and
+// must NOT swallow a following braced declaration. A later value reference
+// (`c2` inside `class C extends c2.C`) must survive so its import is kept.
+#[test]
+fn strip_type_only_content_braceless_import_does_not_consume_following_class() {
+    let src = "import * as ns from \"module\"\nimport { c2 } from \"module\"\nclass C extends c2.C {\n}\nlet y = ns.value;\n";
+    let stripped = strip_type_only_content(src);
+    // `c2` is used as a value in the extends clause and must remain visible.
+    assert!(contains_identifier_occurrence(&stripped, "c2"));
+    assert!(contains_identifier_occurrence(&stripped, "ns"));
+}
+
+// Negative: a balanced single-line alias without a trailing `;` is complete on
+// its own line and must not over-consume the following value statement.
+#[test]
+fn strip_type_only_content_braceless_alias_without_semicolon_keeps_following_value() {
+    let src = "type X = Foo\nconst keepMe = 1;\nkeepMe;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "keepMe"));
+}
+
+// Negative: a generic single-line alias still terminates on its own line and
+// the following value usage survives (no over-consumption of later lines).
+#[test]
+fn strip_type_only_content_singleline_generic_alias_keeps_following_value() {
+    let src = "type Id<T> = T;\nconst usedValue = 1;\nusedValue;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Id"));
+    assert!(contains_identifier_occurrence(&stripped, "usedValue"));
+}
+
 #[test]
 fn strip_type_only_content_drops_other_module_imports() {
     // Identifiers from *other* imports should not count as value usages

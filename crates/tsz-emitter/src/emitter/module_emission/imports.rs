@@ -363,6 +363,48 @@ impl<'a> Printer<'a> {
             && self.async_return_type_uses_imported_promise_constructor(&[local_name])
     }
 
+    /// Whether the namespace binding of an import clause (`import * as ns`) is
+    /// referenced as a value in the rest of the file. Mirrors
+    /// `default_binding_has_value_usage` for the namespace binding so that an
+    /// unused namespace beside a surviving default or named binding is elided
+    /// (matching tsc). The full module is scanned (issue #3597) so a use BEFORE
+    /// the import still keeps the binding.
+    fn namespace_binding_has_value_usage(
+        &self,
+        import_node: &Node,
+        namespace_name_idx: NodeIndex,
+    ) -> bool {
+        let local_name = self.get_identifier_text_idx(namespace_name_idx);
+        if local_name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let Some(import_data) = self.arena.get_import_decl(import_node) else {
+            return true;
+        };
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, decorated-member type annotations are
+        // *value* references; preserve the namespace whose name appears there.
+        if self.ctx.options.emit_decorator_metadata
+            && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor(&[local_name])
+    }
+
     /// Filter named import specifiers to only those with value-level usage
     /// in the rest of the file. Used in --noCheck mode.
     fn filter_value_specs_by_usage(
@@ -720,7 +762,23 @@ impl<'a> Printer<'a> {
         {
             if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
                 if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                    namespace_name = Some(named_imports.name);
+                    // A namespace binding (`import * as ns`) is kept only when it
+                    // has a value-level use. In --noCheck mode (type_only_nodes
+                    // empty) apply the same text-based usage gate used by the
+                    // default and named-specifier paths so an unused namespace
+                    // binding beside a surviving default (`import Foo, * as ns`)
+                    // is elided. JSX-factory namespace names are exempt because
+                    // they are referenced implicitly by JSX elements.
+                    let gate_namespace = self.ctx.options.type_only_nodes.is_empty()
+                        && !self.source_is_js_file
+                        && !self.ctx.options.verbatim_module_syntax
+                        && !preserve_invalid_module_syntax
+                        && !self.is_jsx_factory_import_clause(clause);
+                    if !gate_namespace
+                        || self.namespace_binding_has_value_usage(node, named_imports.name)
+                    {
+                        namespace_name = Some(named_imports.name);
+                    }
                 } else {
                     value_specs = self.collect_value_specifiers(&named_imports.elements);
                     // In --noCheck mode (type_only_nodes empty), apply text-based

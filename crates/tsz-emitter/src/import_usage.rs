@@ -320,42 +320,62 @@ fn strip_non_code_text(line: &str, in_block_comment: &mut bool) -> String {
 /// - Other `import`/`export` statements (identifiers in other imports are not value usages)
 pub fn strip_type_only_content(source: &str) -> String {
     let mut result = String::with_capacity(source.len());
-    // Track brace depth to skip multi-line type declaration bodies
-    // (interface, type alias, declare blocks)
-    let mut type_brace_depth: u32 = 0;
+    // Tracks the span of a multi-line type-only declaration that is still
+    // being consumed. A declaration's header (`type X<...>`), its type-
+    // parameter list, and its body (`= {...}` / `interface X {...}`) can all
+    // span multiple lines, so we follow brace and angle-bracket depth and the
+    // statement terminator rather than assuming the opening brace shares the
+    // first line.
+    let mut pending: Option<TypeDeclSpan> = None;
     let mut in_block_comment = false;
     for line in source.lines() {
         let code_line = strip_non_code_text(line, &mut in_block_comment);
         let trimmed = code_line.trim();
 
-        // If we're inside a type declaration body, count braces to find the end
-        if type_brace_depth > 0 {
-            for ch in trimmed.chars() {
-                match ch {
-                    '{' => type_brace_depth += 1,
-                    '}' => type_brace_depth -= 1,
-                    _ => {}
-                }
-                if type_brace_depth == 0 {
-                    break;
-                }
+        // If we're inside a multi-line type declaration, keep consuming lines
+        // until the statement terminates (brace body closes or an alias `;`
+        // lands at top level).
+        if let Some(span) = pending.as_mut() {
+            if span.consume(trimmed) {
+                pending = None;
             }
             result.push('\n');
             continue;
         }
 
-        // Check if this line starts a type-only declaration (possibly multi-line)
-        let is_type_only_start = trimmed.starts_with("declare ")
-            || trimmed.starts_with("import type ")
-            || trimmed.starts_with("import type{")
+        // Type declarations (`type`/`interface`/`declare` families) may carry a
+        // multi-line `<...>` type-parameter header and a multi-line body, so
+        // they terminate on a balanced statement end, not merely a balanced
+        // brace on the opening line.
+        let is_type_decl_start = trimmed.starts_with("declare ")
             || trimmed.starts_with("export type ")
             || trimmed.starts_with("export type{")
             || trimmed.starts_with("export interface ")
             || trimmed.starts_with("export declare ")
             || trimmed.starts_with("type ")
-            || trimmed.starts_with("interface ")
-            // Other import statements - identifiers from other
-            // imports should not count as value usages of *this* import.
+            || trimmed.starts_with("interface ");
+
+        if is_type_decl_start {
+            let mut span = TypeDeclSpan::default();
+            let terminated = span.consume(trimmed);
+            // Only carry the declaration onto following lines when its `<...>`
+            // type-parameter header or `{...}` body is genuinely still open.
+            // A declaration that is balanced on its opening line is complete
+            // even without a trailing `;` (`type X = Foo`), so it must not
+            // consume the next statement.
+            if !terminated && (span.brace_depth > 0 || span.angle_depth > 0) {
+                pending = Some(span);
+            }
+            result.push('\n');
+            continue;
+        }
+
+        // Import/re-export statements never carry a `<...>` type-parameter
+        // header; identifiers from *other* imports/re-exports are not value
+        // usages of *this* import, so strip them with simple brace tracking
+        // (multi-line named-import/export lists use braces).
+        let is_import_export_start = trimmed.starts_with("import type ")
+            || trimmed.starts_with("import type{")
             // But `import X = Y` (namespace aliases) reference identifiers as
             // values and must be kept — only strip module-style imports.
             || (trimmed.starts_with("import ") && !is_namespace_alias_import(trimmed))
@@ -369,16 +389,26 @@ pub fn strip_type_only_content(source: &str) -> String {
             || (trimmed.starts_with("export {") && is_reexport_from(trimmed))
             || (trimmed.starts_with("export import ") && !is_namespace_alias_import(&trimmed["export ".len()..]));
 
-        if is_type_only_start {
-            // Check if this line opens a brace block (multi-line declaration)
+        if is_import_export_start {
+            // Import/re-export statements span multiple lines only when their
+            // named-binding `{...}` list is unbalanced on the opening line
+            // (e.g. `import {\n a,\n b\n} from "m"`). A statement without an
+            // open brace is single-line, even when it lacks a trailing `;`
+            // (`import * as ns from "m"`), so it must NOT become pending.
+            let mut depth: i32 = 0;
             for ch in trimmed.chars() {
                 match ch {
-                    '{' => type_brace_depth += 1,
-                    '}' => {
-                        type_brace_depth = type_brace_depth.saturating_sub(1);
-                    }
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
                     _ => {}
                 }
+            }
+            if depth > 0 {
+                pending = Some(TypeDeclSpan {
+                    brace_depth: depth as u32,
+                    angle_depth: 0,
+                    body_opened: true,
+                });
             }
             result.push('\n');
             continue;
@@ -389,6 +419,51 @@ pub fn strip_type_only_content(source: &str) -> String {
         result.push('\n');
     }
     result
+}
+
+/// Tracks the in-progress span of a multi-line type-only declaration so the
+/// stripper consumes the full statement — its `<...>` type-parameter header,
+/// its `= {...}` / block body, and its terminating `;` — instead of stopping at
+/// the first brace-balanced line.
+#[derive(Default)]
+struct TypeDeclSpan {
+    brace_depth: u32,
+    angle_depth: u32,
+    /// Whether a brace body (`{`) has been opened anywhere in this declaration.
+    body_opened: bool,
+}
+
+impl TypeDeclSpan {
+    /// Feed one line of comment/string-stripped code. Returns `true` when the
+    /// declaration statement has terminated on this line.
+    fn consume(&mut self, code: &str) -> bool {
+        for ch in code.chars() {
+            match ch {
+                '{' => {
+                    self.brace_depth += 1;
+                    self.body_opened = true;
+                }
+                '}' => {
+                    self.brace_depth = self.brace_depth.saturating_sub(1);
+                    // A block body that closes back to top level ends the
+                    // statement (interfaces have no trailing `;`).
+                    if self.brace_depth == 0 && self.angle_depth == 0 && self.body_opened {
+                        return true;
+                    }
+                }
+                '<' => self.angle_depth += 1,
+                '>' => self.angle_depth = self.angle_depth.saturating_sub(1),
+                ';' => {
+                    // A `;` at top level ends an alias declaration (`type X = ...;`).
+                    if self.brace_depth == 0 && self.angle_depth == 0 {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
 }
 
 pub fn strip_qualified_accesses_for_names<'a>(
