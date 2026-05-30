@@ -130,6 +130,14 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// could short-circuit the expansion that re-derives `TS2589`. See the
     /// `closed_eval` module.
     deep_recursion_seen: bool,
+    /// Whether this evaluator may *write* the `closed_eval_cache`. Only the
+    /// checker's authoritative, context-free type-resolution pass opts in (via
+    /// `with_closed_eval_writes`). Evaluators running mid-relation, mid-inference
+    /// (`infer` binding), mid-narrowing, or contextual typing must NOT write —
+    /// their results can depend on inference/narrowing/contextual state the
+    /// `(TypeId, no_unchecked)` key does not capture. All evaluators may still
+    /// *read* (the stored value is a definite context-free answer).
+    closed_eval_writes_allowed: bool,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -192,6 +200,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             silent_depth_bailed: false,
             detection_growth_runs: FxHashMap::default(),
             deep_recursion_seen: false,
+            closed_eval_writes_allowed: false,
         }
     }
 
@@ -288,6 +297,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Set the query database for Salsa-backed memoization.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
+        self
+    }
+
+    /// Opt this evaluator in to *writing* the substitution-independent
+    /// `closed_eval_cache`. Only the checker's authoritative, context-free
+    /// type-resolution pass should call this — see `closed_eval_writes_allowed`.
+    pub const fn with_closed_eval_writes(mut self) -> Self {
+        self.closed_eval_writes_allowed = true;
         self
     }
 
