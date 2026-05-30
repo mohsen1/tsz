@@ -275,11 +275,11 @@ export * as ns from "c";
         "The star re-export dependency should call exportStar_1.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("\"renamed\": b_2_1[\"y\"]"),
+        output.contains("\"renamed\": b_1_1[\"y\"]"),
         "The named re-export should still be published from its setter.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("exports_1(\"ns\", c_3_1);"),
+        output.contains("exports_1(\"ns\", c_1_1);"),
         "The namespace re-export should still be published from its setter.\nOutput:\n{output}"
     );
 }
@@ -509,4 +509,38 @@ fn system_module_nested_object_export_destructuring_reuses_identifier_source() {
         output, expected,
         "Nested System module destructuring should publish direct reusable source paths.\nOutput:\n{output}"
     );
+}
+
+/// Structural rule: when a System module has both `export * from "..."` and
+/// hoisted function declarations, tsc places `exportStar_1` helper immediately
+/// after `"use strict"` (with other helpers), BEFORE `var __moduleName` and
+/// BEFORE hoisted function bodies. Two name variants prove the rule is not
+/// bound to a specific identifier spelling.
+#[test]
+fn system_export_star_helper_appears_before_var_module_name() {
+    for func_name in &["foo", "bar"] {
+        let src = format!("export * from \"a\";\nexport function {func_name}() {{}}\n");
+        let output = emit_system_es2015(&src);
+
+        let helper_pos = output
+            .find("function exportStar_1(m) {")
+            .unwrap_or_else(|| panic!("exportStar_1 helper missing in output:\n{output}"));
+        let module_name_pos = output
+            .find("var __moduleName = context_1 && context_1.id;")
+            .unwrap_or_else(|| panic!("__moduleName declaration missing in output:\n{output}"));
+        let func_pos = output
+            .find(&format!("function {func_name}() {{"))
+            .unwrap_or_else(|| {
+                panic!("hoisted function {func_name} missing in output:\n{output}")
+            });
+
+        assert!(
+            helper_pos < module_name_pos,
+            "exportStar_1 must appear BEFORE var __moduleName (func={func_name}).\nOutput:\n{output}"
+        );
+        assert!(
+            module_name_pos < func_pos,
+            "var __moduleName must appear BEFORE hoisted function {func_name}.\nOutput:\n{output}"
+        );
+    }
 }

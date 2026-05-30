@@ -986,6 +986,7 @@ impl<'a> Printer<'a> {
             members,
             alias_name,
         );
+        self.write_line();
     }
 
     fn emit_system_top_level_using_variable_statement(
