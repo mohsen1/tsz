@@ -274,6 +274,26 @@ pub(crate) struct CompilationCache {
     export_hashes: FxHashMap<PathBuf, u64>,
     import_symbol_ids: FxHashMap<PathBuf, FxHashMap<PathBuf, Vec<SymbolId>>>,
     star_export_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    /// Cached `MergedProgram` from the last successful unchanged-graph build.
+    ///
+    /// When all bind results come from `bind_cache` (`dirty_paths` is empty) and the
+    /// file count is the same as when the cache was last filled, the merge phase is
+    /// O(total_symbols) work that produces identical output. Storing the
+    /// result as `Arc<MergedProgram>` lets `build_program_with_cache` return it
+    /// immediately via an O(1) `Arc::clone` instead of re-running the merge.
+    ///
+    /// Invariants:
+    /// - `None` until the first successful build with a full `bind_cache`.
+    /// - Cleared by `clear()` when the user explicitly invalidates all state.
+    /// - Replaced whenever `dirty_paths` is non-empty or the file count changes
+    ///   (files added / removed), ensuring the cache is always coherent with the
+    ///   current `bind_cache` contents.
+    cached_merged_program: Option<Arc<MergedProgram>>,
+    /// File count that `cached_merged_program` was built from.
+    ///
+    /// Used to detect file addition/removal even when individual file hashes are
+    /// unchanged (i.e., `dirty_paths` is empty but the project has changed size).
+    cached_file_count: usize,
 }
 
 struct BindCacheEntry {
@@ -409,6 +429,8 @@ impl CompilationCache {
         self.export_hashes.clear();
         self.import_symbol_ids.clear();
         self.star_export_dependencies.clear();
+        self.cached_merged_program = None;
+        self.cached_file_count = 0;
     }
 
     pub(crate) fn update_dependencies(
@@ -1740,7 +1762,7 @@ fn compile_inner(
             &lib_files,
             resolved.checker.target,
         );
-        (parallel::merge_bind_results(bind_results), None)
+        (Arc::new(parallel::merge_bind_results(bind_results)), None)
     };
     let parse_bind_duration = build_program_start.elapsed();
     perf_log_phase("build_program", build_program_start);
@@ -2841,7 +2863,7 @@ struct SourceMeta {
 }
 
 struct BuildProgramResult {
-    program: MergedProgram,
+    program: Arc<MergedProgram>,
     dirty_paths: FxHashSet<PathBuf>,
 }
 
@@ -2886,7 +2908,8 @@ fn build_program_with_cache(
         });
     }
 
-    let parsed_results = if to_parse.is_empty() {
+    let nothing_to_parse = to_parse.is_empty();
+    let parsed_results = if nothing_to_parse {
         Vec::new()
     } else {
         // Use parse_and_bind_parallel_with_libs to load prebound lib symbols
@@ -2972,6 +2995,21 @@ fn build_program_with_cache(
         .bind_cache
         .retain(|path, _| current_paths.contains(path));
 
+    // Fast path: when nothing changed (no re-parses needed) and the project
+    // file set is the same size as when we last built the merged program, the
+    // merge output is identical — return the cached Arc<MergedProgram> directly.
+    // This skips O(total_symbols) symbol-remapping work on every
+    // no-op pass (e.g. repeated benchmark row sweeps over an unchanged graph).
+    if nothing_to_parse
+        && meta.len() == cache.cached_file_count
+        && let Some(ref cached) = cache.cached_merged_program
+    {
+        return BuildProgramResult {
+            program: Arc::clone(cached),
+            dirty_paths: FxHashSet::default(),
+        };
+    }
+
     let mut ordered = Vec::with_capacity(meta.len());
     for entry in &meta {
         let Some(cached) = cache.bind_cache.get(&entry.path) else {
@@ -2980,8 +3018,11 @@ fn build_program_with_cache(
         ordered.push(&cached.bind_result);
     }
 
+    let program = Arc::new(parallel::merge_bind_results_ref(&ordered));
+    cache.cached_merged_program = Some(Arc::clone(&program));
+    cache.cached_file_count = ordered.len();
     BuildProgramResult {
-        program: parallel::merge_bind_results_ref(&ordered),
+        program,
         dirty_paths,
     }
 }
@@ -3186,6 +3227,178 @@ mod explain_files_reason_tests {
         assert_eq!(
             script_target_display_for_explain_files(ScriptTarget::ESNext),
             "esnext"
+        );
+    }
+}
+
+#[cfg(test)]
+mod merge_cache_tests {
+    use super::sources::SourceEntry;
+    use super::*;
+
+    fn make_source(path: &str, text: &str) -> SourceEntry {
+        SourceEntry {
+            path: PathBuf::from(path),
+            text: Some(text.to_string()),
+            is_binary: false,
+            suppress_parser_diagnostics: false,
+        }
+    }
+
+    fn fresh_cache() -> (CompilationCache, Vec<Arc<LibFile>>) {
+        (CompilationCache::default(), vec![])
+    }
+
+    /// First call with an empty cache always runs the merge.
+    /// Second call with the same unchanged inputs returns the same `Arc`
+    /// pointer (no re-merge). Third call after a file change re-merges and
+    /// produces a new pointer.
+    #[test]
+    fn merge_skipped_on_unchanged_inputs_and_reruns_on_change() {
+        let (mut cache, libs) = fresh_cache();
+
+        // --- first call: cold cache, must merge ---
+        let sources = vec![
+            make_source("/a.ts", "export const a = 1;"),
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        let ptr1 = Arc::as_ptr(&r1.program);
+        assert!(
+            !r1.dirty_paths.is_empty(),
+            "first build should have dirty paths"
+        );
+
+        // --- second call: identical inputs, merge must be skipped ---
+        let sources = vec![
+            make_source("/a.ts", "export const a = 1;"),
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        let ptr2 = Arc::as_ptr(&r2.program);
+        assert!(
+            r2.dirty_paths.is_empty(),
+            "second build with unchanged inputs should have no dirty paths"
+        );
+        assert_eq!(
+            ptr1, ptr2,
+            "unchanged inputs must return the same Arc<MergedProgram> pointer"
+        );
+
+        // --- third call: one file changed, must re-merge ---
+        let sources = vec![
+            make_source("/a.ts", "export const a = 99;"), // changed
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        let ptr3 = Arc::as_ptr(&r3.program);
+        assert!(
+            !r3.dirty_paths.is_empty(),
+            "modified-file build should have dirty paths"
+        );
+        assert_ne!(
+            ptr2, ptr3,
+            "changed inputs must produce a new Arc<MergedProgram>"
+        );
+
+        // --- fourth call: back to unchanged after change, cache is warm again ---
+        let sources = vec![
+            make_source("/a.ts", "export const a = 99;"),
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r4 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert!(
+            r4.dirty_paths.is_empty(),
+            "fourth build (re-stable) should have no dirty paths"
+        );
+        assert_eq!(
+            Arc::as_ptr(&r3.program),
+            Arc::as_ptr(&r4.program),
+            "re-stable inputs must return the same Arc as the last merge"
+        );
+    }
+
+    /// Removing a file invalidates the cached merge (file-count guard).
+    #[test]
+    fn merge_invalidated_on_file_removal() {
+        let (mut cache, libs) = fresh_cache();
+
+        let sources = vec![
+            make_source("/a.ts", "export const a = 1;"),
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+
+        // Warm the cache with a no-op second pass.
+        let sources = vec![
+            make_source("/a.ts", "export const a = 1;"),
+            make_source("/b.ts", "export const b = 2;"),
+        ];
+        let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert_eq!(Arc::as_ptr(&r1.program), Arc::as_ptr(&r2.program));
+
+        // Now remove one file.
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert_ne!(
+            Arc::as_ptr(&r2.program),
+            Arc::as_ptr(&r3.program),
+            "file removal must trigger a fresh merge"
+        );
+    }
+
+    /// Adding a file invalidates the cached merge.
+    #[test]
+    fn merge_invalidated_on_file_addition() {
+        let (mut cache, libs) = fresh_cache();
+
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+
+        // Warm the cache.
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert_eq!(Arc::as_ptr(&r1.program), Arc::as_ptr(&r2.program));
+
+        // Add a new file.
+        let sources = vec![
+            make_source("/a.ts", "export const a = 1;"),
+            make_source("/c.ts", "export const c = 3;"),
+        ];
+        let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert_ne!(
+            Arc::as_ptr(&r2.program),
+            Arc::as_ptr(&r3.program),
+            "file addition must trigger a fresh merge"
+        );
+    }
+
+    /// `CompilationCache::clear()` removes the cached merged program.
+    #[test]
+    fn clear_invalidates_merge_cache() {
+        let (mut cache, libs) = fresh_cache();
+
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+
+        // Warm the merge cache.
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert!(r2.dirty_paths.is_empty());
+
+        cache.clear();
+
+        // After clear, next build must re-merge.
+        let sources = vec![make_source("/a.ts", "export const a = 1;")];
+        let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+        assert!(
+            !r3.dirty_paths.is_empty(),
+            "first build after clear must re-parse and re-merge"
+        );
+        assert_ne!(
+            Arc::as_ptr(&r2.program),
+            Arc::as_ptr(&r3.program),
+            "clear must produce a fresh Arc<MergedProgram>"
         );
     }
 }
