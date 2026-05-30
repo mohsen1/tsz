@@ -681,7 +681,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn type_node_contains_type_reference_to_symbol(
+    pub(crate) fn type_node_contains_type_reference_to_symbol(
         &self,
         node_idx: NodeIndex,
         sym_id: SymbolId,
