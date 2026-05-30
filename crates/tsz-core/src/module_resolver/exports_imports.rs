@@ -169,7 +169,7 @@ impl ModuleResolver {
     /// resolution can try later fallbacks when earlier targets are missing.
     fn resolve_imports_subpath_candidates(
         &self,
-        imports: &rustc_hash::FxHashMap<String, PackageExports>,
+        imports: &indexmap::IndexMap<String, PackageExports>,
         specifier: &str,
         conditions: &[String],
     ) -> Vec<(String, bool)> {
@@ -186,23 +186,12 @@ impl ModuleResolver {
                 .collect();
         }
 
-        // Try pattern matching (e.g., "#utils/*")
-        let mut best_match: Option<(usize, &str, String, &PackageExports)> = None;
-
-        for (pattern, value) in imports {
-            if let Some(wildcard) = match_imports_pattern(pattern, specifier) {
-                let specificity = pattern.len();
-                let is_better = match &best_match {
-                    None => true,
-                    Some((best_len, _, _, _)) => specificity > *best_len,
-                };
-                if is_better {
-                    best_match = Some((specificity, pattern.as_str(), wildcard, value));
-                }
-            }
-        }
-
-        if let Some((_, pattern, wildcard, value)) = best_match {
+        // Try pattern matching (e.g., "#utils/*").
+        // IndexMap guarantees JSON insertion-order, so equal-specificity ties
+        // resolve to the first pattern in source order per Node.js/TypeScript spec.
+        if let Some((pattern, wildcard, value)) =
+            find_best_export_pattern(imports.iter(), |p| match_imports_pattern(p, specifier))
+        {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
             return self
@@ -372,23 +361,12 @@ impl ModuleResolver {
                         .map(|p| (p, key_uses_ts));
                 }
 
-                // Try pattern matching (e.g., "./*" or "./lib/*")
-                let mut best_match: Option<(usize, &str, String, &PackageExports)> = None;
-
-                for (pattern, value) in map {
-                    if let Some(matched) = match_export_pattern(pattern, subpath) {
-                        let specificity = pattern.len();
-                        let is_better = match &best_match {
-                            None => true,
-                            Some((best_len, _, _, _)) => specificity > *best_len,
-                        };
-                        if is_better {
-                            best_match = Some((specificity, pattern.as_str(), matched, value));
-                        }
-                    }
-                }
-
-                if let Some((_, pattern, wildcard, value)) = best_match {
+                // Try pattern matching (e.g., "./*" or "./lib/*").
+                // IndexMap guarantees JSON insertion-order, so equal-specificity ties
+                // resolve to the first pattern in source order per Node.js/TypeScript spec.
+                if let Some((pattern, wildcard, value)) =
+                    find_best_export_pattern(map.iter(), |p| match_export_pattern(p, subpath))
+                {
                     // Per Node.js PACKAGE_TARGET_RESOLVE spec, substitute * with the
                     // matched wildcard portion BEFORE resolving the target path.
                     // Without this, try_export_target would look for literal "*.cjs" files.
