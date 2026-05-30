@@ -345,9 +345,18 @@ impl BinderState {
                 };
 
                 // Synthesize a "default" export symbol for cross-file import resolution.
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+
                 // This enables `import X from './file'` to resolve the default export.
+
                 let default_sym_id = self.symbols.alloc(default_flags, "default".to_string());
                 if let Some(default_sym) = self.symbols.get_mut(default_sym_id) {
+                    if let Some(parent_id) = container_sym {
+                        default_sym.parent = parent_id;
+                    }
                     let span = arena
                         .get(export.export_clause)
                         .map(|node| (node.pos, node.end));
@@ -514,6 +523,11 @@ impl BinderState {
                                             orig_sym.is_exported = true;
                                         }
 
+                                        let container_sym =
+                                            self.scope_chain.get(self.current_scope_idx).and_then(
+                                                |ctx| self.get_node_symbol(ctx.container_node),
+                                            );
+
                                         // Create export symbol (EXPORT_VALUE for value exports)
                                         let export_sym_id = self
                                             .symbols
@@ -524,6 +538,7 @@ impl BinderState {
                                             sym.is_type_only = spec_type_only;
                                             // Store the target symbol for re-exports within namespaces
                                             if let Some(ns_sym_id) = current_namespace_sym_id {
+                                                sym.parent = ns_sym_id;
                                                 // This is a namespace re-export - add to namespace's exports
                                                 if let Some(ns_sym) =
                                                     self.symbols.get_mut(ns_sym_id)
@@ -533,6 +548,10 @@ impl BinderState {
                                                             Box::new(SymbolTable::new())
                                                         });
                                                     exports.set(exp.to_string(), sym_id);
+                                                }
+                                            } else {
+                                                if let Some(parent_id) = container_sym {
+                                                    sym.parent = parent_id;
                                                 }
                                             }
                                         }
@@ -701,9 +720,16 @@ impl BinderState {
                 else if let Some(name) = Self::get_identifier_name(arena, export.export_clause) {
                     let is_umd = export.module_specifier.is_none()
                         && node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+                    let container_sym = self
+                        .scope_chain
+                        .get(self.current_scope_idx)
+                        .and_then(|ctx| self.get_node_symbol(ctx.container_node));
 
                     let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        if let Some(parent_id) = container_sym {
+                            sym.parent = parent_id;
+                        }
                         let span = arena
                             .get(export.export_clause)
                             .map(|node| (node.pos, node.end));
