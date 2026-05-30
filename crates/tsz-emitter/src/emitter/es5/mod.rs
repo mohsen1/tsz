@@ -6,6 +6,7 @@
 mod bindings;
 mod bindings_assignment;
 mod bindings_disposable_names;
+mod bindings_for_await_keyword;
 mod bindings_for_of;
 mod bindings_param_patterns;
 mod bindings_patterns;

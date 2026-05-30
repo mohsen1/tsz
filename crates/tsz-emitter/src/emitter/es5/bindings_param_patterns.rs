@@ -1287,12 +1287,7 @@ impl<'a> Printer<'a> {
             self.emit_comments_before_pos(actual_start);
         }
 
-        // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
-        let await_or_yield = if self.ctx.emit_await_as_yield {
-            "yield"
-        } else {
-            "await"
-        };
+        // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield/yield __await(...)] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
         self.write("for (var ");
         self.write(&loop_guard_name);
         self.write(" = true, ");
@@ -1316,10 +1311,11 @@ impl<'a> Printer<'a> {
         self.write("; ");
         self.write(&loop_result_name);
         self.write(" = ");
-        self.write(await_or_yield);
-        self.write(" ");
+        self.emit_for_await_implicit_await_prefix();
         self.write(&loop_iterator_name);
-        self.write(".next(), ");
+        self.write(".next()");
+        self.emit_for_await_implicit_await_suffix();
+        self.write(", ");
         self.write(&loop_done_name);
         self.write(" = ");
         self.write(&loop_result_name);
@@ -1446,11 +1442,6 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.increase_indent();
             if using_async {
-                let await_kw = if self.ctx.emit_await_as_yield {
-                    "yield"
-                } else {
-                    "await"
-                };
                 self.write(kw);
                 self.write(" ");
                 self.write(&result_name);
@@ -1465,9 +1456,9 @@ impl<'a> Printer<'a> {
                 self.write(")");
                 self.write_line();
                 self.increase_indent();
-                self.write(await_kw);
-                self.write(" ");
+                self.emit_for_await_implicit_await_prefix();
                 self.write(&result_name);
+                self.emit_for_await_implicit_await_suffix();
                 self.write(";");
                 self.write_line();
                 self.decrease_indent();
@@ -1531,7 +1522,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Cleanup: if (!_e && !_d && (_a = _b.return)) [await/yield] _a.call(_b);
+        // Cleanup: if (!_e && !_d && (_a = _b.return)) [await/yield/yield __await(...)] _a.call(_b);
         self.write("if (!");
         self.write(&loop_guard_name);
         self.write(" && !");
@@ -1541,12 +1532,13 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         self.write(&loop_iterator_name);
         self.write(".return)) ");
-        self.write(await_or_yield);
-        self.write(" ");
+        self.emit_for_await_implicit_await_prefix();
         self.write(&return_temp_name);
         self.write(".call(");
         self.write(&loop_iterator_name);
-        self.write(");");
+        self.write(")");
+        self.emit_for_await_implicit_await_suffix();
+        self.write(";");
 
         self.write_line();
         self.decrease_indent();
