@@ -214,10 +214,7 @@ impl<'a> CheckerState<'a> {
             })
         {
             let source_modules = source_modules.clone();
-            for (source_module, is_type_only) in source_modules.iter() {
-                if *is_type_only {
-                    continue;
-                }
+            for (source_module, _is_type_only) in source_modules.iter() {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
