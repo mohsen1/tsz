@@ -68,6 +68,9 @@ impl NodeTypeCache {
 
     #[inline]
     pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
+        if !self.data.contains_key(key) {
+            return None;
+        }
         Arc::make_mut(&mut self.data).remove(key)
     }
 
@@ -232,6 +235,9 @@ impl SymbolTypeCache {
 
     #[inline]
     pub fn remove(&mut self, key: &SymbolId) -> Option<TypeId> {
+        if !self.data.contains_key(key) {
+            return None;
+        }
         Arc::make_mut(&mut self.data).remove(key)
     }
 
@@ -278,5 +284,41 @@ impl SymbolTypeCache {
 impl Default for SymbolTypeCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_type_cache_absent_remove_does_not_detach_shared_snapshot() {
+        let mut parent = NodeTypeCache::new();
+        parent.insert(1, TypeId::STRING);
+        let mut child = parent.clone();
+
+        assert!(child.remove(&2).is_none());
+        assert!(Arc::ptr_eq(&parent.data, &child.data));
+
+        assert_eq!(child.remove(&1), Some(TypeId::STRING));
+        assert!(!Arc::ptr_eq(&parent.data, &child.data));
+        assert_eq!(parent.get(&1), Some(&TypeId::STRING));
+        assert_eq!(child.get(&1), None);
+    }
+
+    #[test]
+    fn symbol_type_cache_absent_remove_does_not_detach_shared_snapshot() {
+        let sym = SymbolId(1);
+        let mut parent = SymbolTypeCache::new();
+        parent.insert(sym, TypeId::STRING);
+        let mut child = parent.clone();
+
+        assert!(child.remove(&SymbolId(2)).is_none());
+        assert!(Arc::ptr_eq(&parent.data, &child.data));
+
+        assert_eq!(child.remove(&sym), Some(TypeId::STRING));
+        assert!(!Arc::ptr_eq(&parent.data, &child.data));
+        assert_eq!(parent.get(&sym), Some(&TypeId::STRING));
+        assert_eq!(child.get(&sym), None);
     }
 }
