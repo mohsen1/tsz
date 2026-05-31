@@ -995,12 +995,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let types = self.ctx.types;
-        if !crate::query_boundaries::type_predicates::type_predicate_type_assignable_to_parameter_with(
+        if !crate::query_boundaries::type_predicates::type_predicate_type_assignability_outcome(
             types,
             resolved_predicate,
             resolved_param,
-            |source, target| types.is_assignable_to(source, target),
-        ) && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
+        )
+        .related
+            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
         {
             self.ctx.error(
                 type_node.pos,
