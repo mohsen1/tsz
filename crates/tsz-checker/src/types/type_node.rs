@@ -1034,6 +1034,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a type literal node ({ a: number; `b()`: string; }).
     fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
+        use rustc_hash::FxHashMap;
+        use tsz_common::interner::Atom;
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
@@ -1049,11 +1051,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        struct OverloadEntry {
+            signature: CallSignature,
+            optional: bool,
+            readonly: bool,
+            is_symbol_named: bool,
+        }
+        struct OverloadOrderKey {
+            name: Atom,
+            decl_order: u32,
+            is_string_named: bool,
+            single_quoted_name: bool,
+        }
+
         let mut properties = Vec::new();
         let mut call_signatures = Vec::new();
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut method_overloads: FxHashMap<Atom, Vec<OverloadEntry>> = FxHashMap::default();
+        let mut method_overload_order: Vec<OverloadOrderKey> = Vec::new();
+        let mut member_order: u32 = 0;
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -1113,35 +1131,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 sig.type_annotation,
                                 &params,
                             );
-                            let shape = FunctionShape {
+                            let call_sig = CallSignature {
                                 type_params,
                                 params,
                                 this_type,
                                 return_type,
                                 type_predicate: None,
-                                is_constructor: false,
                                 is_method: true,
                             };
-                            let factory = self.ctx.types.factory();
-                            let method_type = factory.function(shape);
                             self.pop_type_parameters_for_type_literal_signature(type_param_updates);
-                            properties.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: method_type,
-                                write_type: method_type,
-                                optional: sig.question_token,
-                                readonly: self.ctx.arena.has_modifier(
-                                    &sig.modifiers,
-                                    tsz_scanner::SyntaxKind::ReadonlyKeyword,
-                                ),
-                                is_method: true,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: (properties.len() + 1) as u32,
-                                is_string_named,
+                            let optional = sig.question_token;
+                            let readonly = self.ctx.arena.has_modifier(
+                                &sig.modifiers,
+                                tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                            );
+                            let entry = method_overloads.entry(name_atom).or_default();
+                            if entry.is_empty() {
+                                member_order += 1;
+                                method_overload_order.push(OverloadOrderKey {
+                                    name: name_atom,
+                                    decl_order: member_order,
+                                    is_string_named,
+                                    single_quoted_name,
+                                });
+                            }
+                            entry.push(OverloadEntry {
+                                signature: call_sig,
+                                optional,
+                                readonly,
                                 is_symbol_named,
-                                single_quoted_name,
                             });
                         } else {
                             let type_id = if sig.type_annotation.is_some() {
@@ -1165,6 +1183,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 } else {
                                     type_id
                                 };
+                            member_order += 1;
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id,
@@ -1178,7 +1197,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
-                                declaration_order: (properties.len() + 1) as u32,
+                                declaration_order: member_order,
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
@@ -1354,6 +1373,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
                         existing.type_id = getter_type;
                     } else {
+                        member_order += 1;
                         properties.push(PropertyInfo {
                             name: name_atom,
                             type_id: getter_type,
@@ -1364,7 +1384,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: (properties.len() + 1) as u32,
+                            declaration_order: member_order,
                             is_string_named,
                             is_symbol_named,
                             single_quoted_name,
@@ -1386,6 +1406,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         existing.write_type = setter_type;
                         existing.readonly = false;
                     } else {
+                        member_order += 1;
                         properties.push(PropertyInfo {
                             name: name_atom,
                             type_id: setter_type,
@@ -1396,12 +1417,68 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: (properties.len() + 1) as u32,
+                            declaration_order: member_order,
                             is_string_named,
                             is_symbol_named,
                             single_quoted_name,
                         });
                     }
+                }
+            }
+        }
+
+        // Merge overloaded method signatures into properties.
+        // Single-signature methods become Function types; multi-signature become Callable types.
+        {
+            let factory = self.ctx.types.factory();
+            for key in method_overload_order {
+                if let Some(sigs) = method_overloads.remove(&key.name) {
+                    let optional = sigs.iter().all(|e| e.optional);
+                    let readonly = sigs.iter().any(|e| e.readonly);
+                    let is_symbol_named = sigs.iter().any(|e| e.is_symbol_named);
+                    let method_type = if sigs.len() == 1 {
+                        let sig = sigs
+                            .into_iter()
+                            .next()
+                            .expect("sigs.len() == 1 guard ensures at least one element")
+                            .signature;
+                        factory.function(FunctionShape {
+                            type_params: sig.type_params,
+                            params: sig.params,
+                            this_type: sig.this_type,
+                            return_type: sig.return_type,
+                            type_predicate: sig.type_predicate,
+                            is_constructor: false,
+                            is_method: true,
+                        })
+                    } else {
+                        let merged_sigs: Vec<CallSignature> =
+                            sigs.into_iter().map(|e| e.signature).collect();
+                        factory.callable(CallableShape {
+                            call_signatures: merged_sigs,
+                            construct_signatures: Vec::new(),
+                            properties: Vec::new(),
+                            string_index: None,
+                            number_index: None,
+                            symbol: None,
+                            is_abstract: false,
+                        })
+                    };
+                    properties.push(PropertyInfo {
+                        name: key.name,
+                        type_id: method_type,
+                        write_type: method_type,
+                        optional,
+                        readonly,
+                        is_method: true,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: key.decl_order,
+                        is_string_named: key.is_string_named,
+                        is_symbol_named,
+                        single_quoted_name: key.single_quoted_name,
+                    });
                 }
             }
         }
