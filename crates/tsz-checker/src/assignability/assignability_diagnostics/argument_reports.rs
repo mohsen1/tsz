@@ -20,14 +20,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
 
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();
-        if self.diagnostic_relation_boolean_guard(source, target) && !checker_only_mismatch {
+        if self.assign_relation_outcome(source, target).related && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::assignability::is_callable_type(self.ctx.types, source)
             && crate::query_boundaries::assignability::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
-            && self.diagnostic_relation_boolean_guard(target, source)
+            && self.assign_relation_outcome(target, source).related
             && self.callable_params_contain_type_param_intersection(source)
         {
             return true;

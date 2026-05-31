@@ -373,8 +373,8 @@ impl<'a> CheckerState<'a> {
                         ) || self
                             .type_alias_application_filters_to_constraint(type_arg, inst_constraint)
                             || self
-                            .assign_relation_outcome(evaluated_arg, inst_constraint)
-                            .related
+                                .assign_relation_outcome(evaluated_arg, inst_constraint)
+                                .related
                             || query::homomorphic_mapped_application_should_defer_constraint(
                                 self, type_arg,
                             )

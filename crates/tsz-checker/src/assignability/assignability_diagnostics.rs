@@ -247,17 +247,17 @@ impl<'a> CheckerState<'a> {
         let had_excess_property_error =
             self.check_excess_properties_for_fresh_source(source, target, source_idx);
 
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
+        // the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.diagnostic_relation_boolean_guard(inner, target)
+            && self.assign_relation_outcome(inner, target).related
         {
             return true;
         }
@@ -504,7 +504,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        if self.assign_relation_outcome(source, target).related {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -605,7 +605,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .relation_overflow
             .set(crate::context::RelationOverflowFlags::default());
-        let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        let outcome = self.assign_relation_outcome(source, target);
+        let assignable = outcome.related;
         // tsc emits TS2859 ("Excessive complexity") for all relation-checker
         // overflows regardless of whether it was depth or iteration that fired.
         // TS2321 ("Excessive stack depth") fires from a separate mechanism.
@@ -638,10 +639,6 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-        // Use the canonical assign relation outcome so the weak-union hint
-        // can be collected alongside the failure reason.
-        let outcome = self.assign_relation_outcome(source, target);
-
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
         if self.should_skip_weak_union_error_with_outcome(
@@ -815,7 +812,8 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
                 return Some(
-                    self.diagnostic_relation_boolean_guard(source_literal, structural_target),
+                    self.assign_relation_outcome(source_literal, structural_target)
+                        .related,
                 );
             }
             return None;
@@ -869,7 +867,8 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -893,10 +892,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -934,14 +929,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1277,7 +1269,7 @@ impl<'a> CheckerState<'a> {
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
-            && self.diagnostic_relation_boolean_guard(return_type, target)
+            && self.assign_relation_outcome(return_type, target).related
         {
             return true;
         }
@@ -1293,7 +1285,9 @@ impl<'a> CheckerState<'a> {
             if construct_return != TypeId::VOID
                 && construct_return != TypeId::UNDEFINED
                 && construct_return != TypeId::NEVER
-                && self.diagnostic_relation_boolean_guard(construct_return, target)
+                && self
+                    .assign_relation_outcome(construct_return, target)
+                    .related
             {
                 return true;
             }
@@ -1389,7 +1383,9 @@ impl<'a> CheckerState<'a> {
         }
         let value_type = value_prop.type_id;
 
-        !self.diagnostic_relation_boolean_guard(TypeId::UNDEFINED, value_type)
+        !self
+            .assign_relation_outcome(TypeId::UNDEFINED, value_type)
+            .related
     }
 
     fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
