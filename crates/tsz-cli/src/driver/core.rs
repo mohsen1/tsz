@@ -278,7 +278,7 @@ pub(crate) struct CompilationCache {
     ///
     /// When all bind results come from `bind_cache` (`dirty_paths` is empty) and the
     /// file count is the same as when the cache was last filled, the merge phase is
-    /// O(total_symbols) work that produces identical output. Storing the
+    /// `O(total_symbols)` work that produces identical output. Storing the
     /// result as `Arc<MergedProgram>` lets `build_program_with_cache` return it
     /// immediately via an O(1) `Arc::clone` instead of re-running the merge.
     ///
@@ -2865,6 +2865,11 @@ struct SourceMeta {
 struct BuildProgramResult {
     program: Arc<MergedProgram>,
     dirty_paths: FxHashSet<PathBuf>,
+    /// Number of times `merge_bind_results_ref` was called for this result.
+    /// 0 means the fast path fired (merge skipped); 1 means a full merge ran.
+    /// Only consumed by tests; production call sites only use `program`/`dirty_paths`.
+    #[allow(dead_code)]
+    merge_calls: u32,
 }
 
 fn build_program_with_cache(
@@ -3007,6 +3012,7 @@ fn build_program_with_cache(
         return BuildProgramResult {
             program: Arc::clone(cached),
             dirty_paths: FxHashSet::default(),
+            merge_calls: 0,
         };
     }
 
@@ -3024,6 +3030,7 @@ fn build_program_with_cache(
     BuildProgramResult {
         program,
         dirty_paths,
+        merge_calls: 1,
     }
 }
 
