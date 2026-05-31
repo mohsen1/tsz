@@ -6,12 +6,12 @@
 
 use crate::def::resolver::TypeResolver;
 use crate::objects::PropertyCollectionResult;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
 use crate::types::{
-    CachedAnyMode, ObjectFlags, ObjectShape, RelationCacheConfig, RelationCacheKey, RelationFlags,
-    TypeId, Visibility,
+    CachedAnyMode, ObjectFlags, ObjectShape, RelationCacheKey, RelationFlags, TypeId, Visibility,
 };
 use crate::visitor::{
     callable_shape_id, function_shape_id, index_access_parts, keyof_inner_type, literal_string,
@@ -269,7 +269,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyNested,
         };
 
-        RelationCacheKey::for_subtype(source, target, RelationCacheConfig::new(flags, any_mode))
+        let policy = RelationPolicy::from_relation_flags(flags)
+            .with_any_propagation_mode(self.any_propagation)
+            .with_assume_related_on_cycle(self.assume_related_on_cycle);
+
+        RelationCacheKey::for_subtype(
+            source,
+            target,
+            policy.cache_config_with_cached_any_mode(any_mode),
+        )
     }
 
     /// Test-only accessor that exposes the cache key this checker would use

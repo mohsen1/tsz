@@ -238,6 +238,27 @@ impl RelationPolicy {
     /// `config` field of a [`crate::types::RelationCacheKey`]. Every
     /// behavior-affecting field on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
+        let any_mode = match self.any_propagation_mode {
+            AnyPropagationMode::All => CachedAnyMode::All,
+            // A policy does not know the current recursion depth, so it
+            // encodes the configured mode as "top-level" from the policy's
+            // perspective. The `SubtypeChecker` refines this to
+            // `TopLevelOnlyNested` at depth > 0 when it builds its own key.
+            AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyAtTop,
+        };
+        self.cache_config_with_cached_any_mode(any_mode)
+    }
+
+    /// Project this policy to a cache config with an already-resolved cached
+    /// `any` mode.
+    ///
+    /// `SubtypeChecker` uses this when `AnyPropagationMode::TopLevelOnly`
+    /// depends on current recursion depth, which is operation-local state not
+    /// stored on the policy itself.
+    pub(crate) const fn cache_config_with_cached_any_mode(
+        self,
+        any_mode: CachedAnyMode,
+    ) -> RelationCacheConfig {
         let field_owned_bits = RelationFlags::STRICT_SUBTYPE_CHECKING
             .union(RelationFlags::STRICT_ANY_PROPAGATION)
             .union(RelationFlags::SKIP_WEAK_TYPE_CHECKS)
@@ -263,14 +284,6 @@ impl RelationPolicy {
         if !self.erase_generics {
             bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
         }
-        let any_mode = match self.any_propagation_mode {
-            AnyPropagationMode::All => CachedAnyMode::All,
-            // A policy does not know the current recursion depth, so it
-            // encodes the configured mode as "top-level" from the policy's
-            // perspective. The `SubtypeChecker` refines this to
-            // `TopLevelOnlyNested` at depth > 0 when it builds its own key.
-            AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyAtTop,
-        };
         RelationCacheConfig::new(bits, any_mode)
     }
 }
