@@ -2945,29 +2945,12 @@ impl<'a> Printer<'a> {
                     if !first {
                         self.write(", ");
                     }
-                    self.write(&def.var_name);
-                    self.write(" = function ");
-                    self.write(&def.var_name);
-                    self.write("(");
-                    if let Some(param_idx) = def.param
-                        && let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                    self.write(") ");
-                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                    if private_member_def_needs_class_alias
-                        && let Some(alias) = class_value_alias.as_ref()
-                        && !class_name.is_empty()
-                    {
-                        self.scoped_class_expression_self_alias = Some((
-                            Arc::<str>::from(class_name.as_str()),
-                            Arc::<str>::from(alias.as_str()),
-                        ));
-                    }
-                    self.emit_single_line_block(def.body);
-                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    self.emit_private_accessor_function_def(
+                        def,
+                        private_member_def_needs_class_alias,
+                        class_value_alias.as_deref(),
+                        &class_name,
+                    );
                     first = false;
                 }
                 for accessor in &private_auto_accessors {
@@ -3522,29 +3505,12 @@ impl<'a> Printer<'a> {
                 self.write(",");
                 self.write_line();
                 self.increase_indent();
-                self.write(&def.var_name);
-                self.write(" = function ");
-                self.write(&def.var_name);
-                self.write("(");
-                if let Some(param_idx) = def.param
-                    && let Some(param_node) = self.arena.get(param_idx)
-                    && let Some(param_data) = self.arena.get_parameter(param_node)
-                {
-                    self.emit(param_data.name);
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(def.body);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_accessor_function_def(
+                    def,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 self.decrease_indent();
             }
 
@@ -3714,31 +3680,12 @@ impl<'a> Printer<'a> {
                 if !first {
                     self.write(", ");
                 }
-                self.write(&def.var_name);
-                self.write(" = function ");
-                self.write(&def.var_name);
-                self.write("(");
-                if let Some(param_idx) = def.param {
-                    // Emit setter parameter name
-                    if let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(def.body);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_accessor_function_def(
+                    def,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 first = false;
             }
 
