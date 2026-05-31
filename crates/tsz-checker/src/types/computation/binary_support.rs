@@ -476,7 +476,7 @@ impl<'a> CheckerState<'a> {
     /// whose constraint is missing or could accept primitive values. Concrete object
     /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
     /// the constraint of a type parameter that could be instantiated with a primitive.
-    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+    fn type_may_represent_primitive(&mut self, ty: TypeId) -> bool {
         // The intrinsic `object` type excludes primitives by definition
         if ty == TypeId::OBJECT {
             return false;
@@ -504,8 +504,8 @@ impl<'a> CheckerState<'a> {
                     if self.type_may_represent_primitive(c) {
                         return true;
                     }
-                    // For concrete constraints, check if a primitive is assignable
-                    self.ctx.types.is_assignable_to(TypeId::STRING, c)
+                    // For concrete constraints, check if a primitive is assignable.
+                    self.assign_relation_outcome(TypeId::STRING, c).related
                 }
             };
         }

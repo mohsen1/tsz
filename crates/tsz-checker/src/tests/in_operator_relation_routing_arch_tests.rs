@@ -39,6 +39,26 @@ fn in_operator_lhs_key_diagnostic_uses_relation_outcome_boundary() {
 }
 
 #[test]
+fn in_operator_rhs_primitive_constraint_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/binary_support.rs")
+        .expect("failed to read binary support source");
+    let body = function_body_until(
+        &source,
+        "fn type_may_represent_primitive(",
+        "\n    /// True when `ty` is an `in`-operator RHS shape",
+    );
+
+    assert!(
+        body.contains("self.assign_relation_outcome(TypeId::STRING, c).related"),
+        "`in` operator TS2638 primitive constraint check should route through relation outcome boundary"
+    );
+    assert!(
+        !body.contains("ctx.types.is_assignable_to(TypeId::STRING, c)"),
+        "`in` operator TS2638 primitive constraint check should not use a raw solver relation gate"
+    );
+}
+
+#[test]
 fn binary_instanceof_symbol_hasinstance_relations_use_relation_outcomes() {
     let source = fs::read_to_string("src/types/computation/binary_support.rs")
         .expect("failed to read binary support source");
