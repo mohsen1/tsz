@@ -1724,6 +1724,19 @@ impl ParserState {
             return false;
         }
 
+        // A mapped type parameter `[K in T]` on a new line is always a type member
+        // boundary, never an array/indexed-access suffix.  The bracket-scanning loop
+        // below uses raw scanner calls that do not re-enter template-continuation mode
+        // after a `TemplateHead` substitution; template literals inside the `as` clause
+        // (e.g. `[K in T as K extends \`${P}:${N}\` ? N : never]`) can absorb the
+        // closing `]` into the template string, making bracket_depth never reach 0 and
+        // causing the function to incorrectly return false.  Short-circuit here: any
+        // `[identifier in …]` sequence with a preceding line break is a mapped type and
+        // therefore a boundary, regardless of what the bracket contents look like.
+        if self.look_ahead_is_mapped_type_start() {
+            return true;
+        }
+
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 

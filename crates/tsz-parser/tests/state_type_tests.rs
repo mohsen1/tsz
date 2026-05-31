@@ -1,6 +1,8 @@
 //! Tests for type expression parsing in the parser.
 use crate::parser::syntax_kind_ext;
-use crate::parser::test_fixture::{assert_span, assert_span_on, parse_source, parse_source_named};
+use crate::parser::test_fixture::{
+    assert_no_errors, assert_span, assert_span_on, parse_source, parse_source_named,
+};
 
 #[test]
 fn parse_complex_type_expressions_have_no_errors() {
@@ -847,5 +849,84 @@ fn infer_with_constraint_postfix_attaches_to_constraint() {
     assert!(
         diagnostics.iter().all(|d| d.code != 1005 && d.code != 1110),
         "constraint postfix must not be reported as a missing comma/type, got {diagnostics:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mapped type `as` clause with template literal types — bracket-scanning
+// regression (issue #10936 / parser-5-20).
+//
+// When a mapped type entry uses a template literal in its `as` clause, e.g.
+// `[K in T as K extends \`${P}:${N}\` ? N : never]: U`, the raw scanner that
+// `look_ahead_is_computed_type_member_boundary` used internally would fail to
+// re-enter template-continuation mode after the first `}` substitution close,
+// misidentifying the `[` as an array/indexed-access suffix rather than a type
+// member boundary.  The tests below pin every structural shape that was broken.
+// ---------------------------------------------------------------------------
+
+/// Single-member type literal whose only member is a mapped entry with a
+/// template literal in the `as` clause — minimal reproducer.
+#[test]
+fn mapped_type_as_template_literal_single_member_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  [K in keyof O as K extends `${infer P}:${infer N}` ? N : never]: O[K]\n};",
+    );
+}
+
+/// A regular property followed by a mapped entry with a template-literal `as`
+/// clause.  This is the exact shape that triggered the cascade error: the
+/// bracket-scanning loop would misidentify the second line's `[` as an
+/// array-access suffix of the property value type.
+#[test]
+fn mapped_type_as_template_literal_after_regular_member_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  extra: string\n  [K in keyof O as K extends `${infer P}:${infer N}` ? N : never]: O[K]\n};",
+    );
+}
+
+/// Same shape as above but with differently-spelled type-parameter names to
+/// confirm the fix is structural and not hardcoded to specific identifier names.
+#[test]
+fn mapped_type_as_template_literal_renamed_params_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  extra: string\n  [Key in keyof O as Key extends `${infer Prefix}:${infer Name}` ? Name : never]: O[Key]\n};",
+    );
+}
+
+/// Multiple regular members surrounding a mapped entry with a template-literal
+/// `as` clause.
+#[test]
+fn mapped_type_as_template_literal_surrounded_by_regular_members_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  before: string\n  [K in keyof O as K extends `${infer A}:${infer B}` ? B : never]: O[K]\n  after: number\n};",
+    );
+}
+
+/// Mapped type `as` clause with a template literal that has more than two
+/// interpolation segments.
+#[test]
+fn mapped_type_as_template_literal_three_segments_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  [K in keyof O as K extends `${infer A}:${infer B}:${infer C}` ? C : never]: O[K]\n};",
+    );
+}
+
+/// A simple mapped type (no template literal) still parses correctly after the
+/// early-return guard — verifies the guard does not break the non-template case.
+#[test]
+fn mapped_type_plain_as_clause_after_regular_member_no_errors() {
+    assert_no_errors(
+        "type T<O> = {\n  extra: string\n  [K in keyof O as K extends string ? K : never]: O[K]\n};",
+    );
+}
+
+/// The same bracket-scanning fix applies inside an `interface` body.  Interfaces
+/// cannot legally hold mapped type entries (the checker emits TS7061), but the
+/// parser must still recognise `[K in …]` on a new line as a type member
+/// boundary, not an array-access suffix of the preceding property type.
+#[test]
+fn mapped_type_as_template_literal_in_interface_body_no_parser_errors() {
+    assert_no_errors(
+        "interface I {\n  extra: string\n  [K in keyof I as K extends `${infer P}:${infer N}` ? N : never]: I[K]\n}",
     );
 }
