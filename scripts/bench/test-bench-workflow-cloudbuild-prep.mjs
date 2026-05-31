@@ -17,28 +17,40 @@ const BENCH_SHARD_CLOUDBUILD = path.join(
 const workflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 const shardCloudbuild = fs.readFileSync(BENCH_SHARD_CLOUDBUILD, "utf8");
 
-const failFastMessages = workflow.match(
-  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but its manifest artifact is for/g,
+const successGraceWindows = workflow.match(
+  /success_seen_at=""[\s\S]+?success_grace_seconds=600/g,
 ) ?? [];
 assert.equal(
-  failFastMessages.length,
+  successGraceWindows.length,
   2,
-  "both Cloud Build prep artifact paths should fail fast on stale manifest artifacts after build success",
+  "both Cloud Build prep artifact paths should use a bounded post-success artifact visibility grace window",
 );
 
-assert.doesNotMatch(
-  workflow,
-  /Cloud Build manifest artifact is for .*waiting for/,
-  "successful Cloud Build prep with a stale manifest artifact must not wait until the 150 minute deadline",
+const postSuccessMessages = workflow.match(
+  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded; waiting up to \$\{success_grace_seconds\}s for prep artifacts to become visible\./g,
+) ?? [];
+assert.equal(
+  postSuccessMessages.length,
+  2,
+  "both Cloud Build prep artifact paths should log when entering the post-success artifact visibility grace window",
+);
+
+const staleManifestWaits = workflow.match(
+  /Cloud Build benchmark prep \$\{cloudbuild_id\} manifest artifact is for \$\{manifest_target_sha:-unknown\} \/ PGO=\$\{manifest_pgo_optimized:-0\}; waiting for \$\{target_sha\} \/ PGO=1\./g,
+) ?? [];
+assert.equal(
+  staleManifestWaits.length,
+  2,
+  "successful Cloud Build prep with a stale manifest artifact should keep polling during the post-success grace window",
 );
 
 const unusableArtifactMessages = workflow.match(
-  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env\/tar for/g,
+  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env\/tar for \$\{target_sha\} after \$\{success_grace_seconds\}s\./g,
 ) ?? [];
 assert.equal(
   unusableArtifactMessages.length,
   2,
-  "both Cloud Build prep artifact paths should fail fast when a successful build exposes no usable prep artifacts",
+  "both Cloud Build prep artifact paths should fail after the bounded post-success grace window when no usable prep artifacts appear",
 );
 
 assert.match(
@@ -55,14 +67,14 @@ assert.match(
 
 assert.match(
   workflow,
-  /expected \$\{target_sha\} \/ PGO=1\."\s*\n\s+exit 1/,
-  "PGO prep path should report the expected target and exit immediately",
+  /waiting for \$\{target_sha\} \/ PGO=1\."\s*\n\s+fi\s*\n\s+if \(\( SECONDS - success_seen_at >= success_grace_seconds \)\)/,
+  "PGO prep path should report the expected target and wait until the post-success grace deadline",
 );
 
 assert.match(
   workflow,
-  /expected \$\{target_sha\} \/ PGO=1\."\s*\n\s+exit 1/,
-  "benchmark prep path should report the expected target and PGO marker before exiting immediately",
+  /waiting for \$\{target_sha\} \/ PGO=1\."\s*\n\s+fi\s*\n\s+if \(\( SECONDS - success_seen_at >= success_grace_seconds \)\)/,
+  "benchmark prep path should report the expected target and PGO marker before the post-success grace deadline",
 );
 
 assert.match(
