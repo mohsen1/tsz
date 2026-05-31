@@ -1051,13 +1051,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Mark local re-export specifiers for emit elision when the local
-            // binding has no runtime form. `sym.is_type_only` catches type-only
-            // imports (`import type { X }` etc.) regardless of whether the
-            // source-module export is itself a runtime value. The alias branch
-            // handles `import { X } from "m"` where `X` is type-only in `m`;
-            // `import_binding_is_type_only` adds const-enum and `export =`
-            // awareness over the plain specifier-side query. The fallback
-            // covers non-alias declarations that are purely type entities.
+            // binding has no runtime form. The alias branch follows the import
+            // through the source module (covers const-enum and `export =`
+            // shapes that the plain specifier-side query misses).
             if is_local && !enclosing_export_is_type_only && !specifier.is_type_only {
                 use tsz_binder::symbol_flags;
                 let sym = self
