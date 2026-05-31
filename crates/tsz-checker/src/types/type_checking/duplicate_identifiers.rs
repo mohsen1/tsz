@@ -1310,20 +1310,18 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Import specifiers and re-export specifiers with the same name
-                    // do not conflict. In tsc, `export { A } from "mod"` creates a
-                    // symbol in the file's exports table, not in file locals, so it
-                    // never collides with `import { A } from "mod"`. Our binder
-                    // merges both into the same symbol, so we suppress the false
-                    // TS2300 here when at least one declaration is a re-export
-                    // specifier (export specifier whose parent ExportDeclaration
-                    // has a module specifier).
+                    // In tsc, `import { A } from "m"` lives in file locals and
+                    // `export { A } from "m"` lives in the file's exports table —
+                    // different slots, no collision. Our binder merges both into
+                    // the same symbol, so suppress TS2300 only when exactly one
+                    // side is a re-export specifier; two re-exports of the same
+                    // exported name share the exports slot and DO collide.
                     let both_aliases = (decl_flags & symbol_flags::ALIAS) != 0
                         && (other_flags & symbol_flags::ALIAS) != 0;
                     if both_aliases {
                         let decl_is_reexport = self.is_reexport_specifier(decl_idx);
                         let other_is_reexport = self.is_reexport_specifier(other_idx);
-                        if decl_is_reexport || other_is_reexport {
+                        if decl_is_reexport != other_is_reexport {
                             continue;
                         }
                     }

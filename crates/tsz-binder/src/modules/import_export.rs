@@ -665,9 +665,24 @@ impl BinderState {
                                 }
                             }
 
-                            // Create symbols for re-export specifiers so they can be tracked
-                            // in the compilation cache for incremental invalidation
+                            // Duplicate `export { X } from "mod"` specifiers share one slot in
+                            // the file's exports table — tsc reports TS2300 on each. The default
+                            // ALIAS+ALIAS path in `declare_symbol` allocates a shadowing symbol,
+                            // leaving the duplicate-identifier checker with two single-decl
+                            // symbols and no TS2300. Append the second spec to the existing
+                            // re-export alias's declarations instead so the checker sees both.
                             for (exported, original, spec_idx) in &export_mappings {
+                                if let Some(existing_id) =
+                                    self.existing_reexport_alias_for_name(arena, exported)
+                                {
+                                    let span = Self::declaration_span(arena, *spec_idx);
+                                    if let Some(sym) = self.symbols.get_mut(existing_id) {
+                                        sym.add_declaration(*spec_idx, span);
+                                    }
+                                    Arc::make_mut(&mut self.node_symbols)
+                                        .insert(spec_idx.0, existing_id);
+                                    continue;
+                                }
                                 let sym_id = self.declare_symbol(
                                     arena,
                                     exported,
@@ -679,12 +694,8 @@ impl BinderState {
                                     sym.is_exported = true;
                                     sym.is_type_only = export_type_only;
                                     sym.import_module = Some(source_module.clone());
-                                    sym.import_name = Some(
-                                        original
-                                            .as_ref()
-                                            .cloned()
-                                            .unwrap_or_else(|| exported.clone()),
-                                    );
+                                    sym.import_name =
+                                        Some(original.clone().unwrap_or_else(|| exported.clone()));
                                 }
                                 Arc::make_mut(&mut self.node_symbols).insert(spec_idx.0, sym_id);
                             }
@@ -820,6 +831,29 @@ impl BinderState {
                 }
             }
         }
+    }
+
+    /// Existing re-export alias for `name` in the current scope, if any.
+    ///
+    /// `import { X } from "m"`, `export { X } from "m"`, and `export import X =
+    /// require("m")` all set `ALIAS` + `import_module`; only an `EXPORT_SPECIFIER`
+    /// first declaration identifies the file's exports-table slot we want to
+    /// merge into.
+    fn existing_reexport_alias_for_name(
+        &self,
+        arena: &NodeArena,
+        name: &str,
+    ) -> Option<crate::SymbolId> {
+        let candidate = self.current_scope.get(name)?;
+        let sym = self.symbols.get(candidate)?;
+        if (sym.flags & symbol_flags::ALIAS) == 0 || sym.import_module.is_none() {
+            return None;
+        }
+        let first_decl = sym.declarations.first().copied()?;
+        arena
+            .get(first_decl)
+            .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_SPECIFIER)
+            .then_some(candidate)
     }
 
     /// Check if a node kind is a declaration that should be bound
