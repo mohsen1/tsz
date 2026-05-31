@@ -462,6 +462,37 @@ impl<'a> LoweringPass<'a> {
             .any(|&mod_idx| self.arena.get(mod_idx).is_some_and(|n| n.kind == modifier))
     }
 
+    pub(super) fn legacy_private_member_decorators_are_invalid(&self, name: NodeIndex) -> bool {
+        self.ctx.options.legacy_decorators && is_private_identifier(self.arena, name)
+    }
+
+    pub(super) fn modifiers_have_decorator(&self, modifiers: &Option<NodeList>) -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
+        })
+    }
+
+    pub(super) fn visit_modifiers(&mut self, modifiers: &Option<NodeList>, skip_decorators: bool) {
+        let Some(mods) = modifiers else {
+            return;
+        };
+        for &mod_idx in &mods.nodes {
+            if skip_decorators
+                && self
+                    .arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            {
+                continue;
+            }
+            self.visit(mod_idx);
+        }
+    }
+
     /// Check if a class has any decorators (class-level or member-level)
     pub(super) fn class_has_decorators(
         &self,

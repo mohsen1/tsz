@@ -81,3 +81,38 @@ fn legacy_decorated_computed_class_expressions_match_tsc_temp_order() {
         "A computed method should consume pending computed field entries without adding a class-expression wrapper.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn legacy_decorators_on_private_members_do_not_schedule_decorate_helper() {
+    let source = "declare function decorator(target: any, key: any): any;\nclass A {\n    @decorator #field = 1;\n    @decorator #method() {}\n    @decorator get #value() { return 1; }\n}\n";
+
+    let output = emit(source);
+
+    assert!(
+        !output.contains("__decorate"),
+        "Invalid legacy decorators on private members should not schedule runtime decorator helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_field.set(this, 1);")
+            && output.contains("_A_instances = new WeakSet()")
+            && output.contains("_A_method = function _A_method() { }")
+            && output.contains("_A_value_get = function _A_value_get() { return 1; }"),
+        "Private field, method, and accessor state should still lower normally.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_public_member_decorators_still_schedule_decorate_helper() {
+    let source = "declare function decorator(target: any, key: any): any;\nclass A {\n    @decorator field = 1;\n    @decorator method() {}\n}\n";
+
+    let output = emit(source);
+
+    assert!(
+        output.contains("__decorate([") && output.contains("], A.prototype, \"field\", void 0);"),
+        "Public legacy field decorators should still schedule __decorate.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("], A.prototype, \"method\", null);"),
+        "Public legacy method decorators should still schedule __decorate.\nOutput:\n{output}"
+    );
+}

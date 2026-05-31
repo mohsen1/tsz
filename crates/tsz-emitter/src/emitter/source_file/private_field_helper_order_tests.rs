@@ -141,3 +141,187 @@ class Box {
         "instance-only class must not emit a static field assignment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn private_field_leading_comments_move_to_weakmap_initializers() {
+    let source = r#"
+class A {
+    /**
+     * @public
+     */
+    #a = 1;
+    /**
+     * @private
+     */
+    #b = 2;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let public_comment = output
+        .find("* @public")
+        .unwrap_or_else(|| panic!("expected public JSDoc on lowered private field\n{output}"));
+    let public_init = output
+        .find("_A_a.set(this, 1);")
+        .unwrap_or_else(|| panic!("expected lowered private #a initializer\n{output}"));
+    let private_comment = output
+        .find("* @private")
+        .unwrap_or_else(|| panic!("expected private JSDoc on lowered private field\n{output}"));
+    let private_init = output
+        .find("_A_b.set(this, 2);")
+        .unwrap_or_else(|| panic!("expected lowered private #b initializer\n{output}"));
+
+    assert!(
+        public_comment < public_init && private_comment < private_init,
+        "Private field comments should move with constructor WeakMap initializers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn private_field_trailing_comments_move_to_weakmap_initializers() {
+    let source = r#"
+class A {
+    #a = 1; // first
+    #b = 2; // second
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_a.set(this, 1); // first"),
+        "trailing comment for #a should move with the constructor WeakMap initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_b.set(this, 2); // second"),
+        "trailing comment for #b should move with the constructor WeakMap initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn private_accessor_helpers_follow_source_order() {
+    let source = r#"
+class A {
+    get #a() { return 1; }
+    set #a(value) { }
+    get #b() { return 2; }
+    set #b(value) { }
+    get #c() { return 3; }
+    set #c(value) { }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let a_pos = output
+        .find("_A_a_get = function _A_a_get()")
+        .unwrap_or_else(|| panic!("expected #a getter helper\n{output}"));
+    let b_pos = output
+        .find("_A_b_get = function _A_b_get()")
+        .unwrap_or_else(|| panic!("expected #b getter helper\n{output}"));
+    let c_pos = output
+        .find("_A_c_get = function _A_c_get()")
+        .unwrap_or_else(|| panic!("expected #c getter helper\n{output}"));
+
+    assert!(
+        a_pos < b_pos && b_pos < c_pos,
+        "Private accessor helper initialization order should match source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn no_body_private_accessors_emit_empty_extracted_helpers() {
+    let source = r#"
+class A {
+    declare get #value(): number;
+    declare set #value(value: number);
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_value_get = function _A_value_get() { }"),
+        "no-body private getter should recover as an empty extracted helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_value_set = function _A_value_set(value) { }"),
+        "no-body private setter should recover as an empty extracted helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get ()") && !output.contains("set ("),
+        "recovered no-body private accessors should not be printed in the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn private_async_helpers_downlevel_for_es2015_but_preserve_native_for_es2019() {
+    let source = r#"
+class A {
+    async #method() { return 1; }
+    async *#stream() { return 2; }
+    async get #value() { return 3; }
+    async set #value(value: number) { }
+}
+"#;
+    let es2015 = emit(source, ScriptTarget::ES2015);
+    assert!(
+        es2015.contains("_A_method = function _A_method()")
+            && es2015
+                .contains("return __awaiter(this, void 0, void 0, function* () { return 1; });"),
+        "private async methods should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_stream = function _A_stream() { return __asyncGenerator(this, arguments, function* _A_stream_1() { return yield __await(2); }); }"),
+        "private async generators should lower through __asyncGenerator for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_value_get = function _A_value_get()")
+            && es2015
+                .contains("return __awaiter(this, void 0, void 0, function* () { return 3; });"),
+        "private async getters should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_value_set = function _A_value_set(value)")
+            && es2015.contains("return __awaiter(this, void 0, void 0, function* () { });"),
+        "private async setters should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        !es2015.contains("async function _A_method")
+            && !es2015.contains("async function* _A_stream"),
+        "ES2015 private helpers should not keep native async helper functions.\nOutput:\n{es2015}"
+    );
+
+    let es2019 = emit(source, ScriptTarget::ES2019);
+    assert!(
+        es2019.contains("_A_method = async function _A_method()"),
+        "ES2019 should preserve native async private method helpers.\nOutput:\n{es2019}"
+    );
+    assert!(
+        es2019.contains("_A_stream = async function* _A_stream()"),
+        "ES2019 should preserve native async-generator private method helpers.\nOutput:\n{es2019}"
+    );
+}
+
+#[test]
+fn declare_and_abstract_private_fields_do_not_allocate_storage() {
+    let source = r#"
+class A {
+    declare #erased: number;
+    declare #method(): void;
+    #kept = 1;
+}
+abstract class B {
+    abstract #missing: number;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_kept = new WeakMap()"),
+        "ordinary private field should still allocate storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_erased")
+            && !output.contains("_A_method")
+            && !output.contains("_B_missing"),
+        "declare/abstract private members should not allocate runtime storage.\nOutput:\n{output}"
+    );
+}

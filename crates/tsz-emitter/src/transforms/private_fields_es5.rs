@@ -29,7 +29,7 @@
 //! as a shared utility to avoid circular dependencies. This module re-exports it
 //! for backward compatibility.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -71,12 +71,20 @@ pub struct PrivateAccessorInfo {
     pub get_var_name: Option<String>,
     /// The `WeakMap` variable name for the setter (e.g., "_`C_value_set`")
     pub set_var_name: Option<String>,
+    /// Whether a getter declaration appeared for this private name.
+    pub has_getter: bool,
+    /// Whether a setter declaration appeared for this private name.
+    pub has_setter: bool,
     /// The node index of the getter body (if any)
     pub getter_body: Option<NodeIndex>,
     /// The node index of the setter body (if any)
     pub setter_body: Option<NodeIndex>,
     /// The node index of the setter parameter (if any)
     pub setter_param: Option<NodeIndex>,
+    /// Whether the getter declaration carried an `async` modifier.
+    pub getter_is_async: bool,
+    /// Whether the setter declaration carried an `async` modifier.
+    pub setter_is_async: bool,
     /// Whether this is a static private accessor
     pub is_static: bool,
 }
@@ -462,6 +470,12 @@ pub fn collect_private_fields_with_reserved(
 
             // Check if this is a private field
             if is_private_identifier(arena, prop_data.name) {
+                if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
+
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
                 let weakmap_name = make_unique_private_name(
@@ -502,7 +516,7 @@ pub fn collect_private_accessors_with_reserved(
     class_name: &str,
     used_names: &mut FxHashSet<String>,
 ) -> Vec<PrivateAccessorInfo> {
-    let mut accessors: FxHashMap<String, PrivateAccessorInfo> = FxHashMap::default();
+    let mut accessors: Vec<PrivateAccessorInfo> = Vec::new();
 
     let Some(class_node) = arena.get(class_idx) else {
         return Vec::new();
@@ -531,11 +545,14 @@ pub fn collect_private_accessors_with_reserved(
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
             let is_static = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
 
-            // Get or create the accessor info for this name
-            let entry =
-                accessors
-                    .entry(clean_name.to_string())
-                    .or_insert_with(|| PrivateAccessorInfo {
+            // Get or create the accessor info for this name. Keep entries in
+            // source order so helper declaration/initialization order matches
+            // `tsc` for classes with several private accessor pairs.
+            let entry_idx =
+                if let Some(idx) = accessors.iter().position(|entry| entry.name == clean_name) {
+                    idx
+                } else {
+                    accessors.push(PrivateAccessorInfo {
                         member_indices: Vec::new(),
                         name: clean_name.to_string(),
                         get_var_name: Some(make_unique_private_name(
@@ -546,19 +563,31 @@ pub fn collect_private_accessors_with_reserved(
                             &format!("{}_set", private_helper_base(class_name, clean_name)),
                             used_names,
                         )),
+                        has_getter: false,
+                        has_setter: false,
                         getter_body: None,
                         setter_body: None,
                         setter_param: None,
+                        getter_is_async: false,
+                        setter_is_async: false,
                         is_static,
                     });
+                    accessors.len() - 1
+                };
+            let entry = &mut accessors[entry_idx];
             entry.member_indices.push(member_idx);
+            let is_async = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AsyncKeyword);
 
             // Update based on accessor type
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                entry.has_getter = true;
+                entry.getter_is_async = is_async;
                 if accessor_data.body.is_some() {
                     entry.getter_body = Some(accessor_data.body);
                 }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                entry.has_setter = true;
+                entry.setter_is_async = is_async;
                 if accessor_data.body.is_some() {
                     entry.setter_body = Some(accessor_data.body);
                 }
@@ -571,11 +600,7 @@ pub fn collect_private_accessors_with_reserved(
         }
     }
 
-    // Convert to Vec, filtering out entries that have neither getter nor setter
     accessors
-        .into_values()
-        .filter(|a| a.getter_body.is_some() || a.setter_body.is_some())
-        .collect()
 }
 
 /// Information about a private method in a class
@@ -639,6 +664,10 @@ pub fn collect_private_methods_with_reserved(
 
             // Check if this is a private method
             if !is_private_identifier(arena, method_data.name) {
+                continue;
+            }
+
+            if method_data.body.is_none() {
                 continue;
             }
 

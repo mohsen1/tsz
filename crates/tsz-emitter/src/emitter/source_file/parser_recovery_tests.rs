@@ -26,3 +26,14 @@ alpha = (beta = gamma === ) = 'value';
 ";
     assert_eq!(output, expected);
 }
+
+#[test]
+fn invalid_private_name_indexed_access_recovers_as_declarator_tail() {
+    let source = "const badForNow: C[#bar] = 3;";
+    let output = emit_es2015(source);
+    let expected = "\
+const badForNow, #bar;
+3;
+";
+    assert_eq!(output, expected);
+}

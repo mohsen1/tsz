@@ -923,12 +923,12 @@ impl<'a> Printer<'a> {
                                 continue;
                             }
                             if let Some(ref name) = accessor.get_var_name
-                                && accessor.getter_body.is_some()
+                                && accessor.has_getter
                             {
                                 var_names.push(name.clone());
                             }
                             if let Some(ref name) = accessor.set_var_name
-                                && accessor.setter_body.is_some()
+                                && accessor.has_setter
                             {
                                 var_names.push(name.clone());
                             }
@@ -1009,12 +1009,12 @@ impl<'a> Printer<'a> {
                         fn_ref: accessor
                             .get_var_name
                             .as_ref()
-                            .filter(|_| accessor.getter_body.is_some())
+                            .filter(|_| accessor.has_getter)
                             .cloned(),
                         setter_ref: accessor
                             .set_var_name
                             .as_ref()
-                            .filter(|_| accessor.setter_body.is_some())
+                            .filter(|_| accessor.has_setter)
                             .cloned(),
                         state_var: if accessor.is_static {
                             private_class_alias.clone()
@@ -1078,11 +1078,63 @@ impl<'a> Printer<'a> {
                 .iter()
                 .filter(|f| !f.is_static)
                 .map(|f| {
-                    let source_order = self.arena.get(f.member_idx).map_or(u32::MAX, |n| n.pos);
+                    let Some(member_pos) = class
+                        .members
+                        .nodes
+                        .iter()
+                        .position(|&member_idx| member_idx == f.member_idx)
+                    else {
+                        return (
+                            f.weakmap_name.clone(),
+                            f.has_initializer,
+                            f.initializer,
+                            Vec::new(),
+                            Vec::new(),
+                            u32::MAX,
+                        );
+                    };
+                    let member_node = self.arena.get(f.member_idx);
+                    let source_order = member_node.map_or(u32::MAX, |n| n.pos);
+                    let leading_comments = if !self.ctx.options.remove_comments {
+                        let prev_end = if member_pos > 0 {
+                            class
+                                .members
+                                .nodes
+                                .get(member_pos - 1)
+                                .and_then(|&prev_idx| self.arena.get(prev_idx))
+                                .map_or(source_order, |prev| {
+                                    self.find_token_end_before_trivia(prev.pos, prev.end)
+                                })
+                        } else {
+                            source_order.saturating_sub(64)
+                        };
+                        self.collect_leading_comments_in_range(prev_end, source_order)
+                    } else {
+                        Vec::new()
+                    };
+                    let trailing_comments = if !self.ctx.options.remove_comments {
+                        let skip_end = class
+                            .members
+                            .nodes
+                            .get(member_pos + 1)
+                            .and_then(|&next_idx| self.arena.get(next_idx))
+                            .map_or_else(
+                                || member_node.map_or(source_order, |n| n.end),
+                                |next| next.pos,
+                            );
+                        member_node.map_or_else(Vec::new, |node| {
+                            let actual_end = self.find_token_end_before_trivia(node.pos, skip_end);
+                            self.collect_trailing_comments_in_range(actual_end)
+                        })
+                    } else {
+                        Vec::new()
+                    };
                     (
                         f.weakmap_name.clone(),
                         f.has_initializer,
                         f.initializer,
+                        leading_comments,
+                        trailing_comments,
                         source_order,
                     )
                 })
@@ -1113,25 +1165,27 @@ impl<'a> Printer<'a> {
             // Prepare private accessor function defs for after the class body
             // Both instance and static private accessors are extracted.
             for accessor in &private_accessors {
-                if let Some(body_idx) = accessor.getter_body
+                if accessor.has_getter
                     && let Some(ref var_name) = accessor.get_var_name
                 {
                     self.pending_private_accessor_defs.push(
                         crate::emitter::core::PrivateAccessorDef {
                             var_name: var_name.clone(),
-                            body: body_idx,
+                            body: accessor.getter_body,
                             param: None,
+                            is_async: accessor.getter_is_async,
                         },
                     );
                 }
-                if let Some(body_idx) = accessor.setter_body
+                if accessor.has_setter
                     && let Some(ref var_name) = accessor.set_var_name
                 {
                     self.pending_private_accessor_defs.push(
                         crate::emitter::core::PrivateAccessorDef {
                             var_name: var_name.clone(),
-                            body: body_idx,
+                            body: accessor.setter_body,
                             param: accessor.setter_param,
+                            is_async: accessor.setter_is_async,
                         },
                     );
                 }
