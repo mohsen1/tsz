@@ -105,21 +105,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        use crate::caches::db::QueryDatabase;
-        let variances = self
-            .resolver
-            .get_type_param_variance(def_id)
-            .or_else(|| {
-                self.query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-            })
-            .or_else(|| {
-                crate::relations::variance::compute_type_param_variances_with_resolver(
-                    self.interner,
-                    self.resolver,
-                    def_id,
-                )
-            });
+        let variances = self.resolve_application_variances(def_id);
 
         variances.as_ref().is_some_and(|variances| {
             variances.len() == app.args.len() && variances.iter().all(|v| v.is_independent())
@@ -150,25 +136,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// the same-generic error-elaboration path so both observe identical
     /// variance facts.
     pub(crate) fn resolve_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        use crate::caches::db::QueryDatabase;
-        self.resolver
-            .get_type_param_variance(def_id)
-            .or_else(|| {
-                self.query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-            })
-            .or_else(|| {
-                let computed =
-                    crate::relations::variance::compute_type_param_variances_with_resolver(
-                        self.interner,
-                        self.resolver,
-                        def_id,
-                    );
-                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
-                    db.insert_type_param_variance(def_id, variances.clone());
-                }
-                computed
-            })
+        self.resolver.get_type_param_variance(def_id).or_else(|| {
+            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
+                self.interner,
+                self.resolver,
+                self.query_db,
+                def_id,
+            )
+        })
     }
 
     /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) by

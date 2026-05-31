@@ -1415,6 +1415,10 @@ name = "optional_tuple_element_undefined_assignability_tests"
 path = "tests/optional_tuple_element_undefined_assignability_tests.rs"
 
 [[test]]
+name = "variance_session_cache_parity_tests"
+path = "tests/variance_session_cache_parity_tests.rs"
+
+[[test]]
 name = "variance_skip_type_param_default_tests"
 path = "tests/variance_skip_type_param_default_tests.rs"
 

@@ -1991,6 +1991,10 @@ impl QueryDatabase for QueryCache<'_> {
         Some(result)
     }
 
+    fn get_cached_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        self.variance_cache.borrow().get(&def_id).map(Arc::clone)
+    }
+
     fn insert_type_param_variance(&self, def_id: DefId, variance: Arc<[Variance]>) {
         self.variance_cache.borrow_mut().insert(def_id, variance);
     }

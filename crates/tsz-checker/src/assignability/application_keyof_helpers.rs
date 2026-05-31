@@ -185,29 +185,14 @@ impl<'a> CheckerState<'a> {
 
         let def_id = query::lazy_def_id(self.ctx.types, source_base);
         let variances = def_id.and_then(|d| {
-            if let Some(cached) =
-                tsz_solver::construction::QueryDatabase::get_type_param_variance(self.ctx.types, d)
-            {
-                return Some(cached);
-            }
-            if let Some(declared) = TypeResolver::get_type_param_variance(&self.ctx, d) {
-                self.ctx
-                    .types
-                    .insert_type_param_variance(d, declared.clone());
-                return Some(declared);
-            }
-            let computed =
-                tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+            TypeResolver::get_type_param_variance(&self.ctx, d).or_else(|| {
+                crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(
                     self.ctx.types.as_type_database(),
                     &self.ctx,
+                    self.ctx.types,
                     d,
-                );
-            if let Some(ref variances) = computed {
-                self.ctx
-                    .types
-                    .insert_type_param_variance(d, variances.clone());
-            }
-            computed
+                )
+            })
         });
 
         source_args
