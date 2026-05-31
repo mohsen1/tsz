@@ -154,37 +154,51 @@ function sidecarPerfPath(inputPath) {
   return inputPath.replace(/\.json$/, ".perf.json");
 }
 
-function singleRowSidecarAttribution(rows, inputPath) {
-  if (rows.length !== 1) return new Map();
+function rowSidecarPerfPath(inputPath, rowName) {
+  if (typeof inputPath !== "string" || !inputPath.endsWith(".json")) return null;
+  if (typeof rowName !== "string" || rowName.length === 0) return null;
+  const slug = rowName.replace(/[^A-Za-z0-9._-]+/g, "_");
+  return inputPath.replace(/\.json$/, `.${slug}.perf.json`);
+}
 
-  const perfPath = sidecarPerfPath(inputPath);
-  if (!perfPath || !fs.existsSync(perfPath)) return new Map();
+function sidecarAttributionForPath(perfPath) {
+  if (!perfPath || !fs.existsSync(perfPath)) return null;
 
   let snapshot;
   try {
     snapshot = readJson(perfPath);
   } catch {
-    return new Map();
+    return null;
   }
 
-  const row = rows[0];
   const relativePath = toPortablePath(path.relative(process.cwd(), perfPath));
   const mode = snapshot.mode ?? null;
   const isAttributionMode = mode === "attribution";
-  return new Map([
-    [
-      row.name,
-      {
-        path: relativePath,
-        generated_at: fs.statSync(perfPath).mtime.toISOString(),
-        mode,
-        dominant_subsystem: isAttributionMode
-          ? inferDominantSubsystemFromPerfSnapshot(snapshot)
-          : null,
-        warning: isAttributionMode ? null : "sidecar perf snapshot mode is not attribution",
-      },
-    ],
-  ]);
+  return {
+    path: relativePath,
+    generated_at: fs.statSync(perfPath).mtime.toISOString(),
+    mode,
+    dominant_subsystem: isAttributionMode
+      ? inferDominantSubsystemFromPerfSnapshot(snapshot)
+      : null,
+    warning: isAttributionMode ? null : "sidecar perf snapshot mode is not attribution",
+  };
+}
+
+function sidecarAttribution(rows, inputPath) {
+  const attributions = new Map();
+  if (rows.length === 1) {
+    const attribution = sidecarAttributionForPath(sidecarPerfPath(inputPath));
+    if (attribution) attributions.set(rows[0].name, attribution);
+  }
+
+  for (const row of rows) {
+    if (typeof row?.name !== "string" || attributions.has(row.name)) continue;
+    const attribution = sidecarAttributionForPath(rowSidecarPerfPath(inputPath, row.name));
+    if (attribution) attributions.set(row.name, attribution);
+  }
+
+  return attributions;
 }
 
 function pickAttributionArtifact(row, fallbackArtifact = null) {
@@ -298,7 +312,7 @@ function duplicateProjectRows(rows) {
 
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
-  const sidecarAttribution = singleRowSidecarAttribution(rows, inputPath);
+  const rowSidecarAttribution = sidecarAttribution(rows, inputPath);
   const duplicateRows = duplicateProjectRows(rows);
   const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
@@ -323,7 +337,7 @@ export function createTsgoWinnerReport(input, inputPath) {
         exit_class: row.compatibility?.exit_class ?? null,
         semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
         loss_closure: lossClosureForRow(row),
-        attribution_status: attributionStatusForRow(row, sidecarAttribution.get(row.name)),
+        attribution_status: attributionStatusForRow(row, rowSidecarAttribution.get(row.name)),
       };
     });
   const targetGapRows = eligibleRows
@@ -349,7 +363,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
-      attribution_status: attributionStatusForRow(row, sidecarAttribution.get(row.name)),
+      attribution_status: attributionStatusForRow(row, rowSidecarAttribution.get(row.name)),
     }))
     .sort(compareWinnersByFactorDesc);
 
