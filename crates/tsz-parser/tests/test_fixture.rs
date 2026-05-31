@@ -36,6 +36,28 @@ pub(crate) fn assert_no_errors(source: &str) {
     );
 }
 
+/// Assert that no parse diagnostics were emitted for `source` parsed under
+/// `file_name`. Used for file-name-sensitive tests (`.tsx`, `.jsx`, etc.).
+pub(crate) fn assert_no_errors_named(file_name: &str, source: &str) {
+    let (parser, _) = parse_source_named(file_name, source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no parse errors for {source:?} (file: {file_name}), got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+/// Like `assert_no_errors_named` but includes a `label` in the failure message.
+/// Used by table-driven tests that want to identify which case failed by name.
+pub(crate) fn assert_no_errors_labeled(file_name: &str, label: &str, source: &str) {
+    let (parser, _) = parse_source_named(file_name, source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Pattern '{label}' should parse without errors (file: {file_name}), got {:?}\nSource: {source}",
+        parser.get_diagnostics()
+    );
+}
+
 /// Assert that a node of the given `kind` starts at `expected_text` within
 /// `source` and its span ends exactly where `expected_text` ends — i.e. the
 /// node does not overshoot into a trailing token such as `;` or `,`.
