@@ -375,6 +375,23 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Execute a strict-function-types relation probe while returning a
+    /// `RelationOutcome`-shaped result for diagnostic routing.
+    pub(crate) fn strict_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_strict(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Boolean relation guard for diagnostic code paths.
     ///
     /// Keep these calls grep-distinct from diagnostic decisions that need

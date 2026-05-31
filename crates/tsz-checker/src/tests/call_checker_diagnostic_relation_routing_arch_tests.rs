@@ -67,6 +67,14 @@ fn call_checker_adapter_uses_relation_outcome_boundary() {
         "call checker adapter identity comparison should not regress to raw checker assignability"
     );
     assert!(
+        adapter.contains("strict_relation_outcome(source, target)") && adapter.contains(".related"),
+        "call checker adapter strict probes should route through RelationOutcome"
+    );
+    assert!(
+        !adapter.contains("state.is_assignable_to_strict(source, target)"),
+        "call checker adapter strict probes should not regress to raw strict assignability"
+    );
+    assert!(
         adapter.contains("bivariant_callbacks_relation_outcome(source, target)")
             && adapter.contains(".related"),
         "call checker adapter bivariant callback probes should route through RelationOutcome"

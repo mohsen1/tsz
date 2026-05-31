@@ -90,7 +90,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        self.state.is_assignable_to_strict(source, target)
+        self.state.strict_relation_outcome(source, target).related
     }
 
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
