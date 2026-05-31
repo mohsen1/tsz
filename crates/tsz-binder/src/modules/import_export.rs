@@ -549,10 +549,8 @@ impl BinderState {
                                                         });
                                                     exports.set(exp.to_string(), sym_id);
                                                 }
-                                            } else {
-                                                if let Some(parent_id) = container_sym {
-                                                    sym.parent = parent_id;
-                                                }
+                                            } else if let Some(parent_id) = container_sym {
+                                                sym.parent = parent_id;
                                             }
                                         }
                                         Arc::make_mut(&mut self.node_symbols)
