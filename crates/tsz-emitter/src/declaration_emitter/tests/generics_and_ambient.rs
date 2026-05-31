@@ -187,6 +187,10 @@ fn test_inferred_return_preserves_mapped_parameter_annotation() {
     export function makeLookup<Value>(source: { [name: string]: Value }) {
         return source;
     }
+
+    export function makeMethod<Value>(source: { method(input: Value): void }) {
+        return source;
+    }
     "#,
     );
 
@@ -205,6 +209,10 @@ fn test_inferred_return_preserves_mapped_parameter_annotation() {
     assert!(
         output.contains("): {\n    [name: string]: Value;\n};"),
         "Expected renamed index signature parameter annotation to keep object return layout: {output}"
+    );
+    assert!(
+        output.contains("): {\n    method(input: Value): void;\n};"),
+        "Expected method-signature parameter annotation to keep object return layout: {output}"
     );
 }
 

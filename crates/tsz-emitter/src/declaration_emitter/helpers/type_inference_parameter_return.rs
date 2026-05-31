@@ -25,13 +25,28 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        self.emit_type_node_text(type_annotation).map(|type_text| {
-            type_text
-                .trim()
-                .trim_end_matches(';')
-                .trim_end()
-                .to_string()
-        })
+        self.type_literal_annotation_text(type_annotation)
+    }
+
+    pub(in crate::declaration_emitter) fn type_literal_annotation_text(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+
+        self.emit_type_node_text(type_annotation)
+            .map(|type_text| Self::trim_trailing_type_literal_annotation_punctuation(&type_text))
+    }
+
+    fn trim_trailing_type_literal_annotation_punctuation(type_text: &str) -> String {
+        type_text
+            .trim()
+            .trim_end_matches(';')
+            .trim_end()
+            .to_string()
     }
 
     pub(in crate::declaration_emitter) fn function_body_spread_array_return_type_text(
