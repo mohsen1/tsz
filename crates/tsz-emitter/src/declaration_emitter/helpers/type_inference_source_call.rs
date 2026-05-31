@@ -242,6 +242,10 @@ impl<'a> DeclarationEmitter<'a> {
             type_param_names.push(name_text);
         }
 
+        let return_type_param_name = type_param_names
+            .iter()
+            .find(|name| type_text.trim() == name.as_str())
+            .cloned();
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
         let mut substitutions = if explicit_type_args.is_empty() {
             self.infer_call_type_param_substitutions_from_arguments(
@@ -258,6 +262,17 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|(name_text, arg_text)| (name_text.clone(), arg_text.clone()))
                 .collect()
         };
+        if explicit_type_args.is_empty()
+            && let Some(name_text) = return_type_param_name.as_deref()
+            && let Some(literal_text) = self.literal_direct_type_parameter_argument_substitution(
+                source_arena,
+                func,
+                call,
+                name_text,
+            )
+        {
+            Self::replace_or_push_substitution(&mut substitutions, name_text, literal_text);
+        }
         for (name_text, default_text) in type_param_defaults {
             if substitutions
                 .iter()
@@ -289,6 +304,86 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn literal_direct_type_parameter_argument_substitution(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_param_name: &str,
+    ) -> Option<String> {
+        let args = call.arguments.as_ref()?;
+        for (&param_idx, &arg_idx) in func.parameters.nodes.iter().zip(args.nodes.iter()) {
+            let param_node = source_arena.get(param_idx)?;
+            let param = source_arena.get_parameter(param_node)?;
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            let param_type_text = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))?;
+            if param_type_text.trim() != type_param_name {
+                continue;
+            }
+            if let Some(literal_text) = self.primitive_literal_argument_type_text(arg_idx) {
+                return Some(literal_text);
+            }
+        }
+        None
+    }
+
+    fn replace_or_push_substitution(
+        substitutions: &mut Vec<(String, String)>,
+        name: &str,
+        value: String,
+    ) {
+        if let Some((_, existing)) = substitutions
+            .iter_mut()
+            .find(|(known, _)| known.as_str() == name)
+        {
+            *existing = value;
+            return;
+        }
+        substitutions.push((name.to_string(), value));
+    }
+
+    pub(in crate::declaration_emitter) fn function_has_higher_order_type_parameter_parameter(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_param_name: &str,
+    ) -> bool {
+        if type_param_name.is_empty() {
+            return false;
+        }
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
+            if !Self::contains_whole_word_in_text(&param_type_text, type_param_name) {
+                continue;
+            }
+            let Some(parts) = Self::parse_function_type_text(&param_type_text) else {
+                continue;
+            };
+            if parts.parameters.iter().any(|param| {
+                Self::contains_whole_word_in_text(&param.type_text, type_param_name)
+                    && Self::parse_function_type_text(&param.type_text).is_some()
+            }) {
+                return true;
+            }
+        }
+        false
     }
 
     fn expand_literal_key_mapped_type_text(type_text: &str) -> Option<String> {

@@ -1707,7 +1707,10 @@ impl<'a> DeclarationEmitter<'a> {
             || Self::contains_whole_word_in_text(constraint, "bigint")
     }
 
-    fn primitive_literal_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn primitive_literal_argument_type_text(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
         let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
         let arg_node = self.arena.get(arg_idx)?;
         (arg_node.kind == SyntaxKind::StringLiteral as u16

@@ -471,10 +471,27 @@ impl<'a> DeclarationEmitter<'a> {
                             && !self
                                 .call_expression_uses_partial_required_mapped_inference(expr_idx)
                             && !self.call_expression_uses_no_infer_return_block(expr_idx)
-                            && let Some(canonical_text) =
-                                self.fully_resolved_call_canonical_type_text(expr_idx)
                         {
-                            return Some(canonical_text);
+                            let literal_direct_substitution = self
+                                .literal_direct_type_parameter_argument_substitution(
+                                    source_arena,
+                                    func,
+                                    call,
+                                    type_text.trim(),
+                                );
+                            let has_higher_order_type_param_param = self
+                                .function_has_higher_order_type_parameter_parameter(
+                                    source_arena,
+                                    func,
+                                    type_text.trim(),
+                                );
+                            if (literal_direct_substitution.is_none()
+                                || has_higher_order_type_param_param)
+                                && let Some(canonical_text) =
+                                    self.fully_resolved_call_canonical_type_text(expr_idx)
+                            {
+                                return Some(canonical_text);
+                            }
                         }
                         if let Some(evaluated) = self
                             .evaluate_source_template_infer_conditional_call(

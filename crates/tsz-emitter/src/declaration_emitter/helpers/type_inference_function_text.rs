@@ -39,19 +39,18 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            if substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == source_param.type_text)
-            {
-                continue;
-            }
             if let Some(argument_param) = argument.parameters.get(source_param_index) {
-                substitutions.push((
-                    source_param.type_text.clone(),
-                    Self::parenthesize_generic_function_type_argument(&argument_param.type_text),
-                ));
+                Self::merge_function_param_substitution(
+                    substitutions,
+                    &source_param.type_text,
+                    &argument_param.type_text,
+                );
             } else if source_param.optional {
-                substitutions.push((source_param.type_text.clone(), "unknown".to_string()));
+                Self::merge_function_param_substitution(
+                    substitutions,
+                    &source_param.type_text,
+                    "unknown",
+                );
             }
         }
 
@@ -138,6 +137,81 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn merge_function_param_substitution(
+        substitutions: &mut Vec<(String, String)>,
+        name: &str,
+        candidate: &str,
+    ) {
+        if let Some((_, existing)) = substitutions
+            .iter_mut()
+            .find(|(known, _)| known.as_str() == name)
+        {
+            if Self::type_text_is_stricter_function_parameter_candidate(candidate, existing) {
+                *existing = Self::parenthesize_generic_function_type_argument(candidate);
+            }
+            return;
+        }
+        substitutions.push((
+            name.to_string(),
+            Self::parenthesize_generic_function_type_argument(candidate),
+        ));
+    }
+
+    fn type_text_is_stricter_function_parameter_candidate(candidate: &str, existing: &str) -> bool {
+        let candidate = candidate.trim();
+        let existing = existing.trim();
+        if candidate == existing {
+            return false;
+        }
+        if Self::literal_type_text_narrows_type_text(candidate, existing) {
+            return true;
+        }
+        if Self::literal_type_text_narrows_type_text(existing, candidate) {
+            return false;
+        }
+        if Self::primitive_type_text_narrows_type_text(candidate, existing) {
+            return true;
+        }
+        false
+    }
+
+    fn literal_type_text_narrows_type_text(literal: &str, target: &str) -> bool {
+        let Some(primitive) = Self::literal_type_text_primitive_kind(literal) else {
+            return false;
+        };
+        target.trim() == primitive
+            || Self::primitive_type_text_narrows_type_text(primitive, target)
+            || Self::split_top_level_union_type_parts(target)
+                .iter()
+                .any(|part| part.trim() == primitive)
+    }
+
+    fn primitive_type_text_narrows_type_text(candidate: &str, existing: &str) -> bool {
+        matches!(candidate.trim(), "string" | "number" | "boolean" | "bigint")
+            && matches!(existing.trim(), "Object" | "object" | "{}" | "unknown")
+    }
+
+    fn literal_type_text_primitive_kind(type_text: &str) -> Option<&'static str> {
+        let trimmed = type_text.trim();
+        if trimmed == "true" || trimmed == "false" {
+            return Some("boolean");
+        }
+        if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+            return Some("string");
+        }
+        if trimmed.ends_with('n')
+            && tsz_solver::utils::is_numeric_literal_name(
+                &trimmed[..trimmed.len().saturating_sub(1)],
+            )
+        {
+            return Some("bigint");
+        }
+        if tsz_solver::utils::is_numeric_literal_name(trimmed) {
+            return Some("number");
+        }
+        None
+    }
+
     fn infer_argument_function_type_param_substitution(
         argument_param: &FunctionTypeParamText,
         source_type_text: &str,
@@ -154,7 +228,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        substitutions.push((argument_type_text.to_string(), source_type_text.to_string()));
+        Self::merge_function_param_substitution(
+            substitutions,
+            argument_type_text,
+            source_type_text,
+        );
     }
 
     fn tuple_item_text_for_function_param(param: &FunctionTypeParamText) -> String {

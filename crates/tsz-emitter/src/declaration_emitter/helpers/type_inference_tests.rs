@@ -805,6 +805,91 @@ let y10 = unboxify(x10);
 }
 
 #[test]
+fn declared_call_return_refines_callback_parameter_inference_from_later_arguments() {
+    let source = r#"
+declare function merge<A>(left: (value: A) => void, right: (value: A) => void): (value: A) => void;
+declare function acceptObject(value: Object): void;
+declare function acceptString(value: string): void;
+declare function acceptLiteral(value: "lit"): void;
+export const first = merge(acceptObject, acceptString);
+export const reversed = merge(acceptString, acceptObject);
+export const literal = merge(acceptObject, acceptLiteral);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const first: (value: string) => void;"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const reversed: (value: string) => void;"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const literal: (value: \"lit\") => void;"),
+        "{output}"
+    );
+}
+
+#[test]
+fn declared_call_return_preserves_bare_type_parameter_literal_argument() {
+    let source = r#"
+declare function valueMerge<A>(value: A, left: (value: A) => void, right: (value: A) => void): A;
+declare function acceptObject(value: Object): void;
+declare function acceptString(value: string): void;
+const text = valueMerge("abc", acceptObject, acceptString);
+const number = valueMerge(123, (value: number | string) => {}, (value: 123) => {});
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(output.contains("declare const text = \"abc\";"), "{output}");
+    assert!(output.contains("declare const number = 123;"), "{output}");
+}
+
+#[test]
+fn higher_order_type_parameter_parameter_blocks_direct_literal_initializer_reuse() {
+    let source = r#"
+declare function direct<A>(value: A, callback: (value: A) => void): A;
+declare function higher<A>(value: A, callback: (inner: (value: A) => void) => void): A;
+declare function unrelated<A>(value: A, callback: (inner: (value: string) => void) => void): A;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    let find_function = |name: &str| {
+        parser.arena.nodes.iter().find_map(|node| {
+            let func = parser.arena.get_function(node)?;
+            (emitter
+                .identifier_text_from_arena(&parser.arena, func.name)
+                .as_deref()
+                == Some(name))
+            .then_some(func)
+        })
+    };
+
+    assert!(!emitter.function_has_higher_order_type_parameter_parameter(
+        &parser.arena,
+        find_function("direct").expect("direct function"),
+        "A",
+    ));
+    assert!(emitter.function_has_higher_order_type_parameter_parameter(
+        &parser.arena,
+        find_function("higher").expect("higher function"),
+        "A",
+    ));
+    assert!(!emitter.function_has_higher_order_type_parameter_parameter(
+        &parser.arena,
+        find_function("unrelated").expect("unrelated function"),
+        "A",
+    ));
+}
+
+#[test]
 fn declared_call_return_inverts_structural_partial_like_mapped_alias() {
     let source = r#"
 type OptionalShape<T> = { [Key in keyof T]?: T[Key] };

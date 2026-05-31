@@ -636,6 +636,15 @@ impl<'a> DeclarationEmitter<'a> {
                         initializer,
                         &type_text,
                     );
+                if keyword == "const"
+                    && !self.variable_declaration_has_effective_export(decl_idx)
+                    && Self::is_literal_type_text_for_const_call(&type_text)
+                    && self.call_expression_has_primitive_literal_argument(initializer)
+                {
+                    self.write(" = ");
+                    self.write(&type_text);
+                    return;
+                }
                 self.write(": ");
                 if fallback_to_any_for_types_versions_self_reference {
                     self.write("any");
@@ -1751,5 +1760,23 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<tsz_solver::types::LiteralValue> {
         let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;
         tsz_solver::visitor::literal_value(interner, member_type)
+    }
+
+    fn call_expression_has_primitive_literal_argument(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(init_node) else {
+            return false;
+        };
+        call.arguments.as_ref().is_some_and(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .any(|arg| self.primitive_literal_argument_type_text(arg).is_some())
+        })
     }
 }
