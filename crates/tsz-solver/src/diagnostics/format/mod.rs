@@ -958,12 +958,14 @@ impl<'a> TypeFormatter<'a> {
         // surface every level instead of being silently truncated after the
         // first. Depth carries the nesting level so the reporter can render
         // tsc-style progressive 2-space indentation.
-        let fallback_span = pending
-            .span
-            .clone()
-            .unwrap_or_else(|| SourceSpan::new("<unknown>", 0, 0));
-        for related in &pending.related {
-            self.render_related_chain(related, 0, &fallback_span, &mut diag.related);
+        if !pending.related.is_empty() {
+            let fallback_span = pending
+                .span
+                .clone()
+                .unwrap_or_else(|| SourceSpan::new("<unknown>", 0, 0));
+            for related in &pending.related {
+                self.render_related_chain(related, 0, &fallback_span, &mut diag.related);
+            }
         }
 
         diag
