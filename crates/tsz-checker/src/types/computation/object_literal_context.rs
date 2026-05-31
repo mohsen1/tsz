@@ -1550,7 +1550,11 @@ impl<'a> CheckerState<'a> {
                 });
                 match member_prop_type {
                     Some(target_type) => {
-                        if *lit_type == target_type || self.is_subtype_of(*lit_type, target_type) {
+                        if *lit_type == target_type
+                            || self
+                                .diagnostic_subtype_outcome(*lit_type, target_type)
+                                .related
+                        {
                             return true;
                         }
                         // For optional properties (e.g. `disc?: false`), the effective type

@@ -264,3 +264,26 @@ fn test_excess_property_discriminant_filters_use_subtype_outcome_boundary() {
         "excess-property discriminant filters must not consume raw subtype booleans directly"
     );
 }
+
+/// Contextual object-literal union selection keeps discriminator matching local,
+/// but unit-value subtype checks should still use outcome-shaped relation truth.
+#[test]
+fn test_contextual_object_literal_discriminants_use_subtype_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/object_literal_context.rs")
+        .expect("failed to read object_literal_context.rs");
+    let helper = source
+        .split("fn narrow_contextual_union_via_object_literal_discriminants")
+        .nth(1)
+        .and_then(|tail| tail.split("fn shorthand_const_literal_type").next())
+        .expect("failed to locate contextual object-literal discriminant helper");
+    let compact = helper.split_whitespace().collect::<String>();
+
+    assert!(
+        compact.contains("diagnostic_subtype_outcome(*lit_type,target_type).related"),
+        "contextual object-literal discriminant checks must route subtype probes through outcomes"
+    );
+    assert!(
+        !compact.contains("is_subtype_of(*lit_type,target_type)"),
+        "contextual object-literal discriminant checks must not consume raw subtype booleans directly"
+    );
+}
