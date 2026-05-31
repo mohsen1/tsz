@@ -384,9 +384,7 @@ impl<'a> DeclarationEmitter<'a> {
             let element_idx = self
                 .arena
                 .skip_parenthesized_and_assertions_and_comma(element_idx);
-            let Some(element_node) = self.arena.get(element_idx) else {
-                return None;
-            };
+            let element_node = self.arena.get(element_idx)?;
             if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                 let spread = self.arena.get_spread(element_node)?;
                 let spread_text =
