@@ -157,22 +157,6 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Check if a property access expression accesses a private identifier.
-    fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
-        }
-        let Some(access) = self.arena.get_access_expr(node) else {
-            return false;
-        };
-        self.arena
-            .get(access.name_or_argument)
-            .is_some_and(|name_n| name_n.kind == SyntaxKind::PrivateIdentifier as u16)
-    }
-
     fn private_field_access_name(&self, node_idx: NodeIndex) -> Option<&str> {
         let node = self.arena.get(node_idx)?;
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -237,85 +221,6 @@ impl<'a> LoweringPass<'a> {
     ) -> bool {
         self.private_field_access_name(node_idx)
             .is_some_and(|name| private_names.contains(name))
-    }
-
-    fn assignment_pattern_contains_private_field_access(
-        &self,
-        pattern_idx: NodeIndex,
-        needle: NodeIndex,
-    ) -> bool {
-        let pattern_idx = self.unwrap_parens_and_types(pattern_idx);
-        if pattern_idx == needle && self.is_private_field_access(pattern_idx) {
-            return true;
-        }
-
-        let Some(node) = self.arena.get(pattern_idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                self.arena.get_binary_expr(node).is_some_and(|binary| {
-                    binary.operator_token == SyntaxKind::EqualsToken as u16
-                        && self
-                            .assignment_pattern_contains_private_field_access(binary.left, needle)
-                })
-            }
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
-            {
-                self.arena.get_literal_expr(node).is_some_and(|literal| {
-                    literal.elements.nodes.iter().any(|&element| {
-                        self.assignment_pattern_contains_private_field_access(element, needle)
-                    })
-                })
-            }
-            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-            {
-                self.arena.get_binding_pattern(node).is_some_and(|pattern| {
-                    pattern.elements.nodes.iter().any(|&element| {
-                        self.assignment_pattern_contains_private_field_access(element, needle)
-                    })
-                })
-            }
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                .arena
-                .get_property_assignment(node)
-                .is_some_and(|prop| {
-                    self.assignment_pattern_contains_private_field_access(prop.initializer, needle)
-                }),
-            k if k == syntax_kind_ext::SPREAD_ELEMENT
-                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
-            {
-                self.arena.get_spread(node).is_some_and(|spread| {
-                    self.assignment_pattern_contains_private_field_access(spread.expression, needle)
-                })
-            }
-            _ => false,
-        }
-    }
-
-    fn assignment_pattern_has_private_field_access(&self, pattern_idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(pattern_idx) else {
-            return false;
-        };
-        let start = node.pos;
-        let end = node.end;
-        for i in 0..self.arena.len() {
-            let nidx = NodeIndex(i as u32);
-            let Some(candidate) = self.arena.get(nidx) else {
-                continue;
-            };
-            if candidate.pos < start || candidate.end > end {
-                continue;
-            }
-            if self.is_private_field_access(nidx)
-                && self.assignment_pattern_contains_private_field_access(pattern_idx, nidx)
-            {
-                return true;
-            }
-        }
-        false
     }
 
     fn assignment_pattern_contains_declared_private_field_access(
@@ -504,29 +409,33 @@ impl<'a> LoweringPass<'a> {
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
+        let private_names = self.class_private_member_names(class_data);
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
             if self.ctx.options.legacy_decorators
-                && self.member_decorator_expressions_have_private_field_read(member_node)
+                && self.member_decorator_expressions_have_private_field_read(
+                    member_node,
+                    &private_names,
+                )
             {
                 return true;
             }
             // Static blocks: scan the block itself (its pos..end covers all statements)
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                if self.subtree_has_private_field_read(member_idx) {
+                if self.subtree_has_private_field_read(member_idx, &private_names) {
                     return true;
                 }
                 continue;
             }
             if let Some(name) = self.get_member_name(member_node)
-                && self.subtree_has_private_field_read(name)
+                && self.subtree_has_private_field_read(name, &private_names)
             {
                 return true;
             }
             if let Some(body) = self.get_member_body(member_node)
-                && self.subtree_has_private_field_read(body)
+                && self.subtree_has_private_field_read(body, &private_names)
             {
                 return true;
             }
@@ -539,29 +448,33 @@ impl<'a> LoweringPass<'a> {
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
+        let private_names = self.class_private_member_names(class_data);
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
             if self.ctx.options.legacy_decorators
-                && self.member_decorator_expressions_have_private_field_write(member_node)
+                && self.member_decorator_expressions_have_private_field_write(
+                    member_node,
+                    &private_names,
+                )
             {
                 return true;
             }
             // Static blocks: scan the block itself
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                if self.subtree_has_private_field_write(member_idx) {
+                if self.subtree_has_private_field_write(member_idx, &private_names) {
                     return true;
                 }
                 continue;
             }
             if let Some(name) = self.get_member_name(member_node)
-                && self.subtree_has_private_field_write(name)
+                && self.subtree_has_private_field_write(name, &private_names)
             {
                 return true;
             }
             if let Some(body) = self.get_member_body(member_node)
-                && self.subtree_has_private_field_write(body)
+                && self.subtree_has_private_field_write(body, &private_names)
             {
                 return true;
             }
@@ -574,28 +487,32 @@ impl<'a> LoweringPass<'a> {
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
+        let private_names = self.class_private_member_names(class_data);
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
             if self.ctx.options.legacy_decorators
-                && self.member_decorator_expressions_have_private_in_expression(member_node)
+                && self.member_decorator_expressions_have_private_in_expression(
+                    member_node,
+                    &private_names,
+                )
             {
                 return true;
             }
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                if self.subtree_has_private_in_expression(member_idx) {
+                if self.subtree_has_private_in_expression(member_idx, &private_names) {
                     return true;
                 }
                 continue;
             }
             if let Some(name) = self.get_member_name(member_node)
-                && self.subtree_has_private_in_expression(name)
+                && self.subtree_has_private_in_expression(name, &private_names)
             {
                 return true;
             }
             if let Some(body) = self.get_member_body(member_node)
-                && self.subtree_has_private_in_expression(body)
+                && self.subtree_has_private_in_expression(body, &private_names)
             {
                 return true;
             }
@@ -606,27 +523,30 @@ impl<'a> LoweringPass<'a> {
     fn member_decorator_expressions_have_private_field_read(
         &self,
         member_node: &tsz_parser::parser::node::Node,
+        private_names: &rustc_hash::FxHashSet<String>,
     ) -> bool {
         self.member_decorator_expressions_match(member_node, |this, expr| {
-            this.subtree_has_private_field_read(expr)
+            this.subtree_has_private_field_read(expr, private_names)
         })
     }
 
     fn member_decorator_expressions_have_private_field_write(
         &self,
         member_node: &tsz_parser::parser::node::Node,
+        private_names: &rustc_hash::FxHashSet<String>,
     ) -> bool {
         self.member_decorator_expressions_match(member_node, |this, expr| {
-            this.subtree_has_private_field_write(expr)
+            this.subtree_has_private_field_write(expr, private_names)
         })
     }
 
     fn member_decorator_expressions_have_private_in_expression(
         &self,
         member_node: &tsz_parser::parser::node::Node,
+        private_names: &rustc_hash::FxHashSet<String>,
     ) -> bool {
         self.member_decorator_expressions_match(member_node, |this, expr| {
-            this.subtree_has_private_in_expression(expr)
+            this.subtree_has_private_in_expression(expr, private_names)
         })
     }
 
@@ -705,7 +625,11 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Scan a subtree for `#field in obj` expressions.
-    fn subtree_has_private_in_expression(&self, idx: NodeIndex) -> bool {
+    fn subtree_has_private_in_expression(
+        &self,
+        idx: NodeIndex,
+        private_names: &rustc_hash::FxHashSet<String>,
+    ) -> bool {
         let Some(root) = self.arena.get(idx) else {
             return false;
         };
@@ -724,9 +648,8 @@ impl<'a> LoweringPass<'a> {
                 && let Some(bin) = self.arena.get_binary_expr(n)
                 && bin.operator_token == SyntaxKind::InKeyword as u16
                 && self
-                    .arena
-                    .get(bin.left)
-                    .is_some_and(|l| l.kind == SyntaxKind::PrivateIdentifier as u16)
+                    .private_identifier_name(bin.left)
+                    .is_some_and(|name| private_names.contains(name))
             {
                 return true;
             }
@@ -735,7 +658,11 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Scan a subtree for expressions that write to private fields.
-    fn subtree_has_private_field_write(&self, idx: NodeIndex) -> bool {
+    fn subtree_has_private_field_write(
+        &self,
+        idx: NodeIndex,
+        private_names: &rustc_hash::FxHashSet<String>,
+    ) -> bool {
         let Some(root) = self.arena.get(idx) else {
             return false;
         };
@@ -761,8 +688,11 @@ impl<'a> LoweringPass<'a> {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
-                    if self.is_private_field_access(left)
-                        || self.assignment_pattern_has_private_field_access(bin.left)
+                    if self.is_declared_private_field_access(left, private_names)
+                        || self.assignment_pattern_has_declared_private_field_access(
+                            bin.left,
+                            private_names,
+                        )
                     {
                         return true;
                     }
@@ -777,7 +707,7 @@ impl<'a> LoweringPass<'a> {
                         || unary.operator == SyntaxKind::MinusMinusToken as u16
                     {
                         let operand = self.unwrap_parens_and_types(unary.operand);
-                        if self.is_private_field_access(operand) {
+                        if self.is_declared_private_field_access(operand, private_names) {
                             return true;
                         }
                     }
@@ -789,7 +719,11 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Scan a subtree for expressions that read from private fields.
-    fn subtree_has_private_field_read(&self, idx: NodeIndex) -> bool {
+    fn subtree_has_private_field_read(
+        &self,
+        idx: NodeIndex,
+        private_names: &rustc_hash::FxHashSet<String>,
+    ) -> bool {
         let Some(root) = self.arena.get(idx) else {
             return false;
         };
@@ -804,7 +738,7 @@ impl<'a> LoweringPass<'a> {
             if n.pos < start || n.end > end {
                 continue;
             }
-            if !self.is_private_field_access(nidx) {
+            if !self.is_declared_private_field_access(nidx, private_names) {
                 continue;
             }
             // Check if this access is exclusively a write target (LHS of plain `=`).
@@ -825,7 +759,11 @@ impl<'a> LoweringPass<'a> {
                         // Unwrap parens AND type assertions to find the actual LHS
                         let left = self.unwrap_parens_and_types(bin.left);
                         if left == nidx
-                            || self.assignment_pattern_contains_private_field_access(bin.left, nidx)
+                            || self.assignment_pattern_contains_declared_private_field_access(
+                                bin.left,
+                                nidx,
+                                private_names,
+                            )
                         {
                             is_write_only = true;
                             break;

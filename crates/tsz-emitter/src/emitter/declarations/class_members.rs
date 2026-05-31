@@ -1238,7 +1238,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit parameter property and field initializer assignments (constructor prologue).
-    fn emit_constructor_prologue(
+    pub(in crate::emitter) fn emit_constructor_prologue(
         &mut self,
         param_props: &[String],
         field_inits: &[crate::emitter::core::FieldInit],
@@ -1283,114 +1283,31 @@ impl<'a> Printer<'a> {
             }
             self.write_line();
         }
-        // Emit private field WeakMap.set inits after parameter properties. They
-        // are instance field initializers for ordering purposes.
+        // Emit private and public instance field initializers in source order
+        // after parameter properties. Both are field initializers for ordering
+        // purposes even though private fields lower to `WeakMap.set`.
         let private_inits = self.pending_private_field_constructor_inits.clone();
-        for (weakmap_name, has_initializer, initializer) in &private_inits {
-            self.write(weakmap_name);
-            self.write(".set(this, ");
-            if *has_initializer {
-                self.emit_expression(*initializer);
+        let mut private_idx = 0;
+        let mut public_idx = 0;
+        while private_idx < private_inits.len() || public_idx < field_inits.len() {
+            let next_private_order = private_inits
+                .get(private_idx)
+                .map_or(u32::MAX, |(_, _, _, source_order)| *source_order);
+            let next_public_order = field_inits
+                .get(public_idx)
+                .map_or(u32::MAX, |(_, _, _, _, _, source_order)| *source_order);
+            if next_private_order <= next_public_order {
+                let (weakmap_name, has_initializer, initializer, _) = &private_inits[private_idx];
+                self.emit_private_field_constructor_init(
+                    weakmap_name,
+                    *has_initializer,
+                    *initializer,
+                );
+                private_idx += 1;
             } else {
-                self.write("void 0");
+                self.emit_public_field_constructor_init(&field_inits[public_idx]);
+                public_idx += 1;
             }
-            self.write(");");
-            self.write_line();
-        }
-        for (name, init_idx, init_end, leading_comments, trailing_comments) in field_inits {
-            // Emit leading comments from the original property declaration
-            for comment in leading_comments {
-                self.write_comment(comment);
-                self.write_line();
-            }
-            if self.ctx.options.use_define_for_class_fields {
-                self.write("Object.defineProperty(this, ");
-                if name.starts_with('[') && name.ends_with(']') {
-                    self.write(&name[1..name.len() - 1]);
-                } else {
-                    self.emit_string_literal_text(name);
-                }
-                self.write(", {");
-                self.write_line();
-                self.increase_indent();
-                self.write("enumerable: true,");
-                self.write_line();
-                self.write("configurable: true,");
-                self.write_line();
-                self.write("writable: true,");
-                self.write_line();
-                self.write("value: ");
-                if init_idx.is_none() {
-                    self.write("void 0");
-                } else {
-                    if let Some(init_node) = self.arena.get(*init_idx) {
-                        while self.comment_emit_idx < self.all_comments.len()
-                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
-                        {
-                            self.comment_emit_idx += 1;
-                        }
-                    }
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
-                }
-                self.write_line();
-                self.decrease_indent();
-                self.write("});");
-            } else {
-                // Bracket names (e.g., `["constructor"]`) are encoded with `[` prefix
-                if name.starts_with('[') {
-                    self.write("this");
-                    self.write(name);
-                } else {
-                    self.write("this.");
-                    self.write(name);
-                }
-                self.write(" = ");
-                if init_idx.is_none() {
-                    self.write("void 0");
-                } else {
-                    if let Some(init_node) = self.arena.get(*init_idx) {
-                        while self.comment_emit_idx < self.all_comments.len()
-                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
-                        {
-                            self.comment_emit_idx += 1;
-                        }
-                    }
-                    let arrow_comment_scan_end =
-                        self.source_text.map_or(*init_end, |text| text.len() as u32);
-                    let arrow_comment_range = self.rightmost_concise_arrow_deferred_comment_range(
-                        *init_idx,
-                        arrow_comment_scan_end,
-                    );
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        if let Some((comment_start, comment_end)) = arrow_comment_range {
-                            this.with_arrow_concise_body_trailing_comments_deferred(
-                                comment_start,
-                                comment_end,
-                                |this| {
-                                    this.emit_expression(*init_idx);
-                                },
-                            );
-                        } else {
-                            this.emit_expression(*init_idx);
-                        }
-                    });
-                }
-                self.write(";");
-                // Emit trailing comments from the original class field.
-                // If pre-collected (field appeared before constructor in source), use them.
-                // Otherwise fall back to position-based lookup (field after constructor).
-                if !trailing_comments.is_empty() {
-                    for comment in trailing_comments {
-                        self.write_space();
-                        self.write_comment(comment);
-                    }
-                } else {
-                    self.emit_trailing_comments(*init_end);
-                }
-            }
-            self.write_line();
         }
         for (name, init_idx) in auto_accessor_inits {
             self.write(name);
@@ -1402,6 +1319,120 @@ impl<'a> Printer<'a> {
             self.write(");");
             self.write_line();
         }
+    }
+
+    fn emit_private_field_constructor_init(
+        &mut self,
+        weakmap_name: &str,
+        has_initializer: bool,
+        initializer: NodeIndex,
+    ) {
+        self.write(weakmap_name);
+        self.write(".set(this, ");
+        if has_initializer {
+            self.emit_expression(initializer);
+        } else {
+            self.write("void 0");
+        }
+        self.write(");");
+        self.write_line();
+    }
+
+    fn emit_public_field_constructor_init(&mut self, field_init: &crate::emitter::core::FieldInit) {
+        let (name, init_idx, init_end, leading_comments, trailing_comments, _) = field_init;
+        // Emit leading comments from the original property declaration.
+        for comment in leading_comments {
+            self.write_comment(comment);
+            self.write_line();
+        }
+        if self.ctx.options.use_define_for_class_fields {
+            self.write("Object.defineProperty(this, ");
+            if name.starts_with('[') && name.ends_with(']') {
+                self.write(&name[1..name.len() - 1]);
+            } else {
+                self.emit_string_literal_text(name);
+            }
+            self.write(", {");
+            self.write_line();
+            self.increase_indent();
+            self.write("enumerable: true,");
+            self.write_line();
+            self.write("configurable: true,");
+            self.write_line();
+            self.write("writable: true,");
+            self.write_line();
+            self.write("value: ");
+            if init_idx.is_none() {
+                self.write("void 0");
+            } else {
+                if let Some(init_node) = self.arena.get(*init_idx) {
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                    {
+                        self.comment_emit_idx += 1;
+                    }
+                }
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_expression(*init_idx);
+                });
+            }
+            self.write_line();
+            self.decrease_indent();
+            self.write("});");
+        } else {
+            // Bracket names (e.g., `["constructor"]`) are encoded with `[` prefix.
+            if name.starts_with('[') {
+                self.write("this");
+                self.write(name);
+            } else {
+                self.write("this.");
+                self.write(name);
+            }
+            self.write(" = ");
+            if init_idx.is_none() {
+                self.write("void 0");
+            } else {
+                if let Some(init_node) = self.arena.get(*init_idx) {
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                    {
+                        self.comment_emit_idx += 1;
+                    }
+                }
+                let arrow_comment_scan_end =
+                    self.source_text.map_or(*init_end, |text| text.len() as u32);
+                let arrow_comment_range = self.rightmost_concise_arrow_deferred_comment_range(
+                    *init_idx,
+                    arrow_comment_scan_end,
+                );
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    if let Some((comment_start, comment_end)) = arrow_comment_range {
+                        this.with_arrow_concise_body_trailing_comments_deferred(
+                            comment_start,
+                            comment_end,
+                            |this| {
+                                this.emit_expression(*init_idx);
+                            },
+                        );
+                    } else {
+                        this.emit_expression(*init_idx);
+                    }
+                });
+            }
+            self.write(";");
+            // Emit trailing comments from the original class field. If
+            // pre-collected (field appeared before constructor in source), use
+            // them. Otherwise fall back to position-based lookup.
+            if !trailing_comments.is_empty() {
+                for comment in trailing_comments {
+                    self.write_space();
+                    self.write_comment(comment);
+                }
+            } else {
+                self.emit_trailing_comments(*init_end);
+            }
+        }
+        self.write_line();
     }
 
     pub(in crate::emitter) fn emit_get_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
