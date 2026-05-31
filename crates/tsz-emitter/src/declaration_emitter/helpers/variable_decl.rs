@@ -560,6 +560,11 @@ impl<'a> DeclarationEmitter<'a> {
                             && (text.contains("=>")
                                 || text.starts_with('[')
                                 || type_text.contains("unknown")
+                                || self.partial_required_call_reused_type_should_replace_preferred(
+                                    initializer,
+                                    text,
+                                    &type_text,
+                                )
                                 || (keyword == "const"
                                     && Self::is_literal_type_text_for_const_call(text)))
                     })
