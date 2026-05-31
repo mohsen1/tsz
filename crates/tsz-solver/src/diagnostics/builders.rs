@@ -697,7 +697,7 @@ impl TypeDiagnostic {
                 message_text: rel.message.clone(),
                 category: DiagnosticCategory::Message,
                 code: 0,
-                depth: 0,
+                depth: rel.depth,
             })
             .collect();
 

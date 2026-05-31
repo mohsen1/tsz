@@ -401,6 +401,12 @@ impl SourceSpan {
 pub struct RelatedInformation {
     pub span: SourceSpan,
     pub message: String,
+    /// Nesting depth within the parent diagnostic's elaboration chain.
+    /// `0` is the first elaboration line (rendered at 2 spaces of indent);
+    /// each deeper level adds 2 more spaces. Non-chain related entries (e.g.
+    /// genuine cross-location pointers like "see declaration here") stay at
+    /// `0`.
+    pub depth: u8,
 }
 
 /// A type checking diagnostic.
@@ -436,11 +442,12 @@ impl TypeDiagnostic {
         self
     }
 
-    /// Add related information.
+    /// Add related information at depth 0.
     pub fn with_related(mut self, span: SourceSpan, message: impl Into<String>) -> Self {
         self.related.push(RelatedInformation {
             span,
             message: message.into(),
+            depth: 0,
         });
         self
     }

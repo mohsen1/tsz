@@ -953,24 +953,45 @@ impl<'a> TypeFormatter<'a> {
         };
 
         // Render related diagnostics, falling back to the primary span.
-        let fallback_span = pending
-            .span
-            .clone()
-            .unwrap_or_else(|| SourceSpan::new("<unknown>", 0, 0));
-        for related in &pending.related {
-            let related_msg =
-                self.render_template(get_message_template(related.code), &related.args);
-            let span = related
+        // Recursively walk the elaboration tree so nested chains built via
+        // `with_related` (e.g. `PropertyTypeMismatch { nested_reason: ... }`)
+        // surface every level instead of being silently truncated after the
+        // first. Depth carries the nesting level so the reporter can render
+        // tsc-style progressive 2-space indentation.
+        if !pending.related.is_empty() {
+            let fallback_span = pending
                 .span
                 .clone()
-                .unwrap_or_else(|| fallback_span.clone());
-            diag.related.push(RelatedInformation {
-                span,
-                message: related_msg,
-            });
+                .unwrap_or_else(|| SourceSpan::new("<unknown>", 0, 0));
+            for related in &pending.related {
+                self.render_related_chain(related, 0, &fallback_span, &mut diag.related);
+            }
         }
 
         diag
+    }
+
+    /// Recursively flatten a nested `PendingDiagnostic` elaboration chain into
+    /// `RelatedInformation` entries with monotonically increasing depth so the
+    /// reporter can render tsc-style progressive indentation.
+    fn render_related_chain(
+        &mut self,
+        pending: &PendingDiagnostic,
+        depth: u8,
+        fallback_span: &SourceSpan,
+        out: &mut Vec<RelatedInformation>,
+    ) {
+        let message = self.render_template(get_message_template(pending.code), &pending.args);
+        let span = pending.span.as_ref().unwrap_or(fallback_span).clone();
+        out.push(RelatedInformation {
+            span,
+            message,
+            depth,
+        });
+        let next_depth = depth.saturating_add(1);
+        for child in &pending.related {
+            self.render_related_chain(child, next_depth, fallback_span, out);
+        }
     }
 
     /// Render a message template with arguments.

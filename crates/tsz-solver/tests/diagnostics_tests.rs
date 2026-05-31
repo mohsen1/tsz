@@ -268,6 +268,112 @@ fn test_union_member_mismatch_diagnostic_includes_related_members() {
 }
 
 #[test]
+fn test_render_preserves_nested_property_mismatch_chain() {
+    // Structural rule: when a `PendingDiagnostic` carries a nested elaboration
+    // chain built via `with_related`, `TypeFormatter::render` must flatten the
+    // full chain with monotonically increasing depth — not silently truncate
+    // after the first level (the previous behavior dropped every "Types of
+    // property 'X' are incompatible" line below the outermost one).
+    let interner = TypeInterner::new();
+    let inner = SubtypeFailureReason::PropertyTypeMismatch {
+        property_name: interner.intern_string("b"),
+        source_property_type: TypeId::NUMBER,
+        target_property_type: TypeId::STRING,
+        nested_reason: None,
+    };
+    let outer = SubtypeFailureReason::PropertyTypeMismatch {
+        property_name: interner.intern_string("a"),
+        source_property_type: TypeId::NUMBER, // placeholder; the chain uses the inner pair
+        target_property_type: TypeId::STRING,
+        nested_reason: Some(Box::new(inner)),
+    };
+
+    let pending = outer
+        .to_diagnostic(TypeId::NUMBER, TypeId::STRING)
+        .with_span(SourceSpan::new("test.ts", 0, 1));
+
+    // `to_diagnostic` builds a sibling+nested elaboration tree under the top
+    // diagnostic. Before the recursive-flatten fix, the renderer dropped every
+    // child of a non-top-level entry, so the inner "Types of property 'b' are
+    // incompatible." helper-name line vanished entirely — exactly the
+    // "truncates helper names and loses context" symptom.
+    let mut formatter = TypeFormatter::new(&interner);
+    let diag = formatter.render(&pending);
+
+    let messages: Vec<(u8, &str)> = diag
+        .related
+        .iter()
+        .map(|r| (r.depth, r.message.as_str()))
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|(_, m)| m.contains("'a'") && m.contains("incompatible")),
+        "outer property mismatch line missing: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|(_, m)| m.contains("'b'") && m.contains("incompatible")),
+        "inner property mismatch line is truncated and helper name 'b' is lost: {messages:?}"
+    );
+
+    // Depth must strictly increase as the walker descends from a parent into
+    // its children. The 'a' elaboration is a direct sibling of the top diag
+    // (depth 0); the 'b' elaboration hangs off the nested TS2322 wrapper, so
+    // it sits at least one level deeper.
+    let outer_a = diag
+        .related
+        .iter()
+        .find(|r| r.message.contains("'a'"))
+        .expect("outer 'a' line");
+    let inner_b = diag
+        .related
+        .iter()
+        .find(|r| r.message.contains("'b'"))
+        .expect("inner 'b' line");
+    assert_eq!(outer_a.depth, 0);
+    assert!(
+        inner_b.depth > outer_a.depth,
+        "inner 'b' should be rendered deeper than outer 'a' (got outer={}, inner={})",
+        outer_a.depth,
+        inner_b.depth
+    );
+}
+
+#[test]
+fn test_render_related_chain_depth_does_not_overflow_on_pathological_depth() {
+    // Recursion safety: even a chain longer than u8::MAX must not panic. The
+    // walker saturates `depth` at u8::MAX so deeper levels still emit (just at
+    // the same maximum-indent level the reporter clamps to).
+    let interner = TypeInterner::new();
+    // Build a 300-level chain by nesting PropertyTypeMismatch reasons.
+    let mut reason: Option<Box<SubtypeFailureReason>> = None;
+    for i in 0..300 {
+        let name = format!("p{i}");
+        reason = Some(Box::new(SubtypeFailureReason::PropertyTypeMismatch {
+            property_name: interner.intern_string(&name),
+            source_property_type: TypeId::NUMBER,
+            target_property_type: TypeId::STRING,
+            nested_reason: reason,
+        }));
+    }
+    let outermost = *reason.expect("at least one level");
+    let pending = outermost
+        .to_diagnostic(TypeId::NUMBER, TypeId::STRING)
+        .with_span(SourceSpan::new("test.ts", 0, 1));
+
+    let mut formatter = TypeFormatter::new(&interner);
+    let diag = formatter.render(&pending);
+
+    // The chain renders without panic; max depth saturates at u8::MAX.
+    let max_depth = diag.related.iter().map(|r| r.depth).max().unwrap_or(0);
+    assert_eq!(max_depth, u8::MAX);
+    assert!(diag.related.len() >= 300);
+}
+
+#[test]
 fn test_property_missing_diagnostic() {
     let interner = TypeInterner::new();
     let mut builder = DiagnosticBuilder::new(&interner);
