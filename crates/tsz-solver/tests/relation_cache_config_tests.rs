@@ -126,6 +126,20 @@ fn relation_cache_config_does_not_expose_raw_constructor() {
 }
 
 #[test]
+fn query_trace_relation_cache_config_fixture_uses_policy_projection() {
+    let source = include_str!("../src/caches/query_trace.rs");
+
+    assert!(
+        source.contains("RelationPolicy::from_relation_flags"),
+        "query trace relation config fixtures should use the typed relation policy projection",
+    );
+    assert!(
+        !source.contains("RelationCacheConfig::new"),
+        "query trace should not hand-build relation cache configs; use RelationPolicy::cache_config()",
+    );
+}
+
+#[test]
 fn legacy_flag_constructor_stores_typed_relation_flags() {
     let policy = RelationPolicy::from_flags(
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS

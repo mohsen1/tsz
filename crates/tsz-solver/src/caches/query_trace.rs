@@ -202,18 +202,19 @@ mod tests {
 
     #[test]
     fn relation_cache_config_trace_fields_include_any_mode() {
-        let config = crate::types::RelationCacheConfig::new(
+        let config = crate::relations::relation_queries::RelationPolicy::from_relation_flags(
             crate::types::RelationFlags::STRICT_NULL_CHECKS,
-            crate::types::CachedAnyMode::TopLevelOnlyNested,
-        );
+        )
+        .with_any_propagation_mode(crate::relations::subtype::AnyPropagationMode::TopLevelOnly)
+        .cache_config();
 
         let fields = relation_cache_config_trace_fields(config);
 
-        assert_eq!(
-            fields.flags,
-            crate::types::RelationFlags::STRICT_NULL_CHECKS.bits()
+        assert!(
+            crate::types::RelationFlags::from_bits_retain(fields.flags)
+                .contains(crate::types::RelationFlags::STRICT_NULL_CHECKS)
         );
-        assert_eq!(fields.any_mode, "top_level_only_nested");
+        assert_eq!(fields.any_mode, "top_level_only_at_top");
     }
 
     #[test]
