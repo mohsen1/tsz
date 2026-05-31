@@ -58,6 +58,18 @@ fn test_no_errors(source: &str) {
     );
 }
 
+/// Test that contextual `undefined` return accepts empty and bare-return bodies.
+#[test]
+fn test_contextual_undefined_return_allows_empty_bodies() {
+    test_no_errors(
+        r#"
+        type Callback = () => undefined;
+        const empty: Callback = () => {};
+        const bare: Callback = () => { return; };
+        "#,
+    );
+}
+
 /// Test that methods are bivariant (same parameter types work both ways).
 #[test]
 fn test_method_bivariance_same_params() {
