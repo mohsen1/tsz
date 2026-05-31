@@ -1392,6 +1392,22 @@ impl<'a> Printer<'a> {
         if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
             es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
         }
+        let mut outer_rename_map = self.ctx.block_scope_state.visible_outer_rename_map();
+        for (class_name, class_alias) in &self.scoped_class_expression_self_alias_ancestors {
+            outer_rename_map.insert(
+                class_name.as_ref().to_string(),
+                class_alias.as_ref().to_string(),
+            );
+        }
+        if let Some((class_name, class_alias)) = &self.scoped_class_expression_self_alias {
+            outer_rename_map.insert(
+                class_name.as_ref().to_string(),
+                class_alias.as_ref().to_string(),
+            );
+        }
+        if !outer_rename_map.is_empty() {
+            es5_emitter.set_outer_rename_map(outer_rename_map);
+        }
         if self.es5_class_expression_extends_this_captured {
             es5_emitter.set_extends_this_captured(true);
         }

@@ -945,6 +945,9 @@ pub struct Printer<'a> {
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
+    /// Enclosing class-value aliases still visible inside nested class bodies
+    /// whose names do not shadow the outer class binding.
+    pub(crate) scoped_class_expression_self_alias_ancestors: Vec<(Arc<str>, Arc<str>)>,
 
     /// Named-evaluation context for the next TC39-decorated anonymous class
     /// expression. The boolean is true when the name is a runtime expression

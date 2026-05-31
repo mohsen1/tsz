@@ -1272,6 +1272,35 @@ fn es5_commonjs_exported_class_private_storage_hoists_before_es_module_marker() 
 }
 
 #[test]
+fn es2015_nested_class_expression_inherits_enclosing_private_self_alias() {
+    let source = "class Outer {\n    #value = 1;\n    #method() { return new Outer().#value; }\n    make() {\n        return class Inner {\n            #own() {}\n            read() {\n                new Outer().#value;\n                new Inner().#own;\n            }\n        };\n    }\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(
+            "read() {\n                    __classPrivateFieldGet(new _a(), _Outer_value, \"f\");"
+        ),
+        "Nested class-expression bodies should rewrite enclosing class self-references through the private class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(new _b(), _Inner_instances, \"m\", _Inner_own);"),
+        "Nested class self-references should still use the nested class expression alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
     let source = "// order comment\n\
 class C {\n\

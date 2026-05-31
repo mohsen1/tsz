@@ -2017,6 +2017,19 @@ impl<'a> Printer<'a> {
         let mut field_init_comment_idx = 0usize;
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
+        let scoped_class_expression_self_alias_ancestor_len =
+            self.scoped_class_expression_self_alias_ancestors.len();
+        if let Some((prev_class_name, prev_class_alias)) =
+            prev_scoped_class_expression_self_alias.clone()
+        {
+            let shadows_prev_alias = class_name_is_real
+                && !class_name.is_empty()
+                && class_name == prev_class_name.as_ref();
+            if !shadows_prev_alias {
+                self.scoped_class_expression_self_alias_ancestors
+                    .push((prev_class_name, prev_class_alias));
+            }
+        }
         if let Some(alias) = assignment_alias {
             if class_name_is_real && !class_name.is_empty() && class_name != alias {
                 self.scoped_class_expression_self_alias = Some((
@@ -2029,6 +2042,13 @@ impl<'a> Printer<'a> {
                 self.scoped_class_expression_self_alias = Some((
                     Arc::<str>::from(class_name.as_str()),
                     Arc::<str>::from(temp.as_str()),
+                ));
+            }
+        } else if let Some(alias) = class_value_alias.as_ref() {
+            if class_name_is_real && !class_name.is_empty() && class_name != *alias {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias.as_str()),
                 ));
             }
         } else if let Some((static_class_name, static_class_alias)) =
@@ -2614,6 +2634,8 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.scoped_class_expression_self_alias_ancestors
+            .truncate(scoped_class_expression_self_alias_ancestor_len);
         self.scoped_class_expression_self_alias = prev_scoped_class_expression_self_alias;
 
         if !emitted_any_member && let Some(text) = self.source_text {

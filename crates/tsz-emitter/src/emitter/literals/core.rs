@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::sync::Arc;
 
 use crate::context::transform::IdentifierId;
 use crate::emitter::Printer;
@@ -40,6 +41,26 @@ impl<'a> Printer<'a> {
                 self.writer.write(class_alias.as_ref());
             }
             return;
+        }
+        if !self.suppress_ns_qualification && self.private_static_class_alias_shadow_depth == 0 {
+            let ancestor_alias = self
+                .scoped_class_expression_self_alias_ancestors
+                .iter()
+                .rev()
+                .find(|(class_name, _)| original_text == class_name.as_ref())
+                .map(|(_, class_alias)| Arc::clone(class_alias));
+            if let Some(class_alias) = ancestor_alias {
+                if let Some(source_pos) = self.take_pending_source_pos() {
+                    self.writer.write_node_with_name(
+                        class_alias.as_ref(),
+                        source_pos,
+                        original_text,
+                    );
+                } else {
+                    self.writer.write(class_alias.as_ref());
+                }
+                return;
+            }
         }
 
         // tsc preserves unicode escape sequences in identifiers verbatim.
