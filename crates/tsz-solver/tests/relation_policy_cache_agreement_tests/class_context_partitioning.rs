@@ -3,6 +3,9 @@
 use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::QueryCache;
 use crate::intern::TypeInterner;
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId};
 
@@ -67,5 +70,81 @@ fn subtype_cache_skips_class_check_context() {
     assert!(
         structural_cached.is_subtype_of(source, target),
         "a class-context result must not be reused by a structural checker without class context",
+    );
+}
+
+#[test]
+fn assignability_relation_context_propagates_class_check_without_shared_cache() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source_symbol = SymbolId(43);
+    let class_ref = crate::SymbolRef(source_symbol.0);
+    let is_class = |symbol: crate::SymbolRef| symbol == class_ref;
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(source_symbol),
+    );
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    let class_context = RelationContext {
+        query_db: Some(&db),
+        class_check: Some(&is_class),
+        ..RelationContext::default()
+    };
+
+    let class_key = SubtypeChecker::new(&interner)
+        .with_query_db(&db)
+        .with_class_check(&is_class)
+        .debug_cache_key_for(source, target);
+
+    assert!(
+        !query_relation(
+            &interner,
+            source,
+            target,
+            RelationKind::Assignable,
+            RelationPolicy::default(),
+            class_context,
+        )
+        .is_related(),
+        "assignability relation context must preserve class/interface index-signature rules",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(class_key),
+        None,
+        "class-check assignability context must not populate a shared class-agnostic subtype slot",
+    );
+
+    assert!(
+        query_relation(
+            &interner,
+            source,
+            target,
+            RelationKind::Assignable,
+            RelationPolicy::default(),
+            RelationContext {
+                query_db: Some(&db),
+                ..RelationContext::default()
+            },
+        )
+        .is_related(),
+        "without class-symbol context the same shape remains structurally assignable",
     );
 }

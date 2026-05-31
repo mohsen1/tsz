@@ -8,7 +8,8 @@ use crate::operations::AssignabilityChecker;
 use crate::relations::lawyer::AnyPropagationRules;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedModifier, MappedType, PropertyInfo, TypeData, TypeId,
+    IntrinsicKind, LiteralValue, MappedModifier, MappedType, PropertyInfo, SymbolRef, TypeData,
+    TypeId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, index_access_parts, intrinsic_kind,
@@ -667,6 +668,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_query_db(&mut self, db: &'a dyn QueryDatabase) {
         self.query_db = Some(db);
         self.subtype.query_db = Some(db);
+    }
+
+    /// Set the class-symbol classifier used by nested subtype checks.
+    pub fn set_class_check(&mut self, check: &'a dyn Fn(SymbolRef) -> bool) {
+        self.subtype.is_class_symbol = Some(check);
     }
 
     /// Set the inheritance graph for nominal class subtype checking.
