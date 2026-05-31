@@ -55,12 +55,14 @@ diagnostics. Call diagnostic anchor helpers also use the call-argument request
 when probing argument, object-literal property, or array-element mismatch
 anchors. Call context helpers use the call-argument request when probing
 explicit callback parameter conflicts that decide whether to surface an outer
-argument mismatch. Call diagnostic elaboration helpers use the call-argument
-request for parameter-derived object/array member probes, including
-polymorphic-`this` object-literal property probes, and the return request when
-drilling into callback return expressions or return-source conditional
-branches. These callers reuse `RelationOutcome` to avoid separately
-recomputing weak-union and property-classification analysis.
+argument mismatch. Dynamic `import(...)` validation uses the call-argument
+request for specifier and options argument probes while retaining
+checker-owned anchors and diagnostic codes. Call diagnostic elaboration helpers
+use the call-argument request for parameter-derived object/array member probes,
+including polymorphic-`this` object-literal property probes, and the return
+request when drilling into callback return expressions or return-source
+conditional branches. These callers reuse `RelationOutcome` to avoid
+separately recomputing weak-union and property-classification analysis.
 
 `assignability/assignment_checker/destructuring.rs` builds
 `RelationRequest::destructuring` for rest/default/property destructuring
