@@ -2882,8 +2882,8 @@ impl ParserState {
                 SyntaxKind::DotToken => {
                     self.next_token();
                     let diag_count_before = self.parse_diagnostics.len();
-                    let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
-                        self.parse_private_identifier()
+                    let name = if let Some(name) = self.parse_private_identifier_or_bare_hash() {
+                        name
                     } else if self.is_identifier_or_keyword() {
                         self.parse_identifier_name()
                     } else {

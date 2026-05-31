@@ -32,6 +32,80 @@ impl ParserState {
         }
     }
 
+    pub(crate) fn bare_hash_is_followed_by_statement_boundary(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let boundary = self.scanner.has_preceding_line_break()
+            || matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        boundary
+    }
+
+    pub(crate) fn report_bare_hash_invalid_character(&mut self) {
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            diagnostic_codes::INVALID_CHARACTER,
+        );
+    }
+
+    pub(crate) fn parse_recovered_bare_hash_identifier(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let end_pos = self.token_end();
+        self.report_bare_hash_invalid_character();
+        self.next_token();
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: String::from("#"),
+                original_text: None,
+                type_arguments: None,
+            },
+        )
+    }
+
+    pub(crate) fn parse_recovered_bare_hash_private_identifier(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let end_pos = self.token_end();
+        self.report_bare_hash_invalid_character();
+        self.next_token();
+        self.arena.add_identifier(
+            SyntaxKind::PrivateIdentifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: String::from("#"),
+                original_text: None,
+                type_arguments: None,
+            },
+        )
+    }
+
+    pub(crate) fn parse_private_identifier_or_bare_hash(&mut self) -> Option<NodeIndex> {
+        if self.is_token(SyntaxKind::HashToken) {
+            self.current_token = self.scanner.re_scan_hash_token();
+        }
+        if self.is_token(SyntaxKind::PrivateIdentifier) {
+            Some(self.parse_private_identifier())
+        } else if self.is_token(SyntaxKind::HashToken) {
+            Some(self.parse_recovered_bare_hash_private_identifier())
+        } else {
+            None
+        }
+    }
+
     // Parse argument list
     pub(crate) fn parse_argument_list(&mut self) -> NodeList {
         let mut args = Vec::new();
@@ -218,6 +292,7 @@ impl ParserState {
         match self.token() {
             SyntaxKind::Identifier => self.parse_identifier(),
             SyntaxKind::PrivateIdentifier => self.parse_private_identifier(),
+            SyntaxKind::HashToken => self.parse_recovered_bare_hash_identifier(),
             SyntaxKind::NumericLiteral => self.parse_numeric_literal(),
             SyntaxKind::BigIntLiteral => self.parse_bigint_literal(),
             SyntaxKind::StringLiteral => self.parse_string_literal(),
