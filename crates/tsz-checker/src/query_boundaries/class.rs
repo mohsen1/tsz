@@ -466,11 +466,11 @@ pub(crate) fn implementation_signature_covers_interface_overloads(
 
     target_sigs.iter().all(|target_sig| {
         let target_type = call_signature_function_type(checker, target_sig);
-        checker.is_implementation_compatible_with_overload(source_type, target_type)
-            || checker
-                .assign_relation_outcome(target_type, source_type)
-                .related
-            || overload_return_base_matches_and_params_cover(checker, source_type, target_type)
+        // Do not reuse the broad overload-implementation relation here: Array's
+        // callback overload surface needs a real TS2416 when the implementation
+        // narrows callback returns. This helper is only for builder-style returns
+        // that share an application base after erasing local type params.
+        overload_return_base_matches_and_params_cover(checker, source_type, target_type)
     })
 }
 
@@ -715,9 +715,6 @@ pub(crate) fn should_report_member_type_mismatch_bivariant(
     target: TypeId,
     node_idx: NodeIndex,
 ) -> bool {
-    if implementation_signature_covers_interface_overloads(checker, source, target) {
-        return false;
-    }
     checker.should_report_assignability_mismatch_bivariant(source, target, node_idx)
 }
 
