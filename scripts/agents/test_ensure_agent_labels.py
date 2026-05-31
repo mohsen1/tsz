@@ -31,9 +31,11 @@ CANONICAL_AGENT_LABELS = [
 
 
 class EnsureAgentLabelsAuditTests(unittest.TestCase):
-    def run_audit_with_prs(self, prs, issues=None):
+    def run_audit_result(self, prs, issues=None, args=None, check=True):
         if issues is None:
             issues = []
+        if args is None:
+            args = ["--audit"]
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             fake_gh = pathlib.Path(temp_dir) / "gh"
             fake_gh.write_text(
@@ -82,14 +84,17 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             }
 
             return subprocess.run(
-                [str(SCRIPT), "--audit"],
+                [str(SCRIPT), *args],
                 cwd=ROOT,
                 env=env,
-                check=True,
+                check=check,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-            ).stdout
+            )
+
+    def run_audit_with_prs(self, prs, issues=None):
+        return self.run_audit_result(prs, issues=issues).stdout
 
     def test_audit_separates_intentionally_unassigned_prs(self):
         output = self.run_audit_with_prs(
@@ -113,6 +118,8 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
 
         self.assertIn("open_prs_missing_agent_label=0", output)
         self.assertIn("open_prs_intentionally_unassigned=1", output)
+        self.assertIn("agent_label_audit_findings=0", output)
+        self.assertIn("agent_label_audit_status=pass", output)
         self.assertIn("Open PRs Intentionally Unassigned", output)
         self.assertIn(
             "#1 chore: intentionally unassigned https://github.com/mohsen1/tsz/pull/1",
@@ -134,10 +141,51 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
 
         self.assertIn("open_prs_missing_agent_label=1", output)
         self.assertIn("open_prs_intentionally_unassigned=0", output)
+        self.assertIn("agent_label_audit_findings=1", output)
+        self.assertIn("agent_label_audit_status=fail", output)
         self.assertIn(
             "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
             output,
         )
+
+    def test_strict_audit_fails_on_actionable_findings(self):
+        result = self.run_audit_result(
+            [
+                {
+                    "number": 4,
+                    "title": "fix: missing label",
+                    "labels": [],
+                    "body": "AgentName: Studio-F",
+                    "url": "https://github.com/mohsen1/tsz/pull/4",
+                }
+            ],
+            args=["--audit", "--strict"],
+            check=False,
+        )
+
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("open_prs_missing_agent_label=1", result.stdout)
+        self.assertIn("agent_label_audit_findings=1", result.stdout)
+        self.assertIn("agent_label_audit_status=fail", result.stdout)
+
+    def test_strict_audit_allows_intentionally_unassigned_prs(self):
+        result = self.run_audit_result(
+            [
+                {
+                    "number": 5,
+                    "title": "chore: intentionally unassigned",
+                    "labels": [],
+                    "body": "Coordination Notes\n- No canonical agent lane was assigned.",
+                    "url": "https://github.com/mohsen1/tsz/pull/5",
+                }
+            ],
+            args=["--audit", "--strict"],
+        )
+
+        self.assertEqual(0, result.returncode)
+        self.assertIn("open_prs_intentionally_unassigned=1", result.stdout)
+        self.assertIn("agent_label_audit_findings=0", result.stdout)
+        self.assertIn("agent_label_audit_status=pass", result.stdout)
 
     def test_audit_flags_release_issues_missing_agent_labels(self):
         output = self.run_audit_with_prs(

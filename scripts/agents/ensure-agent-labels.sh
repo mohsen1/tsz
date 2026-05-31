@@ -15,7 +15,7 @@ COLOR="ededed"
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/ensure-agent-labels.sh [--audit]
+usage: scripts/agents/ensure-agent-labels.sh [--audit] [--strict]
 
 Create or refresh the GitHub labels used by multi-agent sessions.
 
@@ -24,6 +24,8 @@ agent ownership labels are missing, duplicated, or noncanonical; and open
 release-triage issues whose agent ownership labels are missing, duplicated, or
 noncanonical. Open PRs whose body explicitly says no canonical agent lane was
 assigned are reported separately. The audit does not edit labels.
+
+With --audit --strict, exit nonzero when the audit has actionable findings.
 USAGE
 }
 
@@ -33,10 +35,25 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 AUDIT=false
-if [[ $# -eq 1 && "${1:-}" == "--audit" ]]; then
-  AUDIT=true
-elif [[ $# -ne 0 ]]; then
-  echo "Unknown option: $1 (try --help)" >&2
+STRICT_AUDIT=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --audit)
+      AUDIT=true
+      ;;
+    --strict)
+      STRICT_AUDIT=true
+      ;;
+    *)
+      echo "Unknown option: $1 (try --help)" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ "$STRICT_AUDIT" == true && "$AUDIT" != true ]]; then
+  echo "--strict requires --audit (try --help)" >&2
   exit 2
 fi
 
@@ -66,7 +83,7 @@ if [[ "$AUDIT" == true ]]; then
       process.stdout.write(JSON.stringify(fs.readFileSync(0, "utf8").trim().split(/\n/).filter(Boolean)));
     '
   )"
-  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" node <<'NODE'
+  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" STRICT_AUDIT="$STRICT_AUDIT" node <<'NODE'
 const canonical = new Set(JSON.parse(process.env.AGENTS_JSON).map((agent) => `agent:${agent}`));
 const labels = process.env.LABELS_TEXT.split(/\n/).filter(Boolean);
 const prs = JSON.parse(process.env.PRS_JSON);
@@ -150,6 +167,17 @@ console.log(`open_prs_noncanonical_agent_label=${noncanonicalPrs.length}`);
 console.log(`open_release_issues_missing_agent_label=${missingIssues.length}`);
 console.log(`open_issues_multiple_agent_labels=${multipleIssues.length}`);
 console.log(`open_issues_noncanonical_agent_label=${noncanonicalIssues.length}`);
+const findingCount =
+  missingCanonicalLabels.length +
+  noncanonicalLabels.length +
+  missingPrs.length +
+  multiplePrs.length +
+  noncanonicalPrs.length +
+  missingIssues.length +
+  multipleIssues.length +
+  noncanonicalIssues.length;
+console.log(`agent_label_audit_findings=${findingCount}`);
+console.log(`agent_label_audit_status=${findingCount === 0 ? "pass" : "fail"}`);
 
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
@@ -182,6 +210,9 @@ printRows(
   noncanonicalIssues,
   (issue) => `- #${issue.number} ${issue.agentLabels.join(", ")} ${issue.title}${issue.url ? ` ${issue.url}` : ""}`,
 );
+if (process.env.STRICT_AUDIT === "true" && findingCount > 0) {
+  process.exitCode = 1;
+}
 NODE
   exit 0
 fi
