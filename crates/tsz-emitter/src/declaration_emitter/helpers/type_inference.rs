@@ -1516,14 +1516,6 @@ impl<'a> DeclarationEmitter<'a> {
         (!rescued.is_empty()).then_some(rescued)
     }
 
-    pub(in crate::declaration_emitter) fn undefined_identifier_type_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        (self.get_identifier_text(expr_idx).as_deref() == Some("undefined"))
-            .then(|| "any".to_string())
-    }
-
     pub(in crate::declaration_emitter) fn reference_declared_type_annotation_text(
         &self,
         expr_idx: NodeIndex,

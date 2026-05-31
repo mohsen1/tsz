@@ -2055,7 +2055,6 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_none()
                     {
-                        // Genuinely unconstrained type parameter - emit TS2339
                         if !property_name.starts_with('#') && !accessibility_error_emitted {
                             self.error_property_not_exist_at(
                                 property_name,

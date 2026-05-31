@@ -1315,8 +1315,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
         };
-        if self.is_void_expression(expr_node)
-            || expr_node.kind == SyntaxKind::UndefinedKeyword as u16
+        if self.is_void_expression(expr_node) || self.is_unbound_undefined_value_reference(expr_idx)
         {
             return true;
         }

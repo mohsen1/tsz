@@ -276,9 +276,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::TrueKeyword as u16 => true,
             k if k == SyntaxKind::FalseKeyword as u16 => true,
             k if k == SyntaxKind::NullKeyword as u16 => true,
-            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
-            k if k == SyntaxKind::Identifier as u16 => {
-                self.get_identifier_text(initializer).as_deref() == Some("undefined")
+            k if (k == SyntaxKind::UndefinedKeyword as u16
+                || k == SyntaxKind::Identifier as u16)
+                && self.is_unbound_undefined_value_reference(initializer) =>
+            {
+                true
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.js_empty_object_literal_initializer(initializer)

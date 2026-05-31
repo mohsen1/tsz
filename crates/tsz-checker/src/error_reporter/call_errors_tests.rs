@@ -1699,3 +1699,149 @@ let x3 = f3(x => x);
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_ts2345_pipe_overload_with_interface_callable_operators() {
+    for iface_name in &["Op", "Operator"] {
+        let source = format!(
+            r#"
+interface {iface_name}<A, B> {{ (source: A): B; }}
+declare function lift<A, B>(fn: (a: A) => B): {iface_name}<A, B>;
+declare function pipe<A, B>(op1: {iface_name}<A, B>): {iface_name}<A, B>;
+declare function pipe<A, B, C>(op1: {iface_name}<A, B>, op2: {iface_name}<B, C>): {iface_name}<A, C>;
+const r = pipe(lift((x: number) => x + 1), lift((y: number) => y.toString()));
+"#
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == 2345 || d.code == 2322)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "pipe overload with interface callable {iface_name} must not produce TS2345/TS2322, \
+             got: {:?}",
+            errors
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn no_ts2345_pipe_overload_with_aliased_interface_callable_operators() {
+    let source = r#"
+interface OperatorFunction<T, R> { (source: T): R; }
+declare function map<T, R>(fn: (t: T) => R): OperatorFunction<T, R>;
+declare function filter<T>(pred: (t: T) => boolean): OperatorFunction<T, T>;
+declare function pipe<A, B>(op1: OperatorFunction<A, B>): OperatorFunction<A, B>;
+declare function pipe<A, B, C>(op1: OperatorFunction<A, B>, op2: OperatorFunction<B, C>): OperatorFunction<A, C>;
+const myMap = map;
+const myFilter = filter;
+const result = pipe(myMap((x: number) => x + 1), myFilter(y => y > 0));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "pipe overload with aliased interface callable operators must not produce errors, got: {:?}",
+        errors
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn outer_and_overload_share_tp_name_metadata_but_stay_distinct() {
+    // Regression: when an outer generic function <T> calls an overloaded generic
+    // function whose overloads also use <T>, both unconstrained and with identical
+    // metadata, the checker must NOT collapse them via a structural-metadata guard.
+    // TypeId identity (own_type_param_ids) is the correct discriminant.
+    //
+    // Two name variants guard against hardcoded-name regressions.
+    for outer_name in &["T", "U"] {
+        let source = format!(
+            r#"
+interface Box<{outer_name}> {{ (value: {outer_name}): {outer_name}; }}
+declare function wrapOuter<{outer_name}>(x: {outer_name}): Box<{outer_name}>;
+declare function combine<{outer_name}>(a: Box<{outer_name}>): Box<{outer_name}>;
+declare function combine<{outer_name}, V>(a: Box<{outer_name}>, b: Box<V>): Box<V>;
+const r = combine(wrapOuter(42), wrapOuter("hello"));
+"#
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == 2345 || d.code == 2322)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "outer <{outer_name}> and overload <{outer_name}> sharing name/metadata must not \
+             produce TS2345/TS2322, got: {:?}",
+            errors
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn constructor_inference_keeps_outer_type_params_as_source_candidates() {
+    let source = r#"
+export class Test<A, B> {
+    constructor(public a: A, public b: B) { }
+
+    test<C>(c: C): Test<B, C> {
+        return new Test(this.b, c);
+    }
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "outer class TypeParams used as constructor arguments must stay real candidates, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn explicit_callback_param_annotation_keeps_tsc_argument_blame() {
+    let source = r#"
+class C<T> {
+    foo2<T, U>(x: T, cb: (a: T) => U) {
+        return cb(x);
+    }
+}
+
+declare var c: C<number>;
+
+function other<T, U>(t: T, u: U) {
+    var r = c.foo2(1, (x: T) => '');
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345
+            .iter()
+            .any(|d| d.message_text.contains("Argument of type 'number'")),
+        "explicit callback annotation should keep tsc-style blame on the first argument, got: {:?}",
+        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        !ts2345
+            .iter()
+            .any(|d| d.message_text.contains("(x: T) => string")),
+        "explicit callback annotation must not be rewritten into placeholder-based callback blame, got: {:?}",
+        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

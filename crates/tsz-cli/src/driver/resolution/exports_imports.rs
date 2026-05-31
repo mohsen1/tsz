@@ -6,6 +6,16 @@ use tsz::module_resolver::PackageType;
 #[allow(unused_imports)]
 use super::*;
 
+/// Resolve a `typesVersions` paths object against a subpath, mirroring tsc's
+/// `matchPatternOrExact` + `findBestPatternMatch` chain (see the matching
+/// `tsz-core` resolver for the full rationale). The CLI driver has its own
+/// resolver because it composes with `resolve_package_entry`, but the
+/// algorithm must stay byte-for-byte aligned with tsc:
+///
+/// 1. A no-`*` key that equals `subpath` exactly wins outright.
+/// 2. Otherwise, among single-`*` wildcard keys, the longest **prefix** wins
+///    (ties resolved by first occurrence in declaration order).
+/// 3. Two-or-more-`*` keys are skipped entirely.
 pub(crate) fn resolve_types_versions(
     package_root: &Path,
     subpath: &str,
@@ -16,214 +26,155 @@ pub(crate) fn resolve_types_versions(
 ) -> Option<PathBuf> {
     let compiler_version = types_versions_compiler_version(options);
     let paths = select_types_versions_paths(types_versions, compiler_version)?;
-    let mut best_pattern: Option<&String> = None;
-    let mut best_value: Option<&serde_json::Value> = None;
-    let mut best_wildcard = String::new();
-    let mut best_specificity = 0usize;
-    let mut best_len = 0usize;
 
-    for (pattern, value) in paths {
-        let Some(wildcard) = match_types_versions_pattern(pattern, subpath) else {
+    // 1) Exact-match short-circuit (`matchableStringSet.has(candidate)`).
+    for (key, value) in paths {
+        if !key.contains('*') && key == subpath {
+            return apply_types_versions_targets(
+                package_root,
+                value,
+                "",
+                options,
+                package_type,
+                resolution_cache,
+            );
+        }
+    }
+
+    // 2) Wildcard candidates: longest prefix wins, ties → first in order.
+    //    `best` stores `(prefix_len, value, captured wildcard)`; the
+    //    prefix_len lives inside the tuple so we keep a single source of
+    //    truth for "the current best prefix length".
+    let mut best: Option<(usize, &serde_json::Value, String)> = None;
+    for (key, value) in paths {
+        let Some((prefix, suffix)) = parse_types_versions_pattern(key) else {
             continue;
         };
-        let specificity = types_versions_specificity(pattern);
-        let pattern_len = pattern.len();
-        let is_better = match best_pattern {
-            None => true,
-            Some(current) => {
-                specificity > best_specificity
-                    || (specificity == best_specificity && pattern_len > best_len)
-                    || (specificity == best_specificity
-                        && pattern_len == best_len
-                        && pattern < current)
-            }
-        };
-
-        if is_better {
-            best_specificity = specificity;
-            best_len = pattern_len;
-            best_pattern = Some(pattern);
-            best_value = Some(value);
-            best_wildcard = wildcard;
+        if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
+            continue;
         }
+        let start = prefix.len();
+        let end = subpath.len() - suffix.len();
+        if end < start {
+            continue;
+        }
+        // Strict `>` so equal-prefix ties keep the earlier entry (tsc's
+        // `findBestPatternMatch`).
+        if best
+            .as_ref()
+            .is_some_and(|(best_len, ..)| prefix.len() <= *best_len)
+        {
+            continue;
+        }
+        best = Some((prefix.len(), value, subpath[start..end].to_string()));
     }
 
-    let value = best_value?;
+    let (_, value, wildcard) = best?;
+    apply_types_versions_targets(
+        package_root,
+        value,
+        &wildcard,
+        options,
+        package_type,
+        resolution_cache,
+    )
+}
 
-    let mut targets = Vec::new();
-    match value {
-        serde_json::Value::String(value) => targets.push(value.as_str()),
-        serde_json::Value::Array(list) => {
-            for entry in list {
-                if let Some(value) = entry.as_str() {
-                    targets.push(value);
-                }
-            }
-        }
-        _ => {}
-    }
-
-    for target in targets {
-        let substituted = substitute_path_target(target, &best_wildcard);
-        if let Some(resolved) = resolve_package_entry(
+/// Iterate the `value` of a `typesVersions` paths entry, substitute `*` with
+/// `wildcard`, and return the first target that resolves on disk.
+fn apply_types_versions_targets(
+    package_root: &Path,
+    value: &serde_json::Value,
+    wildcard: &str,
+    options: &ResolvedCompilerOptions,
+    package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> Option<PathBuf> {
+    let mut try_target = |target: &str| {
+        let substituted = substitute_path_target(target, wildcard);
+        resolve_package_entry(
             package_root,
             &substituted,
             options,
             package_type,
             resolution_cache,
-        ) {
-            return Some(resolved);
-        }
+        )
+    };
+    match value {
+        serde_json::Value::String(target) => try_target(target.as_str()),
+        serde_json::Value::Array(list) => list
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find_map(try_target),
+        _ => None,
     }
-
-    None
 }
 
+/// First-match-in-declaration-order version selection (tsc's
+/// `getPackageJsonTypesVersionsPaths`).
 pub(crate) fn select_types_versions_paths(
     types_versions: &serde_json::Value,
     compiler_version: SemVer,
 ) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    select_types_versions_paths_for_version(types_versions, compiler_version)
-}
-
-pub(crate) fn select_types_versions_paths_for_version(
-    types_versions: &serde_json::Value,
-    compiler_version: SemVer,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
     let map = types_versions.as_object()?;
-    let mut best_score: Option<RangeScore> = None;
-    let mut best_key: Option<&str> = None;
-    let mut best_value: Option<&serde_json::Map<String, serde_json::Value>> = None;
-
     for (key, value) in map {
         let Some(value_map) = value.as_object() else {
             continue;
         };
-        let Some(score) = match_types_versions_range(key, compiler_version) else {
-            continue;
-        };
-        let is_better = match best_score {
-            None => true,
-            Some(best) => {
-                score > best
-                    || (score == best && best_key.is_none_or(|best_key| key.as_str() < best_key))
-            }
-        };
-
-        if is_better {
-            best_score = Some(score);
-            best_key = Some(key);
-            best_value = Some(value_map);
+        if types_versions_range_matches(key, compiler_version) {
+            return Some(value_map);
         }
     }
-
-    best_value
+    None
 }
 
-pub(crate) fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
-    if !pattern.contains('*') {
-        return (pattern == subpath).then(String::new);
-    }
-
-    let star = pattern.find('*')?;
-    let (prefix, suffix) = pattern.split_at(star);
-    let suffix = &suffix[1..];
-
-    if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
+/// Split a `prefix*suffix` typesVersions pattern, mirroring tsc's
+/// `tryParsePattern`. Returns `None` for no-`*` patterns and for multi-`*`
+/// patterns.
+pub(crate) fn parse_types_versions_pattern(pattern: &str) -> Option<(&str, &str)> {
+    let star_pos = pattern.find('*')?;
+    let suffix_start = star_pos + 1;
+    if pattern[suffix_start..].contains('*') {
         return None;
     }
-
-    let start = prefix.len();
-    let end = subpath.len().saturating_sub(suffix.len());
-    if end < start {
-        return None;
-    }
-
-    Some(subpath[start..end].to_string())
+    Some((&pattern[..star_pos], &pattern[suffix_start..]))
 }
 
-pub(crate) fn types_versions_specificity(pattern: &str) -> usize {
-    if let Some(star) = pattern.find('*') {
-        star + (pattern.len() - star - 1)
-    } else {
-        pattern.len()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct RangeScore {
-    pub(super) constraints: usize,
-    pub(super) min_version: SemVer,
-    pub(super) key_len: usize,
-}
-
-pub(crate) fn match_types_versions_range(
-    range: &str,
-    compiler_version: SemVer,
-) -> Option<RangeScore> {
+/// Returns `true` when `range` is a valid semver range that the supplied
+/// compiler version satisfies.
+pub(crate) fn types_versions_range_matches(range: &str, compiler_version: SemVer) -> bool {
     let range = range.trim();
     if range.is_empty() || range == "*" {
-        return Some(RangeScore {
-            constraints: 0,
-            min_version: SemVer::ZERO,
-            key_len: range.len(),
-        });
+        return true;
     }
-
-    let mut best: Option<RangeScore> = None;
     for segment in range.split("||") {
-        let segment = segment.trim();
-        let Some(score) =
-            match_types_versions_range_segment(segment, compiler_version, range.len())
-        else {
-            continue;
-        };
-        if best.is_none_or(|current| score > current) {
-            best = Some(score);
+        if types_versions_range_segment_matches(segment.trim(), compiler_version) {
+            return true;
         }
     }
-
-    best
+    false
 }
 
-pub(crate) fn match_types_versions_range_segment(
-    segment: &str,
-    compiler_version: SemVer,
-    key_len: usize,
-) -> Option<RangeScore> {
+fn types_versions_range_segment_matches(segment: &str, compiler_version: SemVer) -> bool {
+    // An empty segment comes from a malformed disjunction like `">=4 || "` —
+    // a vacuous empty-token loop would return `true`, so we reject explicitly.
+    // The lone `"*"` token is handled by the `continue` below; no early
+    // return needed.
     if segment.is_empty() {
-        return None;
+        return false;
     }
-    if segment == "*" {
-        return Some(RangeScore {
-            constraints: 0,
-            min_version: SemVer::ZERO,
-            key_len,
-        });
-    }
-
-    let mut min_version = SemVer::ZERO;
-    let mut constraints = 0usize;
-
     for token in segment.split_whitespace() {
         if token.is_empty() || token == "*" {
             continue;
         }
-        let (op, version) = parse_range_token(token)?;
+        let Some((op, version)) = parse_range_token(token) else {
+            return false;
+        };
         if !compare_range(compiler_version, op, version) {
-            return None;
-        }
-        constraints += 1;
-        if matches!(op, RangeOp::Gt | RangeOp::Gte | RangeOp::Eq) && version > min_version {
-            min_version = version;
+            return false;
         }
     }
-
-    Some(RangeScore {
-        constraints,
-        min_version,
-        key_len,
-    })
+    true
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -358,7 +309,7 @@ pub(crate) fn resolve_exports_target(
                     let base_condition = &key[..at_pos];
                     let version_range = &key[at_pos + 1..];
                     if conditions.contains(&base_condition)
-                        && match_types_versions_range(version_range, compiler_version).is_some()
+                        && types_versions_range_matches(version_range, compiler_version)
                         && let Some(resolved) =
                             resolve_exports_target(value, conditions, compiler_version)
                     {
@@ -402,7 +353,7 @@ pub(crate) fn resolve_exports_target_candidates(
                     let base_condition = &key[..at_pos];
                     let version_range = &key[at_pos + 1..];
                     if conditions.contains(&base_condition)
-                        && match_types_versions_range(version_range, compiler_version).is_some()
+                        && types_versions_range_matches(version_range, compiler_version)
                     {
                         if value.is_null() {
                             return Vec::new();
@@ -653,6 +604,53 @@ mod tests {
                 .as_deref(),
             Some("./second.js"),
         );
+    }
+
+    #[test]
+    fn select_types_versions_paths_returns_first_matching_key_in_declaration_order() {
+        // Pinned against tsc's `getPackageJsonTypesVersionsPaths` (first-match
+        // semantics). With `"*"` declared first, every later key is
+        // unreachable.
+        let types_versions = serde_json::json!({
+            "*": { "*": ["fallback/index.d.ts"] },
+            ">=5.4": { "*": ["modern/index.d.ts"] }
+        });
+
+        let selected = select_types_versions_paths(&types_versions, TEST_VERSION)
+            .expect("expected a matching typesVersions entry");
+        assert_eq!(
+            selected.get("*"),
+            Some(&serde_json::json!(["fallback/index.d.ts"]))
+        );
+
+        // Natural ordering — fallback last — picks the tighter range.
+        let natural = serde_json::json!({
+            ">=5.4": { "*": ["modern/index.d.ts"] },
+            "*": { "*": ["fallback/index.d.ts"] }
+        });
+        let selected_natural = select_types_versions_paths(&natural, TEST_VERSION)
+            .expect("expected a matching typesVersions entry");
+        assert_eq!(
+            selected_natural.get("*"),
+            Some(&serde_json::json!(["modern/index.d.ts"])),
+        );
+    }
+
+    #[test]
+    fn parse_types_versions_pattern_rejects_multi_star_keys() {
+        assert_eq!(parse_types_versions_pattern("lib/*"), Some(("lib/", "")));
+        assert_eq!(parse_types_versions_pattern("*.d.ts"), Some(("", ".d.ts")));
+        assert_eq!(parse_types_versions_pattern("a*b*c"), None);
+        assert_eq!(parse_types_versions_pattern("exact"), None);
+    }
+
+    #[test]
+    fn types_versions_range_matches_handles_star_empty_and_disjunctions() {
+        assert!(types_versions_range_matches("*", TEST_VERSION));
+        assert!(types_versions_range_matches("", TEST_VERSION));
+        assert!(types_versions_range_matches(">=4 <6", TEST_VERSION));
+        assert!(!types_versions_range_matches(">=6", TEST_VERSION));
+        assert!(types_versions_range_matches(">=6 || <=5.4", TEST_VERSION));
     }
 
     #[test]

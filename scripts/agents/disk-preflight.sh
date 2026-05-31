@@ -60,13 +60,20 @@ PRIMARY_TS="$PRIMARY_REPO/TypeScript"
 
 echo ""
 echo "== local cargo cache presence =="
+LOCAL_CARGO_CACHE_COUNT=0
 for dir in .target .target-bench target; do
   if [[ -d "$ROOT/$dir" ]]; then
     echo "$dir=present"
+    LOCAL_CARGO_CACHE_COUNT=$((LOCAL_CARGO_CACHE_COUNT + 1))
   else
     echo "$dir=missing"
   fi
 done
+if (( LOCAL_CARGO_CACHE_COUNT > 0 )); then
+  echo "cargo_cache_status=present"
+else
+  echo "cargo_cache_status=missing"
+fi
 
 echo ""
 echo "== TypeScript reuse sources =="
@@ -97,6 +104,22 @@ if [[ "$COMMON_REAL" != "$GIT_REAL" && ! -e "$ROOT/TypeScript/tests/cases" ]]; t
   else
     echo "hint=no populated TypeScript source found; run scripts/setup/setup-ts-submodule.sh in the primary checkout first"
   fi
+fi
+
+CARGO_CACHE_SOURCE_COUNT=0
+while IFS= read -r wt; do
+  [[ -n "$wt" ]] || continue
+  [[ "$wt" != "$ROOT" ]] || continue
+  if [[ -d "$wt/.target" || -d "$wt/.target-bench" || -d "$wt/target" ]]; then
+    CARGO_CACHE_SOURCE_COUNT=$((CARGO_CACHE_SOURCE_COUNT + 1))
+  fi
+done < <(git -C "$ROOT" worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
+
+echo ""
+echo "== cargo cache reuse summary =="
+echo "cargo_cache_reuse_sources=$CARGO_CACHE_SOURCE_COUNT"
+if (( LOCAL_CARGO_CACHE_COUNT == 0 && CARGO_CACHE_SOURCE_COUNT > 0 )); then
+  echo "hint=reuse an existing cached worktree before creating a new build cache"
 fi
 
 echo ""

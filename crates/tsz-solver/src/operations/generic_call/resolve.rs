@@ -1,5 +1,6 @@
 //! Core generic call resolution (`resolve_generic_call_inner`).
 
+use super::visited::with_resolve_visited;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
@@ -9,36 +10,7 @@ use crate::types::{
     TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
 use tracing::{debug, trace};
-
-// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
-// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
-// #4805 / #4807 / #4810 / #4816.
-thread_local! {
-    static RESOLVE_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
-        const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_resolve_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
-    let mut visited = RESOLVE_VISITED_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_default();
-    visited.clear();
-    let r = f(&mut visited);
-    RESOLVE_VISITED_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some(existing) => visited.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(visited);
-        }
-    });
-    r
-}
 
 fn is_bare_foreign_type_param(
     interner: &dyn crate::construction::TypeDatabase,
@@ -1274,6 +1246,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 contextual_arg_type
             };
+            // Contextual typing can leak the caller signature's TypeParams into
+            // an argument type before overload-specific placeholders exist. Those
+            // leaked params should be rewritten to placeholders for Round 1.
+            // Non-contextual sources, including explicit annotations and outer
+            // generic values, are real candidates and must stay distinct even
+            // when they share a name with the called signature's TypeParams.
+            let source_for_inference = if self.is_contextually_sensitive(arg_type) {
+                self.substitute_caller_type_params(source_for_inference, &substitution)
+            } else {
+                source_for_inference
+            };
             let source_arg_shape = Self::get_contextual_signature_cached(self.interner, arg_type);
             let original_arg_is_generic_function_like = source_arg_shape
                 .as_ref()
@@ -1392,7 +1375,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 first_direct_primitive_candidate.insert(var, source_for_inference);
             }
 
-            // arg_type <: target_type
             self.constrain_types_for_arg_source(
                 i,
                 &mut infer_ctx,

@@ -39,14 +39,6 @@ pub(crate) struct SemVer {
     pub(super) patch: u32,
 }
 
-impl SemVer {
-    pub(super) const ZERO: Self = Self {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
-}
-
 // NOTE: Keep this in sync with the TypeScript version this compiler targets.
 // TODO: Make this configurable once CLI plumbing is available.
 pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {

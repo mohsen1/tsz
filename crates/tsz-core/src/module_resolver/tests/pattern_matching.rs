@@ -4,7 +4,9 @@
 //! `package.json#exports` and `#imports` resolution:
 //!
 //! - `match_export_pattern` / `match_imports_pattern` (exact + wildcard)
-//! - `match_types_versions_pattern` (TypeScript `typesVersions` selector)
+//! - `parse_types_versions_pattern` (TypeScript `typesVersions` selector;
+//!   the resolver inlines the matching loop, so the unit-test surface lives
+//!   in `resolution::helpers` next to the parser itself)
 //! - `apply_wildcard_substitution` / `substitute_wildcard_in_exports`
 
 use crate::module_resolver_helpers::*;
@@ -65,23 +67,6 @@ fn test_match_imports_pattern_wildcard() {
         Some("helpers/bar".to_string())
     );
     assert_eq!(match_imports_pattern("#utils/*", "#other/foo"), None);
-}
-
-#[test]
-fn test_match_types_versions_pattern() {
-    assert_eq!(
-        match_types_versions_pattern("*", "index"),
-        Some("index".to_string())
-    );
-    assert_eq!(
-        match_types_versions_pattern("lib/*", "lib/utils"),
-        Some("utils".to_string())
-    );
-    assert_eq!(
-        match_types_versions_pattern("exact", "exact"),
-        Some(String::new())
-    );
-    assert_eq!(match_types_versions_pattern("lib/*", "src/utils"), None);
 }
 
 #[test]

@@ -1,7 +1,9 @@
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_cached,
+};
 use crate::types::{
     CallSignature, CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue,
     ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
@@ -1437,6 +1439,81 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             visiting: rustc_hash::FxHashSet::default(),
         };
         visitor.visit_guarded(type_id)
+    }
+
+    /// Recursively check if a type references any `TypeParameter` whose name is a key
+    /// in the given substitution (i.e., one of the caller's type parameter names).
+    pub(crate) fn type_references_substitution_keys(
+        &self,
+        ty: TypeId,
+        substitution: &TypeSubstitution,
+    ) -> bool {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info)) => {
+                let name = self.interner.resolve_atom(info.name);
+                if name.as_str().starts_with("__infer_") {
+                    return false;
+                }
+                substitution.map().contains_key(&info.name)
+            }
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|&m| self.type_references_substitution_keys(m, substitution))
+            }
+            Some(TypeData::Array(elem)) => {
+                self.type_references_substitution_keys(elem, substitution)
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner.tuple_list(elements);
+                elements
+                    .iter()
+                    .any(|e| self.type_references_substitution_keys(e.type_id, substitution))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args
+                    .iter()
+                    .any(|&a| self.type_references_substitution_keys(a, substitution))
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                shape
+                    .params
+                    .iter()
+                    .any(|p| self.type_references_substitution_keys(p.type_id, substitution))
+                    || self.type_references_substitution_keys(shape.return_type, substitution)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| {
+                        sig.params.iter().any(|p| {
+                            self.type_references_substitution_keys(p.type_id, substitution)
+                        }) || self.type_references_substitution_keys(sig.return_type, substitution)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Substitute caller `TypeParam`s with their inference placeholders if `ty`
+    /// references any of them. Returns `ty` unchanged when the substitution is
+    /// empty or `ty` contains none of its keys.
+    pub(crate) fn substitute_caller_type_params(
+        &self,
+        ty: TypeId,
+        substitution: &TypeSubstitution,
+    ) -> TypeId {
+        if !substitution.is_empty() && self.type_references_substitution_keys(ty, substitution) {
+            instantiate_type(self.interner, ty, substitution)
+        } else {
+            ty
+        }
     }
 
     /// Get the base constraint for an index type used in an `IndexAccess`.

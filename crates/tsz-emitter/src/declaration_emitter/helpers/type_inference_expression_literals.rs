@@ -101,10 +101,10 @@ impl<'a> DeclarationEmitter<'a> {
             // so they don't pollute the array element type (tsc widens them away).
             if !self.strict_null_checks {
                 if let Some(elem_node) = self.arena.get(elem_idx) {
-                    let k = elem_node.kind;
-                    if k == SyntaxKind::NullKeyword as u16
-                        || k == SyntaxKind::UndefinedKeyword as u16
-                    {
+                    if elem_node.kind == SyntaxKind::NullKeyword as u16 {
+                        continue;
+                    }
+                    if self.is_unbound_undefined_value_reference(elem_idx) {
                         continue;
                     }
                     // Also skip void expressions (e.g., void 0)

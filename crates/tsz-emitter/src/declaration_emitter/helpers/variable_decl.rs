@@ -424,11 +424,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
                 if keyword == "const"
                     && has_initializer
-                    && (self.get_identifier_text(initializer).as_deref() == Some("undefined")
-                        || self
-                            .arena
-                            .get(initializer)
-                            .is_some_and(|node| node.kind == SyntaxKind::UndefinedKeyword as u16))
+                    && self.is_unbound_undefined_value_reference(initializer)
                     && !matches!(type_text.as_str(), "void" | "undefined" | "null")
                     && !Self::type_text_has_undefined_branch(&type_text)
                 {
@@ -560,6 +556,11 @@ impl<'a> DeclarationEmitter<'a> {
                             && (text.contains("=>")
                                 || text.starts_with('[')
                                 || type_text.contains("unknown")
+                                || self.partial_required_call_reused_type_should_replace_preferred(
+                                    initializer,
+                                    text,
+                                    &type_text,
+                                )
                                 || (keyword == "const"
                                     && Self::is_literal_type_text_for_const_call(text)))
                     })

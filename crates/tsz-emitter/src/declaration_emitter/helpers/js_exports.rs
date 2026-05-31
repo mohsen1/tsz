@@ -1328,8 +1328,7 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .skip_parenthesized_and_assertions_and_comma(initializer);
         let init_node = self.arena.get(initializer)?;
-        if self.get_identifier_text(initializer).as_deref() == Some("undefined")
-            || init_node.kind == SyntaxKind::UndefinedKeyword as u16
+        if self.is_unbound_undefined_value_reference(initializer)
             || self.is_void_expression(init_node)
         {
             return Some("undefined".to_string());

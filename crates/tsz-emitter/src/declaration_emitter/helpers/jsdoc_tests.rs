@@ -90,6 +90,18 @@ fn bracket_default_segment_can_be_followed_by_another_param() {
 }
 
 #[test]
+fn legacy_jsdoc_generic_dot_is_normalized_by_generic_parser() {
+    assert_eq!(
+        DeclarationEmitter::normalize_jsdoc_type_expr("Array.<Object.<string, number>>"),
+        "Array<{\n    [x: string]: number;\n}>"
+    );
+    assert_eq!(
+        DeclarationEmitter::normalize_jsdoc_type_expr("(Array.<> | null)"),
+        "(any[] | null)"
+    );
+}
+
+#[test]
 fn jsdoc_type_attaches_through_trailing_line_comment() {
     assert!(DeclarationEmitter::jsdoc_attaches_through_var_prefix(
         " // explanation\nconst "

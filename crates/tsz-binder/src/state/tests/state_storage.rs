@@ -431,19 +431,7 @@ declare module \"virtual:env\" {
 #[test]
 fn binder_resolution_cache_statistics_track_entries_and_clear() {
     let mut binder = BinderState::new();
-    binder
-        .resolved_export_cache
-        .write()
-        .expect("resolved_export_cache RwLock should not be poisoned")
-        .insert(
-            ("module".to_string(), "value".to_string()),
-            Some(SymbolId(1)),
-        );
-    binder
-        .resolved_identifier_cache
-        .write()
-        .expect("resolved_identifier_cache RwLock should not be poisoned")
-        .insert((42, 7), None);
+    seed_both_caches(&mut binder);
 
     let stats = binder.resolution_cache_statistics();
     assert_eq!(stats.export_cache_entries, 1);
@@ -486,4 +474,89 @@ fn next_persistent_scope_id_reserves_none_sentinel() {
         super::core::next_persistent_scope_id(u32::MAX as usize).is_none(),
         "ScopeId::NONE sentinel (u32::MAX) must remain reserved"
     );
+}
+
+// =============================================================================
+// Resolution cache invariants across rebind
+//
+// The export cache maps (module_specifier, export_name) -> SymbolId.  After
+// any rebind the SymbolIds for declarations may change, so both resolution
+// caches must be cleared at the start of every bind entry-point.  Failing to
+// do so lets callers observe stale SymbolIds ("binder-7-20" family of bench
+// regressions reported in issues #11465, #11566, #11627).
+// =============================================================================
+
+fn seed_both_caches(binder: &mut BinderState) {
+    binder
+        .resolved_export_cache
+        .write()
+        .expect("not poisoned")
+        .insert(("stub.ts".to_string(), "x".to_string()), Some(SymbolId(99)));
+    binder
+        .resolved_identifier_cache
+        .write()
+        .expect("not poisoned")
+        .insert((0xdead, 0xbeef), Some(SymbolId(77)));
+}
+
+fn assert_both_caches_cleared(binder: &BinderState, ctx: &str) {
+    let s = binder.resolution_cache_statistics();
+    assert_eq!(s.export_cache_entries, 0, "{ctx}: export cache not cleared");
+    assert_eq!(
+        s.identifier_cache_entries, 0,
+        "{ctx}: identifier cache not cleared"
+    );
+}
+
+/// `bind_source_file` must clear both caches so a second bind of the same
+/// binder state never returns `SymbolId`s from the previous pass.
+#[test]
+fn bind_source_file_clears_both_caches() {
+    use tsz_parser::ParserState;
+
+    let source = "export const alpha = 1; export const beta = 2;";
+    let mut parser = ParserState::new("mod.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    seed_both_caches(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+    assert_both_caches_cleared(&binder, "bind_source_file");
+}
+
+/// `bind_source_file_incremental` must clear both caches even on the early-
+/// return path (empty prefix), so no rebind path can leave a stale entry.
+#[test]
+fn bind_source_file_incremental_clears_both_caches() {
+    use tsz_parser::ParserState;
+
+    let source = "export const gamma = 3; export const delta = 4;";
+    let mut parser = ParserState::new("mod2.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    seed_both_caches(&mut binder);
+
+    // Empty prefix triggers the early-return path; caches must still be cleared.
+    let ok = binder.bind_source_file_incremental(parser.get_arena(), root, &[], &[], &[], 0);
+    assert!(
+        !ok,
+        "empty prefix must cause bind_source_file_incremental to return false"
+    );
+
+    assert_both_caches_cleared(&binder, "bind_source_file_incremental");
+}
+
+/// `merge_lib_contexts_into_binder` must clear both caches because the merge
+/// reassigns `SymbolId`s; any cached (module, name) → `old_id` mapping is invalid.
+#[test]
+fn merge_lib_contexts_into_binder_clears_both_caches() {
+    let mut binder = BinderState::new();
+
+    seed_both_caches(&mut binder);
+    binder.merge_lib_contexts_into_binder(&[]);
+
+    assert_both_caches_cleared(&binder, "merge_lib_contexts_into_binder");
 }
