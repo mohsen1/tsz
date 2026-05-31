@@ -237,3 +237,16 @@ fn jsx_union_props_class_target_display_is_not_a_decision_gate() {
         "JSX union props target display should rely on resolved IntrinsicClassAttributes, not formatted text emptiness"
     );
 }
+
+#[test]
+fn jsx_props_intersection_member_display_is_not_a_decision_gate() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/diagnostics.rs"
+    ))
+    .expect("JSX diagnostics source should be readable");
+    assert!(
+        !source.contains("formatted.is_empty()"),
+        "JSX props intersection display should rely on syntax member presence, not formatted text emptiness"
+    );
+}

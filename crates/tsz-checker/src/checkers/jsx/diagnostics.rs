@@ -1069,10 +1069,9 @@ impl<'a> CheckerState<'a> {
                 .types
                 .nodes
                 .iter()
-                .filter_map(|&member_idx| {
+                .map(|&member_idx| {
                     let member_type = self.get_type_from_type_node(member_idx);
-                    let formatted = self.format_type(member_type);
-                    (!formatted.is_empty()).then_some(formatted)
+                    self.format_type(member_type)
                 })
                 .collect();
             if !parts.is_empty() {
