@@ -1165,7 +1165,14 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # route through existing `query_boundaries::common` wrappers; no new
         # quarantine entry — `contains_keyof_type` reuses the existing
         # `contains_*` one-liner pattern in `common.rs`.
-        3280,
+        #
+        # Bumped by 1 for the concrete indexed-access TS2536→TS2339 parity fix:
+        # the missing-literal-key guard in `check_indexed_access_type` adds one
+        # `contains_type_parameters` concreteness check (the literal key name is
+        # derived through `query_boundaries::type_computation::access`, not the
+        # `common` barrel). It is an existing request-shaped helper already used
+        # throughout this file — no new quarantine entry.
+        3281,
     ),
 ]
 
