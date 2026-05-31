@@ -42,9 +42,6 @@ fn check_two_files_collect_export_specifiers(
     let mut binder_b = BinderState::new();
     binder_b.bind_source_file(parser_b.get_arena(), root_b);
 
-    let arena_a = Arc::new(parser_a.get_arena().clone());
-    let arena_b = Arc::new(parser_b.get_arena().clone());
-
     // `import_binding_is_type_only` follows the module specifier into
     // `binder_a`'s export table, so seed `binder_b.module_exports` for the
     // re-export path. No `register_symbol_file_target` is needed: the
@@ -55,13 +52,18 @@ fn check_two_files_collect_export_specifiers(
             .insert(module_specifier.to_string(), exports);
     }
 
-    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
-    let all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![
+        Arc::new(parser_a.get_arena().clone()),
+        Arc::clone(&arena_b),
+    ]);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::new(binder_a), Arc::clone(&binder_b)]);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
         arena_b.as_ref(),
-        all_binders[1].as_ref(),
+        binder_b.as_ref(),
         &types,
         entry_name.to_string(),
         CheckerOptions {
