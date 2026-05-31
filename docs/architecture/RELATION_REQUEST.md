@@ -69,7 +69,9 @@ assignment diagnostics.
 Return diagnostics in `types/type_checking`, JSX component return checks,
 decorator checks, contextual return utilities, function-type helpers, and call
 checker callback-return recovery build `RelationRequest::return_stmt` through
-`return_relation_outcome`.
+`return_relation_outcome`. Weak-type TS2560 suggestions also use the return
+request when probing whether a call or construct result would satisfy the weak
+target.
 
 JSX props and attribute validation paths build `RelationRequest::jsx_props`
 through `jsx_props_relation_outcome` in the JSX props resolution, validation,

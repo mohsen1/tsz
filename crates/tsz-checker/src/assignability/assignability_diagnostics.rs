@@ -1269,7 +1269,7 @@ impl<'a> CheckerState<'a> {
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
-            && self.assign_relation_outcome(return_type, target).related
+            && self.return_relation_outcome(return_type, target).related
         {
             return true;
         }
@@ -1286,7 +1286,7 @@ impl<'a> CheckerState<'a> {
                 && construct_return != TypeId::UNDEFINED
                 && construct_return != TypeId::NEVER
                 && self
-                    .assign_relation_outcome(construct_return, target)
+                    .return_relation_outcome(construct_return, target)
                     .related
             {
                 return true;

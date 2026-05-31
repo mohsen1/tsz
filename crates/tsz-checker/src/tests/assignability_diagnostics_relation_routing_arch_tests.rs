@@ -10,12 +10,31 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     .expect("failed to read assignability_diagnostics.rs");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 12,
+        source.matches("assign_relation_outcome(").count() >= 11,
         "top-level assignability diagnostics should use RelationOutcome for TS2322-family probes"
     );
     assert!(
         source.contains("call_arg_relation_outcome(source, target)"),
         "argument diagnostics should use the TS2345 RelationOutcome path"
+    );
+    let suggest_call_start = source
+        .find("pub(crate) fn should_suggest_calling_for_weak_type")
+        .expect("missing weak-type call suggestion helper");
+    let suggest_call_end = suggest_call_start
+        + source[suggest_call_start..]
+            .find("pub(crate) fn checker_only_assignability_failure_reason")
+            .expect("missing next assignability diagnostics helper");
+    let suggest_call_helper = &source[suggest_call_start..suggest_call_end];
+    assert_eq!(
+        suggest_call_helper
+            .matches("return_relation_outcome(")
+            .count(),
+        2,
+        "weak-type call/construct suggestions should route result probes through the return relation outcome"
+    );
+    assert!(
+        !suggest_call_helper.contains("assign_relation_outcome("),
+        "weak-type call/construct suggestions should not use generic assignment relation outcomes for result probes"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),
