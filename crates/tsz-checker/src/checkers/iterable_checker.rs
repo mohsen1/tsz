@@ -485,6 +485,14 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        if let ForOfElementKind::TypeParameter { constraint } =
+            classify_for_of_element_type(self.ctx.types, iterable_type)
+        {
+            return constraint
+                .map(|constraint| self.for_of_element_type(constraint, is_async))
+                .unwrap_or(TypeId::ANY);
+        }
+
         if is_async {
             // For for-await-of: try async iterator protocol first (AsyncIterable<T> → T),
             // then fall back to sync iterator + Promise unwrapping (Iterable<Promise<T>> → T)
@@ -641,6 +649,9 @@ impl<'a> CheckerState<'a> {
                 // Unwrap readonly wrapper and compute element type for inner
                 self.for_of_element_type_classified(inner, depth + 1)
             }
+            ForOfElementKind::TypeParameter { constraint } => constraint
+                .map(|constraint| self.for_of_element_type_classified(constraint, depth + 1))
+                .unwrap_or(TypeId::ANY),
             ForOfElementKind::String => TypeId::STRING,
             ForOfElementKind::Other => {
                 // For custom iterators, Application types (Map, Set), etc.,
