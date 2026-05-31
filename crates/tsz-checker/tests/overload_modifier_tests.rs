@@ -1,6 +1,6 @@
 //! Tests for overload modifier agreement: TS2383, TS2385, TS2386, TS2394.
 
-use crate::test_utils::check_source_code_messages as get_diagnostics;
+use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
 fn has_error(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
@@ -339,6 +339,177 @@ fn ts2394_multiple_overloads_all_compatible_callbacks_no_error() {
 function listen(kind: "any", cb: (e: { ts: number }) => void): void;
 function listen(kind: "click", cb: (e: { ts: number }) => void): void;
 function listen(kind: string, cb: (e: { ts: number }) => void): void {}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+// TS2394: generic class method overloads with class-level type parameters
+// These are false positives in tsz (tsc accepts them). See issue #10670.
+
+#[test]
+fn ts2394_generic_class_method_overload_keyof_no_false_positive() {
+    let source = r#"
+class Builder<T> {
+    get<K extends keyof T>(key: K): T[K];
+    get(key: any): any { return (this as any)[key]; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_class_method_overload_varied_names_no_false_positive() {
+    // Varied type param names — proves the fix is not name-specific
+    let source = r#"
+class Store<X> {
+    fetch<Q extends keyof X>(prop: Q): X[Q];
+    fetch(prop: any): any { return (this as any)[prop]; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_class_method_overload_record_return_no_false_positive() {
+    let source = r#"
+class Inserter<O> {
+    returning<SE extends keyof O & string>(col: SE): Inserter<O & Record<SE, O[SE]>>;
+    returning(col: any): Inserter<any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_class_method_overload_multi_type_param_no_false_positive() {
+    let source = r#"
+class QueryBuilder<DB, TB extends keyof DB, O> {
+    returning<SE extends keyof O & string>(columns: SE[]): QueryBuilder<DB, TB, O & Record<SE, O[SE & keyof O]>>;
+    returning(columns: any): QueryBuilder<DB, TB, any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_class_method_overload_pick_return_no_false_positive() {
+    let source = r#"
+class Container<T> {
+    select<K extends keyof T & string>(keys: K[]): Container<Pick<T, K>>;
+    select(keys: any): Container<any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+// TS2394: Multiple overloads (not just one overload + impl)
+
+#[test]
+fn ts2394_multiple_generic_class_overloads_no_false_positive() {
+    let source = r#"
+class QueryBuilder<DB, TB extends keyof DB, O> {
+    returning<SE extends keyof O & string>(col: SE): QueryBuilder<DB, TB, O & Pick<O, SE>>;
+    returning<SE extends keyof O & string>(cols: SE[]): QueryBuilder<DB, TB, O & Pick<O, SE>>;
+    returning(selection: any): QueryBuilder<DB, TB, any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_method_with_conditional_return_no_false_positive() {
+    let source = r#"
+type ExtractRow<O, SE> = SE extends keyof O ? Pick<O, SE & keyof O> : never;
+
+class Builder<O> {
+    select<SE extends keyof O & string>(col: SE): Builder<ExtractRow<O, SE>>;
+    select<SE extends keyof O & string>(cols: SE[]): Builder<ExtractRow<O, SE>>;
+    select(cols: any): Builder<any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_generic_method_overload_with_union_param_no_false_positive() {
+    let source = r#"
+class Container<T> {
+    select<K extends keyof T & string>(key: K | K[]): Container<Pick<T, K>>;
+    select(key: any): Container<any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+// TS2394: self-referential class builder pattern (kysely-like)
+// The return type of the overload contains the class itself.
+
+#[test]
+fn ts2394_self_referential_builder_overload_no_false_positive() {
+    let source = r#"
+class QueryBuilder<DB, TB extends keyof DB, O> {
+    returning<SE extends keyof O & string>(
+        col: SE
+    ): QueryBuilder<DB, TB, O & Record<SE, O[SE & keyof O]>>;
+    returning(col: any): QueryBuilder<DB, TB, any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_self_referential_builder_multiple_overloads_no_false_positive() {
+    let source = r#"
+class InsertBuilder<DB, TB extends keyof DB, O> {
+    returning<SE extends string & keyof O>(col: SE): InsertBuilder<DB, TB, O & Pick<O, SE>>;
+    returning<SE extends string & keyof O>(cols: ReadonlyArray<SE>): InsertBuilder<DB, TB, O & Pick<O, SE>>;
+    returning(col: any): InsertBuilder<DB, TB, any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_method_returning_any_impl_with_self_ref_overload_no_false_positive() {
+    // Implementation returns any, overload returns self-referential complex type
+    let source = r#"
+type SelectAll = '*';
+type RowType<T, K extends keyof T> = Pick<T, K>;
+
+class Builder<T> {
+    select<K extends keyof T & string>(col: K): Builder<RowType<T, K>>;
+    select<K extends keyof T & string>(cols: K[]): Builder<RowType<T, K>>;
+    select(col: SelectAll): Builder<T>;
+    select(col: any): Builder<any> { return this as any; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+// TS2394: same-name shadowing — class-level `T` shadowed by method-level `T`.
+// The class binding must not leak into the method's own type param scope.
+
+#[test]
+fn ts2394_method_type_param_shadows_class_type_param_same_name_no_false_positive() {
+    // Class has `T`; overload method declares its own `T extends keyof U`.
+    // tsc accepts: method `T` shadows class `T` — no TS2394.
+    let source = r#"
+class Container<T, U> {
+    get<T extends keyof U>(key: T): U[T];
+    get(key: any): any { return (this as any)[key]; }
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_method_type_param_same_name_as_class_varied_names_no_false_positive() {
+    // Varied class/method type param names to prove the fix is not spelling-specific.
+    let source = r#"
+class Store<X, Y> {
+    fetch<X extends keyof Y>(prop: X): Y[X];
+    fetch(prop: any): any { return (this as any)[prop]; }
+}
 "#;
     assert!(!has_error(source, 2394));
 }
