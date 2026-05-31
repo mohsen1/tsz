@@ -23,8 +23,8 @@ fn conditional_result_branches_use_relation_outcome_boundary() {
     );
     assert_eq!(
         function.matches("assign_relation_outcome").count(),
-        2,
-        "the raw and evaluated branch relations should both route through RelationOutcome"
+        4,
+        "the conditional branch and indexed-object-map branch relations should route through RelationOutcome"
     );
 }
 
