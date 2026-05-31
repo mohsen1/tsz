@@ -127,6 +127,19 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             ],
         )
 
+    def test_json_report_records_ok_for_clean_audit(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "existing debt"),
+        }
+
+        report = self.audit.build_json_report(findings, allowlist, [])
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["failures"], [])
+
     def test_pass_summary_names_clean_guardrail_counters(self):
         findings = [
             self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
