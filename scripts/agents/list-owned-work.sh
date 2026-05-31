@@ -15,6 +15,8 @@ usage() {
   cat <<'USAGE'
 usage: scripts/agents/list-owned-work.sh [--pr-state] [AgentName|--all]
 
+Lists owned open PRs/issues and prints compact per-agent summary counters.
+
 Examples:
   scripts/agents/list-owned-work.sh M1-A
   scripts/agents/list-owned-work.sh --all
@@ -97,6 +99,15 @@ list_owned_items_rest() {
   fi
 }
 
+count_rows() {
+  local rows="$1"
+  if [[ -z "$rows" ]]; then
+    echo 0
+    return
+  fi
+  printf '%s\n' "$rows" | awk 'NF { count++ } END { print count + 0 }'
+}
+
 for agent in "${SELECTED[@]}"; do
   case "$agent" in
     M1-A|M1-B|M1-C|M1-D|M4-A|M4-B|M4-C|M4-D|Studio-A|Studio-B|Studio-C|Studio-D|Studio-E|Studio-F|Reviewer) ;;
@@ -143,6 +154,7 @@ for agent in "${SELECTED[@]}"; do
   else
     echo "- none"
   fi
+  pr_count="$(count_rows "$prs")"
   echo ""
   echo "Issues:"
   issues="$(
@@ -156,5 +168,16 @@ for agent in "${SELECTED[@]}"; do
   else
     echo "- none"
   fi
+  issue_count="$(count_rows "$issues")"
+  total_count=$(( pr_count + issue_count ))
+  if (( total_count == 0 )); then
+    owned_work_status="clear"
+  else
+    owned_work_status="active"
+  fi
+  echo ""
+  echo "owned_pr_count=$pr_count"
+  echo "owned_issue_count=$issue_count"
+  echo "owned_work_status=$owned_work_status"
   echo ""
 done
