@@ -1,6 +1,7 @@
 //! Correlated union and generic call substitution helpers for DTS emit.
 
 use super::super::DeclarationEmitter;
+use std::cell::Cell;
 use tsz_parser::parser::node::{MappedTypeData, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -799,6 +800,120 @@ impl<'a> DeclarationEmitter<'a> {
         substitutions
     }
 
+    pub(in crate::declaration_emitter) fn partial_required_call_reused_type_should_replace_preferred(
+        &self,
+        expr_idx: NodeIndex,
+        reused_type_text: &str,
+        preferred_type_text: &str,
+    ) -> bool {
+        if !self.call_expression_uses_partial_required_mapped_inference(expr_idx) {
+            return false;
+        }
+        Self::partial_required_object_text_matches_preferred(reused_type_text, preferred_type_text)
+            .unwrap_or(false)
+    }
+
+    pub(in crate::declaration_emitter) fn call_expression_uses_partial_required_mapped_inference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(raw_sym_id) = self.value_reference_symbol(call.expression) else {
+            return false;
+        };
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
+            if !callable.type_annotation.is_some()
+                || !self.function_signature_accepts_call_arguments(
+                    source_arena,
+                    callable.parameters,
+                    call,
+                )
+            {
+                return None;
+            }
+            let return_type_param =
+                self.simple_type_node_name_from_arena(source_arena, callable.type_annotation)?;
+            let type_params = callable.type_parameters?;
+            let declares_return_param = type_params.nodes.iter().copied().any(|param_idx| {
+                source_arena
+                    .get(param_idx)
+                    .and_then(|node| source_arena.get_type_parameter(node))
+                    .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+                    .is_some_and(|name| name == return_type_param)
+            });
+            if !declares_return_param {
+                return None;
+            }
+
+            for &param_idx in &callable.parameters.nodes {
+                let Some(param_node) = source_arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = source_arena.get_parameter(param_node) else {
+                    continue;
+                };
+                let Some((param_inner, inference)) = self
+                    .mapped_argument_inference_from_param_type(source_arena, param.type_annotation)
+                else {
+                    continue;
+                };
+                if param_inner == return_type_param
+                    && matches!(inference, MappedArgumentInference::PartialRequired)
+                {
+                    return Some(true);
+                }
+            }
+            None
+        })
+        .unwrap_or(false)
+    }
+
+    fn partial_required_object_text_matches_preferred(
+        reused_type_text: &str,
+        preferred_type_text: &str,
+    ) -> Option<bool> {
+        let reused_members = Self::object_type_members(reused_type_text)?;
+        let preferred_members = Self::object_type_members(preferred_type_text)?;
+        if reused_members.len() != preferred_members.len() {
+            return Some(false);
+        }
+
+        let mut removed_undefined = false;
+        for (reused_member, preferred_member) in reused_members.iter().zip(preferred_members.iter())
+        {
+            let (reused_name, reused_optional, reused_type) =
+                Self::object_member_parts(reused_member)?;
+            let (preferred_name, preferred_optional, preferred_type) =
+                Self::object_member_parts(preferred_member)?;
+            if reused_name != preferred_name || reused_optional || preferred_optional {
+                return Some(false);
+            }
+            if reused_type == preferred_type {
+                continue;
+            }
+            if Self::remove_undefined_union_member(preferred_type) != reused_type {
+                return Some(false);
+            }
+            removed_undefined = true;
+        }
+
+        Some(removed_undefined)
+    }
+
     fn mapped_argument_inference_from_param_type(
         &self,
         source_arena: &NodeArena,
@@ -815,17 +930,36 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         };
         let param_inner = self.simple_type_node_name_from_arena(source_arena, *type_arg_idx)?;
-        let sym_id = self
-            .declaration_type_symbol_from_type_node(source_arena, param_type_idx)
-            .or_else(|| {
-                let name = self.simple_type_node_name_from_arena(source_arena, param_type_idx)?;
-                self.binder?.get_global_type(&name)
-            })?;
-        let inference = self.with_symbol_declarations(sym_id, |alias_arena, decl_idx| {
-            let alias_node = alias_arena.get(decl_idx)?;
-            let alias = alias_arena.get_type_alias(alias_node)?;
-            self.mapped_argument_inference_from_alias(alias_arena, alias)
-        })?;
+        let mut saw_declared_symbol = false;
+        let inference = if let Some(sym_id) =
+            self.declaration_type_symbol_from_type_node(source_arena, param_type_idx)
+        {
+            let saw_declaration = Cell::new(false);
+            let inference = self.with_symbol_declarations(sym_id, |alias_arena, decl_idx| {
+                saw_declaration.set(true);
+                let alias_node = alias_arena.get(decl_idx)?;
+                let alias = alias_arena.get_type_alias(alias_node)?;
+                self.mapped_argument_inference_from_alias(alias_arena, alias)
+            });
+            saw_declared_symbol = saw_declaration.get();
+            inference
+        } else {
+            None
+        };
+        let inference = if let Some(inference) = inference {
+            inference
+        } else {
+            if saw_declared_symbol {
+                return None;
+            }
+            let name = self.simple_type_node_name_from_arena(source_arena, param_type_idx)?;
+            let sym_id = self.binder?.get_global_type(&name)?;
+            self.with_symbol_declarations(sym_id, |alias_arena, decl_idx| {
+                let alias_node = alias_arena.get(decl_idx)?;
+                let alias = alias_arena.get_type_alias(alias_node)?;
+                self.mapped_argument_inference_from_alias(alias_arena, alias)
+            })?
+        };
         Some((param_inner, inference))
     }
 

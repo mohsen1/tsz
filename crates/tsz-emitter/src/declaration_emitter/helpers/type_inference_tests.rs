@@ -836,6 +836,40 @@ let y = complete(value);
 }
 
 #[test]
+fn partial_required_call_surface_can_replace_preferred_optional_undefined_object() {
+    let source = r#"
+type OptionalShape<Shape> = { [Field in keyof Shape]?: Shape[Field] };
+declare function complete<Shape>(x: OptionalShape<Shape>): Shape;
+declare let value: { a: number | undefined, b?: string[] };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert!(
+        emitter.partial_required_call_reused_type_should_replace_preferred(
+            call_idx,
+            "{\n    a: number;\n    b: string[];\n}",
+            "{\n    a: number | undefined;\n    b: string[];\n}",
+        )
+    );
+}
+
+#[test]
 fn call_reused_type_inverts_reverse_mapped_handler_parameters() {
     let source = r#"
 type Callbacks<Shape> = { [Field in keyof Shape]: (value: Shape[Field]) => void };
