@@ -1178,7 +1178,8 @@ impl<'a> CheckerState<'a> {
                     if elem_requires_assignability_overrides
                         || context_requires_assignability_overrides
                     {
-                        self.is_assignable_to(elem_type, context_element_type)
+                        self.assign_relation_outcome(elem_type, context_element_type)
+                            .related
                     } else {
                         self.is_subtype_of(elem_type, context_element_type)
                     }
