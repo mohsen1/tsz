@@ -221,12 +221,13 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         let collides = sig.type_params.iter().any(|tp| {
-            // A TypeParam in arg_types is only a genuine collision if it comes from
-            // an outer scope and is structurally distinct from the sig's own TypeParam.
-            // We detect structural distinctness by comparing constraint, default, and
-            // is_const: if a "foreign" TypeParam matches the sig's TypeParam metadata
-            // exactly, it is likely the canonical/declaration-level form of the same
-            // TypeParam rather than a true outer-scope collision.
+            // A TypeParam in arg_types is a collision when it has the same name as one
+            // of the sig's own type params but a *different* TypeId (i.e. it comes from
+            // an outer/caller scope). `own_type_param_ids` contains the interned TypeIds
+            // of TypeParams that actually belong to this signature; TypeId identity is
+            // the reliable scope discriminant (structural metadata is not — two
+            // independently-scoped unconstrained `<T>`s are indistinguishable by
+            // constraint/default/is_const but have distinct TypeIds).
             let found = arg_types
                 .iter()
                 .copied()
@@ -235,26 +236,12 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
                 })
                 .find(|&referenced| {
-                    if own_type_param_ids.contains(&referenced) {
-                        return false;
-                    }
-                    let Some(referenced_tp) = crate::query_boundaries::common::type_param_info(
-                        self.ctx.types,
-                        referenced,
-                    ) else {
-                        return false;
-                    };
-                    if referenced_tp.name != tp.name {
-                        return false;
-                    }
-                    // Same name, different TypeId — check structural metadata.
-                    // If the foreign TypeParam has the SAME constraint, default, and
-                    // is_const as the sig's own TypeParam, it is the canonical form of
-                    // the same TypeParam (produced by a previous evaluation pass). Treat
-                    // it as own, not foreign.
-                    referenced_tp.constraint != tp.constraint
-                        || referenced_tp.default != tp.default
-                        || referenced_tp.is_const != tp.is_const
+                    !own_type_param_ids.contains(&referenced)
+                        && crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            referenced,
+                        )
+                        .is_some_and(|info| info.name == tp.name)
                 });
             found.is_some()
         });

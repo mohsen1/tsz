@@ -1755,3 +1755,38 @@ const result = pipe(myMap((x: number) => x + 1), myFilter(y => y > 0));
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn outer_and_overload_share_tp_name_metadata_but_stay_distinct() {
+    // Regression: when an outer generic function <T> calls an overloaded generic
+    // function whose overloads also use <T>, both unconstrained and with identical
+    // metadata, the checker must NOT collapse them via a structural-metadata guard.
+    // TypeId identity (own_type_param_ids) is the correct discriminant.
+    //
+    // Two name variants guard against hardcoded-name regressions.
+    for outer_name in &["T", "U"] {
+        let source = format!(
+            r#"
+interface Box<{outer_name}> {{ (value: {outer_name}): {outer_name}; }}
+declare function wrapOuter<{outer_name}>(x: {outer_name}): Box<{outer_name}>;
+declare function combine<{outer_name}>(a: Box<{outer_name}>): Box<{outer_name}>;
+declare function combine<{outer_name}, V>(a: Box<{outer_name}>, b: Box<V>): Box<V>;
+const r = combine(wrapOuter(42), wrapOuter("hello"));
+"#
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == 2345 || d.code == 2322)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "outer <{outer_name}> and overload <{outer_name}> sharing name/metadata must not \
+             produce TS2345/TS2322, got: {:?}",
+            errors
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+}
