@@ -35,6 +35,72 @@ def make_result(name, js_error="", dts_error="", test_path="", baseline_file="")
     }
 
 
+class TestEmitFreshnessNote(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_query_emit()
+
+    def test_readme_emit_summary_parses_progress_block(self):
+        summary = self.mod.emit_summary_from_readme_text(
+            """
+before
+<!-- EMIT_START -->
+```
+JavaScript:  [####################] 99.5% (13,459 / 13,530 tests)
+Declaration: [####################] 98.5% (1,644 / 1,669 tests)
+```
+<!-- EMIT_END -->
+after
+"""
+        )
+        self.assertEqual(
+            summary,
+            {
+                "jsPass": 13459,
+                "jsTotal": 13530,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+
+    def test_freshness_note_reports_public_aggregate_ahead(self):
+        note = self.mod.emit_freshness_note(
+            {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            {
+                "jsPass": 13459,
+                "jsTotal": 13530,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+        self.assertIsNotNone(note)
+        self.assertIn("README/public emit aggregate is newer", note)
+        self.assertIn("JS 13,459/13,530 vs 13,094/13,530", note)
+        self.assertIn("DTS 1,644/1,669 vs 1,606/1,669", note)
+
+    def test_freshness_note_ignores_different_emit_domains(self):
+        note = self.mod.emit_freshness_note(
+            {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            {
+                "jsPass": 13459,
+                "jsTotal": 14000,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+        self.assertIsNone(note)
+
+
 class TestJSFamilyClassifier(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

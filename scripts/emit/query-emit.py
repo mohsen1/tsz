@@ -34,6 +34,7 @@ Usage:
 import os
 import sys
 import argparse
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -41,6 +42,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
 DETAIL_FILE = Path(__file__).parent / "emit-detail.json"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+README_FILE = ROOT_DIR / "README.md"
 
 
 JS_FAMILY_RULES = [
@@ -154,9 +157,85 @@ def load_detail():
     return load_snapshot(DETAIL_FILE, "Run: ./scripts/emit/run.sh --json-out")
 
 
+def emit_summary(data):
+    summary = data.get("summary", {})
+    return {
+        "jsPass": summary.get("jsPass"),
+        "jsTotal": summary.get("jsTotal"),
+        "dtsPass": summary.get("dtsPass"),
+        "dtsTotal": summary.get("dtsTotal"),
+    }
+
+
+def emit_summary_from_readme_text(text):
+    section = text.split("<!-- EMIT_START -->", 1)
+    if len(section) != 2:
+        return None
+    section = section[1].split("<!-- EMIT_END -->", 1)[0]
+
+    summary = {}
+    for line in section.splitlines():
+        if "JavaScript" in line:
+            prefix = "js"
+        elif "Declaration" in line:
+            prefix = "dts"
+        else:
+            continue
+
+        match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", line)
+        if not match:
+            continue
+        summary[f"{prefix}Pass"] = int(match.group(1).replace(",", ""))
+        summary[f"{prefix}Total"] = int(match.group(2).replace(",", ""))
+
+    required = {"jsPass", "jsTotal", "dtsPass", "dtsTotal"}
+    return summary if required.issubset(summary) else None
+
+
+def emit_summary_from_readme(path=README_FILE):
+    try:
+        return emit_summary_from_readme_text(path.read_text())
+    except OSError:
+        return None
+
+
+def emit_freshness_note(detail_summary, public_summary):
+    if not detail_summary or not public_summary:
+        return None
+
+    same_domain = (
+        detail_summary.get("jsTotal") == public_summary.get("jsTotal")
+        and detail_summary.get("dtsTotal") == public_summary.get("dtsTotal")
+    )
+    public_ahead = (
+        public_summary.get("jsPass", 0) > detail_summary.get("jsPass", 0)
+        or public_summary.get("dtsPass", 0) > detail_summary.get("dtsPass", 0)
+    )
+    if not same_domain or not public_ahead:
+        return None
+
+    return (
+        "Note: README/public emit aggregate is newer than "
+        "scripts/emit/emit-detail.json "
+        f"(JS {public_summary['jsPass']:,}/{public_summary['jsTotal']:,} vs "
+        f"{detail_summary['jsPass']:,}/{detail_summary['jsTotal']:,}; "
+        f"DTS {public_summary['dtsPass']:,}/{public_summary['dtsTotal']:,} vs "
+        f"{detail_summary['dtsPass']:,}/{detail_summary['dtsTotal']:,}). "
+        "Failure-family rows below still use checked-in per-test detail."
+    )
+
+
+def print_emit_freshness_note(data):
+    note = emit_freshness_note(emit_summary(data), emit_summary_from_readme())
+    if note:
+        print(note)
+        print()
+
+
 def show_overview(data):
     s = data["summary"]
     print(f"Emit Test Results")
+    print_emit_freshness_note(data)
     print(f"  JavaScript: {s['jsPass']}/{s['jsTotal']} ({s['jsPassRate']}%)")
     print(f"  Declaration: {s['dtsPass']}/{s['dtsTotal']} ({s['dtsPassRate']}%)")
     print()
@@ -286,6 +365,7 @@ def collect_failures_by_family(data, surface):
 def show_failure_families(data, top=20):
     print("Emit failure families")
     print()
+    print_emit_freshness_note(data)
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(
