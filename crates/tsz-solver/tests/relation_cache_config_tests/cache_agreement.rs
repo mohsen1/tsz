@@ -98,14 +98,66 @@ fn legacy_flag_constants_match_typed_bitflags() {
     // External callers still depend on the `FLAG_*` `u16` constants being
     // numerically stable. Guarantee they line up with the typed layout so
     // that bridges like `pack_relation_flags()` keep working.
-    assert_eq!(
-        u32::from(RelationCacheKey::FLAG_STRICT_NULL_CHECKS),
-        RelationFlags::STRICT_NULL_CHECKS.bits()
-    );
-    assert_eq!(
-        u32::from(RelationCacheKey::FLAG_NO_ERASE_GENERICS),
-        RelationFlags::NO_ERASE_GENERICS.bits()
-    );
+    let cases = [
+        (
+            "strict null checks",
+            RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            RelationFlags::STRICT_NULL_CHECKS,
+        ),
+        (
+            "strict function types",
+            RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES,
+            RelationFlags::STRICT_FUNCTION_TYPES,
+        ),
+        (
+            "exact optional property types",
+            RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+            RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES,
+        ),
+        (
+            "no unchecked indexed access",
+            RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS,
+            RelationFlags::NO_UNCHECKED_INDEXED_ACCESS,
+        ),
+        (
+            "disable method bivariance",
+            RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE,
+            RelationFlags::DISABLE_METHOD_BIVARIANCE,
+        ),
+        (
+            "allow void return",
+            RelationCacheKey::FLAG_ALLOW_VOID_RETURN,
+            RelationFlags::ALLOW_VOID_RETURN,
+        ),
+        (
+            "allow bivariant rest",
+            RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST,
+            RelationFlags::ALLOW_BIVARIANT_REST,
+        ),
+        (
+            "allow bivariant parameter count",
+            RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT,
+            RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT,
+        ),
+        (
+            "disable generic erasure",
+            RelationCacheKey::FLAG_NO_ERASE_GENERICS,
+            RelationFlags::NO_ERASE_GENERICS,
+        ),
+        (
+            "allow erased generic signature retry",
+            RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY,
+            RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY,
+        ),
+    ];
+
+    for (name, legacy, typed) in cases {
+        assert_eq!(
+            u32::from(legacy),
+            typed.bits(),
+            "{name} legacy flag constant must match the typed RelationFlags bit",
+        );
+    }
 }
 
 #[test]
