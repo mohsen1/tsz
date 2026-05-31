@@ -55,6 +55,14 @@ pub type WildcardReexportsMap = FxHashMap<String, Vec<String>>;
 /// Maps `current_file` -> `Vec<(source_module, is_type_only)>`.
 pub type WildcardReexportsTypeOnlyMap = FxHashMap<String, Vec<(String, bool)>>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
+/// Cache for the type-only re-export resolver. Mirrors [`ExportCache`] but also
+/// records whether the resolution path crossed an `export type * from ...`
+/// wildcard (the `bool` in the value). Keyed by `(module_specifier,
+/// export_name)`. The result is a pure function of the request plus the
+/// binder's immutable re-export tables, so it is safe to memoize for the
+/// lifetime of the binder and is cleared alongside [`ExportCache`] whenever
+/// resolution caches are invalidated.
+type ExportTypeOnlyCache = FxHashMap<(String, String), Option<(SymbolId, bool)>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.
 /// Used for caches that need thread-safety in parallel compilation but also
@@ -78,6 +86,7 @@ impl<T> std::ops::Deref for CloneableRwLock<T> {
 }
 
 type ExportCacheStorage = CloneableRwLock<ExportCache>;
+type ExportTypeOnlyCacheStorage = CloneableRwLock<ExportTypeOnlyCache>;
 type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -562,6 +571,18 @@ pub struct BinderState {
     /// binders start with an empty cache and lazily repopulate.
     #[serde(skip)]
     pub(crate) resolved_export_cache: ExportCacheStorage,
+    /// Cache for the type-only re-export resolver
+    /// (`resolve_import_with_reexports_type_only`). The non-type-only
+    /// [`Self::resolved_export_cache`] cannot serve this path because the
+    /// type-only resolver additionally returns whether the resolution crossed
+    /// an `export type * from ...` wildcard. Before this cache existed, every
+    /// type-position cross-file lookup re-walked the full named/wildcard
+    /// re-export chain, which is the dominant cost when checking large
+    /// barrel-re-export-heavy projects. Same lazy-rebuild / `#[serde(skip)]`
+    /// rationale as [`Self::resolved_export_cache`]; cleared together in
+    /// `clear_resolution_caches`.
+    #[serde(skip)]
+    pub(crate) resolved_export_type_only_cache: ExportTypeOnlyCacheStorage,
     /// Cache for identifier resolution by AST node.
     /// Key: (`arena_pointer`, `node_index`) -> resolved `SymbolId` (or None if not found).
     /// This avoids repeated scope walks for hot checker paths that ask for the same
@@ -983,6 +1004,10 @@ impl BinderState {
     /// cache state for its own symbol resolution.
     pub fn clear_resolution_caches(&mut self) {
         self.resolved_export_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.resolved_export_type_only_cache
             .write()
             .expect("not poisoned")
             .clear();

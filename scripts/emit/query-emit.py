@@ -347,6 +347,7 @@ def show_overview(data):
             "  Checked-detail Declaration: "
             f"{s['dtsPass']}/{s['dtsTotal']} ({s['dtsPassRate']}%)"
         )
+    detail_label = "Checked-detail " if headline_source != "checked detail" else ""
     print()
 
     results = data["results"]
@@ -354,18 +355,21 @@ def show_overview(data):
     dts_fails = [r for r in results if r["dtsStatus"] == "fail"]
     timeouts = [r for r in results if r["jsStatus"] == "timeout" or r["dtsStatus"] == "timeout"]
 
-    print(f"  JS failures: {len(js_fails)}")
-    print(f"  DTS failures: {len(dts_fails)}")
-    print(f"  Timeouts: {len(timeouts)}")
+    print(f"  {detail_label}JS failures: {len(js_fails)}")
+    print(f"  {detail_label}DTS failures: {len(dts_fails)}")
+    print(f"  {detail_label}Timeouts: {len(timeouts)}")
     print()
 
     # JS-pass but DTS-fail (close to full pass)
     js_pass_dts_fail = [r for r in results if r["jsStatus"] == "pass" and r["dtsStatus"] == "fail"]
-    print(f"  JS pass + DTS fail (close to full pass): {len(js_pass_dts_fail)}")
+    print(
+        f"  {detail_label}JS pass + DTS fail (close to full pass): "
+        f"{len(js_pass_dts_fail)}"
+    )
 
     # DTS-pass but JS-fail
     dts_pass_js_fail = [r for r in results if r["dtsStatus"] == "pass" and r["jsStatus"] == "fail"]
-    print(f"  DTS pass + JS fail: {len(dts_pass_js_fail)}")
+    print(f"  {detail_label}DTS pass + JS fail: {len(dts_pass_js_fail)}")
     print()
 
     # Top error messages

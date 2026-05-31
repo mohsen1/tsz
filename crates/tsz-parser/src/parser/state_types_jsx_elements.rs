@@ -1138,7 +1138,12 @@ impl ParserState {
                 tsz_common::diagnostics::diagnostic_codes::EXPECTED,
             );
         }
+        // Mirror allowInAnd(parseExpression) from tsc: spread attribute expressions
+        // are isolated from any enclosing CONTEXT_FLAG_DISALLOW_IN context.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
         let expression = self.parse_expression();
+        self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -1268,7 +1273,15 @@ impl ParserState {
     }
 
     pub(crate) fn parse_jsx_embedded_expression(&mut self) -> NodeIndex {
+        // tsc's parseJsxExpression calls `allowInAnd(parseExpression)`, which
+        // clears the DisallowInContext flag before entering the expression. JSX
+        // embedded expressions are isolated contexts: the `in` operator must be
+        // available inside `{expr}` regardless of any enclosing for-loop header
+        // or other context that sets CONTEXT_FLAG_DISALLOW_IN.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
         let expression = self.parse_expression();
+        self.context_flags = saved_flags;
         self.report_jsx_comma_expression(expression);
         expression
     }

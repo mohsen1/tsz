@@ -1,6 +1,8 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — jsx recovery.
 
-use crate::parser::test_fixture::parse_source_named;
+use crate::parser::test_fixture::{
+    assert_no_errors_labeled, assert_no_errors_named, parse_source_named,
+};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -575,4 +577,605 @@ fn test_single_jsx_element_not_wrapped_in_comma() {
         "a single JSX element must not form a comma chain"
     );
     assert_eq!(ts2657, 0, "no TS2657 for a single element");
+}
+
+// ── Repro for issue #11332: conditional expression in TSX children ──────────
+
+#[test]
+fn test_jsx_conditional_expression_in_children_no_errors() {
+    // Simple case: x ? <span/> : <strong/> inside JSX expression container
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>{x ? <span /> : <strong />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_expression_multiline_no_errors() {
+    // Multiline conditional: when_true on a separate line
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>
+  {x
+    ? <span />
+    : <strong />
+  }
+</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_expression_named_components_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>{x ? <Spinner /> : <Content />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_expression_with_null_branch_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>{x ? <span /> : null}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_expression_page_template_pattern_no_errors() {
+    // nextjs page template pattern
+    assert_no_errors_named(
+        "page.tsx",
+        r#"function Page({ isActive }: { isActive: boolean }) {
+  return (
+    <main>
+      {isActive ? <ActiveView /> : <InactiveView />}
+    </main>
+  );
+}"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_nested_jsx_branches_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>
+  {x
+    ? <div className="active"><p>Active</p></div>
+    : <div className="inactive"><p>Inactive</p></div>
+  }
+</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_renamed_branches_same_behavior() {
+    // Rule: conditional JSX branches must work regardless of element name
+    for source in [
+        r#"const n = <div>{x ? <span /> : <strong />}</div>;"#,
+        r#"const n = <div>{x ? <A /> : <B />}</div>;"#,
+        r#"const n = <div>{x ? <Foo /> : <Bar />}</div>;"#,
+        r#"const n = <div>{x ? <alpha /> : <beta />}</div>;"#,
+    ] {
+        assert_no_errors_named("test.tsx", source);
+    }
+}
+
+#[test]
+fn test_jsx_conditional_with_generic_component_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>{x ? <Comp<string> /> : <Other />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_template_literal_branches() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = <div>{x ? `hello` : <strong />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_template_expression_in_true_branch() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const v = "world";
+const n = <div>{x ? <span>{`hello ${v}`}</span> : <strong />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_return_statement_tsx() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const Comp = ({ x }: { x: boolean }) => x ? <span /> : <strong />;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_generic_arrow_in_children() {
+    // In .tsx files, <T>(v: T) => ... is ambiguous; tsc requires the <T,> form.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const render = <T,>(v: T) => v ? <span /> : <strong />;
+const n = <div>{render(x)}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_patterns_no_errors() {
+    // Rule: conditional expressions with JSX branches must parse correctly
+    // in all common nextjs template patterns.
+    // Cases from both the original 11-case and 8-case suites, merged with
+    // consistent (label, source) tuple order.
+    let cases: &[(&str, &str)] = &[
+        ("logical AND", r#"const n = <div>{x && <span />}</div>;"#),
+        (
+            "nested ternary",
+            r#"const n = <div>{a ? (b ? <A /> : <B />) : <C />}</div>;"#,
+        ),
+        (
+            "short-circuit null",
+            r#"const n = <div>{x && (y ? <A /> : null)}</div>;"#,
+        ),
+        (
+            "arrow callback ternary",
+            r#"const n = <div>{items.map(i => i.x ? <A /> : <B />)}</div>;"#,
+        ),
+        (
+            "multiple conditions",
+            r#"const n = <div>{a && b ? <A /> : <B />}</div>;"#,
+        ),
+        (
+            "parenthesized branches",
+            r#"const n = <div>{x ? (<span />) : (<strong />)}</div>;"#,
+        ),
+        (
+            "fragment branches",
+            r#"const n = <div>{x ? <><span /></> : <><strong /></>}</div>;"#,
+        ),
+        (
+            "string branch",
+            r#"const n = <div>{x ? "yes" : <strong />}</div>;"#,
+        ),
+        (
+            "children in branches",
+            r#"const n = <div>{x ? <div><p>Yes</p></div> : <div><p>No</p></div>}</div>;"#,
+        ),
+        (
+            "conditional with props",
+            r#"const n = <div>{x ? <Comp key="a" data={d} /> : <Other />}</div>;"#,
+        ),
+        (
+            "server component async return",
+            r#"async function Page() { return <div>{loading ? <Spinner /> : <Content />}</div>; }"#,
+        ),
+        (
+            "multiple expressions",
+            r#"const n = <div>{a}{x ? <span/> : <strong/>}{b}</div>;"#,
+        ),
+        (
+            "complex true branch",
+            r#"const n = <div>{x ? <span className="test">text</span> : <strong/>}</div>;"#,
+        ),
+        (
+            "nested false branch",
+            r#"const n = <div>{x ? null : <div><span/></div>}</div>;"#,
+        ),
+        (
+            "template condition",
+            r#"const n = <div>{`${x}` ? <span/> : <strong/>}</div>;"#,
+        ),
+        (
+            "type assertion condition",
+            r#"const n = <div>{(x as boolean) ? <span/> : null}</div>;"#,
+        ),
+        (
+            "nullish coalescing",
+            r#"const n = <div>{x ?? <span/>}</div>;"#,
+        ),
+        (
+            "arrow function",
+            r#"const f = (x: boolean) => <div>{x ? <span/> : null}</div>;"#,
+        ),
+        (
+            "map callback",
+            r#"const n = <div>{items.map((i) => i ? <span key={i}/> : null)}</div>;"#,
+        ),
+    ];
+
+    for (label, source) in cases {
+        assert_no_errors_labeled("test.tsx", label, source);
+    }
+}
+
+#[test]
+fn test_jsx_conditional_in_complex_nextjs_page_template() {
+    assert_no_errors_named(
+        "layout.tsx",
+        r#"import type { ReactNode } from 'react';
+
+type Props = { children: ReactNode; params: { lang: string } };
+
+export default function Layout({ children, params }: Props) {
+  const isRtl = params.lang === 'ar';
+  return (
+    <html lang={params.lang} dir={isRtl ? 'rtl' : 'ltr'}>
+      <body>
+        {isRtl ? <RtlProvider>{children}</RtlProvider> : children}
+      </body>
+    </html>
+  );
+}"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_attribute_value() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <Comp content={loading ? <Spinner /> : <Content />} />;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_template_span_expression() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div className={`${loading ? "loading" : "ready"}`}>{loading ? <Spinner /> : <Content />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_after_template_literal_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{`prefix`}{x ? <span /> : <strong />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_optional_chaining_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{data?.isLoading ? <Spinner /> : <Content />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_arrow_returning_jsx() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const Comp = ({ x }: { x: boolean }) => (
+  <div>
+    {x ? <span>Yes</span> : <strong>No</strong>}
+  </div>
+);"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_string_interpolation_class_then_jsx() {
+    // Template literal for className THEN JSX conditional (scanner state transition)
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true;
+const n = (
+  <div className={`${x ? "active" : "inactive"}`}>
+    {x ? <ActiveContent /> : <InactiveContent />}
+  </div>
+);"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_map_callback() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const items = [{ id: 1, active: true }];
+const n = <ul>{items.map(item => (
+  <li key={item.id}>{item.active ? <Active /> : <Inactive />}</li>
+))}</ul>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_nested_ternary_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{a ? (b ? <A/> : <B/>) : <C/>}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_logical_and_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{x && <span/>}{y || <strong/>}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_fragment_branch_no_errors() {
+    assert_no_errors_named("test.tsx", r#"const n = <div>{x ? <></> : <span/>}</div>;"#);
+}
+
+#[test]
+fn test_jsx_conditional_in_jsx_attribute_no_errors() {
+    assert_no_errors_named("test.tsx", r#"const n = <A content={x ? <B/> : null} />;"#);
+}
+
+#[test]
+fn test_jsx_conditional_generic_component_type_args_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{x ? <Component<string>/> : null}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_deeply_nested_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const n = (
+  <Outer>
+    <Middle>
+      {isLoading ? (
+        <div className="loading">
+          <Spinner size="large" />
+        </div>
+      ) : (
+        <div className="content">
+          <Title>Hello</Title>
+          <Body>{text}</Body>
+        </div>
+      )}
+    </Middle>
+  </Outer>
+);
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_page_component_conditional_render_no_errors() {
+    assert_no_errors_named(
+        "page.tsx",
+        r#"
+import React from 'react';
+
+interface PageProps {
+  isLoading: boolean;
+  error: string | null;
+  data: { title: string } | null;
+}
+
+export default function Page({ isLoading, error, data }: PageProps) {
+  return (
+    <main className="container">
+      <header>
+        <h1>My Page</h1>
+      </header>
+      <section>
+        {isLoading ? (
+          <div className="spinner">Loading...</div>
+        ) : error ? (
+          <div className="error">{error}</div>
+        ) : (
+          <div className="content">
+            <h2>{data?.title}</h2>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_both_branches_template_literals_no_errors() {
+    // Exact pattern from nextjs dashboard.tsx: both branches are template spans.
+    // This is the "template conditional boundary" from issue #11332.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+function ActivityList({ activity }: { activity: { kind: string; version: string; status: string; priority: string; title: string; id: string }[] }) {
+  return (
+    <ol>
+      {activity.map((item) => (
+        <li key={item.id}>
+          {item.kind === "release"
+            ? `${item.version}: ${item.status}`
+            : `${item.priority}: ${item.title}`}
+        </li>
+      ))}
+    </ol>
+  );
+}
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_template_span_as_true_branch_jsx_false() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true; const v = "world"; const n = <div>{x ? `${v}` : <strong />}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_jsx_true_template_span_false() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const x = true; const v = "world"; const n = <div>{x ? <span /> : `${v}`}</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_both_branches_multivar_template_spans() {
+    // Both branches are template spans with multiple variables — the actual nextjs dashboard pattern
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const n = <div>{item.kind === "release"
+  ? `${item.version}: ${item.status}`
+  : `${item.priority}: ${item.title}`}
+</div>;"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_generic_function_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+function render<T extends { label: string }>(item: T, show: boolean): JSX.Element {
+  return <div>{show ? <span>{item.label}</span> : null}</div>;
+}
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_generic_arrow_tsx_no_errors() {
+    // Generic arrow with JSX conditional (requires trailing comma for TSX disambiguation)
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const render = <T extends { label: string },>(item: T, show: boolean) => (
+  <div>{show ? <span>{item.label}</span> : null}</div>
+);
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_chained_ternary_template_no_errors() {
+    // Chained ternary with template strings
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const n = <div>{
+  area === "parser"
+    ? `prs-${title}`
+    : area === "binder"
+      ? `bnd-${title}`
+      : area === "type-checker"
+        ? `chk-${title}`
+        : `emt-${title}`
+}</div>;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_clsx_and_jsx_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const n = <li className={clsx("base", isActive && "active", isDisabled && "disabled")}>
+  {isActive ? <ActiveIcon /> : <DefaultIcon />}
+</li>;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_with_type_argument_component_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+interface Props { value: string }
+const n = <div>{x ? <Component<Props>/> : null}</div>;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_allows_in_operator_in_expression() {
+    // JSX embedded expressions clear CONTEXT_FLAG_DISALLOW_IN, so the `in` operator
+    // is available even when an enclosing for-loop initializer sets the flag.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const set = new Set(["a", "b"]);
+const items = ["a", "c"];
+const n = (
+  <ul>
+    {items.map(item => (
+      <li key={item}>{item in set ? <Active /> : <Inactive />}</li>
+    ))}
+  </ul>
+);
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_parenthesized_expression_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const x = true;
+const n = (x ? <span /> : <strong />);
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_object_property_value_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const x = true;
+const obj = { content: x ? <span /> : <strong /> };
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_as_function_argument_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const x = true;
+const result = render(x ? <span /> : <strong />);
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_in_variable_declaration_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+const x = true;
+const el = x ? <span>true</span> : <strong>false</strong>;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_conditional_inside_template_span_inside_jsx_no_errors() {
+    // JSX conditional inside a template span inside a JSX embedded expression —
+    // the most complex "template conditional boundary" scenario.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const n = <div>{`${cond ? <A/> : <B/>}`}</div>;"#,
+    );
 }
