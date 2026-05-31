@@ -141,13 +141,11 @@ impl BinderState {
     ///
     /// # Panics
     ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Panics if either resolution cache lock is poisoned.
     pub fn merge_lib_contexts_into_binder(&mut self, lib_contexts: &[LibContext]) {
-        // Visible globals can change after merge; invalidate identifier resolutions.
-        self.resolved_identifier_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
+        // Merging lib contexts remaps SymbolIds; clear both caches so callers
+        // don't receive stale ids from prior binding passes.
+        self.clear_resolution_caches();
 
         if lib_contexts.is_empty() {
             return;

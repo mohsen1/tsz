@@ -231,14 +231,7 @@ impl BinderState {
         Arc::make_mut(&mut self.reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports_type_only).clear();
-        self.resolved_export_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
-        self.resolved_identifier_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
+        self.clear_resolution_caches();
         Arc::make_mut(&mut self.shorthand_ambient_modules).clear();
         self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
@@ -978,7 +971,7 @@ impl BinderState {
     /// Bind a source file using `NodeArena`.
     /// # Panics
     ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Panics if either resolution cache lock is poisoned.
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
         // Reset per-file binder stack guard so a pathological earlier file on
         // this thread does not prevent subsequent files from being bound.
@@ -990,12 +983,9 @@ impl BinderState {
             self.set_debug_file(&sf.file_name);
         }
 
-        // Binding mutates scope/symbol tables, so stale identifier resolution entries
-        // from prior passes must be dropped.
-        self.resolved_identifier_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
+        // Binding mutates scope/symbol tables and assigns new SymbolIds; both
+        // resolution caches must be cleared so callers don't receive stale ids.
+        self.clear_resolution_caches();
 
         // Preserve lib symbols that were merged before binding (e.g., in parallel.rs)
         // When merge_lib_symbols is called before bind_source_file, lib symbols are stored
@@ -1615,14 +1605,8 @@ impl BinderState {
     /// ```
     /// # Panics
     ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Panics if either resolution cache lock is poisoned.
     pub fn merge_lib_symbols(&mut self, lib_files: &[Arc<lib_loader::LibFile>]) {
-        // Merging lib globals changes visible symbols, so invalidate identifier cache.
-        self.resolved_identifier_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
-
         // Convert LibFiles to LibContexts
         let lib_contexts: Vec<LibContext> = lib_files
             .iter()
@@ -1676,7 +1660,7 @@ impl BinderState {
     /// - `lib_files`: Optional slice of Arc<LibFile> containing lib files
     /// # Panics
     ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Panics if either resolution cache lock is poisoned.
     pub fn bind_source_file_with_libs(
         &mut self,
         arena: &NodeArena,
@@ -1693,7 +1677,7 @@ impl BinderState {
     /// Incrementally bind new statements after a prefix without rebinding the entire file.
     /// # Panics
     ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Panics if either resolution cache lock is poisoned.
     pub fn bind_source_file_incremental(
         &mut self,
         arena: &NodeArena,
@@ -1703,11 +1687,9 @@ impl BinderState {
         new_suffix_statements: &[NodeIndex],
         reparse_start: u32,
     ) -> bool {
-        // Incremental binding mutates scopes; clear stale identifier resolutions.
-        self.resolved_identifier_cache
-            .write()
-            .expect("RwLock not poisoned")
-            .clear();
+        // Incremental binding mutates scopes and can reassign SymbolIds; clear
+        // both caches so callers don't receive stale ids after the re-bind.
+        self.clear_resolution_caches();
 
         let Some(&last_prefix) = prefix_statements.last() else {
             return false;
