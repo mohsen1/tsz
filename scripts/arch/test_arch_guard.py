@@ -1,7 +1,24 @@
+import json
+
 from test_arch_guard_support import ROOT, load_arch_guard_module, pathlib, tempfile, unittest
 from test_arch_guard_counts import *
 from test_arch_guard_policy import *
 from test_arch_guard_projects import *
+
+
+class ArchGuardJsonReportTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_write_json_report_is_atomic_and_stable(self):
+        payload = {"total_hits": 0, "status": "passed", "failures": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = pathlib.Path(tmp) / "nested" / "arch_guard.json"
+            self.arch_guard.write_json_report(report_path, payload)
+
+            self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), payload)
+            self.assertTrue(report_path.read_text(encoding="utf-8").endswith("\n"))
+            self.assertFalse(report_path.with_name(".arch_guard.json.tmp").exists())
 
 
 class ArchGuardCompatCheckerBoundaryTests(unittest.TestCase):

@@ -29,6 +29,16 @@ def scan_project_config_writers(fixture_path, compile_guard_path, bench_path):
     )
 
 
+def write_json_report(report_path: Path, payload: dict) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = report_path.with_name(f".{report_path.name}.tmp")
+    temp_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temp_path.replace(report_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run TSZ architecture guardrails"
@@ -291,10 +301,7 @@ def main() -> int:
     }
 
     if args.json_report:
-        report_path = Path(args.json_report)
-        if report_path.parent != Path("."):
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        write_json_report(Path(args.json_report), payload)
 
     if args.json:
         print(json.dumps(payload, indent=2))
