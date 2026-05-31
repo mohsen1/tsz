@@ -71,12 +71,15 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertIn("typescript=populated-local-submodule", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
             self.assertIn("target=present", result.stdout)
+            self.assertIn("cargo_cache_status=present", result.stdout)
+            self.assertIn("cargo_cache_reuse_sources=0", result.stdout)
 
     def test_worktree_without_typescript_points_to_link_helper(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             temp_root = pathlib.Path(temp_dir).resolve()
             fake_repo, fake_script = self.make_fake_repo(temp_root)
             (fake_repo / "TypeScript" / "tests" / "cases").mkdir(parents=True)
+            (fake_repo / ".target").mkdir()
 
             linked_worktree = temp_root / "tsz-linked"
             self.run_git(
@@ -90,6 +93,12 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertIn("typescript=missing", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
             self.assertIn("hint=run scripts/setup/link-ts-submodule.sh", result.stdout)
+            self.assertIn("cargo_cache_status=missing", result.stdout)
+            self.assertIn("cargo_cache_reuse_sources=1", result.stdout)
+            self.assertIn(
+                "hint=reuse an existing cached worktree before creating a new build cache",
+                result.stdout,
+            )
 
     def test_unknown_agent_fails_before_preflight(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
