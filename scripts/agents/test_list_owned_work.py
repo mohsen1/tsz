@@ -1,0 +1,62 @@
+import os
+import pathlib
+import subprocess
+import unittest
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "agents" / "list-owned-work.sh"
+
+
+class ListOwnedWorkTests(unittest.TestCase):
+    def run_list_owned_work(self, args, prs="", issues=""):
+        env = {**os.environ, "FAKE_GH_PRS": prs, "FAKE_GH_ISSUES": issues}
+        bootstrap = r"""
+gh() {
+  case "$1 $2" in
+    "pr list") printf "%s" "${FAKE_GH_PRS:-}" ;;
+    "issue list") printf "%s" "${FAKE_GH_ISSUES:-}" ;;
+    *) echo "unexpected gh invocation: $*" >&2; return 99 ;;
+  esac
+}
+export -f gh
+exec "$@"
+"""
+        return subprocess.run(
+            ["/bin/bash", "-c", bootstrap, "bash", str(SCRIPT), *args],
+            cwd=ROOT,
+            env=env,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+
+    def test_clear_owned_work_prints_summary_counters(self):
+        result = self.run_list_owned_work(["Studio-F"])
+
+        self.assertIn("## agent:Studio-F", result.stdout)
+        self.assertIn("PRs:\n- none", result.stdout)
+        self.assertIn("Issues:\n- none", result.stdout)
+        self.assertIn("owned_pr_count=0", result.stdout)
+        self.assertIn("owned_issue_count=0", result.stdout)
+        self.assertIn("owned_work_status=clear", result.stdout)
+
+    def test_active_owned_work_prints_active_summary(self):
+        result = self.run_list_owned_work(
+            ["Studio-F"],
+            prs=(
+                "#1 ready first PR https://github.com/mohsen1/tsz/pull/1\n"
+                "#2 draft second PR https://github.com/mohsen1/tsz/pull/2\n"
+            ),
+            issues="#3 issue https://github.com/mohsen1/tsz/issues/3\n",
+        )
+
+        self.assertIn("owned_pr_count=2", result.stdout)
+        self.assertIn("owned_issue_count=1", result.stdout)
+        self.assertIn("owned_work_status=active", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
