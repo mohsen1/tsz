@@ -161,6 +161,46 @@ class C {
 }
 
 #[test]
+fn test_standalone_bare_hash_in_class_recovers_private_field_name() {
+    let source = r"
+class C {
+    #
+
+    m() {
+        this.#
+    }
+}
+";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1127),
+        "Expected TS1127 for recovered bare '#', got diagnostics: {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = arena.get(class_idx).unwrap();
+    let class_data = arena.get_class(class_node).unwrap();
+    let member_node = arena.get(class_data.members.nodes[0]).unwrap();
+    assert_eq!(
+        member_node.kind,
+        crate::parser::syntax_kind_ext::PROPERTY_DECLARATION,
+        "standalone class-body '#' should recover as a property declaration"
+    );
+    let prop = arena.get_property_decl(member_node).unwrap();
+    let name_node = arena.get(prop.name).unwrap();
+    assert_eq!(
+        name_node.kind,
+        tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+    );
+    let ident = arena.get_identifier(name_node).unwrap();
+    assert_eq!(ident.escaped_text, "#");
+}
+
+#[test]
 fn test_valid_private_name_no_ts1127() {
     // Valid private names should not emit TS1127
     let source = r"

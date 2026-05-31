@@ -1339,20 +1339,20 @@ impl ParserState {
         }
 
         // Handle bare `#` that can't become a PrivateIdentifier.
-        // In tsc, the scanner emits TS1127 for a standalone `#` (e.g., `# name` with a
-        // space, or `#` followed by a non-identifier char). Rescan; if still HashToken,
-        // emit TS1127 and skip to avoid cascading TS1003/TS1005/TS1068/TS1128.
+        // Preserve standalone `#` as a recovered private name at boundaries.
         if self.is_token(SyntaxKind::HashToken) {
             let rescanned = self.scanner.re_scan_hash_token();
             if rescanned != SyntaxKind::PrivateIdentifier {
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-                self.next_token();
-                return NodeIndex::NONE;
+                self.report_bare_hash_invalid_character();
+                if self.bare_hash_is_followed_by_statement_boundary() {
+                    self.current_token = SyntaxKind::PrivateIdentifier;
+                } else {
+                    self.next_token();
+                    return NodeIndex::NONE;
+                }
+            } else {
+                self.current_token = rescanned;
             }
-            self.current_token = rescanned;
         }
 
         let decorators = self.parse_decorators();

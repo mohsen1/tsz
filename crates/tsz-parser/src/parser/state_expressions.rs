@@ -1132,13 +1132,9 @@ impl ParserState {
                     let name = if is_private_identifier {
                         self.parse_private_identifier()
                     } else if self.is_token(SyntaxKind::HashToken) {
-                        // Bare `#` after `.` — emit TS1127 like tsc's scanner does.
-                        self.parse_error_at_current_token(
-                            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
-                        );
-                        self.next_token();
-                        NodeIndex::NONE
+                        // Bare `#` after `.` recovers as a private-name-shaped node
+                        // so downlevel private-field emit can preserve tsc's tree.
+                        self.parse_recovered_bare_hash_private_identifier()
                     } else if self.is_identifier_or_keyword() {
                         // When there's a line break after the dot and the current token
                         // starts a declaration (e.g. `foo.\nvar y = 1;`), don't consume
