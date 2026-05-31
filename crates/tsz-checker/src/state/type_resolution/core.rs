@@ -399,15 +399,40 @@ impl<'a> CheckerState<'a> {
                         && self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
                     let default_reset_recursive_alias = is_type_alias
                         && self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
-                    let default_reset_dependency_alias = is_type_alias
+                    let default_omitting_recursive_alias = is_type_alias
                         && !default_reset_recursive_alias
+                        && self.type_alias_has_default_omitting_recursive_conditional_body(sym_id);
+                    let defaulted_recursive_alias =
+                        default_reset_recursive_alias || default_omitting_recursive_alias;
+                    let default_reset_dependency_alias = is_type_alias
+                        && !defaulted_recursive_alias
                         && self.type_alias_body_references_default_reset_recursive_alias(sym_id);
                     let default_reset_conditional_check_alias = is_type_alias
-                        && !default_reset_recursive_alias
+                        && !defaulted_recursive_alias
                         && self
                             .type_alias_conditional_check_references_defaulted_alias_with_omitted_args(sym_id);
                     let should_check_depth =
-                        is_class || !args_have_type_params || default_reset_recursive_alias;
+                        is_class || !args_have_type_params || defaulted_recursive_alias;
+                    if default_omitting_recursive_alias
+                        && args_have_type_params
+                        && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref)
+                        && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            idx,
+                            diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                        );
+                        if let Some(base_def_id) =
+                            query::get_application_info(self.ctx.types, type_id)
+                                .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base))
+                        {
+                            self.ctx.definition_store.mark_depth_poisoned(base_def_id);
+                            self.ctx.clear_type_evaluation_caches_for_def(base_def_id);
+                        }
+                        return TypeId::ANY;
+                    }
                     if should_check_depth {
                         // During symbol resolution, ensure_relation_input_ready is skipped,
                         // leaving the alias body unregistered in the TypeEnvironment. Without
@@ -428,9 +453,12 @@ impl<'a> CheckerState<'a> {
                         // Use the regular evaluator for ordinary type-reference
                         // probes. The TS2589-specific evaluator treats any repeated
                         // Application cycle as overflow, which is too aggressive for
-                        // bounded recursive conditional aliases.
+                        // bounded recursive conditional aliases. Default-reset
+                        // recursive aliases are already known to be unbounded, so
+                        // their wrapper references need the stronger probe too.
                         let (exceeded, tuple_too_large) = if (computed_recursive_alias
-                            || same_input_recursive_union_alias)
+                            || same_input_recursive_union_alias
+                            || defaulted_recursive_alias)
                             && let Some(base_def_id) = base_def_id
                         {
                             (
@@ -472,7 +500,7 @@ impl<'a> CheckerState<'a> {
                         let suppress_depth_cascade = exceeded
                             && (default_reset_dependency_alias
                                 || default_reset_conditional_check_alias
-                                || (!default_reset_recursive_alias
+                                || (!defaulted_recursive_alias
                                     && base_def_id.is_some_and(|def_id| {
                                         self.def_body_involves_depth_poisoned_def(def_id)
                                     })));
@@ -507,7 +535,7 @@ impl<'a> CheckerState<'a> {
 
                             if code
                                 == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
-                                && default_reset_recursive_alias
+                                && defaulted_recursive_alias
                                 && self.type_node_is_outside_symbol_declarations(idx, sym_id)
                                 && let Some(base_def_id) = base_def_id
                             {
@@ -1294,24 +1322,53 @@ impl<'a> CheckerState<'a> {
                             self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
                         let default_reset_recursive_alias =
                             self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
-                        let default_reset_dependency_alias = !default_reset_recursive_alias
+                        let default_omitting_recursive_alias = !default_reset_recursive_alias
+                            && self
+                                .type_alias_has_default_omitting_recursive_conditional_body(sym_id);
+                        let defaulted_recursive_alias =
+                            default_reset_recursive_alias || default_omitting_recursive_alias;
+                        let default_reset_dependency_alias = !defaulted_recursive_alias
                             && self
                                 .type_alias_body_references_default_reset_recursive_alias(sym_id);
-                        let default_reset_conditional_check_alias = !default_reset_recursive_alias
+                        let default_reset_conditional_check_alias = !defaulted_recursive_alias
                             && self
                                 .type_alias_conditional_check_references_defaulted_alias_with_omitted_args(sym_id);
-                        if !args_have_type_params || default_reset_recursive_alias {
+                        if default_omitting_recursive_alias
+                            && args_have_type_params
+                            && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref)
+                            && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                        {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                idx,
+                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            );
+                            if let Some(app_def_id) =
+                                query::get_application_info(self.ctx.types, result).and_then(
+                                    |(base, _)| query::get_lazy_def_id(self.ctx.types, base),
+                                )
+                            {
+                                self.ctx.definition_store.mark_depth_poisoned(app_def_id);
+                                self.ctx.clear_type_evaluation_caches_for_def(app_def_id);
+                            }
+                            return TypeId::ANY;
+                        }
+                        if !args_have_type_params || defaulted_recursive_alias {
                             // Clear overflow flags before probing.
                             self.ctx.types.take_tuple_too_large();
                             self.ctx.depth_exceeded.set(false);
                             // Use the regular evaluator for ordinary type-reference
                             // probes. The TS2589-specific evaluator treats any repeated
                             // Application cycle as overflow, which is too aggressive for
-                            // bounded recursive conditional aliases.
+                            // bounded recursive conditional aliases. Default-reset
+                            // recursive aliases are already known to be unbounded, so
+                            // their wrapper references need the stronger probe too.
                             let app_def_id = query::get_application_info(self.ctx.types, result)
                                 .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base));
                             let (exceeded, tuple_too_large) = if (computed_recursive_alias
-                                || same_input_recursive_union_alias)
+                                || same_input_recursive_union_alias
+                                || defaulted_recursive_alias)
                                 && let Some(app_def_id) = app_def_id
                             {
                                 (
@@ -1357,7 +1414,7 @@ impl<'a> CheckerState<'a> {
                             let suppress_depth_cascade = exceeded
                                 && (default_reset_dependency_alias
                                     || default_reset_conditional_check_alias
-                                    || (!default_reset_recursive_alias
+                                    || (!defaulted_recursive_alias
                                         && app_def_id.is_some_and(|def_id| {
                                             self.def_body_involves_depth_poisoned_def(def_id)
                                         })));
@@ -1390,7 +1447,7 @@ impl<'a> CheckerState<'a> {
 
                                 if code
                                     == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
-                                    && default_reset_recursive_alias
+                                    && defaulted_recursive_alias
                                     && self.type_node_is_outside_symbol_declarations(idx, sym_id)
                                     && let Some(app_def_id) = app_def_id
                                 {

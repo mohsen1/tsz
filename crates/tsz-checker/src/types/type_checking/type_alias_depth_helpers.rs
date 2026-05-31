@@ -321,7 +321,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn type_node_references_defaulted_alias_with_omitted_args(
+    pub(crate) fn type_node_references_defaulted_alias_with_omitted_args(
         &mut self,
         node_idx: NodeIndex,
         owner_alias_sid: tsz_binder::SymbolId,
@@ -354,7 +354,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn type_reference_omits_defaulted_alias_arg(
+    pub(crate) fn type_reference_omits_defaulted_alias_arg(
         &self,
         alias_sid: tsz_binder::SymbolId,
         type_ref: &tsz_parser::parser::node::TypeRefData,
@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn type_alias_has_default_omitting_recursive_conditional_body(
+    pub(crate) fn type_alias_has_default_omitting_recursive_conditional_body(
         &mut self,
         alias_sid: tsz_binder::SymbolId,
     ) -> bool {
