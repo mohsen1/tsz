@@ -7,6 +7,9 @@ mod cache_agreement;
 #[path = "relation_policy_cache_agreement_tests/any_mode_partitioning.rs"]
 mod any_mode_partitioning;
 
+#[path = "relation_policy_cache_agreement_tests/class_context_partitioning.rs"]
+mod class_context_partitioning;
+
 #[path = "relation_policy_cache_agreement_tests/kind_partitioning.rs"]
 mod kind_partitioning;
 
