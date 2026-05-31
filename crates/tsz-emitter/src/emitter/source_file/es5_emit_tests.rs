@@ -1235,7 +1235,7 @@ fn es2015_undeclared_private_recovery_does_not_request_helpers() {
 }
 
 #[test]
-fn es5_commonjs_exported_class_private_storage_hoists_before_es_module_marker() {
+fn es5_commonjs_exported_class_private_storage_stays_inside_iife() {
     let source = "export class Box {\n    #value: unknown;\n}\n";
 
     let (parser, root) = parse_test_source(source);
@@ -1252,9 +1252,6 @@ fn es5_commonjs_exported_class_private_storage_hoists_before_es_module_marker() 
     printer.emit(root);
     let output = printer.get_output().to_string();
 
-    let storage_pos = output
-        .find("var _Box_value;")
-        .expect("private storage var should be emitted");
     let marker_pos = output
         .find("Object.defineProperty(exports, \"__esModule\", { value: true });")
         .expect("CommonJS ES module marker should be emitted");
@@ -1264,10 +1261,14 @@ fn es5_commonjs_exported_class_private_storage_hoists_before_es_module_marker() 
     let class_pos = output
         .find("var Box = /** @class */")
         .expect("ES5 class IIFE should be emitted");
+    let storage_pos = output[class_pos..]
+        .find("var _Box_value;")
+        .map(|pos| class_pos + pos)
+        .expect("private storage var should be emitted inside the IIFE");
 
     assert!(
-        storage_pos < marker_pos && marker_pos < export_init_pos && export_init_pos < class_pos,
-        "Private storage declarations for exported ES5 classes should be hoisted before the CommonJS preamble.\nOutput:\n{output}"
+        marker_pos < export_init_pos && export_init_pos < class_pos && class_pos < storage_pos,
+        "Private storage declarations for exported ES5 classes should stay inside the class IIFE.\nOutput:\n{output}"
     );
 }
 

@@ -4,7 +4,10 @@
 //! Contains `emit_all_members_ir` and related helpers.
 
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
-use crate::transforms::ir::{IRMethodName, IRNode, IRParam, IRPropertyDescriptor};
+use crate::transforms::ir::{
+    IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey, IRPropertyKind,
+};
+use crate::transforms::ir_printer::IRPrinter;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -387,6 +390,269 @@ impl<'a> ES5ClassTransformer<'a> {
         IRMethodName::Identifier(String::new().into())
     }
 
+    pub(super) fn private_storage_declarations_in_tsc_order(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
+        let mut decls = Vec::new();
+        if let Some(instances) = self.private_instances_weakset_name.as_ref() {
+            decls.push(instances.clone());
+        }
+        let has_static_private_lowering = self.private_fields.iter().any(|field| field.is_static)
+            || self.private_methods.iter().any(|method| method.is_static)
+            || self
+                .private_accessors
+                .iter()
+                .any(|accessor| accessor.is_static);
+        if has_static_private_lowering && let Some(alias) = self.current_static_class_alias.as_ref()
+        {
+            decls.push(alias.clone());
+        }
+
+        let mut emitted_accessor_entries: FxHashSet<usize> = FxHashSet::default();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(field) = self
+                        .private_fields
+                        .iter()
+                        .find(|field| field.member_idx == member_idx)
+                    {
+                        decls.push(field.weakmap_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self
+                        .private_methods
+                        .iter()
+                        .find(|method| method.member_idx == member_idx)
+                    {
+                        decls.push(method.fn_var_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some((entry_idx, accessor)) = self
+                        .private_accessors
+                        .iter()
+                        .enumerate()
+                        .find(|(_, accessor)| accessor.member_indices.contains(&member_idx))
+                    {
+                        if !emitted_accessor_entries.insert(entry_idx) {
+                            continue;
+                        }
+                        if let Some(get_var) = accessor.get_var_name.as_ref() {
+                            decls.push(get_var.clone());
+                        }
+                        if let Some(set_var) = accessor.set_var_name.as_ref() {
+                            decls.push(set_var.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        decls
+    }
+
+    pub(super) fn private_method_and_accessor_init_strings(&self) -> Vec<String> {
+        let mut inits = Vec::new();
+        for method in &self.private_methods {
+            if let Some(function) = self.build_private_method_function_ir(method.member_idx) {
+                inits.push(self.private_assignment_string(&method.fn_var_name, function));
+            }
+        }
+        for accessor in &self.private_accessors {
+            if let Some(get_var) = accessor.get_var_name.as_ref()
+                && let Some(getter_idx) = accessor.getter_body.and_then(|_| {
+                    accessor.member_indices.iter().copied().find(|&idx| {
+                        self.arena
+                            .get(idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::GET_ACCESSOR)
+                    })
+                })
+                && let Some(mut function) = if accessor.is_static {
+                    self.build_getter_function_ir_static(getter_idx)
+                } else {
+                    self.build_getter_function_ir(getter_idx)
+                }
+            {
+                if let IRNode::FunctionExpr { name, .. } = &mut function {
+                    *name = Some(get_var.clone().into());
+                }
+                inits.push(self.private_assignment_string(get_var, function));
+            }
+            if let Some(set_var) = accessor.set_var_name.as_ref()
+                && let Some(setter_idx) = accessor.setter_body.and_then(|_| {
+                    accessor.member_indices.iter().copied().find(|&idx| {
+                        self.arena
+                            .get(idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::SET_ACCESSOR)
+                    })
+                })
+                && let Some(mut function) = if accessor.is_static {
+                    self.build_setter_function_ir_static(setter_idx)
+                } else {
+                    self.build_setter_function_ir(setter_idx)
+                }
+            {
+                if let IRNode::FunctionExpr { name, .. } = &mut function {
+                    *name = Some(set_var.clone().into());
+                }
+                inits.push(self.private_assignment_string(set_var, function));
+            }
+        }
+        inits
+    }
+
+    pub(super) fn static_private_field_init_strings(&self) -> Vec<String> {
+        self.private_fields
+            .iter()
+            .filter(|field| field.is_static)
+            .map(|field| {
+                let value = if field.has_initializer && field.initializer.is_some() {
+                    if let Some(alias) = self.current_static_class_alias.as_ref() {
+                        self.convert_expression_static_with_class_alias(field.initializer, alias)
+                    } else {
+                        self.convert_expression_static(field.initializer)
+                    }
+                } else {
+                    IRNode::Undefined
+                };
+                self.render_private_init_expression(&IRNode::assign(
+                    IRNode::id(field.weakmap_name.clone()),
+                    IRNode::ObjectLiteral {
+                        properties: vec![IRProperty {
+                            key: IRPropertyKey::Identifier("value".into()),
+                            value,
+                            kind: IRPropertyKind::Init,
+                        }],
+                        source_range: None,
+                        extra_indent: 0,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn build_private_method_function_ir(&self, member_idx: NodeIndex) -> Option<IRNode> {
+        let method = self
+            .private_methods
+            .iter()
+            .find(|method| method.member_idx == member_idx)?;
+        let method_node = self.arena.get(member_idx)?;
+        let method_data = self.arena.get_method_decl(method_node)?;
+        let body_idx = method.body?;
+        let params = self.extract_parameters(&method_data.parameters);
+        let destructuring_prologue =
+            self.generate_destructuring_prologue(&method_data.parameters, &params);
+        let is_async_generator = method.is_async && method.is_generator;
+        let body_source_range = if method.is_async || method.is_generator || is_async_generator {
+            None
+        } else if destructuring_prologue.is_empty() {
+            self.arena
+                .get(body_idx)
+                .map(|body_node| (body_node.pos, body_node.end))
+        } else {
+            None
+        };
+        let body = if method.is_async && !method.is_generator {
+            let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                .with_class_super_context(
+                    self.has_extends,
+                    self.super_name.clone(),
+                    method.is_static,
+                );
+            if let Some(source_text) = self.source_text {
+                async_transformer.set_source_text(source_text);
+            }
+            async_transformer.set_module_kind(self.module_kind);
+            async_transformer
+                .dynamic_import_promise_counter
+                .set(self.dynamic_import_promise_counter.get());
+            self.configure_async_disposable_context(&mut async_transformer);
+            let has_await = async_transformer.body_contains_await(body_idx);
+            let mut generator_body =
+                async_transformer.transform_generator_body(body_idx, has_await);
+            self.sync_async_disposable_context(&mut async_transformer);
+            self.dynamic_import_promise_counter
+                .set(async_transformer.dynamic_import_promise_counter.get());
+            let hoisted_var_groups =
+                AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+            vec![IRNode::AwaiterCall {
+                this_arg: Box::new(IRNode::this()),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: self
+                    .async_method_promise_constructor(method_data.type_annotation),
+                multiline_callback: false,
+                directives: Vec::new(),
+            }]
+        } else if is_async_generator {
+            self.async_generator_method_body(method_data.name, &method.parameters, body_idx)
+        } else if method.is_generator {
+            self.generator_method_body(body_idx, method.is_static)
+        } else {
+            let this_capture_alias =
+                self.this_capture_alias_for_body(body_idx, Some(&method_data.parameters));
+            let mut method_body = if method.is_static {
+                self.convert_block_body_static_with_this_capture_alias(
+                    body_idx,
+                    this_capture_alias.clone(),
+                )
+            } else {
+                self.convert_block_body_with_this_capture_alias(
+                    body_idx,
+                    this_capture_alias.clone(),
+                )
+            };
+            if !destructuring_prologue.is_empty() {
+                let mut full_body = destructuring_prologue;
+                full_body.append(&mut method_body);
+                method_body = full_body;
+            }
+            if let Some(alias) = this_capture_alias {
+                method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+            }
+            if self.member_contains_new_target(body_idx, &method_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut method_body);
+            }
+            method_body
+        };
+
+        Some(IRNode::FunctionExpr {
+            name: Some(method.fn_var_name.clone().into()),
+            parameters: if is_async_generator {
+                self.async_generator_outer_params(&method.parameters, &params)
+            } else {
+                params
+            },
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
+    }
+
+    fn private_assignment_string(&self, name: &str, function: IRNode) -> String {
+        self.render_private_init_expression(&IRNode::assign(IRNode::id(name.to_string()), function))
+    }
+
+    fn render_private_init_expression(&self, node: &IRNode) -> String {
+        let mut printer = if let Some(source_text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, source_text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        printer.set_target_es5(true);
+        if let Some(transforms) = self.transforms.as_ref() {
+            printer.set_transforms(transforms.clone());
+        }
+        printer.emit(node).to_string()
+    }
+
     /// Emit all class members (prototype and static) in source order.
     /// This matches tsc's behavior of interleaving prototype and static members
     /// based on their order in the source code.
@@ -470,6 +736,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 let Some(method_data) = self.arena.get_method_decl(member_node) else {
                     continue;
                 };
+                if is_private_identifier(self.arena, method_data.name) {
+                    continue;
+                }
 
                 let is_static = self
                     .arena

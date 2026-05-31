@@ -303,6 +303,8 @@ pub enum IRNode {
         computed_prop_temp_inits: Vec<Self>,
         /// `WeakMap` instantiations (after the IIFE)
         weakmap_inits: Vec<String>,
+        /// Statements emitted after the private helper initialization line.
+        post_weakmap_statements: Vec<String>,
         /// Optional comment emitted between weakmap declarations and class var declaration.
         leading_comment: Option<String>,
         /// Static block IIFEs deferred to after the class IIFE

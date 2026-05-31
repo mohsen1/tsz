@@ -25,10 +25,7 @@
 //! ```
 
 use crate::transforms::ir::{IRGeneratorCase, IRMethodName, IRNode, IRParam};
-use crate::transforms::private_fields_es5::{
-    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
-    collect_private_fields_with_reserved, is_private_identifier,
-};
+use crate::transforms::private_fields_es5::is_private_identifier;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -82,21 +79,6 @@ impl<'a> ES5ClassTransformer<'a> {
         };
         self.class_name = class_name.clone();
 
-        // Collect private fields and accessors
-        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
-        let private_fields = collect_private_fields_with_reserved(
-            self.arena,
-            class_idx,
-            &class_name,
-            &mut used_private_names,
-        );
-        let private_accessors = collect_private_accessors_with_reserved(
-            self.arena,
-            class_idx,
-            &class_name,
-            &mut used_private_names,
-        );
-
         // Get base class
         let base_class = self.get_extends_class(&class_data.heritage_clauses);
         let has_extends = base_class.is_some();
@@ -127,53 +109,17 @@ impl<'a> ES5ClassTransformer<'a> {
         // Add return statement
         body.push(IRNode::ret(Some(IRNode::id(class_name.clone()))));
 
-        // Collect WeakMap names
-        let weakmap_decls: Vec<String> = private_fields
-            .iter()
-            .map(|f| f.weakmap_name.clone())
-            .chain(
-                private_accessors
-                    .iter()
-                    .filter_map(|a| a.get_var_name.clone()),
-            )
-            .chain(
-                private_accessors
-                    .iter()
-                    .filter_map(|a| a.set_var_name.clone()),
-            )
-            .collect();
-
-        let weakmap_inits: Vec<String> = private_fields
-            .iter()
-            .filter(|f| !f.is_static)
-            .map(|f| format!("{} = new WeakMap()", f.weakmap_name))
-            .chain(
-                private_accessors
-                    .iter()
-                    .filter(|a| !a.is_static)
-                    .flat_map(|a| {
-                        let mut inits = Vec::new();
-                        if let Some(ref name) = a.get_var_name {
-                            inits.push(format!("{name} = new WeakMap()"));
-                        }
-                        if let Some(ref name) = a.set_var_name {
-                            inits.push(format!("{name} = new WeakMap()"));
-                        }
-                        inits
-                    }),
-            )
-            .collect();
-
         Some(IRNode::ES5ClassIIFE {
             name: class_name.into(),
             binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: has_extends.then(|| "_super".into()),
             body,
-            weakmap_decls,
+            weakmap_decls: Vec::new(),
             computed_prop_temp_decls: Vec::new(),
             computed_prop_temp_inits: Vec::new(),
-            weakmap_inits,
+            weakmap_inits: Vec::new(),
+            post_weakmap_statements: Vec::new(),
             leading_comment: None,
             deferred_static_blocks: Vec::new(),
             deferred_block_class_alias: None,

@@ -92,8 +92,10 @@ use crate::transforms::ir::{
 };
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
-    collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
+    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved, collect_private_methods_with_reserved,
+    make_unique_private_name, private_helper_base,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
@@ -155,6 +157,8 @@ pub struct ES5ClassTransformer<'a> {
     super_name: String,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
+    private_methods: Vec<PrivateMethodInfo>,
+    private_instances_weakset_name: Option<String>,
     auto_accessors: Vec<AutoAccessorFieldInfo>,
     /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
@@ -224,6 +228,8 @@ impl<'a> ES5ClassTransformer<'a> {
             super_name: "_super".to_string(),
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
+            private_methods: Vec::new(),
+            private_instances_weakset_name: None,
             auto_accessors: Vec::new(),
             transforms: None,
             source_text: None,
@@ -1207,20 +1213,6 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
-    /// Convert a block body to IR statements
-    fn convert_block_body(&self, block_idx: NodeIndex) -> Vec<IRNode> {
-        self.convert_block_body_with_alias(block_idx, None)
-    }
-
-    /// Convert a block body to IR statements, optionally prepending a class alias declaration
-    fn convert_block_body_with_alias(
-        &self,
-        block_idx: NodeIndex,
-        class_alias: Option<String>,
-    ) -> Vec<IRNode> {
-        self.convert_block_body_with_alias_impl(block_idx, class_alias, false, false)
-    }
-
     fn convert_block_body_with_alias_impl(
         &self,
         block_idx: NodeIndex,
@@ -1540,9 +1532,15 @@ impl<'a> ES5ClassTransformer<'a> {
             .iter()
             .any(|member| !member.is_static && !member.is_field());
 
-        // Collect private fields and accessors
+        // Collect private fields, methods, and accessors.
         let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
         self.private_fields = collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
+        self.private_methods = collect_private_methods_with_reserved(
             self.arena,
             class_idx,
             &self.class_name,
@@ -1554,6 +1552,18 @@ impl<'a> ES5ClassTransformer<'a> {
             &self.class_name,
             &mut used_private_names,
         );
+        let has_instance_private_brand =
+            self.private_methods.iter().any(|method| !method.is_static)
+                || self
+                    .private_accessors
+                    .iter()
+                    .any(|accessor| !accessor.is_static);
+        self.private_instances_weakset_name = has_instance_private_brand.then(|| {
+            make_unique_private_name(
+                &private_helper_base(&self.class_name, "instances"),
+                &mut used_private_names,
+            )
+        });
         self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause
@@ -1573,18 +1583,26 @@ impl<'a> ES5ClassTransformer<'a> {
         // This must happen before constructor/member IR emission so that temps
         // are available when building property assignment IR nodes.
         self.computed_prop_temp_map.clear();
-        self.current_static_class_alias =
-            if self.static_members_need_class_alias(&class_data.members) {
-                Some(self.generate_temp_name())
-            } else if self
-                .auto_accessors
+        let has_static_private_lowering = self.private_fields.iter().any(|field| field.is_static)
+            || self.private_methods.iter().any(|method| method.is_static)
+            || self
+                .private_accessors
                 .iter()
-                .any(|accessor| accessor.is_static)
-            {
-                Some(generated_auto_accessor_name(1))
-            } else {
-                None
-            };
+                .any(|accessor| accessor.is_static);
+        self.current_static_class_alias = if self
+            .static_members_need_class_alias(&class_data.members)
+            || has_static_private_lowering
+        {
+            Some(self.generate_temp_name())
+        } else if self
+            .auto_accessors
+            .iter()
+            .any(|accessor| accessor.is_static)
+        {
+            Some(generated_auto_accessor_name(1))
+        } else {
+            None
+        };
         // Each entry: (Option<temp_name>, expr_idx, member_idx) for the comma expression.
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
         // When a static field uses a computed key the IIFE body emits `C[_x] = v`
@@ -1816,22 +1834,9 @@ impl<'a> ES5ClassTransformer<'a> {
             self.emit_auto_accessor_storage_decls_and_static_inits(&mut body);
         }
 
-        // return ClassName;
-        body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
-
-        // Build WeakMap declarations and instantiations
+        // Build private storage declarations and instantiations.
+        let private_storage_decls = self.private_storage_declarations_in_tsc_order(class_data);
         let mut weakmap_decls: Vec<String> = Vec::new();
-        weakmap_decls.extend(self.private_fields.iter().map(|f| f.weakmap_name.clone()));
-
-        // Add private accessor WeakMap variables
-        for acc in &self.private_accessors {
-            if let Some(ref get_var) = acc.get_var_name {
-                weakmap_decls.push(get_var.clone());
-            }
-            if let Some(ref set_var) = acc.set_var_name {
-                weakmap_decls.push(set_var.clone());
-            }
-        }
         let auto_accessor_decls_in_iife = self.auto_accessor_storage_decls_in_iife();
         for accessor in &self.auto_accessors {
             if !accessor.is_static && !auto_accessor_decls_in_iife {
@@ -1840,24 +1845,46 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         weakmap_decls.extend(consumed_computed_auto_accessor_temps);
 
-        // WeakMap instantiations for instance fields
-        let mut weakmap_inits: Vec<String> = self
-            .private_fields
-            .iter()
-            .filter(|f| !f.is_static)
-            .map(|f| format!("{} = new WeakMap()", f.weakmap_name))
-            .collect();
-
-        // Add private accessor WeakMap instantiations
-        for acc in &self.private_accessors {
-            if !acc.is_static {
-                if let Some(ref get_var) = acc.get_var_name {
-                    weakmap_inits.push(format!("{get_var} = new WeakMap()"));
-                }
-                if let Some(ref set_var) = acc.set_var_name {
-                    weakmap_inits.push(format!("{set_var} = new WeakMap()"));
-                }
+        // Private helper instantiations and extracted method/accessor functions.
+        let mut weakmap_inits: Vec<String> = Vec::new();
+        if has_static_private_lowering && let Some(alias) = self.current_static_class_alias.as_ref()
+        {
+            weakmap_inits.push(format!("{alias} = {}", self.class_name));
+        }
+        weakmap_inits.extend(
+            self.private_fields
+                .iter()
+                .filter(|f| !f.is_static)
+                .map(|f| format!("{} = new WeakMap()", f.weakmap_name)),
+        );
+        if let Some(instances) = self.private_instances_weakset_name.as_ref() {
+            weakmap_inits.push(format!("{instances} = new WeakSet()"));
+        }
+        weakmap_inits.extend(self.private_method_and_accessor_init_strings());
+        let post_weakmap_statements = self.static_private_field_init_strings();
+        if !private_storage_decls.is_empty() {
+            body.push(IRNode::VarDeclList(
+                private_storage_decls
+                    .into_iter()
+                    .map(|name| IRNode::VarDecl {
+                        name: name.into(),
+                        initializer: None,
+                    })
+                    .collect(),
+            ));
+            if !weakmap_inits.is_empty() {
+                body.push(IRNode::expr_stmt(IRNode::Raw(
+                    weakmap_inits.join(", ").into(),
+                )));
             }
+            body.extend(
+                post_weakmap_statements
+                    .into_iter()
+                    .map(|statement| IRNode::expr_stmt(IRNode::Raw(statement.into()))),
+            );
+            weakmap_inits = Vec::new();
+        } else {
+            weakmap_decls.extend(private_storage_decls);
         }
         let auto_accessor_instance_inits_in_computed_key =
             self.first_computed_instance_auto_accessor().is_some();
@@ -1869,6 +1896,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
             }
         }
+        let post_weakmap_statements = Vec::new();
+
+        // return ClassName;
+        body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // When the class has auto-accessor members, the statement-level comment
         // handler in source_file.rs intentionally skips leading comments (to
@@ -1906,6 +1937,7 @@ impl<'a> ES5ClassTransformer<'a> {
             computed_prop_temp_decls: ir_computed_prop_temp_decls,
             computed_prop_temp_inits: ir_computed_prop_temp_inits,
             weakmap_inits,
+            post_weakmap_statements,
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,

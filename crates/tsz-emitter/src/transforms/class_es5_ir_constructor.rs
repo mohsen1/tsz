@@ -8,7 +8,7 @@ use super::{
     has_parameter_property_modifier,
 };
 use crate::transforms::ir::{
-    IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
+    IRCatchClause, IRMethodName, IRNode, IRProperty, IRPropertyDescriptor, IRPropertyKey,
     IRPropertyKind,
 };
 use tsz_parser::parser::node::Node;
@@ -99,6 +99,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut trailing_comment = None;
         let mut leading_comment = None;
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
+        let has_private_brand = self.private_instances_weakset_name.is_some();
         let constructor_temps_before = self.extra_hoisted_temps.borrow().len();
 
         if let Some(ctor) = constructor_data {
@@ -150,6 +151,7 @@ impl<'a> ES5ClassTransformer<'a> {
             if self.has_extends && !self.extends_null {
                 if instance_props.is_empty()
                     && !has_private_fields
+                    && !has_private_brand
                     && !self.tc39_instance_initializers_needed()
                 {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
@@ -190,9 +192,9 @@ impl<'a> ES5ClassTransformer<'a> {
                         ctor_body.push(Self::class_constructor_new_target_capture_ir());
                     }
 
-                    // Private field initializations
+                    // Private brand and field initializations
+                    self.emit_private_brand_initialization_ir(&mut ctor_body, true);
                     self.emit_private_field_initializations_ir(&mut ctor_body, true);
-                    self.emit_private_accessor_initializations_ir(&mut ctor_body, true);
                     self.emit_auto_accessor_initializations_ir(&mut ctor_body, true);
 
                     // Instance property initializations
@@ -223,9 +225,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     ctor_body.push(Self::class_constructor_new_target_capture_ir());
                 }
 
-                // Emit private field initializations
+                // Emit private brand and field initializations
+                self.emit_private_brand_initialization_ir(&mut ctor_body, false);
                 self.emit_private_field_initializations_ir(&mut ctor_body, false);
-                self.emit_private_accessor_initializations_ir(&mut ctor_body, false);
                 self.emit_auto_accessor_initializations_ir(&mut ctor_body, false);
 
                 // Instance property initializations
@@ -314,6 +316,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
         let has_auto_accessors = self.auto_accessors.iter().any(|a| !a.is_static);
         let has_private_accessors = self.private_accessors.iter().any(|a| !a.is_static);
+        let has_private_brand = self.private_instances_weakset_name.is_some();
         let stmts_after_super = super_stmt_idx
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
@@ -325,6 +328,7 @@ impl<'a> ES5ClassTransformer<'a> {
             || has_private_fields
             || has_auto_accessors
             || has_private_accessors
+            || has_private_brand
             || needs_this_capture;
         let needs_pre_super_this_capture = self.derived_constructor_needs_pre_super_this_capture(
             block,
@@ -457,9 +461,9 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit parameter properties
         self.emit_parameter_properties_ir(body, params, true);
 
-        // Emit private field initializations
+        // Emit private brand and field initializations
+        self.emit_private_brand_initialization_ir(body, true);
         self.emit_private_field_initializations_ir(body, true);
-        self.emit_private_accessor_initializations_ir(body, true);
         self.emit_auto_accessor_initializations_ir(body, true);
 
         // Emit instance property initializers
@@ -554,8 +558,8 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.emit_parameter_properties_ir(&mut try_body, params, true);
+        self.emit_private_brand_initialization_ir(&mut try_body, true);
         self.emit_private_field_initializations_ir(&mut try_body, true);
-        self.emit_private_accessor_initializations_ir(&mut try_body, true);
         self.emit_auto_accessor_initializations_ir(&mut try_body, true);
 
         for &prop_idx in instance_props {
@@ -646,8 +650,8 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.emit_parameter_properties_ir(body, params, true);
+        self.emit_private_brand_initialization_ir(body, true);
         self.emit_private_field_initializations_ir(body, true);
-        self.emit_private_accessor_initializations_ir(body, true);
         self.emit_auto_accessor_initializations_ir(body, true);
 
         for &prop_idx in instance_props {
@@ -970,9 +974,9 @@ impl<'a> ES5ClassTransformer<'a> {
             body.extend(prologue);
         }
 
-        // Emit private field initializations
+        // Emit private brand and field initializations
+        self.emit_private_brand_initialization_ir(body, false);
         self.emit_private_field_initializations_ir(body, false);
-        self.emit_private_accessor_initializations_ir(body, false);
         self.emit_auto_accessor_initializations_ir(body, false);
 
         // Emit parameter properties
@@ -1363,6 +1367,22 @@ impl<'a> ES5ClassTransformer<'a> {
         self.tc39_decorators && self.tc39_has_instance_member_decorators
     }
 
+    /// Emit private method/accessor brand initialization using `WeakSet.add()`.
+    fn emit_private_brand_initialization_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
+        let Some(instances) = self.private_instances_weakset_name.as_ref() else {
+            return;
+        };
+        let key = if use_this {
+            IRNode::id("_this")
+        } else {
+            IRNode::this()
+        };
+        body.push(IRNode::expr_stmt(IRNode::call(
+            IRNode::prop(IRNode::id(instances.clone()), "add"),
+            vec![key],
+        )));
+    }
+
     /// Emit private field initializations using `WeakMap.set()`
     fn emit_private_field_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
         let key = if use_this {
@@ -1376,77 +1396,16 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
 
-            // _ClassName_field.set(this, void 0);
+            let value = if field.has_initializer && field.initializer.is_some() {
+                self.convert_expression(field.initializer)
+            } else {
+                IRNode::Undefined
+            };
             body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
                 weakmap_name: field.weakmap_name.clone().into(),
                 key: Box::new(key.clone()),
-                value: Box::new(IRNode::Undefined),
+                value: Box::new(value),
             }));
-
-            // If has initializer: __classPrivateFieldSet(this, _ClassName_field, value, "f");
-            if field.has_initializer && field.initializer.is_some() {
-                body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
-                    receiver: Box::new(key.clone()),
-                    weakmap_name: field.weakmap_name.clone().into(),
-                    value: Box::new(self.convert_expression(field.initializer)),
-                }));
-            }
-        }
-    }
-
-    /// Emit private accessor initializations using `WeakMap.set()`
-    fn emit_private_accessor_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
-        let key = if use_this {
-            IRNode::id("_this")
-        } else {
-            IRNode::this()
-        };
-
-        for acc in &self.private_accessors {
-            if acc.is_static {
-                continue;
-            }
-
-            // Emit getter: _ClassName_accessor_get.set(this, function() { ... });
-            if let Some(ref get_var) = acc.get_var_name
-                && let Some(getter_body) = acc.getter_body
-            {
-                body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                    weakmap_name: get_var.clone().into(),
-                    key: Box::new(key.clone()),
-                    value: Box::new(IRNode::FunctionExpr {
-                        name: None,
-                        parameters: vec![],
-                        body: self.convert_block_body(getter_body),
-                        is_expression_body: false,
-                        body_source_range: None,
-                    }),
-                }));
-            }
-
-            // Emit setter: _ClassName_accessor_set.set(this, function(param) { ... });
-            if let Some(ref set_var) = acc.set_var_name
-                && let Some(setter_body) = acc.setter_body
-            {
-                let param_name = if let Some(param_idx) = acc.setter_param {
-                    get_identifier_text(self.arena, param_idx)
-                        .unwrap_or_else(|| "value".to_string())
-                } else {
-                    "value".to_string()
-                };
-
-                body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                    weakmap_name: set_var.clone().into(),
-                    key: Box::new(key.clone()),
-                    value: Box::new(IRNode::FunctionExpr {
-                        name: None,
-                        parameters: vec![IRParam::new(param_name)],
-                        body: self.convert_block_body(setter_body),
-                        is_expression_body: false,
-                        body_source_range: None,
-                    }),
-                }));
-            }
         }
     }
 

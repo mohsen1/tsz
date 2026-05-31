@@ -235,6 +235,7 @@ fn test_ir_es5_class_iife() {
         ],
         weakmap_decls: vec![],
         weakmap_inits: vec![],
+        post_weakmap_statements: vec![],
         computed_prop_temp_decls: vec![],
         computed_prop_temp_inits: vec![],
         leading_comment: None,

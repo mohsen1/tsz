@@ -941,10 +941,10 @@ impl<'a> Printer<'a> {
             }
 
             if !var_names.is_empty() {
-                // Hoist private field vars to the top of the scope (after "use strict"
-                // and CJS preamble), matching tsc behavior. tsc emits all private field
-                // WeakMap/method vars before the first class in the scope.
-                if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && (self.ctx.options.target as u32) < (ScriptTarget::ES2015 as u32)
+                {
+                } else if node.kind == syntax_kind_ext::CLASS_EXPRESSION
                     && self.class_expression_is_in_loop_body(_idx)
                 {
                     self.block_scoped_private_temps.extend(var_names);

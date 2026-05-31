@@ -121,6 +121,43 @@ fn define_fields_uses_reserved_computed_instance_key_temp() {
 }
 
 #[test]
+fn private_members_keep_storage_inside_es5_class_iife() {
+    let source = r#"class A {
+            #field = 123;
+            #method() {}
+            static #sField = "hello world";
+            static #sMethod() {}
+            get #acc() { return ""; }
+            set #acc(x: string) {}
+            static get #sAcc() { return 0; }
+            static set #sAcc(x: number) {}
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        !output.starts_with("var _A_field"),
+        "ES5 class declarations should not hoist private storage before the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function A() {\n        _A_instances.add(this);\n        _A_field.set(this, 123);\n    }"),
+        "Instance private methods/accessors need a WeakSet brand and private fields initialize directly.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _A_instances, _a, _A_field, _A_method, _A_sField, _A_sMethod, _A_acc_get, _A_acc_set, _A_sAcc_get, _A_sAcc_set;"),
+        "Private storage locals should be declared inside the IIFE in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = A, _A_field = new WeakMap(), _A_instances = new WeakSet(), _A_method = function _A_method() { }, _A_sMethod = function _A_sMethod() { }, _A_acc_get = function _A_acc_get() { return \"\"; }, _A_acc_set = function _A_acc_set(x) { }, _A_sAcc_get = function _A_sAcc_get() { return 0; }, _A_sAcc_set = function _A_sAcc_set(x) { };"),
+        "Private method/accessor helpers should be initialized in one IIFE-local chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_sField = { value: \"hello world\" };\n    return A;"),
+        "Static private fields should initialize before the IIFE return.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn define_fields_rewrites_this_in_derived_instance_initializers() {
     let source = r#"class C extends Base {
             z = this.ka;
