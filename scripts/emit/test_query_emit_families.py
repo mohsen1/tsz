@@ -150,6 +150,18 @@ after
         status = self.mod.emit_freshness_status(summary, dict(summary))
         self.assertEqual(status["state"], "current")
 
+    def test_current_detail_requirement_requires_matching_aggregates(self):
+        self.assertTrue(self.mod.emit_detail_is_current({"state": "current"}))
+        for state in (
+            "stale",
+            "detail-ahead",
+            "different-domain",
+            "unknown-public",
+            "missing-detail",
+        ):
+            with self.subTest(state=state):
+                self.assertFalse(self.mod.emit_detail_is_current({"state": state}))
+
     def test_stale_failure_family_heading_names_public_remaining_count(self):
         detail_summary = {
             "jsPass": 13094,
