@@ -350,6 +350,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         contextual_type
                     };
+                    // Set when the property is absent from the contextual type and we
+                    // fall back to a synthetic `never` contextual type purely to drive
+                    // function-parameter implicit-any handling (see below). Such a
+                    // property is excess (TS2353 territory), so the synthetic `never`
+                    // must never be used as an assignability *target* — doing so emits
+                    // a spurious TS2322 against `never`.
+                    let mut property_context_is_synthetic_absent_never = false;
                     let property_context_type = if let Some(ctx_type) =
                         function_property_lookup_context
                     {
@@ -393,6 +400,7 @@ impl<'a> CheckerState<'a> {
                             && !allows_callable_fallback
                         {
                             property_context_type = Some(TypeId::NEVER);
+                            property_context_is_synthetic_absent_never = true;
                         }
                         let needs_callable_fallback = property_context_type.is_none()
                             || matches!(property_context_type, Some(TypeId::ANY | TypeId::UNKNOWN));
@@ -724,6 +732,7 @@ impl<'a> CheckerState<'a> {
                             });
 
                         if (recheck_key_remapped_property || recheck_contextual_property)
+                            && !property_context_is_synthetic_absent_never
                             && let Some(check_target) = property_context_type
                             && value_type != TypeId::ERROR
                             && value_type != TypeId::ANY
