@@ -54,8 +54,9 @@ diagnostics and `RelationRequest::call_arg` for TS2345 call-argument
 diagnostics. These callers reuse `RelationOutcome` to avoid separately
 recomputing weak-union and property-classification analysis.
 
-`assignability/assignment_checker/destructuring.rs` builds `RelationRequest::assign` for rest
-destructuring assignment diagnostics.
+`assignability/assignment_checker/destructuring.rs` builds
+`RelationRequest::destructuring` for rest/default/property destructuring
+assignment diagnostics.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.
@@ -68,8 +69,8 @@ utilities, and function-type helpers build `RelationRequest::return_stmt` throug
 `with_erased_generic_signature_retry` for class/interface member compatibility
 where erased generic signature retry is allowed.
 
-No current production call site uses `destructuring`, `with_excess_property_mode`,
-or `with_missing_property_mode`. They are retained as explicit policy shapes and
+No current production call site uses `with_excess_property_mode` or
+`with_missing_property_mode`. They are retained as explicit policy shapes and
 are covered by architecture tests so follow-up work can centralize one policy
 decision at a time.
 
