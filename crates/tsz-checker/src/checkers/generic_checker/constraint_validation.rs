@@ -324,16 +324,17 @@ impl<'a> CheckerState<'a> {
                                 evaluated_arg,
                                 TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                             )
-                            && (self.diagnostic_relation_boolean_guard_no_weak_checks(
-                                evaluated_arg,
-                                evaluated_constraint,
-                            ) || self.satisfies_array_like_constraint(
-                                evaluated_arg,
-                                evaluated_constraint,
-                            ) || self.conditional_result_branches_satisfy_constraint(
-                                evaluated_arg,
-                                evaluated_constraint,
-                            ))
+                            && (self
+                                .no_weak_relation_outcome(evaluated_arg, evaluated_constraint)
+                                .related
+                                || self.satisfies_array_like_constraint(
+                                    evaluated_arg,
+                                    evaluated_constraint,
+                                )
+                                || self.conditional_result_branches_satisfy_constraint(
+                                    evaluated_arg,
+                                    evaluated_constraint,
+                                ))
                         {
                             continue;
                         }
@@ -1754,10 +1755,8 @@ impl<'a> CheckerState<'a> {
                                 instantiated_constraint,
                             )
                         } else {
-                            self.diagnostic_relation_boolean_guard_no_weak_checks(
-                                type_arg,
-                                instantiated_constraint,
-                            )
+                            self.no_weak_relation_outcome(type_arg, instantiated_constraint)
+                                .related
                         });
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),
@@ -1830,16 +1829,17 @@ impl<'a> CheckerState<'a> {
                             TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                         )
                     {
-                        is_satisfied = self.diagnostic_relation_boolean_guard_no_weak_checks(
-                            evaluated_arg,
-                            instantiated_constraint,
-                        ) || self.satisfies_array_like_constraint(
-                            evaluated_arg,
-                            instantiated_constraint,
-                        ) || self.conditional_result_branches_satisfy_constraint(
-                            evaluated_arg,
-                            instantiated_constraint,
-                        );
+                        is_satisfied = self
+                            .no_weak_relation_outcome(evaluated_arg, instantiated_constraint)
+                            .related
+                            || self.satisfies_array_like_constraint(
+                                evaluated_arg,
+                                instantiated_constraint,
+                            )
+                            || self.conditional_result_branches_satisfy_constraint(
+                                evaluated_arg,
+                                instantiated_constraint,
+                            );
                     }
                 }
                 if !is_satisfied

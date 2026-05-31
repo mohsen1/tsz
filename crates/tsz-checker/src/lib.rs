@@ -579,6 +579,9 @@ mod const_asserted_return_type_tests;
 #[path = "tests/constraint_position_nullable_access_tests.rs"]
 mod constraint_position_nullable_access_tests;
 #[cfg(test)]
+#[path = "tests/constraint_validation_relation_routing_arch_tests.rs"]
+mod constraint_validation_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
