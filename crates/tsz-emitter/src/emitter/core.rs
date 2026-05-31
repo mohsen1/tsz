@@ -619,6 +619,11 @@ pub struct Printer<'a> {
     /// to an owning semicolon when the source semicolon follows the arrow body.
     pub(crate) arrow_concise_body_trailing_comment_defer_range: Option<(u32, u32)>,
 
+    /// Upper source bound for trailing comments while emitting a nested
+    /// statement. Single-line function bodies use this to keep comments after
+    /// the closing brace from being claimed by the last body statement.
+    pub(crate) trailing_comment_scan_max_pos: Option<u32>,
+
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(crate) suppress_ns_qualification: bool,
 
