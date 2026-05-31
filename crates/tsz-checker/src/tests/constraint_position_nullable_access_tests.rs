@@ -135,6 +135,50 @@ function f<T extends (() => void) | undefined>(fn: T) {
 }
 
 // ---------------------------------------------------------------------------
+// Assignment-based narrowing through guarded branches.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reassignment_in_guard_branch_survives_intervening_read_at_join() {
+    let source = r#"
+declare function maybe(): number | undefined;
+declare const sink: { push(value: number | undefined): void };
+
+let table = maybe();
+if (table === undefined) {
+    table = 5;
+    sink.push(table);
+}
+const value: number = table;
+"#;
+    let c = codes(source);
+    assert!(
+        !c.iter().any(|code| matches!(*code, 2322 | 18048)),
+        "reassigned guard branch should make `table` definitely number at the join; got {c:?}"
+    );
+}
+
+#[test]
+fn reassignment_in_guard_branch_survives_intervening_plain_call_at_join() {
+    let source = r#"
+declare function maybe(): number | undefined;
+declare const sink: (value: number | undefined) => void;
+
+let table = maybe();
+if (table === undefined) {
+    table = 5;
+    sink(table);
+}
+const value: number = table;
+"#;
+    let c = codes(source);
+    assert!(
+        !c.iter().any(|code| matches!(*code, 2322 | 18048)),
+        "plain calls that only read `table` should preserve guard-branch assignment; got {c:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Guard narrows the constraint: no diagnostic after `=== undefined` return.
 // ---------------------------------------------------------------------------
 
