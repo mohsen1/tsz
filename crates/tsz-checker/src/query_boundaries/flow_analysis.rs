@@ -2,7 +2,10 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
-use super::{assignability::RelationFlags, relation_policy};
+use super::{
+    assignability::{RelationFlags, RelationOutcome},
+    relation_policy,
+};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -540,6 +543,53 @@ pub(crate) fn is_assignable_strict_null(
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
+}
+
+pub(crate) fn flow_assignability_outcome(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    concrete_this_type: Option<TypeId>,
+    source: TypeId,
+    target: TypeId,
+    strict_null_checks: bool,
+) -> RelationOutcome {
+    let source = substitute_flow_this_type(db, concrete_this_type, source);
+    let target = substitute_flow_this_type(db, concrete_this_type, target);
+    let related = if let Some(env) = env {
+        is_assignable_with_env(
+            db.as_type_database(),
+            env,
+            source,
+            target,
+            strict_null_checks,
+        )
+    } else if strict_null_checks {
+        is_assignable_strict_null(db.as_type_database(), source, target)
+    } else {
+        is_assignable(db.as_type_database(), source, target)
+    };
+
+    RelationOutcome {
+        related,
+        depth_exceeded: false,
+        iteration_exceeded: false,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
+}
+
+fn substitute_flow_this_type(
+    db: &dyn QueryDatabase,
+    concrete_this_type: Option<TypeId>,
+    type_id: TypeId,
+) -> TypeId {
+    if let Some(this_type) = concrete_this_type
+        && super::common::contains_this_type(db.as_type_database(), type_id)
+    {
+        return super::common::substitute_this_type(db, type_id, this_type);
+    }
+    type_id
 }
 
 pub(crate) fn fallback_compound_assignment_result(
