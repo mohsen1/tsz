@@ -9,6 +9,7 @@ pub(crate) mod import_type;
 pub(crate) mod judge;
 pub(crate) mod mixin_constraints;
 pub(crate) mod module;
+pub(crate) mod module_export_equals;
 pub(crate) mod reference_helpers;
 pub(crate) mod shadowed_lib_heritage;
 pub(crate) mod symbol_types;

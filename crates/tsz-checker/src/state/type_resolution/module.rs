@@ -600,6 +600,11 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolId> {
+        // NOTE: intentionally *not* memoized — its `register_symbol_file_target`
+        // side effects pick a file index that depends on which branch wins
+        // (augmentation vs re-export vs plain). Caching the `SymbolId` and
+        // skipping the registration mis-points `resolve_symbol_file_index` for
+        // module-augmentation re-export merges.
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
@@ -2032,69 +2037,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Resolve a named export through an `export =` target's members.
-    ///
-    /// This supports declaration patterns like:
-    /// `declare module "m" { namespace e { interface X {} } export = e }`
-    /// where `import { X } from "m"` should resolve via the export-assignment target.
-    pub(crate) fn resolve_named_export_via_export_equals(
-        &self,
-        module_specifier: &str,
-        export_name: &str,
-    ) -> Option<tsz_binder::SymbolId> {
-        let mut visited = AliasCycleTracker::new();
-        self.resolve_named_export_via_export_equals_tracked(
-            module_specifier,
-            export_name,
-            &mut visited,
-        )
-    }
-
-    /// Cycle-aware variant of [`resolve_named_export_via_export_equals`]. Shares
-    /// the caller's `visited_aliases` set with [`Self::resolve_alias_symbol`]
-    /// when walking an `export=` target that itself refers to an alias. Callers
-    /// already inside alias resolution must use this variant so cycle tracking
-    /// is preserved across the mutual recursion boundary.
-    pub(crate) fn resolve_named_export_via_export_equals_tracked(
-        &self,
-        module_specifier: &str,
-        export_name: &str,
-        visited_aliases: &mut AliasCycleTracker,
-    ) -> Option<tsz_binder::SymbolId> {
-        let cache_key = (
-            self.ctx.current_file_idx,
-            module_specifier.to_string(),
-            export_name.to_string(),
-        );
-        let cache_miss = visited_aliases.len() == 0;
-        if let Some(cached) = self
-            .ctx
-            .export_equals_named_cache
-            .borrow()
-            .get(&cache_key)
-            .copied()
-            && (cached.is_some() || cache_miss)
-        {
-            return cached;
-        }
-
-        let resolved = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
-            self.resolve_named_export_via_export_equals_tracked_uncached(
-                module_specifier,
-                export_name,
-                visited_aliases,
-            )
-        });
-        if resolved.is_some() || cache_miss {
-            self.ctx
-                .export_equals_named_cache
-                .borrow_mut()
-                .insert(cache_key, resolved);
-        }
-        resolved
-    }
-
-    fn resolve_named_export_via_export_equals_tracked_uncached(
+    pub(crate) fn resolve_named_export_via_export_equals_tracked_uncached(
         &self,
         module_specifier: &str,
         export_name: &str,

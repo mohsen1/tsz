@@ -92,6 +92,34 @@ pub(crate) fn export_equals_named_cache_estimated_size_bytes(
     size
 }
 
+/// Per-checker cache for fully-resolved alias chains.
+///
+/// Keyed by `(current_file_idx, alias_symbol_id)` because a bare `SymbolId`
+/// decoded against a different file's binder is a *different* symbol (see the
+/// `symbol_name_candidates_cache` reset note in `file_session_reset.rs`). The
+/// `current_file_idx` component makes the key file-stable across
+/// `switch_to_file`, exactly like [`ExportEqualsNamedCache`].
+///
+/// Soundness under alias cycles: an entry is only written when the resolution
+/// observed *zero* cycle collisions on the shared `AliasCycleTracker` between
+/// entry and return (see `AliasCycleTracker::collision_count`). A walk that
+/// short-circuited against an in-progress alias may have been truncated, so its
+/// result is context-dependent and must not be memoized. This generalizes the
+/// `visited_aliases.len() == 0` top-of-chain gate that guards
+/// [`ExportEqualsNamedCache`] to any acyclic sub-walk at any nesting depth.
+pub type AliasResolutionCache = FxHashMap<(usize, SymbolId), Option<SymbolId>>;
+
+#[must_use]
+pub(crate) fn alias_resolution_cache_entries(cache: &AliasResolutionCache) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn alias_resolution_cache_estimated_size_bytes(cache: &AliasResolutionCache) -> usize {
+    cache.capacity()
+        * (std::mem::size_of::<(usize, SymbolId)>() + std::mem::size_of::<Option<SymbolId>>() + 8)
+}
+
 /// Per-checker cache: nested namespace name → candidate `(file_idx, SymbolId)` entries.
 pub type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
 
@@ -232,6 +260,23 @@ mod tests {
         assert!(
             export_equals_named_cache_estimated_size_bytes(&cache)
                 >= 2 * (std::mem::size_of::<(usize, String, String)>()
+                    + std::mem::size_of::<Option<SymbolId>>())
+        );
+    }
+
+    #[test]
+    fn alias_resolution_cache_statistics_report_entries_and_size() {
+        let mut cache = AliasResolutionCache::default();
+        assert_eq!(alias_resolution_cache_entries(&cache), 0);
+        assert_eq!(alias_resolution_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert((1, SymbolId(7)), Some(SymbolId(42)));
+        cache.insert((2, SymbolId(7)), None);
+
+        assert_eq!(alias_resolution_cache_entries(&cache), 2);
+        assert!(
+            alias_resolution_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(usize, SymbolId)>()
                     + std::mem::size_of::<Option<SymbolId>>())
         );
     }

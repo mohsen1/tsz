@@ -2,8 +2,25 @@
 
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use std::sync::LazyLock;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::syntax_kind_ext;
+
+/// Kill-switch for the alias/`export=` resolution caches. Set
+/// `TSZ_DISABLE_ALIAS_CACHE=1` to bypass both
+/// [`CheckerState::resolve_alias_symbol`]'s alias-chain cache and the
+/// `export=` named-export cache, re-walking every chain. Used to prove the
+/// caches produce diagnostics identical to the uncached path.
+static ALIAS_CACHE_DISABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("TSZ_DISABLE_ALIAS_CACHE").is_some());
+
+/// Whether the alias/`export=` resolution caches are disabled via
+/// `TSZ_DISABLE_ALIAS_CACHE`. Shared by the alias-chain cache here and the
+/// `export=` named-export cache in `state::type_resolution::module`.
+#[inline]
+pub(crate) fn alias_resolution_cache_disabled() -> bool {
+    *ALIAS_CACHE_DISABLED
+}
 
 impl<'a> CheckerState<'a> {
     /// Resolve an alias symbol to its target symbol.
@@ -45,9 +62,62 @@ impl<'a> CheckerState<'a> {
             crate::checkers_domain::trip_stack_overflow();
             return None;
         }
-        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+
+        // Read the cache regardless of nesting depth: the key is
+        // `(current_file_idx, sym_id)` and only cycle-independent resolutions
+        // are ever stored (see the write gate below), so a hit is the true
+        // global resolution for `sym_id` in this file.
+        //
+        // Exception: if `sym_id` is already an ancestor on the current chain,
+        // the uncached body would short-circuit to `None` (cycle break). We
+        // must reproduce that here — and record the collision — instead of
+        // returning the cached terminal, so a cyclic outer context still sees a
+        // truncation and never memoizes a context-dependent result above us.
+        let enabled = !alias_resolution_cache_disabled();
+        let cache_key = (self.ctx.current_file_idx, sym_id);
+        if enabled {
+            // Only alias symbols are ever pushed onto `visited_aliases` (the
+            // push in the body is gated behind the ALIAS-flag check), so any
+            // `sym_id` already visiting is an alias the body would truncate to
+            // `None`. Reproduce that — and record the collision — before
+            // consulting the cache, so a cyclic outer context still sees the
+            // truncation.
+            if visited_aliases.contains_recording(&sym_id) {
+                return None;
+            }
+            if let Some(cached) = self
+                .ctx
+                .alias_resolution_cache
+                .borrow()
+                .get(&cache_key)
+                .copied()
+            {
+                return cached;
+            }
+        }
+
+        // Snapshot the cycle-collision counter before recursing. If the
+        // sub-walk observes no new collision, it never short-circuited against
+        // an alias that was already in progress when this call began, so the
+        // result does not depend on the surrounding chain and is safe to
+        // memoize. Any collision (including one nested entirely within this
+        // sub-walk) is treated conservatively as "do not cache".
+        let collisions_before = visited_aliases.collision_count();
+
+        let resolved = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
             self.resolve_alias_symbol_inner(sym_id, visited_aliases)
-        })
+        });
+
+        let cycle_independent = visited_aliases.collision_count() == collisions_before;
+        // A mid-resolution stack-overflow trip yields a spurious `None`; never
+        // memoize it. Likewise skip caching when the walk touched a cycle.
+        if enabled && cycle_independent && !crate::checkers_domain::stack_overflow_tripped() {
+            self.ctx
+                .alias_resolution_cache
+                .borrow_mut()
+                .insert(cache_key, resolved);
+        }
+        resolved
     }
 
     /// Look up the `export =` target for a require-style consumer of a module,
@@ -89,7 +159,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
-        if visited_aliases.contains(&sym_id) {
+        if visited_aliases.contains_recording(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -100,8 +170,9 @@ impl<'a> CheckerState<'a> {
         // b.ts exports { x } from 'c.ts'
         // c.ts exports { x }
         if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
-            // Prevent infinite loops in re-export chains
-            if !visited_aliases.contains(&resolved_sym_id) {
+            // Prevent infinite loops in re-export chains. Record the collision so
+            // a context-dependent (cycle-influenced) result is not memoized.
+            if !visited_aliases.contains_recording(&resolved_sym_id) {
                 let mut preferred_target = resolved_sym_id;
                 if let Some(module_name) = symbol.import_module.as_ref() {
                     let export_name = symbol

@@ -75,6 +75,8 @@ impl<'a> CheckerContext<'a> {
             lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
+            alias_resolution_cache: RefCell::new(FxHashMap::default()),
+            export_equals_in_progress: RefCell::new(rustc_hash::FxHashSet::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache_complete: Cell::new(false),
@@ -658,6 +660,15 @@ impl<'a> CheckerContext<'a> {
             let parent_cache = parent.export_equals_named_cache.borrow();
             if !parent_cache.is_empty() {
                 *ctx.export_equals_named_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
+        {
+            // Alias-resolution entries are keyed by `(file_idx, sym_id)`, so
+            // inheriting the parent's map is file-stable and avoids re-walking
+            // already-resolved alias chains in the child context.
+            let parent_cache = parent.alias_resolution_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.alias_resolution_cache.borrow_mut() = parent_cache.clone();
             }
         }
         {

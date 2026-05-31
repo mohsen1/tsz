@@ -59,6 +59,10 @@ name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"
 
 [[test]]
+name = "alias_resolution_cache_parity_tests"
+path = "tests/alias_resolution_cache_parity_tests.rs"
+
+[[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 

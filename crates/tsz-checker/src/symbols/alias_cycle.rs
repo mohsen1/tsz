@@ -23,6 +23,14 @@ const MAX_ALIAS_RESOLUTION_DEPTH: u32 = 128;
 
 pub(crate) struct AliasCycleTracker {
     guard: RecursionGuard<SymbolId>,
+    /// Monotonic count of cycle collisions observed on this tracker: a
+    /// `contains` check that returned `true`, or a `push` rejected because the
+    /// symbol was already visiting. Because entries accumulate until drop (no
+    /// mid-chain `pop` at the alias call sites), a sub-walk that observes *zero*
+    /// new collisions between entry and return never short-circuited against any
+    /// in-progress alias, so its result is independent of the surrounding chain
+    /// and may be globally memoized. See [`Self::collision_count`].
+    collision_count: u64,
 }
 
 impl AliasCycleTracker {
@@ -32,6 +40,7 @@ impl AliasCycleTracker {
                 max_depth: MAX_ALIAS_RESOLUTION_DEPTH,
                 max_iterations: 100_000,
             }),
+            collision_count: 0,
         }
     }
 
@@ -40,13 +49,55 @@ impl AliasCycleTracker {
         self.guard.is_visiting(sym)
     }
 
+    /// Cumulative number of cycle collisions seen on this tracker so far.
+    ///
+    /// A caller that records this value before recursing and compares it after
+    /// can decide whether the sub-walk depended on a cycle: an unchanged count
+    /// means no `contains`-hit / rejected `push` occurred during the sub-walk,
+    /// so the produced resolution is cycle-independent and cacheable. A changed
+    /// count is treated conservatively (do not cache), which is always sound.
+    #[inline]
+    pub(crate) const fn collision_count(&self) -> u64 {
+        self.collision_count
+    }
+
+    /// Record a cycle collision that was detected outside the symbol set (for
+    /// example an `export=` resolution re-entrancy cycle keyed by module
+    /// specifier + export name rather than `SymbolId`). Bumps the collision
+    /// counter so the surrounding resolution is treated as cycle-dependent and
+    /// not memoized.
+    #[inline]
+    pub(crate) const fn record_cycle_collision(&mut self) {
+        self.collision_count = self.collision_count.saturating_add(1);
+    }
+
+    /// Like [`Self::contains`] but records a cycle collision when the symbol is
+    /// already visiting. Used at the alias-resolution cycle-break sites so the
+    /// cacheability decision in `resolve_alias_symbol` sees every short-circuit.
+    #[inline]
+    pub(crate) fn contains_recording(&mut self, sym: &SymbolId) -> bool {
+        let hit = self.guard.is_visiting(sym);
+        if hit {
+            self.collision_count = self.collision_count.saturating_add(1);
+        }
+        hit
+    }
+
     /// Record `sym` as visited.  Returns `true` if the enter succeeded, `false`
     /// if the depth/iteration cap was hit or the symbol was already tracked.
     /// Callers that previously ignored `Vec::push` may ignore the result;
     /// depth is already gated by [`Self::len`].
     #[inline]
     pub(crate) fn push(&mut self, sym: SymbolId) -> bool {
-        matches!(self.guard.enter(sym), RecursionResult::Entered)
+        match self.guard.enter(sym) {
+            RecursionResult::Entered => true,
+            // A rejected push is a cycle collision (or cap hit); either way the
+            // surrounding resolution was truncated and is not cacheable.
+            _ => {
+                self.collision_count = self.collision_count.saturating_add(1);
+                false
+            }
+        }
     }
 
     /// Remove `sym` from the visiting set, mirroring the old `Vec::pop` call
@@ -361,5 +412,63 @@ mod tests {
         assert!(t.contains(&sym(50)));
         assert!(!t.push(sym(50)));
         assert_eq!(t.len(), 1);
+    }
+
+    // ---------- collision counter (cache-soundness witness) ------------------
+
+    #[test]
+    fn collision_count_starts_at_zero_and_stays_zero_on_acyclic_walk() {
+        // An acyclic chain — distinct symbols, each `contains_recording` miss —
+        // must report zero collisions, marking the walk's result cacheable.
+        let mut t = AliasCycleTracker::new();
+        assert_eq!(t.collision_count(), 0);
+        for n in 0..5u32 {
+            let before = t.collision_count();
+            assert!(!t.contains_recording(&sym(n)));
+            assert!(t.push(sym(n)));
+            assert_eq!(
+                t.collision_count(),
+                before,
+                "miss must not record a collision"
+            );
+        }
+        assert_eq!(t.collision_count(), 0);
+    }
+
+    #[test]
+    fn contains_recording_bumps_collision_count_on_hit() {
+        // A `contains_recording` hit (the alias cycle-break site) must bump the
+        // counter so the surrounding resolution is treated as cycle-dependent.
+        let mut t = AliasCycleTracker::new();
+        t.push(sym(7));
+        let before = t.collision_count();
+        assert!(t.contains_recording(&sym(7)));
+        assert_eq!(t.collision_count(), before + 1);
+        // A subsequent miss does not bump it.
+        assert!(!t.contains_recording(&sym(8)));
+        assert_eq!(t.collision_count(), before + 1);
+    }
+
+    #[test]
+    fn rejected_push_bumps_collision_count() {
+        // A `push` rejected because the symbol is already visiting is a cycle
+        // collision and must bump the counter even if the caller ignores the
+        // bool result.
+        let mut t = AliasCycleTracker::new();
+        assert!(t.push(sym(3)));
+        let before = t.collision_count();
+        assert!(!t.push(sym(3)));
+        assert_eq!(t.collision_count(), before + 1);
+    }
+
+    #[test]
+    fn record_cycle_collision_bumps_counter_for_non_symbol_cycles() {
+        // The `export=` re-entrancy guard reports its string-keyed cycle through
+        // `record_cycle_collision`; it must move the same counter the symbol
+        // sites use so both cache gates observe the cycle.
+        let mut t = AliasCycleTracker::new();
+        let before = t.collision_count();
+        t.record_cycle_collision();
+        assert_eq!(t.collision_count(), before + 1);
     }
 }

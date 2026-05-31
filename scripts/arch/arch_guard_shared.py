@@ -940,7 +940,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        239,
+        # Bumped 239 -> 241 for the cross-file alias/export= resolution caches
+        # (`alias_resolution_cache`, `export_equals_in_progress`) that memoize
+        # deep cross-file `export=` / re-export chains. See PR perf(checker):
+        # cache cross-file alias/export= resolution.
+        241,
     ),
 ]
 

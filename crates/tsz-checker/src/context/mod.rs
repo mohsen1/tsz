@@ -410,6 +410,22 @@ pub struct CheckerContext<'a> {
     /// Misses are cached only for lookups that enter without alias-cycle state.
     pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
 
+    /// Per-checker cache for fully-resolved alias chains
+    /// (`resolve_alias_symbol`). Keyed by `(current_file_idx, alias sym_id)`.
+    /// Entries are written only when resolution started at the top of a fresh
+    /// alias chain, so cycle-truncated mid-chain results are never memoized.
+    pub alias_resolution_cache: RefCell<AliasResolutionCache>,
+
+    /// In-progress `(file_idx, module_specifier, export_name)` keys currently
+    /// being resolved by `resolve_named_export_via_export_equals_tracked`. A
+    /// re-entrant lookup of a key already in this set is, by definition, an
+    /// `export=` resolution cycle and short-circuits to `None`, mirroring the
+    /// symbol-level cycle break in `AliasCycleTracker`. Without this, deeply
+    /// chained `export=` re-exports re-walk the full uncached resolver at every
+    /// hop because the string-keyed cycle is invisible to the symbol-keyed
+    /// alias tracker.
+    pub export_equals_in_progress: RefCell<rustc_hash::FxHashSet<(usize, String, String)>>,
+
     /// Per-checker cache for nested namespace candidates found through namespace exports.
     /// Keyed by `namespace_name` and stores the candidate nested namespace symbols with
     /// their owning file index. This avoids rescanning every binder when resolving many
