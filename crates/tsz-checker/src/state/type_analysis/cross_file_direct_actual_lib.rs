@@ -133,6 +133,10 @@ impl<'a> CheckerState<'a> {
         if self.lib_name_locally_augmented(&name) {
             return None;
         }
+        // DOM value/interface pairs with declared methods can depend on
+        // inherited interface members and contextual callback parameter types.
+        // The direct type-position Lazy path below is safe only for body shapes
+        // that do not need the mature child/interface heritage path.
         if symbol.declarations.iter().any(|&decl_idx| {
             let arena = self
                 .ctx
