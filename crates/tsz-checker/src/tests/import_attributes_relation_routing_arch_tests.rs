@@ -5,8 +5,8 @@ use std::fs;
 /// boundary rather than a raw boolean relation guard.
 #[test]
 fn import_attributes_diagnostics_use_relation_outcome_boundary() {
-    let source = fs::read_to_string("src/declarations/import/declaration.rs")
-        .expect("failed to read declarations/import/declaration.rs");
+    let source = fs::read_to_string("src/declarations/import/declaration_attributes.rs")
+        .expect("failed to read declarations/import/declaration_attributes.rs");
     let compact_source: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(

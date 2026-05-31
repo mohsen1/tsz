@@ -156,7 +156,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        self.diagnostic_relation_boolean_guard(derived, base)
+        self.assign_relation_outcome(derived, base).related
     }
 
     /// True when a derived interface member that mentions the polymorphic `this`

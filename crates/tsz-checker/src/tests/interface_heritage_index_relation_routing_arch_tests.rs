@@ -32,3 +32,32 @@ fn interface_heritage_index_values_use_relation_outcome_boundary() {
         "interface heritage index value checks should not regress to raw boolean relation guards"
     );
 }
+
+#[test]
+fn interface_heritage_generic_method_specialization_uses_relation_outcome_boundary() {
+    let source_path = format!(
+        "{}/src/classes/interface_heritage_index_compat.rs",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let source = fs::read_to_string(source_path)
+        .expect("read interface heritage index compatibility helpers");
+
+    let start = source
+        .find("pub(super) fn generic_method_override_is_valid_specialization")
+        .expect("find interface heritage generic method specialization helper");
+    let end = source[start..]
+        .find("pub(super) fn type_base_def_id")
+        .map(|offset| start + offset)
+        .expect("find end of generic method specialization helper");
+    let helper_source = &source[start..end];
+
+    assert!(
+        helper_source.contains("assign_relation_outcome(derived, base)")
+            && helper_source.contains(".related"),
+        "interface heritage generic method specialization should route relation truth through RelationOutcome"
+    );
+    assert!(
+        !helper_source.contains("diagnostic_relation_boolean_guard"),
+        "interface heritage generic method specialization should not regress to raw boolean relation guards"
+    );
+}
