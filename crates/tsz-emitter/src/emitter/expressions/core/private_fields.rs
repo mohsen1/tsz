@@ -651,12 +651,12 @@ impl<'a> Printer<'a> {
         &mut self,
         expression: NodeIndex,
         clean_name: &str,
-    ) -> String {
+    ) -> (String, Option<tsz_common::source_map::SourceMapGenerator>) {
         let scratch = self.writer.inline_capture_from(128);
         let main_writer = std::mem::replace(&mut self.writer, scratch);
         self.emit_private_receiver(expression, clean_name);
         let scratch = std::mem::replace(&mut self.writer, main_writer);
-        scratch.take_output()
+        scratch.take_output_and_source_map()
     }
 
     /// Emit the state variable (WeakMap/WeakSet) for a private field.
@@ -922,10 +922,17 @@ impl<'a> Printer<'a> {
 
                 self.write_helper("__classPrivateFieldSet");
                 self.write("(");
-                if let Some(receiver) = captured_receiver.as_deref() {
+                if let Some(receiver) = captured_receiver.as_ref() {
                     self.write(receiver_temp.as_deref().expect("receiver temp"));
                     self.write(" = ");
-                    self.write(receiver);
+                    let receiver_line = self.writer.current_line();
+                    let receiver_column = self.writer.current_column();
+                    self.write(&receiver.0);
+                    self.writer.add_inline_capture_mappings(
+                        receiver_line,
+                        receiver_column,
+                        receiver.1.as_ref(),
+                    );
                 } else {
                     self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
                 }

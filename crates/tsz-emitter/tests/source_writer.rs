@@ -96,6 +96,50 @@ fn test_insert_line_at_shifts_output_and_source_maps() {
     assert!(map.mappings.matches(';').count() >= 2);
 }
 
+#[test]
+fn inline_capture_mappings_are_spliced_at_actual_column() {
+    let mut writer = SourceWriter::with_source_map("out.js".to_string());
+    writer.add_source("input.ts".to_string(), Some("receiver.value".to_string()));
+    writer.write("__classPrivateFieldSet(_a = ");
+
+    let mut capture = writer.inline_capture_from(32);
+    capture.write_node_with_name(
+        "receiver",
+        SourcePosition {
+            pos: 0,
+            line: 0,
+            column: 0,
+        },
+        "receiver",
+    );
+    let (captured_text, captured_map) = capture.take_output_and_source_map();
+
+    let splice_line = writer.current_line();
+    let splice_column = writer.current_column();
+    writer.write(&captured_text);
+    writer.add_inline_capture_mappings(splice_line, splice_column, captured_map.as_ref());
+
+    assert_eq!(writer.get_output(), "__classPrivateFieldSet(_a = receiver");
+
+    let mut generator = writer
+        .take_source_map()
+        .expect("source map should be enabled");
+    let mappings = generator.mappings();
+    assert!(
+        mappings.iter().any(|mapping| {
+            mapping.generated_line == splice_line
+                && mapping.generated_column == splice_column
+                && mapping.original_line == 0
+                && mapping.original_column == 0
+                && mapping.name_index.is_some()
+        }),
+        "captured receiver mapping should be offset to the actual splice column"
+    );
+
+    let source_map = generator.generate();
+    assert_eq!(source_map.names, vec!["receiver"]);
+}
+
 // =============================================================================
 // SourceWriter - constructors and defaults
 // =============================================================================

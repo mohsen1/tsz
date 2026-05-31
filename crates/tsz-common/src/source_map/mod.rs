@@ -77,6 +77,47 @@ impl SourceMapGenerator {
         }
     }
 
+    /// Create a `SourceMapGenerator` with the same source/name tables but no
+    /// generated mappings.
+    #[must_use]
+    pub fn clone_for_inline_capture(&self) -> Self {
+        Self {
+            file: self.file.clone(),
+            source_root: self.source_root.clone(),
+            sources: self.sources.clone(),
+            sources_content: self.sources_content.clone(),
+            names: self.names.clone(),
+            mappings: Vec::new(),
+            prev_generated_column: 0,
+            prev_original_line: 0,
+            prev_original_column: 0,
+            prev_source_index: 0,
+            prev_name_index: 0,
+        }
+    }
+
+    /// Return generated mappings accumulated so far.
+    #[must_use]
+    pub fn mappings(&self) -> &[Mapping] {
+        &self.mappings
+    }
+
+    /// Append any names added while writing an inline capture.
+    ///
+    /// The capture generator is created from `clone_for_inline_capture`, so its
+    /// existing name prefix must match the main generator. New names are appended
+    /// in order to keep captured mapping name indices valid when mappings are
+    /// copied back to the main generator.
+    pub fn sync_names_from_inline_capture(&mut self, capture: &Self) {
+        for (index, name) in capture.names.iter().enumerate() {
+            if let Some(existing) = self.names.get(index) {
+                debug_assert_eq!(existing, name);
+            } else {
+                self.names.push(name.clone());
+            }
+        }
+    }
+
     /// Set the source root
     pub fn set_source_root(&mut self, root: String) {
         self.source_root = root;
