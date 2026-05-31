@@ -239,6 +239,12 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_emit_decorator_metadata(enabled);
     }
 
+    /// Set whether `--useDefineForClassFields` is enabled so classes nested in
+    /// this namespace lower fields and static methods like top-level classes.
+    pub const fn set_use_define_for_class_fields(&mut self, enabled: bool) {
+        self.transformer.set_use_define_for_class_fields(enabled);
+    }
+
     /// Set exported variable names from prior blocks of the same namespace.
     pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
         self.transformer.set_prior_exported_vars(vars);

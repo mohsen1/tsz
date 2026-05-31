@@ -138,6 +138,13 @@ pub struct NamespaceES5Transformer<'a> {
     /// `ES5ClassTransformer` so metadata is emitted for classes that live
     /// inside a namespace IIFE.
     emit_decorator_metadata: bool,
+    /// Whether `--useDefineForClassFields` is enabled. Mirrors the top-level
+    /// class lowering option and is forwarded to the nested
+    /// `ES5ClassTransformer` so classes that live inside a namespace/module
+    /// IIFE get the same field/method lowering as top-level classes (fields
+    /// become `Object.defineProperty(this, ...)`; static methods become
+    /// `Object.defineProperty(C, ...)`).
+    use_define_for_class_fields: bool,
     /// Hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
@@ -170,6 +177,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            use_define_for_class_fields: false,
             hoisted_temps: RefCell::new(Vec::new()),
             disposable_env_counter: Cell::new(1),
             generated_disposable_env_names: RefCell::new(Vec::new()),
@@ -194,6 +202,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            use_define_for_class_fields: false,
             hoisted_temps: RefCell::new(Vec::new()),
             disposable_env_counter: Cell::new(1),
             generated_disposable_env_names: RefCell::new(Vec::new()),
@@ -216,6 +225,13 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// arrays for classes inside this namespace.
     pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
         self.emit_decorator_metadata = enabled;
+    }
+
+    /// Set whether `--useDefineForClassFields` is enabled. Forwarded to the
+    /// nested `ES5ClassTransformer` so namespace-scoped classes lower fields
+    /// and static methods the same way top-level classes do.
+    pub const fn set_use_define_for_class_fields(&mut self, enabled: bool) {
+        self.use_define_for_class_fields = enabled;
     }
 
     pub fn set_disposable_env_context(&self, next_env_id: u32) {
@@ -1454,6 +1470,12 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Forward `--emitDecoratorMetadata` so namespace-scoped decorated
         // classes still emit `__metadata("design:type", T)` etc.
         class_transformer.set_emit_decorator_metadata(self.emit_decorator_metadata);
+        // Forward `--useDefineForClassFields` so namespace-scoped classes lower
+        // fields to `Object.defineProperty(this, ...)` and static methods to
+        // `Object.defineProperty(C, ...)`, matching top-level classes. Without
+        // this, nested classes fell back to plain assignment / dropped no-init
+        // fields under `useDefineForClassFields`.
+        class_transformer.set_use_define_for_class_fields(self.use_define_for_class_fields);
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
         if self.legacy_decorators {

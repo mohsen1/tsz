@@ -85,6 +85,8 @@ impl<'a> Printer<'a> {
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
             es5_emitter.set_transforms(self.transforms.clone());
             // Do NOT seed the namespace emitter with outer visible_original_names() as
             // block_scope_shadowed_names. The namespace IIFE creates an independent function
