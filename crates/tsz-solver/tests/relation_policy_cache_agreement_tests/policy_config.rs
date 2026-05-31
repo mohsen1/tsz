@@ -45,6 +45,49 @@ fn relation_policy_cache_config_unifies_equivalent_flag_and_builder_bits() {
 }
 
 #[test]
+fn relation_policy_builder_overrides_remove_prior_flag_bits_from_cache_config() {
+    let cases = [
+        (
+            "strict subtype checking",
+            RelationPolicy::from_relation_flags(RelationFlags::STRICT_SUBTYPE_CHECKING)
+                .with_strict_subtype_checking(false),
+            RelationFlags::STRICT_SUBTYPE_CHECKING,
+        ),
+        (
+            "strict any propagation",
+            RelationPolicy::from_relation_flags(RelationFlags::STRICT_ANY_PROPAGATION)
+                .with_strict_any_propagation(false),
+            RelationFlags::STRICT_ANY_PROPAGATION,
+        ),
+        (
+            "skip weak type checks",
+            RelationPolicy::from_relation_flags(RelationFlags::SKIP_WEAK_TYPE_CHECKS)
+                .with_skip_weak_type_checks(false),
+            RelationFlags::SKIP_WEAK_TYPE_CHECKS,
+        ),
+        (
+            "assume related on cycle",
+            RelationPolicy::from_relation_flags(RelationFlags::ASSUME_RELATED_ON_CYCLE)
+                .with_assume_related_on_cycle(false),
+            RelationFlags::ASSUME_RELATED_ON_CYCLE,
+        ),
+        (
+            "generic erasure",
+            RelationPolicy::from_relation_flags(RelationFlags::NO_ERASE_GENERICS)
+                .with_erase_generics(true),
+            RelationFlags::NO_ERASE_GENERICS,
+        ),
+    ];
+
+    for (name, policy, flag) in cases {
+        assert!(
+            !policy.cache_config().flags.contains(flag),
+            "{name} builder override must remove stale flag bits from the cache config",
+        );
+    }
+}
+
+#[test]
 fn assignability_cache_reuses_slot_for_flag_and_builder_strict_subtype_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
