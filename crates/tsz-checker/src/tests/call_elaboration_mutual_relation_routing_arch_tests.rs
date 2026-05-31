@@ -96,9 +96,13 @@ fn call_elaboration_polymorphic_this_properties_use_relation_outcome_boundary() 
     let helper = &source[helper_start..helper_end];
 
     assert!(
-        helper.contains("assign_relation_outcome(source_prop_type, target_prop_type)")
+        helper.contains("call_arg_relation_outcome(source_prop_type, target_prop_type)")
             && helper.contains(".related"),
-        "polymorphic this object literal property probes should route relation truth through RelationOutcome"
+        "polymorphic this object literal property probes should route through the call-argument RelationOutcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(source_prop_type, target_prop_type)"),
+        "polymorphic this object literal property probes should not use generic assign relation outcomes"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)"),

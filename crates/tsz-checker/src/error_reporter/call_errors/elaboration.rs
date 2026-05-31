@@ -755,7 +755,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if self
-                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .call_arg_relation_outcome(source_prop_type, target_prop_type)
                     .related
                     && self.emit_polymorphic_this_property_assignment_error(
                         source_prop_type,

@@ -54,9 +54,9 @@ diagnostics and `RelationRequest::call_arg` for TS2345 call-argument
 diagnostics. Call diagnostic anchor helpers also use the call-argument request
 when probing argument, object-literal property, or array-element mismatch
 anchors. Call diagnostic elaboration helpers use the call-argument request for
-parameter-derived object/array member probes and the return request when
-drilling into callback return expressions or return-source conditional
-branches. These callers reuse
+parameter-derived object/array member probes, including polymorphic-`this`
+object-literal property probes, and the return request when drilling into
+callback return expressions or return-source conditional branches. These callers reuse
 `RelationOutcome` to avoid separately recomputing weak-union and
 property-classification analysis.
 
