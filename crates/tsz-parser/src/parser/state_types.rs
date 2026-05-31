@@ -607,6 +607,16 @@ impl ParserState {
             self.parse_primary_type_base(start_pos)
         };
 
+        // Bare `infer X` skips all postfix operators (`[]`, `?`, `!`), matching
+        // tsc's `parseTypeOperatorOrHigher` which returns `parseInferType()`
+        // directly instead of falling through to `parsePostfixTypeOrHigher`.
+        // The trailing tokens become the tuple-optional marker, the outer
+        // conditional `?`, or a stray-marker recovery via
+        // `bare_infer_has_stray_tuple_marker` at the tuple-element level.
+        if self.node_is_bare_infer_type(base_type) {
+            return base_type;
+        }
+
         self.parse_primary_type_array_suffix(start_pos, base_type)
     }
 
@@ -970,12 +980,20 @@ impl ParserState {
         start_pos: u32,
         base_type: NodeIndex,
     ) -> NodeIndex {
-        if self.is_token(SyntaxKind::OpenBracketToken) {
+        // Array/indexed-access suffix: T[], T[K], T[][], etc.
+        // `parse_array_type` itself loops over consecutive `[...]` chains so
+        // the postfix `?`/`!` handlers below run once on the fully-arrayed
+        // base type.  Falling through (rather than the previous early return)
+        // is what lets `T[]?` emit TS17019 like tsc instead of cascading into
+        // TS1005 / TS1110.
+        let base_type = if self.is_token(SyntaxKind::OpenBracketToken) {
             if self.look_ahead_is_computed_type_member_boundary() {
                 return base_type;
             }
-            return self.parse_array_type(start_pos, base_type);
-        }
+            self.parse_array_type(start_pos, base_type)
+        } else {
+            base_type
+        };
 
         // Handle JSDoc-style postfix `?` after a type (e.g., `string?`).
         // TSC emits TS17019: "'?' at the end of a type is not valid TypeScript syntax."
@@ -991,7 +1009,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::QuestionToken)
             && !self.scanner.has_preceding_line_break()
             && (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT) == 0
-            && !self.node_is_bare_infer_type(base_type)
         {
             // Lookahead: if the token after `?` can start a type, this is a conditional
             // type's `?`, not a nullable suffix.
@@ -1006,21 +1023,13 @@ impl ParserState {
 
             if !next_can_start_type {
                 let q_end = self.token_end();
-                let (diag_start, suggested) = if let Some(node) = self.arena.get(base_type) {
-                    (
-                        node.pos,
-                        self.scanner
-                            .source_slice(node.pos as usize, node.end as usize)
-                            .to_string(),
-                    )
-                } else {
-                    (start_pos, String::from("T"))
-                };
+                let (diag_start, suggested) =
+                    self.postfix_jsdoc_type_diagnostic_anchor(start_pos, base_type);
                 self.next_token(); // consume '?'
                 // Simplify the suggestion for types that absorb undefined.
                 // TSC suggests just the type name when adding | undefined is redundant.
                 let suggestion = match suggested.as_str() {
-                    "any" | "unknown" | "never" | "void" | "undefined" => suggested.clone(),
+                    "any" | "unknown" | "never" | "void" | "undefined" => suggested,
                     _ => format!("{suggested} | undefined"),
                 };
                 let msg = format!(
@@ -1054,21 +1063,10 @@ impl ParserState {
             }
         }
 
-        if self.is_token(SyntaxKind::ExclamationToken)
-            && !self.scanner.has_preceding_line_break()
-            && !self.node_is_bare_infer_type(base_type)
-        {
+        if self.is_token(SyntaxKind::ExclamationToken) && !self.scanner.has_preceding_line_break() {
             let bang_end = self.token_end();
-            let (diag_start, suggested) = if let Some(node) = self.arena.get(base_type) {
-                (
-                    node.pos,
-                    self.scanner
-                        .source_slice(node.pos as usize, node.end as usize)
-                        .to_string(),
-                )
-            } else {
-                (start_pos, String::from("T"))
-            };
+            let (diag_start, suggested) =
+                self.postfix_jsdoc_type_diagnostic_anchor(start_pos, base_type);
             self.next_token(); // consume '!'
             let msg = format!(
                 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggested}'?"
@@ -1083,6 +1081,42 @@ impl ParserState {
         }
 
         base_type
+    }
+
+    /// Build the (diagnostic span start, suggestion text) pair used when a
+    /// trailing `?` / `!` JSDoc postfix is reported as TS17019.
+    ///
+    /// The diagnostic span anchors at the outer `base_type`'s position so the
+    /// underline runs from the typed-out cursor location. The suggestion text
+    /// mirrors the type's source but peels outer `PARENTHESIZED_TYPE` wrappers
+    /// to match tsc's display: `(string | number)?` should suggest
+    /// `string | number | undefined`, not `(string | number) | undefined`.
+    fn postfix_jsdoc_type_diagnostic_anchor(
+        &self,
+        start_pos: u32,
+        base_type: NodeIndex,
+    ) -> (u32, String) {
+        use super::syntax_kind_ext::PARENTHESIZED_TYPE;
+
+        let Some(anchor) = self.arena.get(base_type) else {
+            return (start_pos, String::from("T"));
+        };
+
+        // Walk through outer parens — `((T))?` should suggest `T | undefined`.
+        let mut suggestion_node = anchor;
+        while suggestion_node.kind == PARENTHESIZED_TYPE
+            && let Some(inner) = self.arena.get_wrapped_type(suggestion_node)
+            && inner.type_node != NodeIndex::NONE
+            && let Some(next) = self.arena.get(inner.type_node)
+        {
+            suggestion_node = next;
+        }
+
+        let suggestion = self
+            .scanner
+            .source_slice(suggestion_node.pos as usize, suggestion_node.end as usize)
+            .to_string();
+        (anchor.pos, suggestion)
     }
 
     // Parenthesized, tuple, literal, import, mapped, and type-argument parsing -> state_types_advanced.rs
