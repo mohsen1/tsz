@@ -637,3 +637,189 @@ fn test_import_type_from_equals_still_routes_to_import_equals() {
         "Expected no parse errors for `import type from = require(...)`, got {parse_errors:?}"
     );
 }
+
+// =============================================================================
+// ASI guard for import attributes (with/assert on new line = new statement)
+// =============================================================================
+
+// Helpers shared across the ASI tests below.
+
+fn parse_first_import_has_attributes(source: &str) -> bool {
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    arena
+        .get_import_decl(stmt_node)
+        .is_some_and(|i| i.attributes.is_some())
+}
+
+fn parse_first_export_has_attributes(source: &str) -> bool {
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    arena
+        .get_export_decl(stmt_node)
+        .is_some_and(|e| e.attributes.is_some())
+}
+
+fn parse_first_import_attributes_multi_line(source: &str) -> bool {
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    let import = arena.get_import_decl(stmt_node).unwrap();
+    let attr_node = arena
+        .get(import.attributes)
+        .expect("should have attributes");
+    arena
+        .get_import_attributes_data(attr_node)
+        .expect("should have attributes data")
+        .multi_line
+}
+
+#[test]
+fn test_import_attributes_same_line_extensionless_parsed() {
+    // `import './foo' with { type: 'json' }` — extensionless path, same line:
+    // 'with' is on the same line as the module specifier, so it IS import attributes.
+    let (parser, root) = parse_source(r#"import './foo' with { type: 'json' };"#);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert!(
+        arena
+            .get_import_decl(stmt_node)
+            .is_some_and(|i| i.attributes.is_some()),
+        "extensionless same-line 'with' must be parsed as import attributes"
+    );
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for extensionless with-attributes, got {parse_errors:?}"
+    );
+}
+
+#[test]
+fn test_import_attributes_newline_extensionless_not_parsed_as_attributes() {
+    // When 'with' appears on a new line after the module specifier, ASI applies:
+    // the import declaration ends and 'with' starts a new statement (tsc behavior).
+    // The fix: `has_preceding_line_break()` guard in `parse_import_attributes`.
+    assert!(
+        !parse_first_import_has_attributes("import './foo'\nwith { type: 'json' };"),
+        "newline before 'with' must not be parsed as import attributes (ASI rule)"
+    );
+}
+
+#[test]
+fn test_import_attributes_same_line_with_extension_parsed() {
+    // Same-line attributes work with extension-bearing paths too.
+    assert!(
+        parse_first_import_has_attributes(r#"import './data.json' with { type: 'json' };"#),
+        "extension-bearing same-line 'with' must be parsed as import attributes"
+    );
+}
+
+#[test]
+fn test_import_attributes_newline_with_extension_not_parsed_as_attributes() {
+    // New-line guard applies regardless of whether the path has an extension.
+    assert!(
+        !parse_first_import_has_attributes("import './data.json'\nwith { type: 'json' };"),
+        "newline before 'with' must not be parsed as import attributes (extension-bearing path)"
+    );
+}
+
+#[test]
+fn test_import_assert_same_line_parsed() {
+    // 'assert' clause (deprecated TS 4.5–5.2 syntax) on the same line is still parsed.
+    assert!(
+        parse_first_import_has_attributes(r#"import './data.json' assert { type: 'json' };"#),
+        "same-line 'assert' clause must be parsed as import attributes"
+    );
+}
+
+#[test]
+fn test_import_assert_newline_not_parsed_as_attributes() {
+    // 'assert' on a new line must not be parsed as import attributes.
+    assert!(
+        !parse_first_import_has_attributes("import './data.json'\nassert { type: 'json' };"),
+        "newline before 'assert' must not be parsed as import attributes"
+    );
+}
+
+#[test]
+fn test_export_attributes_same_line_parsed() {
+    // Export declarations also support 'with' attributes on the same line.
+    let (parser, root) = parse_source(r#"export * from './foo' with { type: 'json' };"#);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert!(
+        arena
+            .get_export_decl(stmt_node)
+            .is_some_and(|e| e.attributes.is_some()),
+        "same-line 'with' on export must be parsed as import attributes"
+    );
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for export with-attributes, got {parse_errors:?}"
+    );
+}
+
+#[test]
+fn test_export_attributes_newline_not_parsed_as_attributes() {
+    // 'with' on a new line after export's module specifier = new statement (ASI).
+    assert!(
+        !parse_first_export_has_attributes("export * from './foo'\nwith { type: 'json' };"),
+        "newline before 'with' on export must not be parsed as import attributes"
+    );
+}
+
+#[test]
+fn test_import_attributes_multi_line_sets_multi_line_flag() {
+    // When the attribute block spans multiple lines, `multi_line` should be true.
+    assert!(
+        parse_first_import_attributes_multi_line("import './foo' with {\n  type: 'json'\n};"),
+        "multi_line must be true when attribute block spans multiple lines"
+    );
+}
+
+#[test]
+fn test_import_attributes_single_line_clears_multi_line_flag() {
+    // When attributes are on one line, `multi_line` should be false.
+    assert!(
+        !parse_first_import_attributes_multi_line(r#"import './foo' with { type: 'json' };"#),
+        "multi_line must be false for single-line attribute block"
+    );
+}
+
+#[test]
+fn test_import_attributes_named_import_extensionless_same_line() {
+    // Named import with extensionless path and same-line attributes.
+    assert!(
+        parse_first_import_has_attributes(
+            r#"import { foo } from './module' with { type: 'json' };"#
+        ),
+        "named import with extensionless path: same-line 'with' must be attributes"
+    );
+}
+
+#[test]
+fn test_import_attributes_named_import_extensionless_newline() {
+    // Named import with extensionless path and new-line 'with' — ASI applies.
+    assert!(
+        !parse_first_import_has_attributes(
+            "import { foo } from './module'\nwith { type: 'json' };"
+        ),
+        "named import with extensionless path: newline 'with' must not be attributes"
+    );
+}
