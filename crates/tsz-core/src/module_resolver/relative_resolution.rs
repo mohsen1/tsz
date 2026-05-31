@@ -62,6 +62,7 @@ impl ModuleResolver {
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
         import_kind: ImportKind,
+        importer_package_type: Option<PackageType>,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
         let mut candidates = vec![candidate];
@@ -89,12 +90,12 @@ impl ModuleResolver {
                         .unwrap_or(PackageType::CommonJs),
                 )
             } else {
-                self.current_package_type
+                importer_package_type
             };
             if prefer_directory {
-                self.try_directory_with_package_type(path, package_type)
+                self.try_directory(path, package_type)
             } else {
-                self.try_file_or_directory_with_package_type(path, package_type)
+                self.try_file_or_directory(path, package_type)
             }
         };
 
@@ -309,10 +310,11 @@ impl ModuleResolver {
         specifier: &str,
         containing_file: &str,
         specifier_span: Span,
+        importer_package_type: Option<PackageType>,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let path = std::path::PathBuf::from(specifier);
 
-        if let Some(resolved) = self.try_file_or_directory(&path) {
+        if let Some(resolved) = self.try_file_or_directory(&path, importer_package_type) {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
                 resolved_using_ts_extension: false,

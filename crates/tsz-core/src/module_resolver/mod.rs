@@ -208,8 +208,6 @@ pub struct ModuleResolver {
     /// repeated walks from sibling files do not need to re-stat the same
     /// ancestors.
     node_modules_dir_cache: std::cell::RefCell<FxHashMap<PathBuf, bool>>,
-    /// Cached package type for the current resolution
-    current_package_type: Option<PackageType>,
     /// Root directory for the project (used for TS2209 ambiguous root detection)
     root_dir: Option<PathBuf>,
     /// Out directory for the project (also used for TS2209 - if set, root is not ambiguous)
@@ -265,7 +263,6 @@ impl ModuleResolver {
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
             node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
-            current_package_type: None,
             root_dir: options.root_dir.clone(),
             out_dir: options.out_dir.clone(),
         }
@@ -307,7 +304,6 @@ impl ModuleResolver {
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
             node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
-            current_package_type: None,
             root_dir: None,
             out_dir: None,
         }
@@ -381,15 +377,12 @@ impl ModuleResolver {
                     _ => self.get_importing_module_kind(containing_file),
                 },
             });
-        self.current_package_type = match self.resolution_kind {
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
-                Some(match importing_module_kind {
-                    ImportingModuleKind::Esm => PackageType::Module,
-                    ImportingModuleKind::CommonJs => PackageType::CommonJs,
-                })
-            }
-            _ => None,
-        };
+        // The IMPORTER's package type drives extension-priority choices for
+        // any file probing that lives in the importer's own package context
+        // (relative paths, baseUrl/path-mapping targets, classic walk-up).
+        // External-package lookups derive their own `package_type` from the
+        // target's `package.json` instead — see [`Self::resolve_package`].
+        let importer_package_type = self.importer_package_type(importing_module_kind);
         let cache_key = (
             containing_dir.clone(),
             specifier.to_string(),
@@ -409,6 +402,7 @@ impl ModuleResolver {
             specifier_span,
             importing_module_kind,
             import_kind,
+            importer_package_type,
         );
 
         if !self.allow_importing_ts_extensions
@@ -513,6 +507,7 @@ impl ModuleResolver {
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
         import_kind: ImportKind,
+        importer_package_type: Option<PackageType>,
     ) -> (Result<ResolvedModule, ResolutionFailure>, bool) {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
@@ -544,6 +539,7 @@ impl ModuleResolver {
                     containing_file,
                     specifier_span,
                     importing_module_kind,
+                    importer_package_type,
                 ),
                 false,
             );
@@ -556,7 +552,7 @@ impl ModuleResolver {
         if let Some(base_url) = self.base_url.as_deref()
             && !self.path_mappings.is_empty()
         {
-            let attempt = self.try_path_mappings(specifier, base_url);
+            let attempt = self.try_path_mappings(specifier, base_url, importer_package_type);
             if let Some(resolved) = attempt.resolved {
                 return (Ok(resolved), path_mapping_attempted);
             }
@@ -573,6 +569,7 @@ impl ModuleResolver {
                     specifier_span,
                     importing_module_kind,
                     import_kind,
+                    importer_package_type,
                 ),
                 path_mapping_attempted,
             );
@@ -581,7 +578,12 @@ impl ModuleResolver {
         // Step 4: Handle absolute imports (rare but valid)
         if specifier.starts_with('/') {
             return (
-                self.resolve_absolute(specifier, containing_file, specifier_span),
+                self.resolve_absolute(
+                    specifier,
+                    containing_file,
+                    specifier_span,
+                    importer_package_type,
+                ),
                 path_mapping_attempted,
             );
         }
@@ -589,7 +591,7 @@ impl ModuleResolver {
         // Step 5: Try baseUrl fallback for non-relative specifiers
         if let Some(base_url) = &self.base_url {
             let candidate = base_url.join(specifier);
-            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+            if let Some(resolved) = self.try_file_or_directory(&candidate, importer_package_type) {
                 return (
                     Ok(ResolvedModule {
                         resolved_path: resolved.clone(),
@@ -1025,6 +1027,7 @@ impl ModuleResolver {
         let importing_module_kind = self.get_importing_module_kind(containing_file);
 
         self.allow_js = true;
+        let importer_package_type = self.importer_package_type(importing_module_kind);
         let (result, _) = self.resolve_uncached(
             specifier,
             &containing_dir,
@@ -1032,6 +1035,7 @@ impl ModuleResolver {
             specifier_span,
             importing_module_kind,
             import_kind,
+            importer_package_type,
         );
         self.allow_js = false;
 
@@ -1180,6 +1184,5 @@ fn is_arbitrary_extension_declaration(specifier: &str, resolved_path: &std::path
     resolved_name.ends_with(&expected_suffix)
 }
 
-/// Parse a package specifier into package name and subpath
 #[cfg(test)]
 mod tests;

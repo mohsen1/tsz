@@ -23,3 +23,4 @@ mod pattern_matching;
 mod resolution_failure;
 mod resolver_integration;
 mod specifier_parsing;
+mod target_package_type;

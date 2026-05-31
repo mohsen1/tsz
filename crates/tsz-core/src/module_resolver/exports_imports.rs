@@ -86,6 +86,7 @@ impl ModuleResolver {
         containing_file: &str,
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
+        importer_package_type: Option<super::PackageType>,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Walk up directory tree looking for package.json with imports field
         let mut current = containing_dir.to_path_buf();
@@ -98,6 +99,12 @@ impl ModuleResolver {
                 && let Some(imports) = &package_json.imports
             {
                 let conditions = self.get_export_conditions(importing_module_kind);
+                // `#imports` always resolve inside the importer's own package,
+                // so use the package_json we just read to anchor the extension
+                // priority. The importer's own context is the fallback when
+                // this package.json has no `"type"` field.
+                let host_pt =
+                    self.target_package_type_from_json(&package_json, importer_package_type);
 
                 for (target, resolved_using_ts_extension) in
                     self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
@@ -112,7 +119,8 @@ impl ModuleResolver {
                         else {
                             continue;
                         };
-                        if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
+                        if let Some(resolved) = self.try_file_or_directory(&resolved_path, host_pt)
+                        {
                             return Ok(ResolvedModule {
                                 resolved_path: resolved.clone(),
                                 resolved_using_ts_extension,
@@ -339,6 +347,7 @@ impl ModuleResolver {
         subpath: &str,
         conditions: &[String],
         is_types_condition: bool,
+        target_package_type: Option<super::PackageType>,
     ) -> Option<(PathBuf, bool)> {
         match exports {
             PackageExports::String(s) => {
@@ -346,15 +355,13 @@ impl ModuleResolver {
                     let resolved = package_relative_target_path(package_dir, s)?;
                     if is_types_condition {
                         if let Some(r) = self
-                            .try_types_entry(&resolved)
-                            .or_else(|| self.try_export_target(&resolved))
+                            .try_types_entry(&resolved, target_package_type)
+                            .or_else(|| self.try_export_target(&resolved, target_package_type))
                         {
                             return Some((r, false));
                         }
-                    } else {
-                        if let Some(r) = self.try_export_target(&resolved) {
-                            return Some((r, false));
-                        }
+                    } else if let Some(r) = self.try_export_target(&resolved, target_package_type) {
+                        return Some((r, false));
                     }
                 }
                 None
@@ -372,6 +379,7 @@ impl ModuleResolver {
                             value,
                             conditions,
                             is_types_condition,
+                            target_package_type,
                         )
                         .map(|p| (p, key_uses_ts));
                 }
@@ -396,6 +404,7 @@ impl ModuleResolver {
                         &substituted_value,
                         conditions,
                         is_types_condition,
+                        target_package_type,
                     ) {
                         return Some((resolved, key_uses_ts));
                     }
@@ -418,6 +427,7 @@ impl ModuleResolver {
                             subpath,
                             conditions,
                             is_types,
+                            target_package_type,
                         ) {
                             return Some(resolved);
                         }
@@ -434,6 +444,7 @@ impl ModuleResolver {
                         subpath,
                         conditions,
                         is_types_condition,
+                        target_package_type,
                     ) {
                         return Some(resolved);
                     }
@@ -454,15 +465,16 @@ impl ModuleResolver {
         value: &PackageExports,
         conditions: &[String],
         is_types_condition: bool,
+        target_package_type: Option<super::PackageType>,
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
                 let resolved = package_relative_target_path(package_dir, s)?;
                 if is_types_condition {
-                    self.try_types_entry(&resolved)
-                        .or_else(|| self.try_export_target(&resolved))
+                    self.try_types_entry(&resolved, target_package_type)
+                        .or_else(|| self.try_export_target(&resolved, target_package_type))
                 } else {
-                    self.try_export_target(&resolved)
+                    self.try_export_target(&resolved, target_package_type)
                 }
             }
             PackageExports::Conditional(cond_entries) => {
@@ -479,6 +491,7 @@ impl ModuleResolver {
                             nested,
                             conditions,
                             is_types,
+                            target_package_type,
                         ) {
                             return Some(resolved);
                         }
@@ -493,6 +506,7 @@ impl ModuleResolver {
                         element,
                         conditions,
                         is_types_condition,
+                        target_package_type,
                     ) {
                         return Some(resolved);
                     }
@@ -529,6 +543,7 @@ impl ModuleResolver {
         package_dir: &Path,
         subpath: &str,
         types_versions: &serde_json::Value,
+        target_package_type: Option<super::PackageType>,
     ) -> Option<PathBuf> {
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
@@ -540,7 +555,12 @@ impl ModuleResolver {
         //    iteration order is consistent with the wildcard pass below.
         for (key, value) in paths {
             if !key.contains('*') && key == subpath {
-                return self.apply_types_versions_targets(package_dir, value, "");
+                return self.apply_types_versions_targets(
+                    package_dir,
+                    value,
+                    "",
+                    target_package_type,
+                );
             }
         }
 
@@ -573,7 +593,7 @@ impl ModuleResolver {
         }
 
         let (_, value, wildcard) = best?;
-        self.apply_types_versions_targets(package_dir, value, &wildcard)
+        self.apply_types_versions_targets(package_dir, value, &wildcard, target_package_type)
     }
 
     /// Iterate the `value` of a `typesVersions` paths entry (a single string or
@@ -585,6 +605,7 @@ impl ModuleResolver {
         package_dir: &Path,
         value: &serde_json::Value,
         wildcard: &str,
+        target_package_type: Option<super::PackageType>,
     ) -> Option<PathBuf> {
         // tsc's `replaceFirstStar` substitutes only the first `*` in the
         // target string. `apply_wildcard_substitution` does the same when
@@ -595,7 +616,7 @@ impl ModuleResolver {
         let try_target = |target: &str| {
             let substituted = apply_wildcard_substitution(target, wildcard, false);
             let resolved = package_dir.join(substituted.trim_start_matches("./"));
-            self.try_file_or_directory(&resolved)
+            self.try_file_or_directory(&resolved, target_package_type)
         };
         match value {
             serde_json::Value::String(target) => try_target(target.as_str()),
