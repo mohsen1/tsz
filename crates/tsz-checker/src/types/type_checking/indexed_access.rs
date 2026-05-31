@@ -1606,12 +1606,14 @@ impl<'a> CheckerState<'a> {
             // intersections, function/callable types, and `unknown`. When the index
             // is not a type parameter, the object type carries no type parameters
             // (so type-parameter-like, generic index-access/conditional/application
-            // objects are all excluded), and the index resolves to a literal key,
-            // emit TS2339 so anonymous object literals and union/function-typed
-            // accesses match tsc instead of falling through to a spurious TS2536.
+            // objects are all excluded), the original object node is not itself a
+            // type parameter, and the index resolves to a literal key, emit TS2339
+            // so anonymous object literals and union/function-typed accesses match
+            // tsc instead of falling through to a spurious TS2536.
             // Dedup merges this with any TS2339 the property path already produced
             // for the same key and location.
             if !original_index_is_type_param
+                && !self.type_node_refers_to_type_parameter(data.object_type)
                 && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     object_type_for_check,
