@@ -380,15 +380,6 @@ impl RelationCacheConfig {
         Self { flags, any_mode }
     }
 
-    /// Build a config that only encodes boolean flags (any-mode defaults
-    /// to `All`, matching tsc's default).
-    pub const fn from_flags(flags: RelationFlags) -> Self {
-        Self {
-            flags,
-            any_mode: CachedAnyMode::All,
-        }
-    }
-
     /// Fluent builder override.
     pub const fn with_any_mode(mut self, any_mode: CachedAnyMode) -> Self {
         self.any_mode = any_mode;
