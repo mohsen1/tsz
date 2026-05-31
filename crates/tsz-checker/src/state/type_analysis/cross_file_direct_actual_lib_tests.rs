@@ -452,6 +452,9 @@ fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
 const app = document.querySelector<HTMLDivElement>("#app");
 if (app) {
   app.innerHTML = "";
+  app.addEventListener("click", ev => {
+    ev.preventDefault();
+  });
 }
 "##,
         "fixture.ts",
