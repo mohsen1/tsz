@@ -83,3 +83,47 @@ fn hidden_infer_constraints_use_relation_outcome_boundary() {
         "the restricted relation should route through RelationOutcome"
     );
 }
+
+#[test]
+fn infer_conditional_alias_element_constraints_use_no_weak_relation_outcome_boundary() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/checkers/generic_checker/infer_conditional_constraints.rs");
+    let source =
+        fs::read_to_string(&source_path).expect("read infer conditional constraint helper source");
+
+    let alias_start = source
+        .find("pub(crate) fn array_element_infer_alias_satisfies_constraint")
+        .expect("find alias element infer helper");
+    let alias_rest = &source[alias_start..];
+    let alias_end = alias_rest
+        .find("\n    fn instantiated_alias_body_candidates")
+        .expect("find next alias helper");
+    let alias_helper = &alias_rest[..alias_end];
+    assert!(
+        alias_helper.contains("no_weak_relation_outcome(candidate, inst_constraint)")
+            && alias_helper.contains(".related"),
+        "alias element infer constraints should route no-weak relation truth through RelationOutcome"
+    );
+    assert!(
+        !alias_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
+        "alias element infer constraints should not use the raw no-weak boolean guard"
+    );
+
+    let array_start = source
+        .find("fn conditional_array_element_infer_satisfies_constraint")
+        .expect("find conditional array element infer helper");
+    let array_rest = &source[array_start..];
+    let array_end = array_rest
+        .find("\n    fn array_like_pattern_extracts_infer")
+        .expect("find next array helper");
+    let array_helper = &array_rest[..array_end];
+    assert!(
+        array_helper.contains("no_weak_relation_outcome(element, inst_constraint)")
+            && array_helper.contains(".related"),
+        "conditional array element infer constraints should route no-weak relation truth through RelationOutcome"
+    );
+    assert!(
+        !array_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
+        "conditional array element infer constraints should not use the raw no-weak boolean guard"
+    );
+}

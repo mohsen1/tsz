@@ -407,6 +407,23 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to_no_weak_checks(source, target)
     }
 
+    /// Execute a no-weak-checks relation probe while returning a
+    /// `RelationOutcome`-shaped result for diagnostic routing.
+    pub(crate) fn no_weak_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_no_weak_checks(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
