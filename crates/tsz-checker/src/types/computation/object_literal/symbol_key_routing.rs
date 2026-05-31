@@ -40,9 +40,15 @@ impl<'a> CheckerState<'a> {
         string_index_types: &mut Vec<TypeId>,
         symbol_index_types: &mut Vec<TypeId>,
     ) {
-        if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+        if self
+            .assign_relation_outcome(prop_name_type, TypeId::NUMBER)
+            .related
+        {
             number_index_types.push(value_type);
-        } else if self.is_assignable_to(prop_name_type, TypeId::SYMBOL) {
+        } else if self
+            .assign_relation_outcome(prop_name_type, TypeId::SYMBOL)
+            .related
+        {
             symbol_index_types.push(value_type);
         } else {
             string_index_types.push(value_type);

@@ -218,3 +218,29 @@ fn test_contextual_symbol_index_value_mismatch_uses_relation_outcome_boundary() 
         "contextual symbol-index diagnostics must not use a raw diagnostic boolean relation guard"
     );
 }
+
+/// Computed-key index-signature routing chooses the number/symbol/string bucket
+/// locally, but key-space relation decisions belong on the shared relation
+/// outcome path.
+#[test]
+fn test_computed_key_index_signature_routing_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/object_literal/symbol_key_routing.rs")
+        .expect("failed to read symbol_key_routing.rs");
+    let helper = source
+        .split("fn route_computed_member_value_to_index_signature")
+        .nth(1)
+        .and_then(|tail| tail.split("fn computed_name_is_wide_symbol").next())
+        .expect("failed to locate computed-key index-signature routing helper");
+
+    assert!(
+        helper.contains("assign_relation_outcome(prop_name_type, TypeId::NUMBER)")
+            && helper.contains("assign_relation_outcome(prop_name_type, TypeId::SYMBOL)")
+            && helper.contains(".related"),
+        "computed-key index-signature routing must route key-space checks through relation outcomes"
+    );
+    assert!(
+        !helper.contains("is_assignable_to(prop_name_type, TypeId::NUMBER)")
+            && !helper.contains("is_assignable_to(prop_name_type, TypeId::SYMBOL)"),
+        "computed-key index-signature routing must not regress to raw boolean assignability"
+    );
+}
