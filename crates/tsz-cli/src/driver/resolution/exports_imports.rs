@@ -313,22 +313,8 @@ pub(crate) fn resolve_exports_subpath(
                     return Some(target);
                 }
 
-                let mut best_match: Option<((usize, usize), String, &serde_json::Value)> = None;
-                for (key, value) in map {
-                    let Some(wildcard) = match_exports_subpath(key, subpath_key) else {
-                        continue;
-                    };
-                    let specificity = exports_subpath_specificity(key);
-                    let is_better = match &best_match {
-                        None => true,
-                        Some((best_spec, _, _)) => specificity > *best_spec,
-                    };
-                    if is_better {
-                        best_match = Some((specificity, wildcard, value));
-                    }
-                }
-
-                if let Some((_, wildcard, value)) = best_match
+                if let Some((wildcard, value)) =
+                    find_best_subpath_pattern(map, |key| match_exports_subpath(key, subpath_key))
                     && let Some(target) =
                         resolve_exports_target(value, conditions, compiler_version)
                 {
@@ -463,22 +449,9 @@ pub(crate) fn resolve_imports_subpath_candidates(
         return resolve_exports_target_candidates(value, conditions, compiler_version);
     }
 
-    let mut best_match: Option<((usize, usize), String, &serde_json::Value)> = None;
-    for (key, value) in map {
-        let Some(wildcard) = match_imports_subpath(key, subpath_key) else {
-            continue;
-        };
-        let specificity = exports_subpath_specificity(key);
-        let is_better = match &best_match {
-            None => true,
-            Some((best_spec, _, _)) => specificity > *best_spec,
-        };
-        if is_better {
-            best_match = Some((specificity, wildcard, value));
-        }
-    }
-
-    if let Some((_, wildcard, value)) = best_match {
+    if let Some((wildcard, value)) =
+        find_best_subpath_pattern(map, |key| match_imports_subpath(key, subpath_key))
+    {
         return resolve_exports_target_candidates(value, conditions, compiler_version)
             .into_iter()
             .map(|target| apply_exports_subpath(&target, &wildcard))
@@ -514,6 +487,30 @@ pub(crate) fn exports_subpath_specificity(pattern: &str) -> (usize, usize) {
     } else {
         (pattern.len(), 0)
     }
+}
+
+/// Pick the most-specific pattern entry from `map`, ranked by
+/// [`exports_subpath_specificity`]. `match_fn` decides whether a given key
+/// matches the requested subpath and returns the captured wildcard portion.
+///
+/// Updates only on strict improvement, so true ties resolve to the first
+/// matching pattern in JSON insertion order (the workspace builds `serde_json`
+/// with `preserve_order`).
+fn find_best_subpath_pattern<'a>(
+    map: &'a serde_json::Map<String, serde_json::Value>,
+    match_fn: impl Fn(&str) -> Option<String>,
+) -> Option<(String, &'a serde_json::Value)> {
+    let mut best: Option<((usize, usize), String, &'a serde_json::Value)> = None;
+    for (key, value) in map {
+        let Some(wildcard) = match_fn(key) else {
+            continue;
+        };
+        let specificity = exports_subpath_specificity(key);
+        if best.as_ref().is_none_or(|(s, _, _)| specificity > *s) {
+            best = Some((specificity, wildcard, value));
+        }
+    }
+    best.map(|(_, w, v)| (w, v))
 }
 
 pub(crate) fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
@@ -598,39 +595,31 @@ pub(crate) fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 mod tests {
     use super::*;
 
+    const TEST_VERSION: SemVer = SemVer {
+        major: 5,
+        minor: 4,
+        patch: 0,
+    };
+
     #[test]
     fn exports_subpath_specificity_uses_prefix_then_suffix_tuple() {
-        assert_eq!(exports_subpath_specificity("./api/*"), (6, 0));
-        assert_eq!(exports_subpath_specificity("./*/api"), (2, 4));
-        assert_eq!(exports_subpath_specificity("./*.ts"), (2, 3));
-        assert_eq!(exports_subpath_specificity("./"), (2, 0));
+        // Covers each branch of the algorithm plus the regression cases:
+        //   * exact/non-wildcard keys score `(pattern.len(), 0)`,
+        //   * patterns with `*` score `(prefix_len, suffix_len)` and so the
+        //     equal-total-length / unequal-prefix pair `./abc/*` vs `./*/abc`
+        //     resolves strictly (the previous `key.len()` heuristic tied them),
+        //   * identical-prefix patterns are broken by suffix length.
         assert_eq!(exports_subpath_specificity("./exact.js"), (10, 0));
-        assert_eq!(exports_subpath_specificity("./prefix*"), (8, 0));
+        assert_eq!(exports_subpath_specificity("./"), (2, 0));
         assert_eq!(exports_subpath_specificity("./*"), (2, 0));
-    }
-
-    #[test]
-    fn exports_subpath_specificity_prefers_longer_prefix_over_equal_total_length() {
-        // The previous `key.len()` heuristic scored both at 7 and let JSON order
-        // decide the winner. The spec-correct tuple compares `(6,0) > (2,4)`,
-        // so `./abc/*` is uniformly more specific than `./*/abc` regardless of
-        // which key appears first in the JSON.
-        let abc_star = exports_subpath_specificity("./abc/*");
-        let star_abc = exports_subpath_specificity("./*/abc");
-        assert!(abc_star > star_abc);
-        assert_eq!(abc_star, (6, 0));
-        assert_eq!(star_abc, (2, 4));
-    }
-
-    #[test]
-    fn exports_subpath_specificity_breaks_equal_prefix_ties_by_suffix() {
-        // Identical prefix ⇒ longer suffix wins (matches Node.js
-        // `PACKAGE_IMPORTS_EXPORTS_RESOLVE` and tsc `findBestPatternMatch`).
-        let bare = exports_subpath_specificity("./lib/*");
-        let typed = exports_subpath_specificity("./lib/*.d.ts");
-        assert!(typed > bare);
-        assert_eq!(bare, (6, 0));
-        assert_eq!(typed, (6, 5));
+        assert_eq!(exports_subpath_specificity("./prefix*"), (8, 0));
+        assert_eq!(exports_subpath_specificity("./*.ts"), (2, 3));
+        assert_eq!(exports_subpath_specificity("./abc/*"), (6, 0));
+        assert_eq!(exports_subpath_specificity("./*/abc"), (2, 4));
+        assert!(exports_subpath_specificity("./abc/*") > exports_subpath_specificity("./*/abc"));
+        assert!(
+            exports_subpath_specificity("./lib/*.d.ts") > exports_subpath_specificity("./lib/*")
+        );
     }
 
     #[test]
@@ -638,40 +627,23 @@ mod tests {
         // Regression: with the old `key.len()` rule, `./abc/*` (length 7) and
         // `./*/abc` (length 7) tied, so the JSON ordering decided who won.
         // With the `(prefix_len, suffix_len)` tuple, `./abc/*` (prefix 6) is
-        // always the strict winner for `./abc/abc`.
-        let exports = serde_json::json!({
-            "./*/abc": "./by-star-abc.js",
-            "./abc/*": "./by-abc-star.js"
-        });
-        let resolved = resolve_exports_subpath(
-            &exports,
-            "./abc/abc",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
-        );
-        assert_eq!(resolved.as_deref(), Some("./by-abc-star.js"));
-
-        // And again with the JSON keys reversed — the result must not depend
-        // on source order.
-        let exports_reversed = serde_json::json!({
-            "./abc/*": "./by-abc-star.js",
-            "./*/abc": "./by-star-abc.js"
-        });
-        let resolved_reversed = resolve_exports_subpath(
-            &exports_reversed,
-            "./abc/abc",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
-        );
-        assert_eq!(resolved_reversed.as_deref(), Some("./by-abc-star.js"));
+        // always the strict winner for `./abc/abc` regardless of JSON order.
+        for exports in [
+            serde_json::json!({
+                "./*/abc": "./by-star-abc.js",
+                "./abc/*": "./by-abc-star.js"
+            }),
+            serde_json::json!({
+                "./abc/*": "./by-abc-star.js",
+                "./*/abc": "./by-star-abc.js"
+            }),
+        ] {
+            assert_eq!(
+                resolve_exports_subpath(&exports, "./abc/abc", &["default"], TEST_VERSION)
+                    .as_deref(),
+                Some("./by-abc-star.js"),
+            );
+        }
     }
 
     #[test]
@@ -683,68 +655,44 @@ mod tests {
             "./a/*": "./first.js",
             "./b/*": "./second.js"
         });
-        let resolved = resolve_exports_subpath(
-            &exports,
-            "./a/x",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
+        assert_eq!(
+            resolve_exports_subpath(&exports, "./a/x", &["default"], TEST_VERSION).as_deref(),
+            Some("./first.js"),
         );
-        assert_eq!(resolved.as_deref(), Some("./first.js"));
 
         let exports_reversed = serde_json::json!({
             "./b/*": "./second.js",
             "./a/*": "./first.js"
         });
-        let resolved_reversed = resolve_exports_subpath(
-            &exports_reversed,
-            "./b/x",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
+        assert_eq!(
+            resolve_exports_subpath(&exports_reversed, "./b/x", &["default"], TEST_VERSION)
+                .as_deref(),
+            Some("./second.js"),
         );
-        assert_eq!(resolved_reversed.as_deref(), Some("./second.js"));
     }
 
     #[test]
     fn resolve_imports_subpath_uses_prefix_specificity_not_total_length() {
         // Same regression as exports, on the `#`-prefixed imports field.
-        let imports = serde_json::json!({
-            "#*/abc": "./by-star-abc.js",
-            "#abc/*": "./by-abc-star.js"
-        });
-        let resolved = resolve_imports_subpath_candidates(
-            &imports,
-            "#abc/abc",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
-        );
-        assert_eq!(resolved, vec!["./by-abc-star.js".to_string()]);
-
-        let imports_reversed = serde_json::json!({
-            "#abc/*": "./by-abc-star.js",
-            "#*/abc": "./by-star-abc.js"
-        });
-        let resolved_reversed = resolve_imports_subpath_candidates(
-            &imports_reversed,
-            "#abc/abc",
-            &["default"],
-            SemVer {
-                major: 5,
-                minor: 4,
-                patch: 0,
-            },
-        );
-        assert_eq!(resolved_reversed, vec!["./by-abc-star.js".to_string()]);
+        for imports in [
+            serde_json::json!({
+                "#*/abc": "./by-star-abc.js",
+                "#abc/*": "./by-abc-star.js"
+            }),
+            serde_json::json!({
+                "#abc/*": "./by-abc-star.js",
+                "#*/abc": "./by-star-abc.js"
+            }),
+        ] {
+            assert_eq!(
+                resolve_imports_subpath_candidates(
+                    &imports,
+                    "#abc/abc",
+                    &["default"],
+                    TEST_VERSION,
+                ),
+                vec!["./by-abc-star.js".to_string()],
+            );
+        }
     }
 }
