@@ -256,6 +256,68 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             output,
         )
 
+    def test_json_report_records_metrics_and_findings(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "reports" / "agent-labels.json"
+            result = self.run_audit_result(
+                [
+                    {
+                        "number": 30,
+                        "title": "fix: missing owner",
+                        "labels": [],
+                        "body": "AgentName: Studio-F",
+                        "url": "https://github.com/mohsen1/tsz/pull/30",
+                    },
+                    {
+                        "number": 31,
+                        "title": "fix: generated owner",
+                        "labels": [{"name": "agent:dreamy-runner"}],
+                        "body": "AgentName: Studio-F",
+                        "url": "https://github.com/mohsen1/tsz/pull/31",
+                    },
+                ],
+                args=["--audit", "--json-report", str(report_path)],
+            )
+
+            self.assertIn("agent_label_audit_status=fail", result.stdout)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("fail", report["status"])
+        self.assertEqual(2, report["metrics"]["agent_label_audit_findings"])
+        self.assertEqual(1, report["metrics"]["open_prs_missing_agent_label"])
+        self.assertEqual(1, report["metrics"]["open_prs_noncanonical_agent_label"])
+        self.assertEqual(
+            [
+                {
+                    "number": 30,
+                    "title": "fix: missing owner",
+                    "url": "https://github.com/mohsen1/tsz/pull/30",
+                }
+            ],
+            report["open_prs_missing_agent_label"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "number": 31,
+                    "title": "fix: generated owner",
+                    "url": "https://github.com/mohsen1/tsz/pull/31",
+                    "agent_labels": ["agent:dreamy-runner"],
+                }
+            ],
+            report["open_prs_noncanonical_agent_label"],
+        )
+
+    def test_json_report_requires_audit_mode(self):
+        result = self.run_audit_result(
+            [],
+            args=["--json-report", "agent-labels.json"],
+            check=False,
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--json-report requires --audit", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

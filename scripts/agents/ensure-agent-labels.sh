@@ -15,7 +15,7 @@ COLOR="ededed"
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/ensure-agent-labels.sh [--audit] [--strict]
+usage: scripts/agents/ensure-agent-labels.sh [--audit] [--strict] [--json-report PATH]
 
 Create or refresh the GitHub labels used by multi-agent sessions.
 
@@ -26,6 +26,8 @@ noncanonical. Open PRs whose body explicitly says no canonical agent lane was
 assigned are reported separately. The audit does not edit labels.
 
 With --audit --strict, exit nonzero when the audit has actionable findings.
+
+With --audit --json-report PATH, also write a machine-readable audit report.
 USAGE
 }
 
@@ -36,6 +38,7 @@ fi
 
 AUDIT=false
 STRICT_AUDIT=false
+JSON_REPORT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --audit)
@@ -43,6 +46,21 @@ while [[ $# -gt 0 ]]; do
       ;;
     --strict)
       STRICT_AUDIT=true
+      ;;
+    --json-report)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      JSON_REPORT="$1"
+      ;;
+    --json-report=*)
+      JSON_REPORT="${1#--json-report=}"
+      if [[ -z "$JSON_REPORT" ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
       ;;
     *)
       echo "Unknown option: $1 (try --help)" >&2
@@ -54,6 +72,11 @@ done
 
 if [[ "$STRICT_AUDIT" == true && "$AUDIT" != true ]]; then
   echo "--strict requires --audit (try --help)" >&2
+  exit 2
+fi
+
+if [[ -n "$JSON_REPORT" && "$AUDIT" != true ]]; then
+  echo "--json-report requires --audit (try --help)" >&2
   exit 2
 fi
 
@@ -83,7 +106,9 @@ if [[ "$AUDIT" == true ]]; then
       process.stdout.write(JSON.stringify(fs.readFileSync(0, "utf8").trim().split(/\n/).filter(Boolean)));
     '
   )"
-  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" STRICT_AUDIT="$STRICT_AUDIT" node <<'NODE'
+  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" STRICT_AUDIT="$STRICT_AUDIT" JSON_REPORT="$JSON_REPORT" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
 const canonical = new Set(JSON.parse(process.env.AGENTS_JSON).map((agent) => `agent:${agent}`));
 const labels = process.env.LABELS_TEXT.split(/\n/).filter(Boolean);
 const prs = JSON.parse(process.env.PRS_JSON);
@@ -176,8 +201,47 @@ const findingCount =
   missingIssues.length +
   multipleIssues.length +
   noncanonicalIssues.length;
+const metrics = {
+  missing_canonical_labels: missingCanonicalLabels.length,
+  noncanonical_agent_labels: noncanonicalLabels.length,
+  open_prs_missing_agent_label: missingPrs.length,
+  open_prs_intentionally_unassigned: intentionallyUnassignedPrs.length,
+  open_prs_multiple_agent_labels: multiplePrs.length,
+  open_prs_noncanonical_agent_label: noncanonicalPrs.length,
+  open_release_issues_missing_agent_label: missingIssues.length,
+  open_issues_multiple_agent_labels: multipleIssues.length,
+  open_issues_noncanonical_agent_label: noncanonicalIssues.length,
+  agent_label_audit_findings: findingCount,
+};
 console.log(`agent_label_audit_findings=${findingCount}`);
 console.log(`agent_label_audit_status=${findingCount === 0 ? "pass" : "fail"}`);
+
+const summarizeWorkItem = (item) => ({
+  number: item.number,
+  title: item.title,
+  url: item.url ?? null,
+});
+const summarizeLabeledWorkItem = (item) => ({
+  ...summarizeWorkItem(item),
+  agent_labels: item.agentLabels,
+});
+if (process.env.JSON_REPORT) {
+  const report = {
+    status: findingCount === 0 ? "pass" : "fail",
+    metrics,
+    missing_canonical_labels: missingCanonicalLabels,
+    noncanonical_agent_labels: noncanonicalLabels,
+    open_prs_missing_agent_label: missingPrs.map(summarizeWorkItem),
+    open_prs_intentionally_unassigned: intentionallyUnassignedPrs.map(summarizeWorkItem),
+    open_prs_multiple_agent_labels: multiplePrs.map(summarizeLabeledWorkItem),
+    open_prs_noncanonical_agent_label: noncanonicalPrs.map(summarizeLabeledWorkItem),
+    open_release_issues_missing_agent_label: missingIssues.map(summarizeWorkItem),
+    open_issues_multiple_agent_labels: multipleIssues.map(summarizeLabeledWorkItem),
+    open_issues_noncanonical_agent_label: noncanonicalIssues.map(summarizeLabeledWorkItem),
+  };
+  fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
+  fs.writeFileSync(process.env.JSON_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+}
 
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
