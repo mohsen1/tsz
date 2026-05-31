@@ -310,6 +310,16 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    Self::source_file_type_node_is_option_bag_lowerable(
+                        arena,
+                        delegate_binder,
+                        operator.type_node,
+                        seen_type_names,
+                    )
+                })
+            }
             _ => false,
         }
     }
