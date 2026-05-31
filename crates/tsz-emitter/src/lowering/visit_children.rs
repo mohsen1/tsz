@@ -200,16 +200,13 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 if let Some(prop) = self.arena.get_property_decl(node) {
+                    let skip_invalid_legacy_private_decorators =
+                        self.legacy_private_member_decorators_are_invalid(prop.name);
                     // Set __metadata helper when a decorated property exists
                     if self.ctx.options.legacy_decorators
                         && self.ctx.options.emit_decorator_metadata
-                        && prop.modifiers.as_ref().is_some_and(|m| {
-                            m.nodes.iter().any(|&mod_idx| {
-                                self.arena
-                                    .get(mod_idx)
-                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                            })
-                        })
+                        && !skip_invalid_legacy_private_decorators
+                        && self.modifiers_have_decorator(&prop.modifiers)
                     {
                         self.transforms.helpers_mut().metadata = true;
                     }
@@ -221,11 +218,7 @@ impl<'a> LoweringPass<'a> {
                     {
                         self.transforms.helpers_mut().prop_key = true;
                     }
-                    if let Some(mods) = &prop.modifiers {
-                        for &mod_idx in &mods.nodes {
-                            self.visit(mod_idx);
-                        }
-                    }
+                    self.visit_modifiers(&prop.modifiers, skip_invalid_legacy_private_decorators);
                     self.visit(prop.name);
                     if prop.initializer.is_some() {
                         self.visit(prop.initializer);
@@ -260,13 +253,10 @@ impl<'a> LoweringPass<'a> {
                     // Parameter decorators also emit method metadata. Overload signatures
                     // (no body) are not emitted as __decorate targets.
                     let is_overload = !method.body.is_some();
-                    let has_method_decorator = method.modifiers.as_ref().is_some_and(|m| {
-                        m.nodes.iter().any(|&mod_idx| {
-                            self.arena
-                                .get(mod_idx)
-                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                        })
-                    });
+                    let skip_invalid_legacy_private_decorators =
+                        self.legacy_private_member_decorators_are_invalid(method.name);
+                    let has_method_decorator = !skip_invalid_legacy_private_decorators
+                        && self.modifiers_have_decorator(&method.modifiers);
                     let has_parameter_decorator =
                         method.parameters.nodes.iter().any(|&param_idx| {
                             self.arena
@@ -291,20 +281,16 @@ impl<'a> LoweringPass<'a> {
                     if method.body.is_some() {
                         self.mark_function_parameter_transform_helpers(&method.parameters);
                     }
-                    if let Some(mods) = &method.modifiers {
-                        // For overload signatures (no body), save/restore the decorate
-                        // flag to prevent decorator visits from triggering helper emission.
-                        let prev_decorate = if is_overload {
-                            Some(self.transforms.helpers().decorate)
-                        } else {
-                            None
-                        };
-                        for &mod_idx in &mods.nodes {
-                            self.visit(mod_idx);
-                        }
-                        if let Some(prev) = prev_decorate {
-                            self.transforms.helpers_mut().decorate = prev;
-                        }
+                    // For overload signatures (no body), save/restore the decorate
+                    // flag to prevent decorator visits from triggering helper emission.
+                    let prev_decorate = if is_overload {
+                        Some(self.transforms.helpers().decorate)
+                    } else {
+                        None
+                    };
+                    self.visit_modifiers(&method.modifiers, skip_invalid_legacy_private_decorators);
+                    if let Some(prev) = prev_decorate {
+                        self.transforms.helpers_mut().decorate = prev;
                     }
                     self.visit(method.name);
                     for &param_idx in &method.parameters.nodes {
@@ -363,23 +349,19 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
+                    let skip_invalid_legacy_private_decorators =
+                        self.legacy_private_member_decorators_are_invalid(accessor.name);
                     if self.ctx.options.legacy_decorators
                         && self.ctx.options.emit_decorator_metadata
-                        && accessor.modifiers.as_ref().is_some_and(|m| {
-                            m.nodes.iter().any(|&mod_idx| {
-                                self.arena
-                                    .get(mod_idx)
-                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                            })
-                        })
+                        && !skip_invalid_legacy_private_decorators
+                        && self.modifiers_have_decorator(&accessor.modifiers)
                     {
                         self.transforms.helpers_mut().metadata = true;
                     }
-                    if let Some(mods) = &accessor.modifiers {
-                        for &mod_idx in &mods.nodes {
-                            self.visit(mod_idx);
-                        }
-                    }
+                    self.visit_modifiers(
+                        &accessor.modifiers,
+                        skip_invalid_legacy_private_decorators,
+                    );
                     if accessor.body.is_some() {
                         self.mark_function_parameter_transform_helpers(&accessor.parameters);
                     }
