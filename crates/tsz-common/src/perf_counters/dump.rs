@@ -182,6 +182,11 @@ impl PerfCounters {
             .iter()
             .map(load)
             .sum();
+        let interface_simple_object_actual_lib_type_reference_outcome_total: u64 = c
+            .compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
+            .iter()
+            .map(load)
+            .sum();
         if source_total == 0
             && kind_total == 0
             && interface_fastpath_total == 0
@@ -189,6 +194,7 @@ impl PerfCounters {
             && interface_simple_object_total == 0
             && interface_simple_object_non_primitive_annotation_kind_total == 0
             && interface_simple_object_type_reference_reject_outcome_total == 0
+            && interface_simple_object_actual_lib_type_reference_outcome_total == 0
         {
             return String::new();
         }
@@ -280,6 +286,24 @@ impl PerfCounters {
             {
                 let count = load(
                     &c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+                        [idx],
+                );
+                if count > 0 {
+                    out.push_str(&format!("  {name:<28} {count:>12}\n"));
+                }
+            }
+        }
+        if interface_simple_object_actual_lib_type_reference_outcome_total > 0 {
+            out.push_str(
+                "\ncompute_type_of_symbol interface simple-object actual-lib type-reference outcomes:\n",
+            );
+            for (idx, name) in
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES
+                    .iter()
+                    .enumerate()
+            {
+                let count = load(
+                    &c.compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
                         [idx],
                 );
                 if count > 0 {

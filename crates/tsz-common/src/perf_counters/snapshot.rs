@@ -141,6 +141,16 @@ pub struct PerfCounterSnapshot {
     /// order.
     pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes:
         Vec<NamedCount>,
+    /// Fine-grained accept/reject split for the helper that lowers simple
+    /// actual-lib type references to lazy `DefId` references.
+    ///
+    /// Always
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT`
+    /// long, in
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES`
+    /// order.
+    pub compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes:
+        Vec<NamedCount>,
     /// Bounded name-level attribution for `type_reference` rows within
     /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
     ///
@@ -629,6 +639,16 @@ impl PerfCounters {
                     name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES[i],
                     count: load(
                         &c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+                            [i],
+                    ),
+                })
+                .collect(),
+            compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes: (0
+                ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES[i],
+                    count: load(
+                        &c.compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
                             [i],
                     ),
                 })

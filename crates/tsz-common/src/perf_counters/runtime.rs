@@ -148,6 +148,9 @@ pub struct PerfCounters {
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT],
     pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome: [AtomicU64;
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+    pub compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome:
+        [AtomicU64;
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT],
     pub property_classification_calls: AtomicU64,
     pub property_classification_string_fallback_source_lookups: AtomicU64,
     pub property_classification_string_fallback_target_names: AtomicU64,
@@ -255,6 +258,9 @@ impl PerfCounters {
                 AtomicU64::new(0)
             };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+            compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome:
+                [const { AtomicU64::new(0) };
+                    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT],
             property_classification_calls: AtomicU64::new(0),
             property_classification_string_fallback_source_lookups: AtomicU64::new(0),
             property_classification_string_fallback_target_names: AtomicU64::new(0),
@@ -1065,6 +1071,21 @@ pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reje
             },
         );
     }
+}
+
+/// Record why the actual-lib lazy-ref lowering helper accepted or rejected a
+/// property-signature type reference inside the simple local-interface shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome(
+    outcome: ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
+        [outcome.as_index()]
+    .fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_property_classification_call() {

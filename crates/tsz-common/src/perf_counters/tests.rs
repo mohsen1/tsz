@@ -37,6 +37,7 @@ mod json_tests {
             "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues",
             "compute_type_of_symbol_interface_simple_object_declaration_provenance_residues",
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes",
+            "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes",
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
@@ -923,6 +924,37 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes_locks_to_names_array(
+    ) {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json
+            ["compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes is array",
+            );
+        assert_eq!(
+            rows.len(),
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT,
+            "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes length must match \
+             COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"],
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES
+                    [i],
+                "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues_lock_field_shape(
     ) {
         let unique_interface = format!(
@@ -1553,6 +1585,9 @@ mod json_tests {
         let ctos_simple_object_type_reference_reject_outcome_idx =
             ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome::IdentifierNotFoundSymbol
                 .as_index();
+        let ctos_simple_object_actual_lib_type_reference_outcome_idx =
+            ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome::Success
+                .as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -1606,6 +1641,10 @@ mod json_tests {
             .compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
             [ctos_simple_object_type_reference_reject_outcome_idx]
             .load(Ordering::Relaxed);
+        let before_ctos_simple_object_actual_lib_type_reference_outcome = c
+            .compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
+            [ctos_simple_object_actual_lib_type_reference_outcome_idx]
+            .load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -1630,6 +1669,9 @@ mod json_tests {
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
             [ctos_simple_object_type_reference_reject_outcome_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome
+            [ctos_simple_object_actual_lib_type_reference_outcome_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_fastpath_hits
             .fetch_add(1, Ordering::Relaxed);
@@ -1814,6 +1856,27 @@ mod json_tests {
                 .unwrap_or(0)
                 > before_ctos_simple_object_type_reference_reject_outcome,
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[identifier_not_found_symbol] did not reflect the bump",
+        );
+
+        let ctos_simple_object_actual_lib_type_reference_outcomes = json
+            ["compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes is array",
+            );
+        let ctos_simple_object_actual_lib_type_reference_outcome_row =
+            &ctos_simple_object_actual_lib_type_reference_outcomes
+                [ctos_simple_object_actual_lib_type_reference_outcome_idx];
+        assert_eq!(
+            ctos_simple_object_actual_lib_type_reference_outcome_row["name"],
+            "success"
+        );
+        assert!(
+            ctos_simple_object_actual_lib_type_reference_outcome_row["count"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_ctos_simple_object_actual_lib_type_reference_outcome,
+            "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes[success] did not reflect the bump",
         );
 
         assert!(
