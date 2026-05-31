@@ -310,6 +310,8 @@ impl<'a> Printer<'a> {
         self.jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
+            usage.needs_jsx || usage.needs_jsxs || usage.needs_create_element,
+            usage.needs_fragment,
         )
     }
 

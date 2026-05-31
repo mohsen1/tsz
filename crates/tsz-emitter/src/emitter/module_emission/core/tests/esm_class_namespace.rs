@@ -1577,3 +1577,70 @@ fn esnext_jsx_factory_namespace_binding_is_kept() {
         "JSX-factory namespace binding must be preserved when the file uses JSX.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn esnext_custom_jsx_factory_elides_unused_default_fragment_import_without_fragments() {
+    let source = r#"import React from "react";
+
+declare const jsx: typeof React.createElement;
+declare const Comp: (p: { css?: string }) => null;
+<Comp css="color:hotpink;" />;
+"#;
+
+    let mut parser = ParserState::new("main.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        jsx: crate::emitter::JsxEmit::React,
+        jsx_factory: Some("jsx".to_string()),
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("from \"react\""),
+        "Default fragment factory root must not keep an otherwise type-only import alive when the file has no fragments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("jsx(Comp, { css: \"color:hotpink;\" });"),
+        "Custom element factory should still emit the JSX call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Eliding the only import should keep the file as an external module.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn esnext_custom_jsx_factory_keeps_default_fragment_import_for_fragments() {
+    let source = r#"import React from "react";
+
+declare const jsx: typeof React.createElement;
+<></>;
+"#;
+
+    let mut parser = ParserState::new("main.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        jsx: crate::emitter::JsxEmit::React,
+        jsx_factory: Some("jsx".to_string()),
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import React from \"react\""),
+        "Default fragment factory root should keep the import when fragments emit React.Fragment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("jsx(React.Fragment"),
+        "Fragment JSX should still reference the configured element factory and default fragment factory.\nOutput:\n{output}"
+    );
+}

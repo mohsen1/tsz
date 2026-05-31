@@ -128,12 +128,16 @@ impl JsxPragmaFacts {
         &self,
         jsx_factory: Option<&str>,
         jsx_fragment_factory: Option<&str>,
+        needs_factory: bool,
+        needs_fragment_factory: bool,
     ) -> Vec<String> {
         classic_jsx_factory_roots_from_facts(
             self.factory.as_deref(),
             self.fragment_factory.as_deref(),
             jsx_factory,
             jsx_fragment_factory,
+            needs_factory,
+            needs_fragment_factory,
         )
     }
 }
@@ -154,6 +158,8 @@ fn classic_jsx_factory_roots_from_facts(
     pragma_fragment_factory: Option<&str>,
     jsx_factory: Option<&str>,
     jsx_fragment_factory: Option<&str>,
+    needs_factory: bool,
+    needs_fragment_factory: bool,
 ) -> Vec<String> {
     let jsx_factory = pragma_factory
         .or(jsx_factory)
@@ -165,7 +171,13 @@ fn classic_jsx_factory_roots_from_facts(
         .to_string();
 
     let mut roots = Vec::new();
-    for factory in [jsx_factory, jsx_fragment_factory] {
+    for factory in [
+        needs_factory.then_some(jsx_factory),
+        needs_fragment_factory.then_some(jsx_fragment_factory),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let Some(root) = factory.split('.').next() else {
             continue;
         };
