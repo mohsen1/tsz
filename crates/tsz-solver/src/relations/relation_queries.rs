@@ -518,6 +518,9 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
+    if let Some(class_check) = context.class_check {
+        checker.set_class_check(class_check);
+    }
     checker
 }
 
