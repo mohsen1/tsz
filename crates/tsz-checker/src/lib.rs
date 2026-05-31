@@ -711,6 +711,9 @@ mod generic_unknown_type_arg_tests;
 #[path = "tests/generics_relation_routing_arch_tests.rs"]
 mod generics_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/identifier_relation_routing_arch_tests.rs"]
+mod identifier_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]

@@ -1966,7 +1966,9 @@ impl<'a> CheckerState<'a> {
                     || (request.contextual_type.is_some()
                         && has_enclosing_binding_default
                         && flow_type != TypeId::ERROR
-                        && self.is_assignable_to(flow_type, declared_type))
+                        && self
+                            .assign_relation_outcome(flow_type, declared_type)
+                            .related)
                 {
                     declared_type
                 } else {
