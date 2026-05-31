@@ -109,3 +109,30 @@ fn polymorphic_this_intersection_display_is_structural() {
         "polymorphic this source display should use the structural intersection helper"
     );
 }
+
+#[test]
+fn global_object_special_diagnostic_is_structural() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/render_failure.rs"
+    ))
+    .expect("render failure source should be readable");
+
+    let start = source
+        .find("if depth == 0")
+        .expect("top-level render failure special cases should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n        let rctx = RenderContext")
+        .expect("top-level render failure special cases should end before render context");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("format_type_diagnostic(source)"),
+        "global Object special diagnostic must not prove Object identity through rendered text"
+    );
+    assert!(
+        helper_body.contains("is_global_object_interface_for_diagnostic"),
+        "global Object special diagnostic should route through the diagnostic query boundary"
+    );
+}

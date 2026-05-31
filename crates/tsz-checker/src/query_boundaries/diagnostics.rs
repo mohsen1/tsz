@@ -64,6 +64,40 @@ pub(crate) fn object_shape_for_assignment_numeric_display(
     tsz_solver::type_queries::object_shape_for_assignment_numeric_display(db, type_id)
 }
 
+pub(crate) fn is_global_object_interface_for_diagnostic(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if db
+        .get_boxed_type(tsz_solver::IntrinsicKind::Object)
+        .is_some_and(|object_type| object_type == type_id)
+    {
+        return true;
+    }
+    let Some(shape) = super::common::object_shape_for_type(db, type_id) else {
+        return false;
+    };
+    if shape.string_index.is_some() || shape.number_index.is_some() {
+        return false;
+    }
+    const OBJECT_PROTO: &[&str] = &[
+        "constructor",
+        "toString",
+        "toLocaleString",
+        "valueOf",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+    ];
+    shape.properties.len() == OBJECT_PROTO.len()
+        && OBJECT_PROTO.iter().all(|expected| {
+            shape
+                .properties
+                .iter()
+                .any(|prop| db.resolve_atom_ref(prop.name).as_ref() == *expected)
+        })
+}
+
 pub(crate) fn number_literal_bits(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,

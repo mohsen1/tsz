@@ -412,8 +412,10 @@ impl<'a> CheckerState<'a> {
                     | SubtypeFailureReason::NoCommonProperties { .. }
             );
             if is_property_failure {
-                let src_str = self.format_type_diagnostic(source);
-                if src_str == "Object" {
+                if crate::query_boundaries::diagnostics::is_global_object_interface_for_diagnostic(
+                    self.ctx.types,
+                    source,
+                ) {
                     return Diagnostic::error(
                         file_name,
                         start,

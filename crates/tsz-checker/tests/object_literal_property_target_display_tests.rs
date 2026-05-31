@@ -1,9 +1,20 @@
-use tsz_checker::test_utils::check_source_code_messages;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_source_code_messages, check_source_with_libs_code_messages, load_lib_files,
+};
 
 fn ts2322_messages(source: &str) -> Vec<String> {
     check_source_code_messages(source)
         .into_iter()
         .filter_map(|(code, message)| (code == 2322).then_some(message))
+        .collect()
+}
+
+fn diagnostic_messages_with_es5(source: &str) -> Vec<String> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &libs)
+        .into_iter()
+        .map(|(_, message)| message)
         .collect()
 }
 
@@ -40,6 +51,46 @@ let bad: Outer<string> = { item: new Source<number>() };
     assert!(
         !message.contains("type 'Outer<string>'"),
         "enclosing variable annotation must not repaint the property target, got: {message}"
+    );
+}
+
+#[test]
+fn uppercase_object_special_diagnostic_uses_global_object_identity() {
+    let messages = diagnostic_messages_with_es5(
+        r#"
+declare let value: Object;
+let needsProp: { required: string } = value;
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message
+                .contains("The 'Object' type is assignable to very few other types")),
+        "uppercase global Object should use the special tsc diagnostic, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn lowercase_object_keyword_does_not_use_uppercase_object_special_diagnostic() {
+    let messages = diagnostic_messages_with_es5(
+        r#"
+declare let value: object;
+let needsProp: { required: string } = value;
+"#,
+    );
+
+    assert!(
+        messages.iter().any(|message| message.contains("required")),
+        "lowercase object keyword should still report the missing property, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message
+                .contains("The 'Object' type is assignable to very few other types")),
+        "lowercase object keyword must not be classified as the global Object interface, got: {messages:#?}"
     );
 }
 
