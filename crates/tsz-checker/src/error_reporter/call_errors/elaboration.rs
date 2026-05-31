@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(branch_type, target_type)
+                        .return_relation_outcome(branch_type, target_type)
                         .related
                 {
                     continue;

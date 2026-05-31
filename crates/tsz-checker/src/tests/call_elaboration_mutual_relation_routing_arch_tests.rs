@@ -42,9 +42,13 @@ fn call_elaboration_return_probes_use_relation_outcome_boundary() {
             .expect("missing next object-literal argument helper");
     let assignment_helper = &source[assignment_start..assignment_end];
     assert!(
-        assignment_helper.contains("assign_relation_outcome(branch_type, target_type)")
+        assignment_helper.contains("return_relation_outcome(branch_type, target_type)")
             && assignment_helper.contains(".related"),
-        "conditional branch elaboration should route relation truth through RelationOutcome"
+        "conditional return-source branch elaboration should route through the return RelationOutcome"
+    );
+    assert!(
+        !assignment_helper.contains("assign_relation_outcome(branch_type, target_type)"),
+        "conditional return-source branch elaboration should not use generic assign relation outcomes"
     );
     assert!(
         !assignment_helper.contains("diagnostic_relation_boolean_guard(branch_type, target_type)"),

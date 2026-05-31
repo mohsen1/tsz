@@ -55,7 +55,8 @@ diagnostics. Call diagnostic anchor helpers also use the call-argument request
 when probing argument, object-literal property, or array-element mismatch
 anchors. Call diagnostic elaboration helpers use the call-argument request for
 parameter-derived object/array member probes and the return request when
-drilling into callback return expressions. These callers reuse
+drilling into callback return expressions or return-source conditional
+branches. These callers reuse
 `RelationOutcome` to avoid separately recomputing weak-union and
 property-classification analysis.
 
