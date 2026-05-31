@@ -1281,6 +1281,21 @@ impl BinderState {
                 // or `export` modifier. These may not be module/namespace symbols but
                 // need to be in module_exports for cross-file import resolution.
                 if symbol.is_exported || name == "export=" {
+                    // When a namespace MODULE symbol overwrites an existing `export * as N`
+                    // ALIAS in file_exports, preserve the import_module link via
+                    // alias_partners. The checker's member-resolution path already follows
+                    // alias_partners to bridge locally-declared namespace members with the
+                    // re-exported ones from the source module.
+                    if (symbol.flags & symbol_flags::MODULE) != 0
+                        && let Some(existing_id) = file_exports.get(name)
+                        && self.symbols.get(existing_id).is_some_and(|s| {
+                            (s.flags & symbol_flags::ALIAS) != 0
+                                && s.import_name.as_deref() == Some("*")
+                                && !s.is_umd_export
+                        })
+                    {
+                        Arc::make_mut(&mut self.alias_partners).insert(sym_id, existing_id);
+                    }
                     file_exports.set(name.clone(), sym_id);
                 }
             }
