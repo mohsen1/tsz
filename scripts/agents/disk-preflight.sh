@@ -96,30 +96,71 @@ PRIMARY_TS="$PRIMARY_REPO/TypeScript"
 
 echo ""
 echo "== local cargo cache presence =="
-LOCAL_CARGO_CACHE_COUNT=0
+cache_size_kb() {
+  if [[ -d "$1" ]]; then
+    du -sk "$1" 2>/dev/null | awk '{ print $1 }'
+  else
+    echo 0
+  fi
+}
+
+CARGO_CACHE_STUB_MAX_KB="${TSZ_CARGO_CACHE_STUB_MAX_KB:-1024}"
+LOCAL_CARGO_CACHE_DIR_COUNT=0
+LOCAL_CARGO_CACHE_PRESENT_COUNT=0
+LOCAL_CARGO_CACHE_TOTAL_KB=0
 CARGO_DOT_TARGET=false
 CARGO_DOT_TARGET_BENCH=false
 CARGO_TARGET=false
+CARGO_DOT_TARGET_STATUS=missing
+CARGO_DOT_TARGET_BENCH_STATUS=missing
+CARGO_TARGET_STATUS=missing
+CARGO_DOT_TARGET_SIZE_KB=0
+CARGO_DOT_TARGET_BENCH_SIZE_KB=0
+CARGO_TARGET_SIZE_KB=0
 for dir in .target .target-bench target; do
   if [[ -d "$ROOT/$dir" ]]; then
-    echo "$dir=present"
-    LOCAL_CARGO_CACHE_COUNT=$((LOCAL_CARGO_CACHE_COUNT + 1))
+    size_kb="$(cache_size_kb "$ROOT/$dir")"
+    LOCAL_CARGO_CACHE_DIR_COUNT=$((LOCAL_CARGO_CACHE_DIR_COUNT + 1))
+    LOCAL_CARGO_CACHE_TOTAL_KB=$((LOCAL_CARGO_CACHE_TOTAL_KB + size_kb))
+    if (( size_kb > CARGO_CACHE_STUB_MAX_KB )); then
+      status=present
+      LOCAL_CARGO_CACHE_PRESENT_COUNT=$((LOCAL_CARGO_CACHE_PRESENT_COUNT + 1))
+    else
+      status=stub
+    fi
+    echo "$dir=$status size_kb=$size_kb"
     case "$dir" in
-      .target) CARGO_DOT_TARGET=true ;;
-      .target-bench) CARGO_DOT_TARGET_BENCH=true ;;
-      target) CARGO_TARGET=true ;;
+      .target)
+        CARGO_DOT_TARGET=true
+        CARGO_DOT_TARGET_STATUS="$status"
+        CARGO_DOT_TARGET_SIZE_KB="$size_kb"
+        ;;
+      .target-bench)
+        CARGO_DOT_TARGET_BENCH=true
+        CARGO_DOT_TARGET_BENCH_STATUS="$status"
+        CARGO_DOT_TARGET_BENCH_SIZE_KB="$size_kb"
+        ;;
+      target)
+        CARGO_TARGET=true
+        CARGO_TARGET_STATUS="$status"
+        CARGO_TARGET_SIZE_KB="$size_kb"
+        ;;
     esac
   else
     echo "$dir=missing"
   fi
 done
-if (( LOCAL_CARGO_CACHE_COUNT > 0 )); then
+if (( LOCAL_CARGO_CACHE_PRESENT_COUNT > 0 )); then
   CARGO_CACHE_STATUS="present"
   echo "cargo_cache_status=present"
+elif (( LOCAL_CARGO_CACHE_DIR_COUNT > 0 )); then
+  CARGO_CACHE_STATUS="stub"
+  echo "cargo_cache_status=stub"
 else
   CARGO_CACHE_STATUS="missing"
   echo "cargo_cache_status=missing"
 fi
+echo "cargo_cache_total_kb=$LOCAL_CARGO_CACHE_TOTAL_KB"
 
 echo ""
 echo "== TypeScript reuse sources =="
@@ -167,7 +208,14 @@ CARGO_CACHE_SOURCE_COUNT=0
 while IFS= read -r wt; do
   [[ -n "$wt" ]] || continue
   [[ "$wt" != "$ROOT" ]] || continue
-  if [[ -d "$wt/.target" || -d "$wt/.target-bench" || -d "$wt/target" ]]; then
+  cache_kb=0
+  for dir in .target .target-bench target; do
+    if [[ -d "$wt/$dir" ]]; then
+      size_kb="$(cache_size_kb "$wt/$dir")"
+      cache_kb=$((cache_kb + size_kb))
+    fi
+  done
+  if (( cache_kb > CARGO_CACHE_STUB_MAX_KB )); then
     CARGO_CACHE_SOURCE_COUNT=$((CARGO_CACHE_SOURCE_COUNT + 1))
   fi
 done < <(git -C "$ROOT" worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
@@ -175,7 +223,7 @@ done < <(git -C "$ROOT" worktree list --porcelain | awk '/^worktree / { print su
 echo ""
 echo "== cargo cache reuse summary =="
 echo "cargo_cache_reuse_sources=$CARGO_CACHE_SOURCE_COUNT"
-if (( LOCAL_CARGO_CACHE_COUNT == 0 && CARGO_CACHE_SOURCE_COUNT > 0 )); then
+if (( LOCAL_CARGO_CACHE_PRESENT_COUNT == 0 && CARGO_CACHE_SOURCE_COUNT > 0 )); then
   echo "hint=reuse an existing cached worktree before creating a new build cache"
 fi
 
@@ -199,8 +247,16 @@ REUSABLE_WORKTREE_OUTPUT="$(
       flags=()
       [[ -L "$wt/TypeScript" ]] && flags+=("ts-link")
       [[ -d "$wt/TypeScript/tests/cases" ]] && flags+=("ts-populated")
-      [[ -d "$wt/.target" ]] && flags+=(".target")
-      [[ -d "$wt/target" ]] && flags+=("target")
+      for dir in .target .target-bench target; do
+        if [[ -d "$wt/$dir" ]]; then
+          size_kb="$(cache_size_kb "$wt/$dir")"
+          if (( size_kb > CARGO_CACHE_STUB_MAX_KB )); then
+            flags+=("$dir")
+          else
+            flags+=("$dir:stub")
+          fi
+        fi
+      done
       [[ ${#flags[@]} -eq 0 ]] && flags+=("no-local-cache-signal")
       printf "%s branch=%s %s\n" "$wt" "${branch:-unknown}" "${flags[*]}"
     done
@@ -231,7 +287,14 @@ if [[ -n "$JSON_REPORT" ]]; then
   CARGO_DOT_TARGET="$CARGO_DOT_TARGET" \
   CARGO_DOT_TARGET_BENCH="$CARGO_DOT_TARGET_BENCH" \
   CARGO_TARGET="$CARGO_TARGET" \
+  CARGO_DOT_TARGET_STATUS="$CARGO_DOT_TARGET_STATUS" \
+  CARGO_DOT_TARGET_BENCH_STATUS="$CARGO_DOT_TARGET_BENCH_STATUS" \
+  CARGO_TARGET_STATUS="$CARGO_TARGET_STATUS" \
+  CARGO_DOT_TARGET_SIZE_KB="$CARGO_DOT_TARGET_SIZE_KB" \
+  CARGO_DOT_TARGET_BENCH_SIZE_KB="$CARGO_DOT_TARGET_BENCH_SIZE_KB" \
+  CARGO_TARGET_SIZE_KB="$CARGO_TARGET_SIZE_KB" \
   CARGO_CACHE_STATUS="$CARGO_CACHE_STATUS" \
+  CARGO_CACHE_TOTAL_KB="$LOCAL_CARGO_CACHE_TOTAL_KB" \
   CARGO_CACHE_REUSE_SOURCES="$CARGO_CACHE_SOURCE_COUNT" \
   REUSABLE_WORKTREE_OUTPUT="$REUSABLE_WORKTREE_OUTPUT" \
   JSON_REPORT="$JSON_REPORT" \
@@ -295,10 +358,21 @@ const report = {
   },
   cargo_cache: {
     status: process.env.CARGO_CACHE_STATUS,
+    total_size_kb: Number(process.env.CARGO_CACHE_TOTAL_KB ?? 0),
     local: {
       ".target": bool(process.env.CARGO_DOT_TARGET),
       ".target-bench": bool(process.env.CARGO_DOT_TARGET_BENCH),
       target: bool(process.env.CARGO_TARGET),
+    },
+    local_status: {
+      ".target": process.env.CARGO_DOT_TARGET_STATUS,
+      ".target-bench": process.env.CARGO_DOT_TARGET_BENCH_STATUS,
+      target: process.env.CARGO_TARGET_STATUS,
+    },
+    local_size_kb: {
+      ".target": Number(process.env.CARGO_DOT_TARGET_SIZE_KB ?? 0),
+      ".target-bench": Number(process.env.CARGO_DOT_TARGET_BENCH_SIZE_KB ?? 0),
+      target: Number(process.env.CARGO_TARGET_SIZE_KB ?? 0),
     },
     reuse_sources: Number(process.env.CARGO_CACHE_REUSE_SOURCES ?? 0),
   },

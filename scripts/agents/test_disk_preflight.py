@@ -48,6 +48,7 @@ class DiskPreflightTests(unittest.TestCase):
         env = {
             **os.environ,
             "TSZ_WORKTREE_INACTIVE_HOURS": "1",
+            "TSZ_CARGO_CACHE_STUB_MAX_KB": "8",
         }
         return subprocess.run(
             ["bash", str(fake_script), "Studio-F", *extra_args],
@@ -59,20 +60,37 @@ class DiskPreflightTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def populate_cache(self, path):
+        path.mkdir(parents=True)
+        (path / "cache.bin").write_bytes(b"x" * 16 * 1024)
+
     def test_reports_populated_typescript_and_cache_state(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             temp_root = pathlib.Path(temp_dir).resolve()
             fake_repo, fake_script = self.make_fake_repo(temp_root)
             (fake_repo / "TypeScript" / "tests" / "cases").mkdir(parents=True)
-            (fake_repo / "target").mkdir()
+            self.populate_cache(fake_repo / "target")
 
             result = self.run_preflight(fake_repo, fake_script)
 
             self.assertIn("agent=Studio-F", result.stdout)
             self.assertIn("typescript=populated-local-submodule", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
-            self.assertIn("target=present", result.stdout)
+            self.assertRegex(result.stdout, r"target=present size_kb=\d+")
             self.assertIn("cargo_cache_status=present", result.stdout)
+            self.assertRegex(result.stdout, r"cargo_cache_total_kb=\d+")
+            self.assertIn("cargo_cache_reuse_sources=0", result.stdout)
+
+    def test_reports_stub_cache_directories_separately(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            (fake_repo / "target").mkdir()
+
+            result = self.run_preflight(fake_repo, fake_script)
+
+            self.assertRegex(result.stdout, r"target=stub size_kb=\d+")
+            self.assertIn("cargo_cache_status=stub", result.stdout)
             self.assertIn("cargo_cache_reuse_sources=0", result.stdout)
 
     def test_json_report_records_disk_typescript_and_cache_state(self):
@@ -81,7 +99,7 @@ class DiskPreflightTests(unittest.TestCase):
             fake_repo, fake_script = self.make_fake_repo(temp_root)
             report_path = temp_root / "preflight.json"
             (fake_repo / "TypeScript" / "tests" / "cases").mkdir(parents=True)
-            (fake_repo / "target").mkdir()
+            self.populate_cache(fake_repo / "target")
 
             result = self.run_preflight(
                 fake_repo,
@@ -101,6 +119,9 @@ class DiskPreflightTests(unittest.TestCase):
             )
             self.assertEqual("present", report["cargo_cache"]["status"])
             self.assertTrue(report["cargo_cache"]["local"]["target"])
+            self.assertEqual("present", report["cargo_cache"]["local_status"]["target"])
+            self.assertGreater(report["cargo_cache"]["local_size_kb"]["target"], 8)
+            self.assertGreater(report["cargo_cache"]["total_size_kb"], 8)
             self.assertFalse(report["cargo_cache"]["local"][".target"])
             self.assertIn("disk_status", report["disk_guard"])
             self.assertNotIn("branch", report["disk_guard"])
@@ -111,7 +132,7 @@ class DiskPreflightTests(unittest.TestCase):
             temp_root = pathlib.Path(temp_dir).resolve()
             fake_repo, fake_script = self.make_fake_repo(temp_root)
             (fake_repo / "TypeScript" / "tests" / "cases").mkdir(parents=True)
-            (fake_repo / ".target").mkdir()
+            self.populate_cache(fake_repo / ".target")
 
             linked_worktree = temp_root / "tsz-linked"
             self.run_git(
