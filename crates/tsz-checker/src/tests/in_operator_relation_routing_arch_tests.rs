@@ -18,6 +18,10 @@ fn trailing_function_body<'a>(source: &'a str, signature: &str) -> &'a str {
     &source[start..]
 }
 
+fn compact(source: &str) -> String {
+    source.split_whitespace().collect::<String>()
+}
+
 #[test]
 fn in_operator_lhs_key_diagnostic_uses_relation_outcome_boundary() {
     let source = fs::read_to_string("src/types/computation/binary_support.rs")
@@ -108,5 +112,26 @@ fn indexed_access_binary_arithmetic_uses_relation_outcomes() {
         !body.contains("is_assignable_to(left, TypeId::NUMBER)")
             && !body.contains("is_assignable_to(right, TypeId::NUMBER)"),
         "indexed-access arithmetic probes should not use raw boolean assignability gates"
+    );
+}
+
+#[test]
+fn binary_relational_number_bigint_probes_use_relation_outcome_boundary() {
+    let source =
+        fs::read_to_string("src/types/computation/binary.rs").expect("failed to read binary.rs");
+    let compact_source = compact(&source);
+
+    assert!(
+        compact_source.contains("diagnostic_relation_outcome(cmp_left,number_or_bigint).related"),
+        "left relational number/bigint probe should route through relation outcome"
+    );
+    assert!(
+        compact_source.contains("diagnostic_relation_outcome(cmp_right,number_or_bigint).related"),
+        "right relational number/bigint probe should route through relation outcome"
+    );
+    assert!(
+        !compact_source.contains("is_assignable_to(cmp_left,number_or_bigint)")
+            && !compact_source.contains("is_assignable_to(cmp_right,number_or_bigint)"),
+        "relational number/bigint probes should not use raw boolean assignability gates"
     );
 }

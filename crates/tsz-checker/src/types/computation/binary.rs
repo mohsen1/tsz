@@ -1384,9 +1384,12 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 let number_or_bigint =
                                     self.ctx.types.union2(TypeId::NUMBER, TypeId::BIGINT);
-                                let left_to_num = self.is_assignable_to(cmp_left, number_or_bigint);
-                                let right_to_num =
-                                    self.is_assignable_to(cmp_right, number_or_bigint);
+                                let left_to_num = self
+                                    .diagnostic_relation_outcome(cmp_left, number_or_bigint)
+                                    .related;
+                                let right_to_num = self
+                                    .diagnostic_relation_outcome(cmp_right, number_or_bigint)
+                                    .related;
 
                                 if left_to_num && right_to_num {
                                     true

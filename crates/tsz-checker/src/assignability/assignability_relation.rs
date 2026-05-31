@@ -371,6 +371,23 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(source, target)
     }
 
+    /// Outcome-shaped wrapper for diagnostic probes that intentionally need only
+    /// the legacy boolean relation decision.
+    pub(crate) fn diagnostic_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.diagnostic_relation_boolean_guard(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Environment-aware boolean relation guard for diagnostic code paths.
     ///
     /// Use this only when the caller intentionally needs the current
