@@ -177,3 +177,20 @@ fn mixin_anonymous_class_display_rewrite_is_idempotent() {
         "mixin constructor display should apply the anonymous-class rewrite idempotently"
     );
 }
+
+#[test]
+fn ts2411_type_query_constructor_display_uses_symbol_identity() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/state/state_checking_members/index_signature_key_helpers.rs"
+    ))
+    .expect("index signature key helper source should be readable");
+    assert!(
+        !source.contains("value_display == symbol.escaped_name"),
+        "TS2411 type-query constructor display should use symbol identity, not formatted-name equality"
+    );
+    assert!(
+        source.contains("resolve_type_to_symbol_id(value_type) == Some(sym_id)"),
+        "TS2411 type-query constructor display should prove the queried value by symbol identity"
+    );
+}
