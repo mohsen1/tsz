@@ -860,11 +860,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let display = self.format_type(type_id);
-        if display
-            .split(" | ")
-            .all(|part| matches!(part, "string" | "number" | "symbol"))
-        {
+        if is_broad_primitive_key_or_union(self.ctx.types, type_id) {
             return true;
         }
 
@@ -1420,6 +1416,26 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+}
+
+/// Returns `true` when `type_id` is a broad primitive key (`string`,
+/// `number`, `symbol`) or a union whose members are all such primitives.
+/// Structural analogue of splitting `format_type(t)` on `" | "` and
+/// checking each part against the known key spellings.
+fn is_broad_primitive_key_or_union(
+    types: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    const fn is_broad_primitive(id: TypeId) -> bool {
+        matches!(id, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL)
+    }
+    if is_broad_primitive(type_id) {
+        return true;
+    }
+    let Some(members) = crate::query_boundaries::common::union_members(types, type_id) else {
+        return false;
+    };
+    !members.is_empty() && members.iter().all(|&m| is_broad_primitive(m))
 }
 
 #[cfg(test)]

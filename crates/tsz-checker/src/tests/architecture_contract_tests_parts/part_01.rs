@@ -561,6 +561,191 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
+/// Track 10 ratchet: rendered type strings must not become new semantic inputs,
+/// even when the format/use are spread across multiple lines.
+///
+/// The single-line companion above only detects `format_type(...).contains(...)`
+/// on one line. This test catches the broader pattern: bind the rendered string
+/// to a variable on one line, then drive a decision (string equality, prefix,
+/// substring search, infallible `if`) on the bound variable a few lines later.
+///
+/// Per §25, the printer must not feed the type system. New decision sites
+/// belong in `query_boundaries`/`tsz_solver::type_queries` helpers that
+/// inspect `TypeId`/`TypeData` structurally.
+///
+/// The ceiling captures the remaining historic violations so they cannot
+/// silently grow while we burn the list down.
+#[test]
+fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut decisions = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        let lines: Vec<&str> = src.lines().collect();
+        let test_ranges = test_module_line_ranges(&lines);
+        let in_test = |line_num: usize| {
+            test_ranges
+                .iter()
+                .any(|&(start, end)| start <= line_num && line_num <= end)
+        };
+
+        for (i, line) in lines.iter().enumerate() {
+            if in_test(i) || line.trim_start().starts_with("//") {
+                continue;
+            }
+            let Some(var) = format_bound_identifier(line) else {
+                continue;
+            };
+            // Build per-pattern check strings outside the inner loop so the
+            // hot loop only does substring scans, not formatting.
+            let var_dot_contains = format!("{var}.contains(");
+            let var_dot_starts = format!("{var}.starts_with(");
+            let var_dot_ends = format!("{var}.ends_with(");
+            let var_dot_isempty = format!("{var}.is_empty(");
+            let var_eq = format!("{var} ==");
+            let var_neq = format!("{var} !=");
+            let if_var_dot = format!("if {var}.");
+            let if_var_amp = format!("if {var} ");
+            // Look ahead up to 30 lines for a decision use of the same name.
+            let end = std::cmp::min(i + 30, lines.len());
+            for j in (i + 1)..end {
+                if in_test(j) {
+                    continue;
+                }
+                let nl = lines[j];
+                if nl.contains(&var_dot_contains)
+                    || nl.contains(&var_dot_starts)
+                    || nl.contains(&var_dot_ends)
+                    || nl.contains(&var_dot_isempty)
+                    || nl.contains(&var_eq)
+                    || nl.contains(&var_neq)
+                    || nl.contains(&if_var_dot)
+                    || nl.contains(&if_var_amp)
+                {
+                    decisions.push(format!("{}:{}-{}", path.display(), i + 1, j + 1));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Ratchet: this is set to the count of historic violations at the time
+    // this test was introduced. Driving any of these sites through a
+    // structural `query_boundaries`/`type_queries` helper lowers the ceiling.
+    // Adding a new rendered-type decision raises this count and fails the
+    // test; the fix is to use a structural query instead, not to bump the
+    // ceiling.
+    const MULTILINE_DECISION_LINE_CEILING: usize = 15;
+    assert!(
+        decisions.len() <= MULTILINE_DECISION_LINE_CEILING,
+        "Multi-line rendered-type decision sites grew to {} (ceiling: {}). \
+         Per §25 the printer must not feed checker decisions. Route the new \
+         site through a structural `query_boundaries`/`tsz_solver::type_queries` \
+         helper that inspects `TypeId`/`TypeData` instead of the formatted text. \
+         Current sites:\n  {}",
+        decisions.len(),
+        MULTILINE_DECISION_LINE_CEILING,
+        decisions.join("\n  ")
+    );
+}
+
+/// Match a line that binds the result of a `format_type(...)` /
+/// `format_type_diagnostic(...)` (with optional `_widened` / `_constraint`
+/// suffix) call to a fresh identifier. Returns the identifier when matched.
+///
+/// Equivalent to the regex
+/// `^\s*(?:let\s+)?(\w+)\s*=\s*.*\.format_type(?:_diagnostic)?(?:_widened|_constraint)?\(`,
+/// implemented in plain `str` ops so the checker crate does not need a
+/// regex dev-dependency for this guardrail test.
+fn format_bound_identifier(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let after_let = trimmed.strip_prefix("let ").unwrap_or(trimmed);
+    let after_let = after_let.trim_start();
+    let after_let = after_let.strip_prefix("mut ").unwrap_or(after_let);
+    let after_let = after_let.trim_start();
+
+    let ident_end = after_let
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(after_let.len());
+    if ident_end == 0 {
+        return None;
+    }
+    let ident = &after_let[..ident_end];
+
+    let after_ident = after_let[ident_end..].trim_start();
+    let after_eq = after_ident.strip_prefix('=')?;
+    if after_eq.starts_with('=') {
+        return None; // `==`, not assignment
+    }
+
+    if !rest_calls_format_type(after_eq) {
+        return None;
+    }
+    Some(ident)
+}
+
+/// Returns true when `rest` contains a method call to one of the
+/// `format_type*` family (with the `(` suffix on the same line).
+fn rest_calls_format_type(rest: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        ".format_type(",
+        ".format_type_diagnostic(",
+        ".format_type_widened(",
+        ".format_type_constraint(",
+        ".format_type_diagnostic_widened(",
+        ".format_type_diagnostic_constraint(",
+    ];
+    NEEDLES.iter().any(|n| rest.contains(n))
+}
+
+/// Return the `(start, end)` line ranges (0-based, inclusive) covered by
+/// `#[cfg(test)] mod ...` blocks in `lines`. Used to exclude in-file tests
+/// from architecture scans.
+fn test_module_line_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].contains("#[cfg(test)]") {
+            // Find the next `mod ` line — the cfg attribute may be followed by
+            // additional attributes before the module declaration.
+            let mut j = i + 1;
+            while j < lines.len() && !lines[j].contains("mod ") {
+                j += 1;
+            }
+            if j >= lines.len() {
+                break;
+            }
+            let mut depth: i32 = 0;
+            let mut started = false;
+            let mut end = j;
+            for (k, l) in lines.iter().enumerate().skip(j) {
+                for c in l.chars() {
+                    if c == '{' {
+                        depth += 1;
+                        started = true;
+                    } else if c == '}' {
+                        depth -= 1;
+                    }
+                }
+                if started && depth == 0 {
+                    end = k;
+                    break;
+                }
+            }
+            ranges.push((i, end));
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    ranges
+}
+
 #[test]
 fn test_top_rest_any_callable_policy_avoids_rendered_signature_prefixes() {
     let path =

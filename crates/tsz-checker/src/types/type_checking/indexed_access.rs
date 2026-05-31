@@ -1509,14 +1509,16 @@ impl<'a> CheckerState<'a> {
                     index_type,
                 ) {
                 self.format_type(evaluated_index_type)
+            } else if evaluated_index_type != index_type
+                && crate::query_boundaries::common::is_keyof_type(self.ctx.types, index_type)
+                && crate::query_boundaries::common::contains_keyof_type(
+                    self.ctx.types,
+                    evaluated_index_type,
+                )
+            {
+                self.format_type(evaluated_index_type)
             } else {
-                let raw = self.format_type(index_type);
-                let evaluated = self.format_type(evaluated_index_type);
-                if raw != evaluated && raw.starts_with("keyof ") && evaluated.contains("keyof ") {
-                    evaluated
-                } else {
-                    raw
-                }
+                self.format_type(index_type)
             };
 
             // Last resort: when the object type is an indexed access Obj[K] where Obj
