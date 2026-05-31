@@ -1050,20 +1050,27 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Mark local re-export specifiers for emit elision when the re-exported
-            // local binding resolves to a type-only symbol (interface, type alias,
-            // uninstantiated namespace, or a const enum without preserveConstEnums).
-            // This covers `import { I1 as I } from "mod"; export { I }` — the import
-            // checker marks the import specifier, but the export specifier has a
-            // different NodeIndex that the emitter checks separately.
-            //
-            // For import-alias bindings, use `import_binding_is_type_only` which has
-            // full const-enum awareness. For other local symbols, `is_local_symbol_type_only`
-            // handles interfaces, type aliases, and uninstantiated namespaces.
+            // Rule: when `export { X }` re-exports a local binding whose
+            // source has no runtime form — type-only import, type-only
+            // declaration, or alias to a type-only / const-enum / `export =`
+            // module export — tsc elides the specifier from JS emit; mark
+            // the specifier so the emitter matches. The alias branch follows
+            // the import through the source module, which is what catches
+            // the const-enum / `export =` shapes the plain specifier-side
+            // query misses.
             if is_local && !enclosing_export_is_type_only && !specifier.is_type_only {
                 use tsz_binder::symbol_flags;
-                let is_type_only = if let Some(sym_id) = self.ctx.binder.file_locals.get(&name_str)
-                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                let sym = self
+                    .ctx
+                    .binder
+                    .file_locals
+                    .get(&name_str)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id));
+                let is_type_only = if let Some(sym) = sym
+                    && sym.is_type_only
+                {
+                    true
+                } else if let Some(sym) = sym
                     && sym.has_any_flags(symbol_flags::ALIAS)
                     && let Some(ref module_spec) = sym.import_module
                 {
