@@ -546,6 +546,9 @@ mod call_checker_diagnostic_relation_routing_arch_tests;
 #[path = "tests/call_context_relation_routing_arch_tests.rs"]
 mod call_context_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/call_error_anchor_relation_routing_arch_tests.rs"]
+mod call_error_anchor_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]

@@ -51,8 +51,10 @@ shapes suppress EPC now lives in the assignability boundary.
 
 `assignability_diagnostics.rs` builds `RelationRequest::assign` for TS2322
 diagnostics and `RelationRequest::call_arg` for TS2345 call-argument
-diagnostics. These callers reuse `RelationOutcome` to avoid separately
-recomputing weak-union and property-classification analysis.
+diagnostics. Call diagnostic anchor helpers also use the call-argument request
+when probing argument, object-literal property, or array-element mismatch
+anchors. These callers reuse `RelationOutcome` to avoid separately recomputing
+weak-union and property-classification analysis.
 
 `assignability/assignment_checker/destructuring.rs` builds
 `RelationRequest::destructuring` for rest/default/property destructuring

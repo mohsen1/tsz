@@ -1,33 +1,23 @@
 use std::fs;
+use std::path::Path;
 
 #[test]
-fn call_error_anchor_mismatch_probes_use_relation_outcome_boundary() {
-    let source = fs::read_to_string("src/error_reporter/call_errors_anchors.rs")
-        .expect("failed to read call_errors_anchors.rs");
+fn call_error_anchors_use_call_argument_relation_outcome_boundary() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/error_reporter/call_errors_anchors.rs"),
+    )
+    .expect("failed to read call error anchor source");
 
-    assert_eq!(
-        source.matches("assign_relation_outcome(").count(),
-        4,
-        "call error anchoring should route mismatch probes through assign_relation_outcome"
-    );
-    assert_eq!(
-        source.matches("diagnostic_relation_boolean_guard(").count(),
-        0,
-        "call error anchoring should not regress to the raw boolean relation guard"
+    assert!(
+        source.matches("call_arg_relation_outcome(").count() >= 4,
+        "call diagnostic anchors should route parameter mismatch probes through call_arg_relation_outcome"
     );
     assert!(
-        source.contains(".assign_relation_outcome(arg_type, expected_type)")
-            || source.contains("assign_relation_outcome(arg_type, expected_type)"),
-        "literal argument anchoring should route argument-vs-parameter probes through the boundary"
+        !source.contains("assign_relation_outcome("),
+        "call diagnostic anchors should not regress to generic assign relation outcomes"
     );
     assert!(
-        source.contains(".assign_relation_outcome(source_prop_type, target_prop_type)")
-            || source.contains("assign_relation_outcome(source_prop_type, target_prop_type)"),
-        "object literal anchoring should route property mismatch probes through the boundary"
-    );
-    assert!(
-        source.contains(".assign_relation_outcome(elem_type, target_element_type)")
-            || source.contains("assign_relation_outcome(elem_type, target_element_type)"),
-        "array literal anchoring should route element mismatch probes through the boundary"
+        !source.contains("diagnostic_relation_boolean_guard("),
+        "call diagnostic anchors should not use raw diagnostic boolean relation probes"
     );
 }
