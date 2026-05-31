@@ -568,6 +568,86 @@ fn resolves_wildcard_type_only_reexports_with_provenance() {
     assert!(!is_type_only_value);
 }
 
+/// When two wildcard sources export the same name, one as a pure `TYPE_ALIAS`
+/// and one as a value, the value symbol must be returned.
+#[test]
+fn value_export_preferred_over_type_alias_in_wildcard_sources() {
+    let mut binder = BinderState::new();
+
+    let type_alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Config".to_string());
+    let mut types_exports = SymbolTable::new();
+    types_exports.set("Config".to_string(), type_alias_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./types".to_string(), types_exports);
+
+    let value_sym = binder
+        .symbols
+        .alloc(symbol_flags::VARIABLE, "Config".to_string());
+    let mut values_exports = SymbolTable::new();
+    values_exports.set("Config".to_string(), value_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./values".to_string(), values_exports);
+
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push("./types".to_string());
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push("./values".to_string());
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push(("./types".to_string(), false));
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push(("./values".to_string(), false));
+
+    let (resolved, is_type_only) = binder
+        .resolve_import_with_reexports_type_only("./barrel", "Config")
+        .expect("expected Config to be resolved from barrel");
+
+    assert_eq!(
+        resolved, value_sym,
+        "should resolve to value symbol, not type alias, when both are exported"
+    );
+    assert!(!is_type_only, "value export must not be marked type-only");
+}
+
+/// When only a `TYPE_ALIAS` is exported, the type-alias symbol is still the
+/// resolution result for type-position access.
+#[test]
+fn type_alias_returned_when_no_value_in_wildcard_sources() {
+    let mut binder = BinderState::new();
+
+    let type_alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Config".to_string());
+    let mut types_exports = SymbolTable::new();
+    types_exports.set("Config".to_string(), type_alias_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./types".to_string(), types_exports);
+
+    Arc::make_mut(&mut binder.wildcard_reexports)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push("./types".to_string());
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
+        .entry("./barrel".to_string())
+        .or_default()
+        .push(("./types".to_string(), false));
+
+    let (resolved, _) = binder
+        .resolve_import_with_reexports_type_only("./barrel", "Config")
+        .expect("expected Config to be resolved from barrel");
+
+    assert_eq!(
+        resolved, type_alias_sym,
+        "should resolve to type alias when no value export exists"
+    );
+}
+
 #[test]
 fn global_augmentation_namespace_appears_in_file_locals() {
     // `declare global { namespace JSX { ... } }` inside a module declaration
