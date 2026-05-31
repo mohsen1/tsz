@@ -244,3 +244,23 @@ fn test_computed_key_index_signature_routing_uses_relation_outcome_boundary() {
         "computed-key index-signature routing must not regress to raw boolean assignability"
     );
 }
+
+/// Excess-property discriminant narrowing owns candidate filtering locally, but
+/// discriminator subtype probes should still use outcome-shaped relation truth.
+#[test]
+fn test_excess_property_discriminant_filters_use_subtype_outcome_boundary() {
+    let source = fs::read_to_string("src/state/state_checking/property/excess_property_tail.rs")
+        .expect("failed to read excess_property_tail.rs");
+    let compact = source.split_whitespace().collect::<String>();
+
+    assert!(
+        compact.contains("diagnostic_subtype_outcome(prop_type,*target_ty).related")
+            && compact.contains("diagnostic_subtype_outcome(prop_type,prop.type_id).related"),
+        "excess-property discriminant filters must route subtype probes through outcomes"
+    );
+    assert!(
+        !compact.contains("is_subtype_of(prop_type,*target_ty)")
+            && !compact.contains("is_subtype_of(prop_type,prop.type_id)"),
+        "excess-property discriminant filters must not consume raw subtype booleans directly"
+    );
+}
