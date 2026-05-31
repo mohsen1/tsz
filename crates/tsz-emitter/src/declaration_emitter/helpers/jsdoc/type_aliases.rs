@@ -1,5 +1,14 @@
 use super::*;
 
+#[derive(Clone)]
+struct JsdocPropertyAliasMember {
+    name: String,
+    optional: bool,
+    type_text: String,
+    description_lines: Vec<String>,
+    children: Vec<JsdocPropertyAliasMember>,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(
         jsdoc: &str,
@@ -157,6 +166,93 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         params
+    }
+
+    fn parse_jsdoc_template_params_before_tag(jsdoc: &str, tag: &str) -> Vec<String> {
+        let mut params = Vec::new();
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if Self::jsdoc_tag_rest(line, tag).is_some() {
+                break;
+            }
+            if let Some(rest) = Self::jsdoc_tag_rest(line, "template") {
+                Self::push_jsdoc_type_params_unique(
+                    &mut params,
+                    &Self::parse_jsdoc_template_params(&format!("@template {rest}")),
+                );
+            }
+        }
+        params
+    }
+
+    fn jsdoc_template_param_names_after_tag(jsdoc: &str, tag: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut seen = FxHashSet::default();
+        let mut after_tag = false;
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if !after_tag {
+                if Self::jsdoc_tag_rest(line, tag).is_some() {
+                    after_tag = true;
+                }
+                continue;
+            }
+            if let Some(rest) = Self::jsdoc_tag_rest(line, "template") {
+                for param in Self::parse_jsdoc_template_params(&format!("@template {rest}")) {
+                    let name = Self::jsdoc_template_param_name_key(&param).to_string();
+                    if seen.insert(name.clone()) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_type_text_references_any_template_param(
+        type_text: &str,
+        param_names: &[String],
+    ) -> bool {
+        if param_names.is_empty() {
+            return false;
+        }
+
+        let mut start = None;
+        for (idx, ch) in type_text.char_indices() {
+            if start.is_none() {
+                if Self::is_jsdoc_identifier_start(ch) {
+                    start = Some(idx);
+                }
+                continue;
+            }
+
+            if Self::is_jsdoc_identifier_continue(ch) {
+                continue;
+            }
+
+            if let Some(word_start) = start.take()
+                && param_names
+                    .iter()
+                    .any(|name| name == &type_text[word_start..idx])
+            {
+                return true;
+            }
+        }
+
+        if let Some(word_start) = start {
+            return param_names
+                .iter()
+                .any(|name| name == &type_text[word_start..]);
+        }
+        false
+    }
+
+    const fn is_jsdoc_identifier_start(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+    }
+
+    const fn is_jsdoc_identifier_continue(ch: char) -> bool {
+        Self::is_jsdoc_identifier_start(ch) || ch.is_ascii_digit()
     }
 
     fn split_jsdoc_template_param_segments(text: &str) -> Vec<&str> {
@@ -465,29 +561,118 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let mut type_text = String::from("{\n");
+        let mut members = Vec::new();
         for (property_name, optional, property_type, description_lines) in properties {
-            if !description_lines.is_empty() {
-                type_text.push_str("    /**\n");
-                for line in description_lines {
-                    type_text.push_str("     * ");
-                    type_text.push_str(&line);
-                    type_text.push('\n');
-                }
-                type_text.push_str("     */\n");
-            }
-            type_text.push_str("    ");
-            type_text.push_str(&Self::render_jsdoc_property_name(&property_name));
-            if optional {
-                type_text.push('?');
-            }
-            type_text.push_str(": ");
-            type_text.push_str(&property_type);
-            type_text.push_str(";\n");
+            let path = Self::split_jsdoc_property_path(&property_name);
+            Self::insert_jsdoc_property_alias_member(
+                &mut members,
+                &path,
+                optional,
+                property_type,
+                description_lines,
+            );
         }
+
+        let mut type_text = String::from("{\n");
+        Self::render_jsdoc_property_alias_members(&members, 4, &mut type_text);
         type_text.push('}');
 
         Some((name, type_text))
+    }
+
+    fn split_jsdoc_property_path(name: &str) -> Vec<String> {
+        if Self::is_quoted_jsdoc_property_name(name) {
+            return vec![name.to_string()];
+        }
+        let path = name
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if path.is_empty() {
+            vec![name.to_string()]
+        } else {
+            path
+        }
+    }
+
+    fn insert_jsdoc_property_alias_member(
+        members: &mut Vec<JsdocPropertyAliasMember>,
+        path: &[String],
+        optional: bool,
+        type_text: String,
+        description_lines: Vec<String>,
+    ) {
+        let Some((head, tail)) = path.split_first() else {
+            return;
+        };
+
+        let member_idx = members
+            .iter()
+            .position(|member| member.name == *head)
+            .unwrap_or_else(|| {
+                members.push(JsdocPropertyAliasMember {
+                    name: head.clone(),
+                    optional: false,
+                    type_text: "object".to_string(),
+                    description_lines: Vec::new(),
+                    children: Vec::new(),
+                });
+                members.len() - 1
+            });
+
+        let member = &mut members[member_idx];
+        if tail.is_empty() {
+            member.optional = optional;
+            member.type_text = type_text;
+            member.description_lines = description_lines;
+            return;
+        }
+
+        Self::insert_jsdoc_property_alias_member(
+            &mut member.children,
+            tail,
+            optional,
+            type_text,
+            description_lines,
+        );
+    }
+
+    fn render_jsdoc_property_alias_members(
+        members: &[JsdocPropertyAliasMember],
+        indent: usize,
+        type_text: &mut String,
+    ) {
+        let pad = " ".repeat(indent);
+        for member in members {
+            if !member.description_lines.is_empty() {
+                type_text.push_str(&pad);
+                type_text.push_str("/**\n");
+                for line in &member.description_lines {
+                    type_text.push_str(&pad);
+                    type_text.push_str(" * ");
+                    type_text.push_str(line);
+                    type_text.push('\n');
+                }
+                type_text.push_str(&pad);
+                type_text.push_str(" */\n");
+            }
+            type_text.push_str(&pad);
+            type_text.push_str(&Self::render_jsdoc_property_name(&member.name));
+            if member.optional {
+                type_text.push('?');
+            }
+            type_text.push_str(": ");
+            if member.children.is_empty() {
+                type_text.push_str(&member.type_text);
+                type_text.push_str(";\n");
+            } else {
+                type_text.push_str("{\n");
+                Self::render_jsdoc_property_alias_members(&member.children, indent + 4, type_text);
+                type_text.push_str(&pad);
+                type_text.push_str("};\n");
+            }
+        }
     }
 
     fn parse_jsdoc_name_only_typedef_alias(jsdoc: &str) -> Option<(String, String)> {
@@ -563,28 +748,50 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(
         jsdoc: &str,
     ) -> Option<JsdocTypeAliasDecl> {
-        let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let mut description_lines = Self::jsdoc_description_lines(jsdoc);
         description_lines.extend(Self::jsdoc_typedef_trailing_description_lines(jsdoc));
 
         if Self::jsdoc_has_property_tags(jsdoc) {
+            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
+            let invalid_type_param_names =
+                Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
             let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
             if name == "default" {
                 return None;
             }
+            let (type_text, render_verbatim) =
+                if Self::jsdoc_type_text_references_any_template_param(
+                    &type_text,
+                    &invalid_type_param_names,
+                ) {
+                    ("any".to_string(), false)
+                } else {
+                    (type_text, true)
+                };
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
                 type_text,
                 description_lines,
-                render_verbatim: true,
+                render_verbatim,
             });
         }
 
         if let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(jsdoc) {
+            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
+            let invalid_type_param_names =
+                Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
             if name == "default" {
                 return None;
             }
+            let type_text = if Self::jsdoc_type_text_references_any_template_param(
+                &type_text,
+                &invalid_type_param_names,
+            ) {
+                "any".to_string()
+            } else {
+                type_text
+            };
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
@@ -597,6 +804,17 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some((name, type_text, description_lines)) =
             Self::parse_jsdoc_callback_alias_parts(jsdoc)
         {
+            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "callback");
+            let invalid_type_param_names =
+                Self::jsdoc_template_param_names_after_tag(jsdoc, "callback");
+            let type_text = if Self::jsdoc_type_text_references_any_template_param(
+                &type_text,
+                &invalid_type_param_names,
+            ) {
+                "() => any".to_string()
+            } else {
+                type_text
+            };
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
@@ -613,7 +831,8 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
         alias_name: &str,
     ) -> Option<JsdocTypeAliasDecl> {
-        let type_params = Self::parse_jsdoc_template_params(jsdoc);
+        let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
+        let invalid_type_param_names = Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
         let (name, type_text) = if Self::jsdoc_has_property_tags(jsdoc) {
             Self::parse_jsdoc_property_type_alias(jsdoc)?
         } else {
@@ -622,13 +841,21 @@ impl<'a> DeclarationEmitter<'a> {
         if name != "default" {
             return None;
         }
+        let uses_invalid_template_param = Self::jsdoc_type_text_references_any_template_param(
+            &type_text,
+            &invalid_type_param_names,
+        );
 
         Some(JsdocTypeAliasDecl {
             name: alias_name.to_string(),
             type_params,
-            type_text,
+            type_text: if uses_invalid_template_param {
+                "any".to_string()
+            } else {
+                type_text
+            },
             description_lines: Vec::new(),
-            render_verbatim: Self::jsdoc_has_property_tags(jsdoc),
+            render_verbatim: Self::jsdoc_has_property_tags(jsdoc) && !uses_invalid_template_param,
         })
     }
 

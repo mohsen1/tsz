@@ -135,6 +135,83 @@ fn typedef_alias_renders_constrained_template_default_with_description() {
 }
 
 #[test]
+fn typedef_alias_ignores_template_after_typedef_tag() {
+    let jsdoc = "\
+@typedef Box
+@template T
+@property {T} value
+";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc typedef alias");
+    assert_eq!(decl.name, "Box");
+    assert!(decl.type_params.is_empty());
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Box = any;\n");
+}
+
+#[test]
+fn callback_alias_ignores_template_after_callback_tag() {
+    let jsdoc = "\
+@callback Fn
+@template T
+@param {T} value
+@returns {T}
+";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc callback alias");
+    assert_eq!(decl.name, "Fn");
+    assert!(decl.type_params.is_empty());
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Fn = () => any;\n");
+}
+
+#[test]
+fn property_alias_nests_dotted_property_paths() {
+    let jsdoc = "\
+@typedef Nested
+@property {Object} outer
+@template T
+@property {number} outer.value
+@property {string} outer.label
+";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "Nested");
+    assert!(decl.type_params.is_empty());
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type Nested = {\n    outer: {\n        value: number;\n        label: string;\n    };\n};\n"
+    );
+}
+
+#[test]
+fn overload_template_after_overload_collapses_signature_surface() {
+    let jsdoc = "\
+@overload
+@template T
+@template U
+@param {U} value
+@returns {U}
+";
+
+    let signatures = DeclarationEmitter::parse_jsdoc_overload_signatures(jsdoc);
+    assert_eq!(signatures.len(), 1);
+    assert_eq!(signatures[0].type_params, vec!["U"]);
+    assert!(signatures[0].params.is_empty());
+    assert_eq!(signatures[0].return_type, "any");
+}
+
+#[test]
 fn satisfies_param_facts_require_real_tag_boundary() {
     let jsdoc = "\
 @satisfiesx {(bad: number) => void}

@@ -55,7 +55,9 @@ impl<'a> DeclarationEmitter<'a> {
             .is_none_or(|raw| raw.contains('\n'))
     }
 
-    fn parse_jsdoc_overload_signatures(jsdoc: &str) -> Vec<JsdocOverloadSignature> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_overload_signatures(
+        jsdoc: &str,
+    ) -> Vec<JsdocOverloadSignature> {
         let lines = Self::normalized_jsdoc_lines(jsdoc);
         let overload_positions: Vec<usize> = lines
             .iter()
@@ -95,16 +97,21 @@ impl<'a> DeclarationEmitter<'a> {
         lines: &[String],
     ) -> Option<JsdocOverloadSignature> {
         let mut type_params = global_type_params.to_vec();
+        let mut has_invalid_segment_template = false;
         let mut params = Vec::new();
         let mut return_type = None;
         let mut seen_return = false;
+        let mut seen_segment_template = false;
 
         for line in lines {
             if let Some(rest) = Self::jsdoc_tag_rest(line, "template") {
-                Self::push_jsdoc_type_params_unique(
-                    &mut type_params,
-                    &Self::parse_jsdoc_template_params(&format!("@template {rest}")),
-                );
+                let parsed = Self::parse_jsdoc_template_params(&format!("@template {rest}"));
+                if seen_segment_template {
+                    Self::push_jsdoc_type_params_unique(&mut type_params, &parsed);
+                } else {
+                    has_invalid_segment_template = !parsed.is_empty();
+                    seen_segment_template = true;
+                }
                 continue;
             }
 
@@ -135,8 +142,16 @@ impl<'a> DeclarationEmitter<'a> {
         Some(JsdocOverloadSignature {
             comment: jsdoc.to_string(),
             type_params,
-            params,
-            return_type: return_type.unwrap_or_else(|| "any".to_string()),
+            params: if has_invalid_segment_template {
+                Vec::new()
+            } else {
+                params
+            },
+            return_type: if has_invalid_segment_template {
+                "any".to_string()
+            } else {
+                return_type.unwrap_or_else(|| "any".to_string())
+            },
         })
     }
 
@@ -225,7 +240,10 @@ impl<'a> DeclarationEmitter<'a> {
             .collect()
     }
 
-    fn jsdoc_tag_rest<'b>(line: &'b str, tag: &str) -> Option<&'b str> {
+    pub(in crate::declaration_emitter) fn jsdoc_tag_rest<'b>(
+        line: &'b str,
+        tag: &str,
+    ) -> Option<&'b str> {
         let rest = line.strip_prefix('@')?.strip_prefix(tag)?;
         if rest
             .chars()
@@ -250,7 +268,10 @@ impl<'a> DeclarationEmitter<'a> {
         params
     }
 
-    fn push_jsdoc_type_params_unique(params: &mut Vec<String>, additions: &[String]) {
+    pub(in crate::declaration_emitter) fn push_jsdoc_type_params_unique(
+        params: &mut Vec<String>,
+        additions: &[String],
+    ) {
         for param in additions {
             let key = Self::jsdoc_template_param_name_key(param).to_string();
             if params
