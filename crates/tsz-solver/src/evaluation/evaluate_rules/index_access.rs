@@ -1092,6 +1092,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Returns `true` when both `left` and `right` are `KeyOf(X)` with the same inner `X`.
     /// Purely structural — no evaluation — so safe for recursive/conditional inner types.
+    ///
+    /// Type-parameter inners are compared by identity (`name` `Atom`), not by raw
+    /// `TypeId`. Nested generic instantiation can produce two distinct interned
+    /// `TypeParameter` `TypeId`s for the *same* logical parameter (e.g. when
+    /// `Record<keyof T, V>` is expanded as the argument of an outer homomorphic
+    /// mapped type like `Partial<…>`). Both `keyof T` occurrences denote the same
+    /// key space, so a raw-`TypeId` comparison would spuriously reject
+    /// `{ [P in keyof T]?: V }[K]` for `K extends keyof T`.
     fn keyof_same_inner(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
         if left == right {
             return true;
@@ -1102,7 +1110,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(TypeData::KeyOf(r_inner)) = db.lookup(right) else {
             return false;
         };
-        l_inner == r_inner
+        if l_inner == r_inner {
+            return true;
+        }
+        match (db.lookup(l_inner), db.lookup(r_inner)) {
+            (Some(TypeData::TypeParameter(l_tp)), Some(TypeData::TypeParameter(r_tp))) => {
+                l_tp.name == r_tp.name
+            }
+            _ => false,
+        }
     }
 
     fn constraints_semantically_match(&mut self, left: TypeId, right: TypeId) -> bool {
@@ -1110,9 +1126,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true;
         }
 
+        // `keyof T` denotes the same key space regardless of which interned
+        // `TypeParameter` `TypeId` represents `T`. Nested generic instantiation can
+        // alias the same logical `T` to two distinct `TypeId`s, so compare the
+        // `KeyOf` inners by type-parameter identity before falling back to
+        // evaluation. This is the homomorphic-mapped read counterpart to the
+        // same-name handling already used for the mapped iteration variable.
+        if Self::keyof_same_inner(self.interner(), left, right) {
+            return true;
+        }
+
         let evaluated_left = self.evaluate(left);
         let evaluated_right = self.evaluate(right);
-        left == evaluated_right || evaluated_left == right || evaluated_left == evaluated_right
+        if evaluated_left == evaluated_right || left == evaluated_right || evaluated_left == right {
+            return true;
+        }
+        Self::keyof_same_inner(self.interner(), evaluated_left, evaluated_right)
     }
 
     fn index_type_overlaps_optional_props(
