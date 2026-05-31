@@ -68,6 +68,7 @@ impl ModuleResolver {
                             None => ".".to_string(),
                         };
 
+                        let target_pt = self.target_package_type_from_json(&package_json, None);
                         if let Some((resolved, resolved_using_ts_extension)) = self
                             .resolve_package_exports_with_conditions(
                                 &current,
@@ -75,6 +76,7 @@ impl ModuleResolver {
                                 &subpath_key,
                                 conditions,
                                 false,
+                                target_pt,
                             )
                         {
                             // Self-reference resolved successfully via exports.

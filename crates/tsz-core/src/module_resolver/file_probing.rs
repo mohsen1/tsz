@@ -36,12 +36,15 @@ impl ModuleResolver {
     // File probing methods
     // =========================================================================
 
-    /// Try to resolve a file with various extensions
-    pub(super) fn try_file(&self, path: &Path) -> Option<PathBuf> {
-        self.try_file_with_package_type(path, self.current_package_type)
-    }
-
-    pub(super) fn try_file_with_package_type(
+    /// Try to resolve a file with various extensions.
+    ///
+    /// `package_type` is the type of the package CONTAINING `path` (the
+    /// target's `package.json#type` for external lookups, the importer's
+    /// own package type for in-tree lookups). For `Node16`/`NodeNext` this
+    /// drives whether `.mts`/`.d.mts` or `.cts`/`.d.cts` are tried first; in
+    /// other resolution modes it is ignored. Use `None` when no package
+    /// context applies (path mapping, baseUrl, classic, bundler bare).
+    pub(super) fn try_file(
         &self,
         path: &Path,
         package_type: Option<PackageType>,
@@ -111,14 +114,10 @@ impl ModuleResolver {
         None
     }
 
-    /// Like `try_file`, but does NOT try directory index resolution (path/index.{ext}).
-    /// Used for ESM packages in Node16/NodeNext where directory index resolution
-    /// is not allowed by Node.js.
-    pub(super) fn try_file_no_index(&self, path: &Path) -> Option<PathBuf> {
-        self.try_file_no_index_with_package_type(path, self.current_package_type)
-    }
-
-    pub(super) fn try_file_no_index_with_package_type(
+    /// Like [`Self::try_file`], but does NOT try directory index resolution
+    /// (`path/index.{ext}`). Used for ESM packages in Node16/NodeNext where
+    /// directory index resolution is not allowed by Node.js.
+    pub(super) fn try_file_no_index(
         &self,
         path: &Path,
         package_type: Option<PackageType>,
@@ -218,7 +217,7 @@ impl ModuleResolver {
         }
     }
 
-    pub(super) fn try_directory_with_package_type(
+    pub(super) fn try_directory(
         &self,
         path: &Path,
         package_type: Option<PackageType>,
@@ -238,6 +237,12 @@ impl ModuleResolver {
         if package_json_path.exists()
             && let Ok(pj) = self.read_package_json(&package_json_path)
         {
+            // The directory's own `package.json#type` determines the
+            // extension-candidate priority for `main` / `types` resolution
+            // inside this directory; the caller-supplied `package_type`
+            // only acts as an inherited fallback when this nested
+            // package.json has no `"type"` field.
+            let dir_package_type = self.target_package_type_from_json(&pj, package_type);
             let types = pj
                 .types
                 .clone()
@@ -252,51 +257,55 @@ impl ModuleResolver {
             // bypasses the redirect, producing a divergent resolution from tsc.
             if let Some(types_versions) = &pj.types_versions {
                 let subpath = types.as_deref().unwrap_or("index");
-                if let Some(resolved) = self.resolve_types_versions(path, subpath, types_versions) {
+                if let Some(resolved) =
+                    self.resolve_types_versions(path, subpath, types_versions, dir_package_type)
+                {
                     return Some(resolved);
                 }
             }
 
             if let Some(types) = types {
                 let types_path = path.join(&types);
-                if let Some(resolved) = self.try_types_entry(&types_path) {
+                if let Some(resolved) = self.try_types_entry(&types_path, dir_package_type) {
                     return Some(resolved);
                 }
             }
             if let Some(main) = &pj.main {
                 let main_path = path.join(main);
-                if let Some(resolved) = self.try_file_with_package_type(&main_path, package_type) {
+                if let Some(resolved) = self.try_file(&main_path, dir_package_type) {
                     return Some(resolved);
                 }
             }
+            let index = path.join("index");
+            return self.try_file(&index, dir_package_type);
         }
 
         let index = path.join("index");
-        self.try_file_with_package_type(&index, package_type)
+        self.try_file(&index, package_type)
     }
 
     /// Try to resolve a path as a file or directory
-    pub(super) fn try_file_or_directory(&self, path: &Path) -> Option<PathBuf> {
-        self.try_file_or_directory_with_package_type(path, self.current_package_type)
-    }
-
-    pub(super) fn try_file_or_directory_with_package_type(
+    pub(super) fn try_file_or_directory(
         &self,
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
         // Try as file first
-        if let Some(resolved) = self.try_file_with_package_type(path, package_type) {
+        if let Some(resolved) = self.try_file(path, package_type) {
             return Some(resolved);
         }
 
-        self.try_directory_with_package_type(path, package_type)
+        self.try_directory(path, package_type)
     }
 
     /// Resolve an exports target without Node16 extension substitution.
     ///
     /// Explicit extensions must exist exactly; extensionless targets follow normal lookup.
-    pub(super) fn try_export_target(&self, path: &Path) -> Option<PathBuf> {
+    pub(super) fn try_export_target(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
             if split_path_extension(path).is_some() {
                 // For JS export targets, try declaration substitution first.
@@ -336,17 +345,21 @@ impl ModuleResolver {
             self.resolution_kind,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
         );
-        if !skip_extension_probing && let Some(resolved) = self.try_file(path) {
+        if !skip_extension_probing && let Some(resolved) = self.try_file(path, package_type) {
             return Some(resolved);
         }
         if path.is_dir() {
             let index = path.join("index");
-            return self.try_file(&index);
+            return self.try_file(&index, package_type);
         }
         None
     }
 
-    pub(super) fn try_types_entry(&self, path: &Path) -> Option<PathBuf> {
+    pub(super) fn try_types_entry(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         if let Some(resolved) = resolve_explicit_unknown_extension(path) {
             return Some(resolved);
         }
@@ -382,6 +395,6 @@ impl ModuleResolver {
             return None;
         }
 
-        self.try_file_or_directory(path)
+        self.try_file_or_directory(path, package_type)
     }
 }

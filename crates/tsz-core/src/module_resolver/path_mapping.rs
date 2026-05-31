@@ -1,6 +1,6 @@
 //! Path mapping resolution from tsconfig `paths` and `baseUrl`.
 
-use super::{ModuleExtension, ModuleResolver, ResolvedModule};
+use super::{ModuleExtension, ModuleResolver, PackageType, ResolvedModule};
 use crate::resolution::helpers::apply_wildcard_substitution;
 use std::path::Path;
 
@@ -21,7 +21,12 @@ impl ModuleResolver {
     ///
     /// `base` is the resolved `baseUrl` directory; callers must only invoke this
     /// method when `base_url` is set (the type system enforces it via `&Path`).
-    pub(super) fn try_path_mappings(&self, specifier: &str, base: &Path) -> PathMappingAttempt {
+    pub(super) fn try_path_mappings(
+        &self,
+        specifier: &str,
+        base: &Path,
+        importer_package_type: Option<PackageType>,
+    ) -> PathMappingAttempt {
         // `self.path_mappings` is pre-sorted by specificity descending at
         // construction time (`build_path_mappings` in config/mod.rs).
         let mut attempted = false;
@@ -32,7 +37,9 @@ impl ModuleResolver {
                     let substituted = apply_wildcard_substitution(target, &star_match, false);
                     let candidate = base.join(&substituted);
 
-                    if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                    if let Some(resolved) =
+                        self.try_file_or_directory(&candidate, importer_package_type)
+                    {
                         let extension = ModuleExtension::from_path(&resolved);
                         return PathMappingAttempt {
                             resolved: Some(ResolvedModule {
