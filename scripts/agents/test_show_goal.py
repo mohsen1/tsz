@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import stat
@@ -109,6 +110,59 @@ class ShowGoalTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertEqual(calls, ["rev-parse --show-toplevel"])
         self.assertEqual(temp_files, [])
+
+    def test_json_report_records_remote_goal_source(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "goal.json"
+
+            output, stderr, calls, temp_files = self.run_show_goal(
+                ["Studio-F", "--no-fetch", "--json-report", str(report_path)]
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(output, "# remote goal\n")
+            self.assertIn("branch-local docs/plan/agents/Studio-F.md differs", stderr)
+            self.assertEqual("scripts/agents/show-goal.sh", report["generated_by"])
+            self.assertEqual("Studio-F", report["agent"])
+            self.assertEqual("docs/plan/agents/Studio-F.md", report["goal_path"])
+            self.assertEqual("origin/main", report["printed_source"])
+            self.assertFalse(report["fetch_attempted"])
+            self.assertFalse(report["local_only"])
+            self.assertTrue(report["no_fetch"])
+            self.assertTrue(report["branch_local_differs"])
+            self.assertIn("-C", calls[1])
+            self.assertEqual(temp_files, [])
+
+    def test_json_report_records_local_goal_source(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "goal.json"
+
+            output, stderr, calls, temp_files = self.run_show_goal(
+                ["--json-report", str(report_path), "Studio-F", "--local"]
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(output, "# local goal\n")
+            self.assertEqual(stderr, "")
+            self.assertEqual("local", report["printed_source"])
+            self.assertFalse(report["fetch_attempted"])
+            self.assertTrue(report["local_only"])
+            self.assertFalse(report["branch_local_differs"])
+            self.assertEqual(calls, ["rev-parse --show-toplevel"])
+            self.assertEqual(temp_files, [])
+
+    def test_json_report_requires_path(self):
+        result = subprocess.run(
+            [str(SCRIPT), "Studio-F", "--json-report"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--json-report requires a path", result.stderr)
+        self.assertEqual("", result.stdout)
 
 
 if __name__ == "__main__":
