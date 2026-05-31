@@ -126,7 +126,17 @@ function validateRunnerEnvironmentConsistency(environments) {
   const warnings = [];
   for (const { file, environment } of environments.slice(1)) {
     const current = runnerHardwareSignature(environment);
-    const mismatchedFields = Object.keys(baseline).filter((key) => baseline[key] !== current[key]);
+    const mismatchedFields = Object.keys(baseline).filter((key) => {
+      if (baseline[key] === current[key]) return false;
+      if (
+        key === "cpu_model"
+        && baseline.cloud_build_machine_type
+        && baseline.cloud_build_machine_type === current.cloud_build_machine_type
+      ) {
+        return false;
+      }
+      return true;
+    });
     if (mismatchedFields.length > 0) {
       warnings.push({
         file: path.basename(file),
