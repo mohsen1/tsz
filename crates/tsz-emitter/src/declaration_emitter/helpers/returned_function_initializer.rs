@@ -735,6 +735,7 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
         let return_text = direct_function_return
+            .or_else(|| self.function_body_nullish_guard_return_type_text(func, func_body))
             .or_else(|| self.function_body_parameter_return_type_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
