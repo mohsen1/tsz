@@ -943,3 +943,137 @@ let x: number | undefined;
         "arrow IIFE should not create a FlowStart node"
     );
 }
+
+/// Build a binder with a named re-export chain `entry -> mid -> leaf` whose
+/// `export_name` ultimately resolves to a single leaf symbol. The chain is
+/// constructed structurally (no source text) so the names of the modules and
+/// the export can be varied by the caller — the resolution rule must not depend
+/// on any specific spelling.
+fn build_named_reexport_chain(
+    leaf_module: &str,
+    mid_module: &str,
+    entry_module: &str,
+    export_name: &str,
+) -> (BinderState, SymbolId) {
+    let mut binder = BinderState::new();
+    let leaf_sym = binder
+        .symbols
+        .alloc(symbol_flags::CLASS, export_name.to_string());
+
+    let mut leaf_exports = SymbolTable::new();
+    leaf_exports.set(export_name.to_string(), leaf_sym);
+    Arc::make_mut(&mut binder.module_exports).insert(leaf_module.to_string(), leaf_exports);
+
+    // mid re-exports `export { export_name } from leaf`
+    Arc::make_mut(&mut binder.reexports)
+        .entry(mid_module.to_string())
+        .or_default()
+        .insert(export_name.to_string(), (leaf_module.to_string(), None));
+    // entry re-exports `export { export_name } from mid`
+    Arc::make_mut(&mut binder.reexports)
+        .entry(entry_module.to_string())
+        .or_default()
+        .insert(export_name.to_string(), (mid_module.to_string(), None));
+
+    (binder, leaf_sym)
+}
+
+#[test]
+fn type_only_reexport_resolution_is_cached_and_stable() {
+    let (binder, leaf_sym) = build_named_reexport_chain("./leaf", "./mid", "./entry", "Widget");
+
+    // Cold lookup walks the chain and resolves to the leaf symbol.
+    let first = binder.resolve_import_with_reexports_type_only("./entry", "Widget");
+    assert_eq!(first, Some((leaf_sym, false)));
+
+    // The result is now memoized for this (module, export) pair.
+    assert_eq!(
+        binder
+            .resolved_export_type_only_cache
+            .read()
+            .expect("cache lock")
+            .get(&("./entry".to_string(), "Widget".to_string()))
+            .copied(),
+        Some(Some((leaf_sym, false))),
+        "type-only resolution should be memoized per (module, export)"
+    );
+
+    // Warm lookup returns the identical result.
+    let second = binder.resolve_import_with_reexports_type_only("./entry", "Widget");
+    assert_eq!(second, first);
+}
+
+#[test]
+fn type_only_reexport_cache_is_name_agnostic() {
+    // Same structural chain, completely different spellings. The cached result
+    // must still be the single leaf symbol — proving the rule is structural, not
+    // keyed on any particular identifier.
+    let (binder, leaf_sym) =
+        build_named_reexport_chain("./pkg-z/lib", "./pkg-y/index", "./pkg-x/index", "Zeta");
+
+    let resolved = binder.resolve_import_with_reexports_type_only("./pkg-x/index", "Zeta");
+    assert_eq!(resolved, Some((leaf_sym, false)));
+    // Repeat lookup served from cache is identical.
+    assert_eq!(
+        binder.resolve_import_with_reexports_type_only("./pkg-x/index", "Zeta"),
+        resolved
+    );
+}
+
+#[test]
+fn type_only_reexport_cache_missing_export_is_cached_as_none() {
+    let (binder, _leaf) = build_named_reexport_chain("./leaf", "./mid", "./entry", "Widget");
+
+    // An export that does not exist anywhere in the chain resolves to None and
+    // the negative result is memoized (so the chain is not re-walked).
+    assert_eq!(
+        binder.resolve_import_with_reexports_type_only("./entry", "DoesNotExist"),
+        None
+    );
+    assert_eq!(
+        binder
+            .resolved_export_type_only_cache
+            .read()
+            .expect("cache lock")
+            .get(&("./entry".to_string(), "DoesNotExist".to_string()))
+            .copied(),
+        Some(None),
+        "negative type-only results must also be memoized"
+    );
+}
+
+#[test]
+fn clear_resolution_caches_drops_type_only_cache() {
+    let (mut binder, leaf_sym) = build_named_reexport_chain("./leaf", "./mid", "./entry", "Widget");
+
+    assert_eq!(
+        binder.resolve_import_with_reexports_type_only("./entry", "Widget"),
+        Some((leaf_sym, false))
+    );
+    assert!(
+        !binder
+            .resolved_export_type_only_cache
+            .read()
+            .expect("cache lock")
+            .is_empty(),
+        "cache should be populated after a lookup"
+    );
+
+    binder.clear_resolution_caches();
+
+    assert!(
+        binder
+            .resolved_export_type_only_cache
+            .read()
+            .expect("cache lock")
+            .is_empty(),
+        "clear_resolution_caches must drop the type-only re-export cache so a \
+         symbol-id remap cannot serve a stale resolution"
+    );
+
+    // Resolution still works after the cache is cleared.
+    assert_eq!(
+        binder.resolve_import_with_reexports_type_only("./entry", "Widget"),
+        Some((leaf_sym, false))
+    );
+}

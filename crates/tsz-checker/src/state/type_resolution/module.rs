@@ -2395,6 +2395,22 @@ impl<'a> CheckerState<'a> {
         // Fallback: ambient module declarations may not always be indexed in
         // `module_exports` maps (especially in reduced/single-binder contexts).
         // Probe module-like symbols by name and resolve through their own exports.
+        //
+        // This probe scans every binder for symbols whose name equals the module
+        // specifier, which is O(total symbols). It only ever finds `declare
+        // module "name"` ambient module symbols, which are keyed by the bare
+        // specifier string. When the specifier already resolves to a real source
+        // file, any `export =` it carries was reached through the
+        // `module_exports`/global-index paths above, and no symbol is named after
+        // a relative/resolved path, so the scan cannot contribute a hit. Skipping
+        // it for file-backed specifiers removes the dominant cost on large
+        // module-graph projects without changing which symbol resolves.
+        // Guarded by `TSZ_DISABLE_EXPORT_EQUALS_FAST_PATH` for parity checks.
+        if !reexports::export_equals_fast_path_disabled()
+            && self.ctx.resolve_import_target(module_specifier).is_some()
+        {
+            return None;
+        }
         let mut ambient_module_symbol_ids = rustc_hash::FxHashSet::default();
         for candidate in module_specifier_candidates(module_specifier) {
             if let Some(sym_id) = self.ctx.binder.file_locals.get(&candidate) {
@@ -2433,24 +2449,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
-    }
-
-    fn module_has_export_assignment_declaration(&self, module_specifier: &str) -> bool {
-        self.ctx
-            .resolve_import_target(module_specifier)
-            .and_then(|file_idx| {
-                self.ctx
-                    .all_arenas
-                    .as_ref()
-                    .and_then(|arenas| arenas.get(file_idx))
-            })
-            .is_some_and(|arena| {
-                (0..arena.len()).any(|i| {
-                    arena
-                        .get(NodeIndex(i as u32))
-                        .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
-                })
-            })
     }
 
     /// Emit TS2305 error when a module has no exported member with the given name.

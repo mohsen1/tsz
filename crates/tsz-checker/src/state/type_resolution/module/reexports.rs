@@ -1,5 +1,20 @@
 use crate::state::CheckerState;
 
+/// Kill-switch for the program-wide `export =` fast path in
+/// `resolve_named_export_via_export_equals_tracked`. When
+/// `TSZ_DISABLE_EXPORT_EQUALS_FAST_PATH` is set to a non-empty, non-`0` value,
+/// the resolver runs its full chain even when no module uses `export =`. Used
+/// to verify the fast path produces byte-identical diagnostics.
+pub(super) fn export_equals_fast_path_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_EXPORT_EQUALS_FAST_PATH")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerState<'a> {
     /// Follow re-export chains across binder boundaries to find an exported symbol.
     /// Returns `(SymbolId, file_idx)` where `file_idx` is the actual file that owns
