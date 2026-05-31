@@ -684,6 +684,9 @@ mod generic_tests;
 #[path = "tests/generic_unknown_type_arg_tests.rs"]
 mod generic_unknown_type_arg_tests;
 #[cfg(test)]
+#[path = "tests/generics_relation_routing_arch_tests.rs"]
+mod generics_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]

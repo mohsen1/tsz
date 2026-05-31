@@ -574,10 +574,10 @@ impl<'a> CheckerState<'a> {
             let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
             let ready_type_arg_constraint =
                 self.evaluate_type_for_assignability(ready_type_arg_constraint);
-            if self.diagnostic_relation_boolean_guard_no_weak_checks(
-                ready_type_arg_constraint,
-                ready_constraint,
-            ) {
+            if self
+                .no_weak_relation_outcome(ready_type_arg_constraint, ready_constraint)
+                .related
+            {
                 return;
             }
         }
