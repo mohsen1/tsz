@@ -987,6 +987,9 @@ mod private_optional_field_undefined_tests;
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
+#[path = "tests/promise_this_relation_routing_arch_tests.rs"]
+mod promise_this_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]

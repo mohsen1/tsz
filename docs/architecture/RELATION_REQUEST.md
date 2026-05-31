@@ -63,6 +63,8 @@ including polymorphic-`this` object-literal property probes, and the return
 request when drilling into callback return expressions or return-source
 conditional branches. These callers reuse `RelationOutcome` to avoid
 separately recomputing weak-union and property-classification analysis.
+Awaited thenable validation also uses the call-argument request when probing
+whether the awaited receiver satisfies a `then` signature's `this` type.
 
 `assignability/assignment_checker/destructuring.rs` builds
 `RelationRequest::destructuring` for rest/default/property destructuring
