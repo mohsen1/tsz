@@ -132,6 +132,69 @@ pub(crate) fn distinct_type_parameters_share_declared_name(
     source_info.name == target_info.name
 }
 
+pub(crate) fn distinct_types_share_nominal_diagnostic_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    binder: &tsz_binder::BinderState,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let Some(source_name) = nominal_diagnostic_name(db, binder, def_store, source) else {
+        return false;
+    };
+    nominal_diagnostic_name(db, binder, def_store, target).is_some_and(|target_name| {
+        target_name == source_name && !is_primitive_diagnostic_name(&target_name)
+    })
+}
+
+fn nominal_diagnostic_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    binder: &tsz_binder::BinderState,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<String> {
+    if let Some(app) = type_application(db, type_id)
+        && let Some(name) = nominal_diagnostic_name(db, binder, def_store, app.base)
+    {
+        return Some(name);
+    }
+    if let Some(alias) = db.get_display_alias(type_id)
+        && alias != type_id
+        && let Some(name) = nominal_diagnostic_name(db, binder, def_store, alias)
+    {
+        return Some(name);
+    }
+    if let Some(def_id) = lazy_def_id(db, type_id)
+        && let Some(def) = def_store.get(def_id)
+    {
+        return Some(db.resolve_atom_ref(def.name).to_string());
+    }
+    let shape = object_shape_for_type(db, type_id)?;
+    let symbol = binder.get_symbol(shape.symbol?)?;
+    (!symbol.escaped_name.is_empty()).then(|| symbol.escaped_name.clone())
+}
+
+fn is_primitive_diagnostic_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "unknown"
+            | "never"
+            | "string"
+            | "number"
+            | "boolean"
+            | "symbol"
+            | "bigint"
+            | "void"
+            | "undefined"
+            | "null"
+            | "object"
+    )
+}
+
 pub(crate) fn number_literal_bits(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,

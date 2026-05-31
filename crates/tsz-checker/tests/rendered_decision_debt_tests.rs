@@ -332,3 +332,33 @@ fn index_access_type_parameter_ts2719_uses_declared_param_names() {
         "indexed-access TS2719 elaboration should compare type-parameter identity and declared names"
     );
 }
+
+#[test]
+fn missing_property_nominal_requalification_avoids_bare_rendered_name_comparison() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/render_failure_missing_property.rs"
+    ))
+    .expect("missing-property renderer source should be readable");
+    let forbidden = [
+        "let fmt_src_bare = self.format_type_diagnostic(widened_source);",
+        "let fmt_tgt_bare = self.format_type_diagnostic(target);",
+        "fmt_src_bare == fmt_tgt_bare",
+    ];
+    let violations = forbidden
+        .iter()
+        .filter(|pattern| source.contains(**pattern))
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert!(
+        violations.is_empty(),
+        "missing-property requalification must use nominal TypeId facts, not \
+         re-rendered bare type-name comparison. Violations:\n  {}",
+        violations.join("\n  ")
+    );
+    assert!(
+        source.contains("distinct_types_share_nominal_diagnostic_name("),
+        "missing-property requalification should route through the diagnostic query boundary"
+    );
+}
