@@ -111,6 +111,7 @@ const bool = (value) => value === "true";
 const report = {
   ok: true,
   status: "pass",
+  agent_goal_status: "pass",
   generated_by: "scripts/agents/show-goal.sh",
   agent: process.env.AGENT,
   repo: process.env.ROOT,
