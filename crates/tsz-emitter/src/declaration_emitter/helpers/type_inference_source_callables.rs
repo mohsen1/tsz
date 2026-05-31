@@ -470,6 +470,7 @@ impl<'a> DeclarationEmitter<'a> {
                         if self.source_return_is_bare_type_parameter(source_arena, func)
                             && !self
                                 .call_expression_uses_partial_required_mapped_inference(expr_idx)
+                            && !self.call_expression_uses_no_infer_return_block(expr_idx)
                             && let Some(canonical_text) =
                                 self.fully_resolved_call_canonical_type_text(expr_idx)
                         {

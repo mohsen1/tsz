@@ -768,12 +768,27 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            let blocked_return_type_params = self
+                .no_infer_blocked_return_type_params_from_function_type(
+                    source_arena,
+                    param.type_annotation,
+                    type_param_names,
+                );
             Self::infer_function_type_substitutions(
                 &source_function_type,
                 &argument_function_type,
                 type_param_names,
+                &blocked_return_type_params,
                 &mut substitutions,
             );
+            for param_name in blocked_return_type_params {
+                if !substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_name)
+                {
+                    substitutions.push((param_name, "unknown".to_string()));
+                }
+            }
         }
 
         for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {

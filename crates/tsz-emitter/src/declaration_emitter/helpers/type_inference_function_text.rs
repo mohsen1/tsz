@@ -28,6 +28,7 @@ impl<'a> DeclarationEmitter<'a> {
         source: &FunctionTypeTextParts,
         argument: &FunctionTypeTextParts,
         type_param_names: &[String],
+        blocked_return_type_params: &[String],
         substitutions: &mut Vec<(String, String)>,
     ) {
         for (source_param_index, source_param) in source.parameters.iter().enumerate() {
@@ -119,6 +120,9 @@ impl<'a> DeclarationEmitter<'a> {
         if type_param_names
             .iter()
             .any(|name| name.as_str() == source.return_type)
+            && !blocked_return_type_params
+                .iter()
+                .any(|name| name.as_str() == source.return_type)
             && !substitutions
                 .iter()
                 .any(|(name, _)| name.as_str() == source.return_type)
@@ -452,6 +456,7 @@ mod tests {
             &source,
             &argument,
             &["A".to_string(), "B".to_string()],
+            &[],
             &mut substitutions,
         );
 
@@ -462,5 +467,26 @@ mod tests {
                 ("B".to_string(), "boolean".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn blocked_return_type_param_does_not_infer_from_callback_return() {
+        let source =
+            DeclarationEmitter::parse_function_type_text("(a: NoInfer<Shape>, b: number) => Shape")
+                .unwrap();
+        let argument =
+            DeclarationEmitter::parse_function_type_text("(a: unknown, b: number) => number")
+                .unwrap();
+        let mut substitutions = Vec::new();
+
+        DeclarationEmitter::infer_function_type_substitutions(
+            &source,
+            &argument,
+            &["Shape".to_string()],
+            &["Shape".to_string()],
+            &mut substitutions,
+        );
+
+        assert!(substitutions.is_empty());
     }
 }
