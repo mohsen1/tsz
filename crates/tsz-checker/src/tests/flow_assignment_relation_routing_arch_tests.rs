@@ -43,6 +43,15 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         "flow assignability truth should be exposed through an outcome-shaped query boundary"
     );
     assert!(
+        compact_boundary.contains("fnflow_relation_outcome(")
+            && compact_boundary
+                .contains("flow_relation_outcome(db,env,source,member,true).related")
+            && compact_boundary.contains(
+                "flow_relation_outcome(db,None,assigned_resolved,resolved_initial,false).related"
+            ),
+        "flow assignment reduction should consume outcome-shaped relation truth"
+    );
+    assert!(
         compact_core.matches("flow_assignability_outcome(").count() >= 2
             && compact_core.contains("source,target,false")
             && compact_core.contains("source,target,true"),
