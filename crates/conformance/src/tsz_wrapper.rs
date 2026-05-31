@@ -3,7 +3,6 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use crate::compiler_options::canonical_option_name;
-use crate::parity::fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -811,7 +810,7 @@ fn parse_diagnostic_fingerprints_from_text(
                 .name("col")
                 .and_then(|m| m.as_str().parse::<u32>().ok())
                 .unwrap_or(0);
-            if let Some(code) = code {
+            if code.is_some() {
                 let file = normalize_diagnostic_path(
                     caps.name("file").map(|m| m.as_str()).unwrap_or_default(),
                     project_root,
@@ -823,16 +822,7 @@ fn parse_diagnostic_fingerprints_from_text(
                 else {
                     continue;
                 };
-                let (code, line_no, col_no, message) =
-                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
-                        .map(|rule| rule.action)
-                    {
-                        Some(ParityAction::Drop) => continue,
-                        Some(ParityAction::Remap(r)) => {
-                            (r.code, r.line, r.column, r.message.to_string())
-                        }
-                        None => (retained_code, line_no, col_no, message),
-                    };
+                let (code, line_no, col_no, message) = (retained_code, line_no, col_no, message);
                 fingerprints.push(DiagnosticFingerprint::new(
                     code, file, line_no, col_no, &message,
                 ));
@@ -841,9 +831,10 @@ fn parse_diagnostic_fingerprints_from_text(
         }
 
         if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
-            if let Some(code) = caps
+            if caps
                 .name("code")
                 .and_then(|m| m.as_str().parse::<u32>().ok())
+                .is_some()
             {
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
@@ -852,16 +843,7 @@ fn parse_diagnostic_fingerprints_from_text(
                 else {
                     continue;
                 };
-                let (code, line_no, col_no, message) =
-                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
-                        .map(|rule| rule.action)
-                    {
-                        Some(ParityAction::Drop) => continue,
-                        Some(ParityAction::Remap(r)) => {
-                            (r.code, r.line, r.column, r.message.to_string())
-                        }
-                        None => (retained_code, 0, 0, message),
-                    };
+                let (code, line_no, col_no, message) = (retained_code, 0, 0, message);
                 fingerprints.push(DiagnosticFingerprint::new(
                     code,
                     String::new(),
@@ -1543,12 +1525,6 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
         .or_else(|| caps.name("code2"))
         .or_else(|| caps.name("code3"))
         .and_then(|m| m.as_str().parse::<u32>().ok())?;
-    if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
-        return match rule.action {
-            ParityAction::Drop => None,
-            ParityAction::Remap(r) => Some(r.code),
-        };
-    }
     Some(code)
 }
 
