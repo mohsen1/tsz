@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
             return fallback.to_string();
         };
         let class_target = self.format_type(intrinsic_class_attrs);
-        if class_target.is_empty() || props_display.is_empty() {
+        if props_display.is_empty() {
             return fallback.to_string();
         }
 

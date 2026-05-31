@@ -224,3 +224,16 @@ fn jsx_children_display_append_is_property_resolution_driven() {
         "JSX children display append should be driven by property resolution, not formatted text emptiness"
     );
 }
+
+#[test]
+fn jsx_union_props_class_target_display_is_not_a_decision_gate() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/diagnostics.rs"
+    ))
+    .expect("JSX diagnostics source should be readable");
+    assert!(
+        !source.contains("class_target.is_empty()"),
+        "JSX union props target display should rely on resolved IntrinsicClassAttributes, not formatted text emptiness"
+    );
+}
