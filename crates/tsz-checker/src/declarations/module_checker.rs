@@ -1050,10 +1050,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Mark local re-export specifiers for emit elision when the local
-            // binding has no runtime form. The alias branch follows the import
-            // through the source module (covers const-enum and `export =`
-            // shapes that the plain specifier-side query misses).
+            // Rule: when `export { X }` re-exports a local binding whose
+            // source has no runtime form — type-only import, type-only
+            // declaration, or alias to a type-only / const-enum / `export =`
+            // module export — tsc elides the specifier from JS emit; mark
+            // the specifier so the emitter matches. The alias branch follows
+            // the import through the source module, which is what catches
+            // the const-enum / `export =` shapes the plain specifier-side
+            // query misses.
             if is_local && !enclosing_export_is_type_only && !specifier.is_type_only {
                 use tsz_binder::symbol_flags;
                 let sym = self
