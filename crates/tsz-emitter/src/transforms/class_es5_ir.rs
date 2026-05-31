@@ -216,6 +216,14 @@ pub struct ES5ClassTransformer<'a> {
     /// identifier references in class property initializers use the renamed form
     /// when an outer `let`/`const` was renamed during ES5 lowering.
     outer_rename_map: FxHashMap<String, String>,
+    /// Super name of an enclosing *instance* member when this class is lowered
+    /// inside that member's body. A computed property name in such a nested
+    /// class is evaluated inside the enclosing instance method, so a `super`
+    /// reference in the name binds to the outer class's prototype home and must
+    /// lower to `<super>.prototype.m.call(this)` rather than the default
+    /// static-context `<super>.m`. `None` for a top-level/static definition
+    /// site, where computed names keep static-like super access.
+    inherited_computed_name_super: Option<String>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -260,6 +268,7 @@ impl<'a> ES5ClassTransformer<'a> {
             extra_hoisted_temps: RefCell::new(Vec::new()),
             emit_computed_props_outside: Cell::new(false),
             outer_rename_map: FxHashMap::default(),
+            inherited_computed_name_super: None,
         }
     }
 
@@ -267,6 +276,14 @@ impl<'a> ES5ClassTransformer<'a> {
     /// variables renamed during ES5 lowering in enclosing scopes).
     pub fn set_outer_rename_map(&mut self, map: FxHashMap<String, String>) {
         self.outer_rename_map = map;
+    }
+
+    /// Record the super name of an enclosing *instance* member when this nested
+    /// class is lowered inside that member's body. Enables prototype-qualified
+    /// `super` lowering for `super` references that appear in this class's
+    /// computed property names.
+    pub fn set_inherited_computed_name_super(&mut self, super_name: String) {
+        self.inherited_computed_name_super = Some(super_name);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
@@ -1019,6 +1036,26 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Convert an AST expression to IR in static context
     fn convert_expression_static(&self, idx: NodeIndex) -> IRNode {
         let converter = self.make_converter().with_static(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
+    /// Convert a computed-property-name expression that is evaluated inside an
+    /// enclosing *instance* member body. A `super` reference here binds to the
+    /// outer class's prototype home, so super access lowers in instance context
+    /// (`<super>.prototype.m.call(this)`) using the inherited outer super name,
+    /// instead of the default class-definition static context.
+    fn convert_computed_name_expression_instance_super(
+        &self,
+        idx: NodeIndex,
+        outer_super_name: &str,
+    ) -> IRNode {
+        let converter = self
+            .make_converter()
+            .with_super(true)
+            .with_super_name(outer_super_name.to_string())
+            .with_static(false);
         let result = converter.convert_expression(idx);
         self.collect_from_converter(&converter);
         result

@@ -553,6 +553,14 @@ pub enum IRNode {
     /// should be evaluated in a captured constructor receiver context.
     ASTRefWithCapturedClassHeritageThis(NodeIndex),
 
+    /// Reference to an original class expression whose computed property names
+    /// should inherit an enclosing instance `super` home while the nested
+    /// printer applies normal ES5 class-expression lowering.
+    ASTRefWithInheritedComputedNameSuper {
+        node: NodeIndex,
+        super_name: Cow<'static, str>,
+    },
+
     /// Reference to an original AST node with constrained source range.
     /// Used when the parser's node.end extends into a parent block's closing brace.
     ASTRefRange(NodeIndex, u32),
@@ -1228,6 +1236,7 @@ impl IRNode {
             | Self::ASTRef(_)
             | Self::ASTRefWithGeneratorThis { .. }
             | Self::ASTRefWithCapturedClassHeritageThis(_)
+            | Self::ASTRefWithInheritedComputedNameSuper { .. }
             | Self::ASTRefRange(..)
             | Self::UseStrict
             | Self::EsesModuleMarker => false,
