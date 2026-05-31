@@ -19,6 +19,7 @@ impl<'a> IRPrinter<'a> {
             computed_prop_temp_decls,
             computed_prop_temp_inits,
             weakmap_inits,
+            post_weakmap_statements,
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,
@@ -87,6 +88,11 @@ impl<'a> IRPrinter<'a> {
         if !weakmap_inits.is_empty() {
             self.write_line();
             self.write(&weakmap_inits.join(", "));
+            self.write(";");
+        }
+        for statement in post_weakmap_statements {
+            self.write_line();
+            self.write(statement);
             self.write(";");
         }
 

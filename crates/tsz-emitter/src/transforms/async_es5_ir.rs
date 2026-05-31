@@ -3586,6 +3586,7 @@ impl<'a> AsyncES5Transformer<'a> {
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,
+            ..
         } = class_ir
         else {
             return false;
@@ -3602,7 +3603,6 @@ impl<'a> AsyncES5Transformer<'a> {
                 initializer: None,
             });
         }
-
         current_statements.push(IRNode::ES5ClassAssignment {
             name,
             base_class,

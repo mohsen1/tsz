@@ -375,6 +375,7 @@ impl<'a> ClassES5Emitter<'a> {
             computed_prop_temp_decls,
             computed_prop_temp_inits,
             weakmap_inits: _,
+            post_weakmap_statements: _,
             leading_comment: _,
             deferred_static_blocks: _,
             deferred_block_class_alias: _,
@@ -448,6 +449,7 @@ impl<'a> ClassES5Emitter<'a> {
             computed_prop_temp_decls,
             computed_prop_temp_inits,
             weakmap_inits,
+            post_weakmap_statements,
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,
@@ -487,6 +489,11 @@ impl<'a> ClassES5Emitter<'a> {
             output.push('\n');
         }
         output.push_str(&assignment);
+        for statement in post_weakmap_statements {
+            output.push('\n');
+            output.push_str(&statement);
+            output.push(';');
+        }
         output
     }
 
@@ -565,6 +572,7 @@ impl<'a> ClassES5Emitter<'a> {
             computed_prop_temp_decls,
             computed_prop_temp_inits,
             weakmap_inits,
+            post_weakmap_statements,
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,
@@ -608,6 +616,11 @@ impl<'a> ClassES5Emitter<'a> {
             output.push('\n');
         }
         output.push_str(&assignment);
+        for statement in post_weakmap_statements {
+            output.push('\n');
+            output.push_str(&statement);
+            output.push(';');
+        }
 
         // Render each deferred static block as a separate string.
         let mut static_strings = Vec::new();
@@ -646,6 +659,7 @@ impl<'a> ClassES5Emitter<'a> {
             computed_prop_temp_decls,
             computed_prop_temp_inits,
             weakmap_inits,
+            post_weakmap_statements,
             leading_comment,
             deferred_static_blocks,
             deferred_block_class_alias,
@@ -654,7 +668,7 @@ impl<'a> ClassES5Emitter<'a> {
             return None;
         };
 
-        if deferred_static_blocks.is_empty() {
+        if deferred_static_blocks.is_empty() || !post_weakmap_statements.is_empty() {
             return None;
         }
 
