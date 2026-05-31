@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 ARCH_DIR = Path(__file__).resolve().parent
 if str(ARCH_DIR) not in sys.path:
@@ -39,13 +41,50 @@ def write_json_report(report_path: Path, payload: dict) -> None:
     temp_path.replace(report_path)
 
 
-def build_json_payload(failures: list[tuple[str, list[str]]], total_hits: int) -> dict:
+def _run_git(root: Path, args: list[str]) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def build_git_context(root: Path = ROOT, run_git=_run_git) -> dict:
+    status = run_git(root, ["status", "--porcelain"])
+    branch = run_git(root, ["branch", "--show-current"])
+    return {
+        "repo_root": root.as_posix(),
+        "head": run_git(root, ["rev-parse", "HEAD"]),
+        "branch": branch or None,
+        "upstream": run_git(
+            root,
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ),
+        "dirty": None if status is None else bool(status),
+        "dirty_path_count": None if status is None else len(status.splitlines()),
+    }
+
+
+def build_json_payload(
+    failures: list[tuple[str, list[str]]],
+    total_hits: int,
+    git_context: Optional[dict] = None,
+) -> dict:
     ok = not failures
     failed_hit_count = sum(len(hits) for _, hits in failures)
     return {
         "ok": ok,
         "status": "failed" if failures else "passed",
         "arch_guard_status": "failed" if failures else "passed",
+        "git_context": git_context if git_context is not None else build_git_context(),
         "total_hits": total_hits,
         "failure_count": len(failures),
         "failed_hit_count": failed_hit_count,
