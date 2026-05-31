@@ -513,3 +513,26 @@ class Store<X, Y> {
 "#;
     assert!(!has_error(source, 2394));
 }
+
+#[test]
+fn overload_assignment_missing_literal_overload_still_ts2322() {
+    let source = r#"
+function f(x: "foo"): number;
+function f(x: string): number;
+function f(x: string): number {
+    return 0;
+}
+
+function g(x: "foo"): number;
+function g(x: string): number {
+    return 0;
+}
+
+let a = f;
+let b = g;
+
+a = b;
+b = a;
+"#;
+    assert!(has_error(source, 2322));
+}

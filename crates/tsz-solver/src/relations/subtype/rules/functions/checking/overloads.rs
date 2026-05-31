@@ -69,9 +69,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_return: TypeId,
         target_return: TypeId,
     ) -> bool {
-        if source_return == target_return {
-            return true;
-        }
         let source_bases = self.application_bases_including_root(source_return);
         !source_bases.is_empty()
             && self
