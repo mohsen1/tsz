@@ -228,10 +228,11 @@ pub struct ParserState {
     /// recovered as ordinary statements.
     pub(crate) abort_object_literal_recovery_once: bool,
     /// An object literal aborted because a template literal appeared where a
-    /// property name was expected (e.g. `{ \`b\`: 321 }`). The object closes at
-    /// the template, the template becomes a tagged-template tail, and the
-    /// variable-declaration-list recovery should treat a following `:` as a
-    /// missing comma between declarators rather than a type annotation.
+    /// property name was expected (a template literal used as a key). The
+    /// object closes at the template, the template becomes a tagged-template
+    /// tail, and the variable-declaration-list recovery should treat a
+    /// following `:` as a missing comma between declarators rather than a type
+    /// annotation.
     pub(crate) recovered_template_literal_property_in_object: bool,
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
