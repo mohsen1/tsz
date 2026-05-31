@@ -13,20 +13,41 @@ class ArchGuardJsonReportTests(unittest.TestCase):
     def test_json_payload_includes_boolean_ok_status(self):
         self.assertEqual(
             self.arch_guard.build_json_payload([], 0),
-            {"ok": True, "status": "passed", "total_hits": 0, "failures": []},
+            {
+                "ok": True,
+                "status": "passed",
+                "total_hits": 0,
+                "failure_count": 0,
+                "failed_hit_count": 0,
+                "failures": [],
+            },
         )
         self.assertEqual(
-            self.arch_guard.build_json_payload([("Rule", ["src/lib.rs:1"])], 1),
+            self.arch_guard.build_json_payload(
+                [("Rule", ["src/lib.rs:1", "src/lib.rs:2"])],
+                2,
+            ),
             {
                 "ok": False,
                 "status": "failed",
-                "total_hits": 1,
-                "failures": [{"name": "Rule", "hits": ["src/lib.rs:1"]}],
+                "total_hits": 2,
+                "failure_count": 1,
+                "failed_hit_count": 2,
+                "failures": [
+                    {"name": "Rule", "hits": ["src/lib.rs:1", "src/lib.rs:2"]}
+                ],
             },
         )
 
     def test_write_json_report_is_atomic_and_stable(self):
-        payload = {"ok": True, "total_hits": 0, "status": "passed", "failures": []}
+        payload = {
+            "ok": True,
+            "total_hits": 0,
+            "status": "passed",
+            "failure_count": 0,
+            "failed_hit_count": 0,
+            "failures": [],
+        }
         with tempfile.TemporaryDirectory() as tmp:
             report_path = pathlib.Path(tmp) / "nested" / "arch_guard.json"
             self.arch_guard.write_json_report(report_path, payload)

@@ -41,10 +41,13 @@ def write_json_report(report_path: Path, payload: dict) -> None:
 
 def build_json_payload(failures: list[tuple[str, list[str]]], total_hits: int) -> dict:
     ok = not failures
+    failed_hit_count = sum(len(hits) for _, hits in failures)
     return {
         "ok": ok,
         "status": "failed" if failures else "passed",
         "total_hits": total_hits,
+        "failure_count": len(failures),
+        "failed_hit_count": failed_hit_count,
         "failures": [{"name": name, "hits": hits} for name, hits in failures],
     }
 
