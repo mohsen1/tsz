@@ -132,6 +132,91 @@ type T = [name?: string];
     );
 }
 
+/// The class of inputs covered by the tuple-recovery progress guard.
+///
+/// Every shape here has a token inside the brackets that `can_token_start_type`
+/// returns `true` for, but that neither `parse_type` nor `parse_optional(',')`
+/// consume — `||`, `&&`, `==`, etc. Before the fix, the recovery branch in
+/// `parse_tuple_type` would `continue` without advancing the cursor and the
+/// parser would loop forever. The matrix covers multiple operators and
+/// multiple tuple shapes (bare, comma-separated, named, rest, readonly,
+/// nested in a type argument, and inside a mapped-type value position) so a
+/// fix that only handles one spelling — or only the bare tuple form — fails.
+const HANGING_TUPLE_SHAPES: &[&str] = &[
+    "type T = [a||b];",
+    "type T = [a&&b];",
+    "type T = [a==b];",
+    "type T = [a===b];",
+    "type T = [a!=b];",
+    "type T = [a, b||c];",
+    "type T = [first: a||b];",
+    "type T = [...a||b];",
+    "type T = readonly [a||b];",
+    "type T = Array<[a||b]>;",
+    "type T<U> = { [K in keyof U]: [U[K], a||b] };",
+];
+
+#[test]
+fn tuple_recovery_does_not_hang_on_binary_operator_tokens() {
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    // Watchdog: the worker announces each shape over the channel *before*
+    // parsing it and drops the sender after the last shape completes. The
+    // main thread tracks the most recent in-flight shape and panics naming
+    // it on `recv_timeout`. `thread::scope` lets the worker borrow main-
+    // thread state without `'static`/`Send` bounds.
+    std::thread::scope(|scope| {
+        let (tx, rx) = mpsc::sync_channel::<&'static str>(0);
+        scope.spawn(move || {
+            for source in HANGING_TUPLE_SHAPES {
+                // `thread::scope` keeps the receiver alive for the entire
+                // scope, so this send cannot fail.
+                let _ = tx.send(source);
+                let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+                assert!(
+                    !parser.get_diagnostics().is_empty(),
+                    "expected at least one parser diagnostic for {source:?}, got none",
+                );
+            }
+        });
+        let mut in_flight: &'static str = "<no shape announced>";
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(next) => in_flight = next,
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!("parser hung on {in_flight:?} (exceeded 5s)")
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn tuple_with_double_bar_token_reports_comma_expected_without_cascade() {
+    // Specific shape used by the original repro: a binary operator inside a
+    // tuple element should surface as a single `',' expected.` diagnostic at
+    // the operator (matching tsc), not an infinite loop or a downstream
+    // bracket cascade.
+    let source = "type T = [a||b];";
+    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    let op_pos = source.find("||").expect("operator present") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.message == "',' expected."
+                && d.start == op_pos),
+        "expected TS1005 `',' expected.` at the operator, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.message != "']' expected."
+            && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected no `]`/TS1128 cascade, got {diagnostics:?}",
+    );
+}
+
 #[test]
 fn test_mixed_tuple_elements() {
     // Mix of optional, named, and rest elements should work

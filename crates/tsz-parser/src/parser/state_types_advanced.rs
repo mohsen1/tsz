@@ -362,6 +362,7 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            let pos_before = self.token_pos();
             let element = self.parse_tuple_element_type();
             elements.push(element);
 
@@ -371,6 +372,13 @@ impl ParserState {
                         "',' expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                     );
+                    // Each loop iteration must advance the scanner; without
+                    // this, tokens like `||`/`&&`/`==` that satisfy
+                    // `can_token_start_type` but stall both `parse_type`
+                    // and `parse_optional(',')` would spin forever.
+                    if self.token_pos() == pos_before {
+                        self.next_token();
+                    }
                     continue;
                 }
                 break;
