@@ -53,6 +53,25 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
+    fn symbol_has_builtin_lib_declaration_provenance(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        delegate_arena: &NodeArena,
+    ) -> bool {
+        !symbol.declarations.is_empty()
+            && symbol.declarations.iter().all(|&decl_idx| {
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    return !arenas.is_empty()
+                        && arenas
+                            .iter()
+                            .all(|arena| is_builtin_lib_declaration_arena(arena.as_ref()));
+                }
+
+                is_builtin_lib_declaration_arena(delegate_arena)
+            })
+    }
+
     pub(super) fn direct_builtin_lib_interface_symbol_type(
         &mut self,
         sym_id: SymbolId,
@@ -60,15 +79,20 @@ impl<'a> CheckerState<'a> {
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let delegate_arena = delegate_arena?;
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
-            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
-            || !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            || !is_builtin_lib_declaration_arena(delegate_arena)
         {
             return None;
         }
 
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && !self.symbol_has_builtin_lib_declaration_provenance(sym_id, &symbol, delegate_arena)
+        {
+            return None;
+        }
         if symbol.flags & symbol_flags::INTERFACE == 0
             || symbol.flags
                 & (symbol_flags::VALUE
@@ -107,15 +131,20 @@ impl<'a> CheckerState<'a> {
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let delegate_arena = delegate_arena?;
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
-            || !delegate_arena.is_some_and(is_dom_builtin_lib_declaration_arena)
-            || !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            || !is_dom_builtin_lib_declaration_arena(delegate_arena)
         {
             return None;
         }
 
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && !self.symbol_has_builtin_lib_declaration_provenance(sym_id, &symbol, delegate_arena)
+        {
+            return None;
+        }
         let has_value_interface =
             symbol.flags & symbol_flags::INTERFACE != 0 && symbol.flags & symbol_flags::VALUE != 0;
         if !has_value_interface
