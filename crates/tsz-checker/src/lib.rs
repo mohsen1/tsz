@@ -972,6 +972,9 @@ mod ref_type_params_cache_tests;
 #[path = "tests/relation_flags_boundary_contract_tests.rs"]
 mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/relation_routing_residual_arch_tests.rs"]
+mod relation_routing_residual_arch_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
