@@ -6,6 +6,25 @@ use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy, Default)]
+struct NullishExclusions {
+    excludes_null: bool,
+    excludes_undefined: bool,
+}
+
+impl NullishExclusions {
+    const fn any(self) -> bool {
+        self.excludes_null || self.excludes_undefined
+    }
+
+    const fn union(self, other: Self) -> Self {
+        Self {
+            excludes_null: self.excludes_null || other.excludes_null,
+            excludes_undefined: self.excludes_undefined || other.excludes_undefined,
+        }
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn array_element_type_text(
         type_text: &str,
@@ -162,6 +181,240 @@ impl<'a> DeclarationEmitter<'a> {
         let param_name = self.get_identifier_text(param.name)?;
         let param_type_text = self.emit_type_node_text(param.type_annotation)?;
         Some((param_name, param_type_text))
+    }
+
+    pub(in crate::declaration_emitter) fn function_body_nullish_guard_return_type_text(
+        &self,
+        func: &FunctionData,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            let param_name = self.get_identifier_text(param.name)?;
+            let param_type_text = self.function_parameter_type_text(func, param.name)?;
+            if !Self::type_text_is_simple_reference(&param_type_text) {
+                continue;
+            }
+
+            let exclusions = self
+                .nullish_exclusions_from_guarded_parameter_return(body_idx, &param_name)
+                .or_else(|| {
+                    self.nullish_exclusions_from_guarded_call_return(body_idx, &param_name)
+                })?;
+            if exclusions.any() {
+                return Self::nullish_guarded_return_type_text(&param_type_text, exclusions);
+            }
+        }
+        None
+    }
+
+    fn nullish_exclusions_from_guarded_parameter_return(
+        &self,
+        body_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<NullishExclusions> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let (return_stmt, guard_stmts) = block.statements.nodes.split_last()?;
+        if guard_stmts.is_empty() {
+            return None;
+        }
+        let return_node = self.arena.get(*return_stmt)?;
+        if return_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+        let ret = self.arena.get_return_statement(return_node)?;
+        let return_expr = self.skip_parenthesized_expression(ret.expression)?;
+        if self.get_identifier_text(return_expr).as_deref() != Some(param_name) {
+            return None;
+        }
+
+        let mut exclusions = NullishExclusions::default();
+        for guard_stmt in guard_stmts.iter().copied() {
+            exclusions =
+                exclusions.union(self.nullish_throw_guard_exclusions(guard_stmt, param_name)?);
+        }
+        exclusions.any().then_some(exclusions)
+    }
+
+    fn nullish_exclusions_from_guarded_call_return(
+        &self,
+        body_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<NullishExclusions> {
+        let return_expr = self.function_body_single_return_expression(body_idx)?;
+        let exclusions =
+            self.nullish_exclusions_from_guarded_call_expression(return_expr, param_name, 0)?;
+        exclusions.any().then_some(exclusions)
+    }
+
+    fn nullish_exclusions_from_guarded_call_expression(
+        &self,
+        expr_idx: NodeIndex,
+        param_name: &str,
+        depth: usize,
+    ) -> Option<NullishExclusions> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        if self.get_identifier_text(expr_idx).as_deref() == Some(param_name) {
+            return Some(NullishExclusions::default());
+        }
+
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let [arg_idx] = call.arguments.as_ref()?.nodes.as_slice() else {
+            return None;
+        };
+        let callee_name = self.get_identifier_text(call.expression)?;
+        let callee_func = self.local_function_declaration_by_name(&callee_name)?;
+        let callee_param_idx = callee_func.parameters.nodes.first().copied()?;
+        let callee_param_node = self.arena.get(callee_param_idx)?;
+        let callee_param = self.arena.get_parameter(callee_param_node)?;
+        let callee_param_name = self.get_identifier_text(callee_param.name)?;
+        let callee_exclusions = self.nullish_exclusions_from_guarded_parameter_return(
+            callee_func.body,
+            &callee_param_name,
+        )?;
+        let arg_exclusions =
+            self.nullish_exclusions_from_guarded_call_expression(*arg_idx, param_name, depth + 1)?;
+        Some(arg_exclusions.union(callee_exclusions))
+    }
+
+    fn nullish_throw_guard_exclusions(
+        &self,
+        stmt_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<NullishExclusions> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::IF_STATEMENT {
+            return None;
+        }
+        let if_data = self.arena.get_if_statement(stmt_node)?;
+        if if_data.else_statement.is_some() || !self.statement_always_throws(if_data.then_statement)
+        {
+            return None;
+        }
+        self.nullish_equality_exclusions(if_data.expression, param_name)
+    }
+
+    fn statement_always_throws(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::THROW_STATEMENT {
+            return true;
+        }
+        let Some(block) = self.arena.get_block(stmt_node) else {
+            return false;
+        };
+        let [only_stmt] = block.statements.nodes.as_slice() else {
+            return false;
+        };
+        self.arena
+            .get(*only_stmt)
+            .is_some_and(|node| node.kind == syntax_kind_ext::THROW_STATEMENT)
+    }
+
+    fn nullish_equality_exclusions(
+        &self,
+        expr_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<NullishExclusions> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        let nullish = self
+            .nullish_equality_pair(binary.left, binary.right, param_name)
+            .or_else(|| self.nullish_equality_pair(binary.right, binary.left, param_name))?;
+        match (binary.operator_token, nullish) {
+            (op, "null") if op == SyntaxKind::EqualsEqualsEqualsToken as u16 => {
+                Some(NullishExclusions {
+                    excludes_null: true,
+                    excludes_undefined: false,
+                })
+            }
+            (op, "undefined") if op == SyntaxKind::EqualsEqualsEqualsToken as u16 => {
+                Some(NullishExclusions {
+                    excludes_null: false,
+                    excludes_undefined: true,
+                })
+            }
+            (op, "null" | "undefined") if op == SyntaxKind::EqualsEqualsToken as u16 => {
+                Some(NullishExclusions {
+                    excludes_null: true,
+                    excludes_undefined: true,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn nullish_equality_pair(
+        &self,
+        param_idx: NodeIndex,
+        nullish_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<&'static str> {
+        let param_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(param_idx);
+        if self.get_identifier_text(param_idx).as_deref() != Some(param_name) {
+            return None;
+        }
+        let nullish_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(nullish_idx);
+        if self.get_identifier_text(nullish_idx).as_deref() == Some("undefined") {
+            return Some("undefined");
+        }
+        let nullish_node = self.arena.get(nullish_idx)?;
+        match nullish_node.kind {
+            k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
+            _ => None,
+        }
+    }
+
+    fn nullish_guarded_return_type_text(
+        param_type_text: &str,
+        exclusions: NullishExclusions,
+    ) -> Option<String> {
+        let param_type_text = param_type_text.trim();
+        if param_type_text.is_empty() || !exclusions.any() {
+            return None;
+        }
+        let narrowed = match (exclusions.excludes_null, exclusions.excludes_undefined) {
+            (true, true) => "{}",
+            (true, false) => "({} | undefined)",
+            (false, true) => "({} | null)",
+            (false, false) => return None,
+        };
+        Some(format!("{param_type_text} & {narrowed}"))
+    }
+
+    fn type_text_is_simple_reference(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        !trimmed.is_empty()
+            && trimmed
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            && trimmed
+                .chars()
+                .next()
+                .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
     }
 
     fn source_type_predicate_type_text(

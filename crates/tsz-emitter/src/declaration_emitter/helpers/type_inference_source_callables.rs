@@ -689,6 +689,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(func.body)?;
         if body_node.kind == syntax_kind_ext::BLOCK {
+            if let Some(type_text) =
+                self.function_body_nullish_guard_return_type_text(func, func.body)
+            {
+                return Some(type_text);
+            }
             if let Some(return_expr) = self.single_return_expression(func.body)
                 && let Some(type_text) = self.as_const_assertion_type_text(return_expr)
             {

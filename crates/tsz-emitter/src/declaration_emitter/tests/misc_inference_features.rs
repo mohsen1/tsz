@@ -153,6 +153,74 @@ function f2(item: A | B | undefined) {
 }
 
 #[test]
+fn generic_return_parameter_after_nullish_throw_guard_keeps_flow_surface() {
+    let output = emit_dts(
+        r#"
+function ensureNotNull<Value>(value: Value) {
+    if (value === null) throw Error();
+    return value;
+}
+
+function ensureNotUndefined<Item>(item: Item) {
+    if (undefined === item) {
+        throw Error();
+    }
+    return item;
+}
+
+function ensurePresent<Thing>(thing: Thing) {
+    if (thing == null) throw Error();
+    return thing;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function ensureNotNull<Value>(value: Value): Value & ({} | undefined);"
+        ),
+        "Expected null guard to preserve the generic non-null return surface: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function ensureNotUndefined<Item>(item: Item): Item & ({} | null);"),
+        "Expected undefined guard to preserve the generic defined return surface: {output}"
+    );
+    assert!(
+        output.contains("declare function ensurePresent<Thing>(thing: Thing): Thing & {};"),
+        "Expected loose nullish guard to preserve the generic present return surface: {output}"
+    );
+}
+
+#[test]
+fn generic_return_parameter_after_nested_nullish_helpers_composes_flow_surface() {
+    let output = emit_dts(
+        r#"
+function ensureNotNull<Value>(value: Value) {
+    if (value === null) throw Error();
+    return value;
+}
+
+function ensureNotUndefined<Value>(value: Value) {
+    if (value === undefined) throw Error();
+    return value;
+}
+
+function ensureNotNullOrUndefined<Value>(value: Value) {
+    return ensureNotUndefined(ensureNotNull(value));
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function ensureNotNullOrUndefined<Value>(value: Value): Value & {};"
+        ),
+        "Expected nested nullish helpers to compose the public return surface: {output}"
+    );
+}
+
+#[test]
 fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
     let source = r#"
 let [hello, brave] = ["Hello", "Brave"];
