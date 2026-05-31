@@ -135,6 +135,66 @@ fn direct_source_file_function_declaration_lowers_local_alias_signature() {
 }
 
 #[test]
+fn direct_source_file_function_declaration_lowers_readonly_array_of_local_shape() {
+    let (arena, binder, types) = parse_bound_source(
+        r#"
+                interface DataPoint { value: number; }
+                interface SeriesSummary { mean: number; }
+                export function summarize(points: readonly DataPoint[]): SeriesSummary {
+                    return { mean: points.length };
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let state = CheckerState { ctx };
+    let summarize_sym = binder
+        .file_locals
+        .get("summarize")
+        .expect("function symbol");
+
+    let result = state
+        .direct_source_file_function_declaration_type(
+            summarize_sym,
+            binder.as_ref(),
+            arena.as_ref(),
+            true,
+        )
+        .expect("readonly array of a lowerable local shape should lower directly");
+    let shape = function_shape_for_type(&types, result)
+        .expect("direct source function lowering should produce a function type");
+
+    assert_eq!(shape.params.len(), 1);
+    assert_ne!(shape.params[0].type_id, TypeId::UNKNOWN);
+    assert_ne!(shape.params[0].type_id, TypeId::ERROR);
+    assert_ne!(shape.return_type, TypeId::UNKNOWN);
+    assert_ne!(shape.return_type, TypeId::ERROR);
+}
+
+#[test]
+fn direct_source_file_function_declaration_rejects_non_readonly_type_operator() {
+    let result = direct_function_type_for_source(
+        r#"
+                interface Payload { value: number; label: string; }
+                export function summarize(key: keyof Payload): string {
+                    return key;
+                }
+            "#,
+        "summarize",
+    );
+
+    assert!(
+        result.is_none(),
+        "keyof changes the annotated type and must fall back to normal lowering",
+    );
+}
+
+#[test]
 fn direct_source_file_function_declaration_rejects_inferred_signature_parts() {
     let (arena, binder, types) = parse_bound_source(
         r#"
