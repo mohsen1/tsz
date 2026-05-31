@@ -461,27 +461,11 @@ pub(crate) fn resolve_imports_subpath_candidates(
     Vec::new()
 }
 
-/// Specificity tuple for a package.json `exports` / `imports` subpath pattern,
-/// per Node.js `PACKAGE_IMPORTS_EXPORTS_RESOLVE` (and tsc's
-/// `findBestPatternMatch` / `getMatchedFileName`).
-///
-/// The score is `(prefix_len, suffix_len)`:
-///   * `prefix_len` — characters before `*` (or the whole pattern for
-///     exact / trailing-slash directory keys, with `suffix_len = 0`).
-///   * `suffix_len` — characters after `*`.
-///
-/// Tuples compare lexicographically, so a longer prefix always beats a shorter
-/// prefix regardless of suffix length, and a longer suffix only acts as a
-/// tie-breaker between patterns with identical prefixes. This mirrors the
-/// canonical `export_pattern_specificity` helper in `tsz-core` and supersedes
-/// the previous `key.len()` heuristic, which incorrectly tied total-length-equal
-/// patterns whose prefixes differed (e.g. `"./abc/*"` vs `"./*/abc"`).
-///
-/// On true ties (identical prefix AND suffix), callers iterate JSON insertion
-/// order and update only on strict improvement, so the first pattern in source
-/// order wins — matching the Node.js / tsc spec given the workspace's
-/// `serde_json` `preserve_order` feature.
-pub(crate) fn exports_subpath_specificity(pattern: &str) -> (usize, usize) {
+/// `(prefix_len, suffix_len)` specificity for a package.json `exports` /
+/// `imports` subpath pattern, per Node.js `PACKAGE_IMPORTS_EXPORTS_RESOLVE`.
+/// Longer prefix beats shorter prefix; longer suffix only breaks
+/// equal-prefix ties. Mirrors `tsz-core`'s `export_pattern_specificity`.
+fn exports_subpath_specificity(pattern: &str) -> (usize, usize) {
     if let Some(star_pos) = pattern.find('*') {
         (star_pos, pattern.len() - star_pos - 1)
     } else {
@@ -489,28 +473,28 @@ pub(crate) fn exports_subpath_specificity(pattern: &str) -> (usize, usize) {
     }
 }
 
-/// Pick the most-specific pattern entry from `map`, ranked by
-/// [`exports_subpath_specificity`]. `match_fn` decides whether a given key
-/// matches the requested subpath and returns the captured wildcard portion.
-///
-/// Updates only on strict improvement, so true ties resolve to the first
-/// matching pattern in JSON insertion order (the workspace builds `serde_json`
-/// with `preserve_order`).
+/// Pick the most-specific pattern entry from `map`. `match_fn` accepts the
+/// captured wildcard portion for a matching key (or returns `None`). Updates
+/// only on strict improvement, so true ties resolve to the first matching
+/// pattern in JSON insertion order (`serde_json` is built with
+/// `preserve_order`).
 fn find_best_subpath_pattern<'a>(
     map: &'a serde_json::Map<String, serde_json::Value>,
     match_fn: impl Fn(&str) -> Option<String>,
 ) -> Option<(String, &'a serde_json::Value)> {
-    let mut best: Option<((usize, usize), String, &'a serde_json::Value)> = None;
+    let mut best: Option<(String, &'a serde_json::Value)> = None;
+    let mut best_score: Option<(usize, usize)> = None;
     for (key, value) in map {
         let Some(wildcard) = match_fn(key) else {
             continue;
         };
         let specificity = exports_subpath_specificity(key);
-        if best.as_ref().is_none_or(|(s, _, _)| specificity > *s) {
-            best = Some((specificity, wildcard, value));
+        if best_score.is_none_or(|s| specificity > s) {
+            best_score = Some(specificity);
+            best = Some((wildcard, value));
         }
     }
-    best.map(|(_, w, v)| (w, v))
+    best
 }
 
 pub(crate) fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
