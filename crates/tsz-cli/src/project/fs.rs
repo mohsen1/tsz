@@ -341,6 +341,9 @@ fn expand_exclude_patterns(patterns: &[String]) -> Vec<String> {
     let mut expanded = Vec::new();
     for pattern in patterns {
         expanded.push(pattern.clone());
+        if let Some(root_relative) = pattern.strip_prefix("**/") {
+            expanded.push(root_relative.to_string());
+        }
         if !contains_glob_meta(pattern) && !pattern.ends_with("/**") {
             let base = pattern.trim_end_matches('/');
             expanded.push(format!("{base}/**"));
@@ -653,6 +656,51 @@ mod tests {
         assert!(patterns.contains(&"**/node_modules/**".to_string()));
         assert!(patterns.contains(&"dist".to_string()));
         assert!(patterns.contains(&"dist/**".to_string()));
+    }
+
+    #[test]
+    fn test_leading_globstar_exclude_matches_include_root_relative_path() {
+        let dir = unique_temp_dir("leading_globstar_exclude");
+        fs::create_dir_all(dir.join("src/dialect/mssql")).unwrap();
+        fs::create_dir_all(dir.join("src/dialect/mysql")).unwrap();
+        fs::write(
+            dir.join("src/dialect/mssql/skip.ts"),
+            "export const skip = 1;",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/dialect/mysql/keep.ts"),
+            "export const keep = 1;",
+        )
+        .unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: Some(vec!["src/**/*.ts".to_string()]),
+            exclude: Some(vec!["**/dialect/mssql/**".to_string()]),
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result
+                .iter()
+                .any(|path| path.ends_with("src/dialect/mysql/keep.ts")),
+            "expected non-excluded mysql file, got: {result:?}"
+        );
+        assert!(
+            !result
+                .iter()
+                .any(|path| path.ends_with("src/dialect/mssql/skip.ts")),
+            "leading globstar exclude should match paths relative to the include root, got: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
