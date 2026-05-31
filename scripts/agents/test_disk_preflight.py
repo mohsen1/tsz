@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import subprocess
@@ -43,13 +44,13 @@ class DiskPreflightTests(unittest.TestCase):
 
         return fake_repo, fake_script
 
-    def run_preflight(self, fake_repo, fake_script):
+    def run_preflight(self, fake_repo, fake_script, *extra_args):
         env = {
             **os.environ,
             "TSZ_WORKTREE_INACTIVE_HOURS": "1",
         }
         return subprocess.run(
-            ["bash", str(fake_script), "Studio-F"],
+            ["bash", str(fake_script), "Studio-F", *extra_args],
             cwd=fake_repo,
             env=env,
             check=True,
@@ -73,6 +74,37 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertIn("target=present", result.stdout)
             self.assertIn("cargo_cache_status=present", result.stdout)
             self.assertIn("cargo_cache_reuse_sources=0", result.stdout)
+
+    def test_json_report_records_disk_typescript_and_cache_state(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            report_path = temp_root / "preflight.json"
+            (fake_repo / "TypeScript" / "tests" / "cases").mkdir(parents=True)
+            (fake_repo / "target").mkdir()
+
+            result = self.run_preflight(
+                fake_repo,
+                fake_script,
+                "--json-report",
+                str(report_path),
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertIn("agent=Studio-F", result.stdout)
+            self.assertEqual("Studio-F", report["agent"])
+            self.assertEqual(str(fake_repo), report["repo"])
+            self.assertEqual("populated-local-submodule", report["typescript"]["state"])
+            self.assertEqual(
+                {"path": str(fake_repo), "state": "ts-populated"},
+                report["typescript"]["primary"],
+            )
+            self.assertEqual("present", report["cargo_cache"]["status"])
+            self.assertTrue(report["cargo_cache"]["local"]["target"])
+            self.assertFalse(report["cargo_cache"]["local"][".target"])
+            self.assertIn("disk_status", report["disk_guard"])
+            self.assertNotIn("branch", report["disk_guard"])
+            self.assertGreaterEqual(len(report["reusable_worktrees"]), 1)
 
     def test_worktree_without_typescript_points_to_link_helper(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
@@ -115,6 +147,23 @@ class DiskPreflightTests(unittest.TestCase):
 
             self.assertEqual(1, result.returncode)
             self.assertIn("unknown AgentName: Dreamy-F", result.stderr)
+            self.assertEqual("", result.stdout)
+
+    def test_json_report_requires_path(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+
+            result = subprocess.run(
+                ["bash", str(fake_script), "--json-report"],
+                cwd=fake_repo,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("--json-report requires a path", result.stderr)
             self.assertEqual("", result.stdout)
 
 

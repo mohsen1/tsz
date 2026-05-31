@@ -7,26 +7,54 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/disk-preflight.sh [AgentName]
+usage: scripts/agents/disk-preflight.sh [--json-report PATH] [AgentName]
 
 Runs compact checks only. It does not delete files or create worktrees.
+
+With --json-report PATH, also write a machine-readable preflight report.
 USAGE
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+AGENT="unknown"
+JSON_REPORT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --json-report)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      JSON_REPORT="$1"
+      ;;
+    --json-report=*)
+      JSON_REPORT="${1#--json-report=}"
+      if [[ -z "$JSON_REPORT" ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      ;;
+    --*)
+      echo "Unknown option: $1 (try --help)" >&2
+      exit 2
+      ;;
+    *)
+      if [[ "$AGENT" != "unknown" ]]; then
+        echo "Unknown option: $1 (try --help)" >&2
+        exit 2
+      fi
+      AGENT="$1"
+      ;;
+  esac
+  shift
+done
 
-if [[ $# -gt 1 ]]; then
-  echo "Unknown option: $2 (try --help)" >&2
-  exit 2
-fi
-
-AGENT="${1:-unknown}"
 case "$AGENT" in
   unknown|M1-A|M1-B|M1-C|M1-D|M4-A|M4-B|M4-C|M4-D|Studio-A|Studio-B|Studio-C|Studio-D|Studio-E|Studio-F|Reviewer) ;;
-  --*) echo "Unknown option: $AGENT (try --help)" >&2; exit 2 ;;
   *) echo "unknown AgentName: $AGENT" >&2; exit 1 ;;
 esac
 
@@ -42,12 +70,20 @@ echo "$GUARD_OUTPUT"
 echo ""
 echo "== current TypeScript state =="
 if [[ -L "$ROOT/TypeScript" ]]; then
-  echo "typescript=symlink target=$(readlink "$ROOT/TypeScript")"
+  TYPESCRIPT_STATE="symlink"
+  TYPESCRIPT_TARGET="$(readlink "$ROOT/TypeScript")"
+  echo "typescript=symlink target=$TYPESCRIPT_TARGET"
 elif [[ -d "$ROOT/TypeScript/tests/cases" ]]; then
+  TYPESCRIPT_STATE="populated-local-submodule"
+  TYPESCRIPT_TARGET=""
   echo "typescript=populated-local-submodule"
 elif [[ -d "$ROOT/TypeScript" ]]; then
+  TYPESCRIPT_STATE="present-but-not-populated"
+  TYPESCRIPT_TARGET=""
   echo "typescript=present-but-not-populated"
 else
+  TYPESCRIPT_STATE="missing"
+  TYPESCRIPT_TARGET=""
   echo "typescript=missing"
 fi
 
@@ -61,29 +97,48 @@ PRIMARY_TS="$PRIMARY_REPO/TypeScript"
 echo ""
 echo "== local cargo cache presence =="
 LOCAL_CARGO_CACHE_COUNT=0
+CARGO_DOT_TARGET=false
+CARGO_DOT_TARGET_BENCH=false
+CARGO_TARGET=false
 for dir in .target .target-bench target; do
   if [[ -d "$ROOT/$dir" ]]; then
     echo "$dir=present"
     LOCAL_CARGO_CACHE_COUNT=$((LOCAL_CARGO_CACHE_COUNT + 1))
+    case "$dir" in
+      .target) CARGO_DOT_TARGET=true ;;
+      .target-bench) CARGO_DOT_TARGET_BENCH=true ;;
+      target) CARGO_TARGET=true ;;
+    esac
   else
     echo "$dir=missing"
   fi
 done
 if (( LOCAL_CARGO_CACHE_COUNT > 0 )); then
+  CARGO_CACHE_STATUS="present"
   echo "cargo_cache_status=present"
 else
+  CARGO_CACHE_STATUS="missing"
   echo "cargo_cache_status=missing"
 fi
 
 echo ""
 echo "== TypeScript reuse sources =="
+TYPESCRIPT_REUSE_OUTPUT=""
 if [[ -d "$ROOT/TypeScript/tests/cases" ]]; then
-  echo "current=$ROOT ts-populated"
+  line="current=$ROOT ts-populated"
+  TYPESCRIPT_REUSE_OUTPUT+="$line"$'\n'
+  echo "$line"
 fi
 if [[ -d "$PRIMARY_TS/tests/cases" ]]; then
-  echo "primary=$PRIMARY_REPO ts-populated"
+  PRIMARY_TYPESCRIPT_STATE="ts-populated"
+  line="primary=$PRIMARY_REPO ts-populated"
+  TYPESCRIPT_REUSE_OUTPUT+="$line"$'\n'
+  echo "$line"
 else
-  echo "primary=$PRIMARY_REPO ts-missing-or-unpopulated"
+  PRIMARY_TYPESCRIPT_STATE="ts-missing-or-unpopulated"
+  line="primary=$PRIMARY_REPO ts-missing-or-unpopulated"
+  TYPESCRIPT_REUSE_OUTPUT+="$line"$'\n'
+  echo "$line"
 fi
 
 TS_SOURCE_COUNT=0
@@ -92,7 +147,9 @@ while IFS= read -r wt; do
   [[ "$wt" != "$ROOT" ]] || continue
   if [[ -d "$wt/TypeScript/tests/cases" ]]; then
     TS_SOURCE_COUNT=$((TS_SOURCE_COUNT + 1))
-    echo "source=$wt"
+    line="source=$wt"
+    TYPESCRIPT_REUSE_OUTPUT+="$line"$'\n'
+    echo "$line"
   fi
 done < <(git -C "$ROOT" worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
 
@@ -124,7 +181,8 @@ fi
 
 echo ""
 echo "== reusable worktree signals =="
-git -C "$ROOT" worktree list --porcelain \
+REUSABLE_WORKTREE_OUTPUT="$(
+  git -C "$ROOT" worktree list --porcelain \
   | awk '
       /^worktree / { if (path) print path "\t" branch; path=substr($0, 10); branch=""; head="" }
       /^HEAD / { head=substr($0, 6) }
@@ -146,6 +204,8 @@ git -C "$ROOT" worktree list --porcelain \
       [[ ${#flags[@]} -eq 0 ]] && flags+=("no-local-cache-signal")
       printf "%s branch=%s %s\n" "$wt" "${branch:-unknown}" "${flags[*]}"
     done
+)"
+echo "$REUSABLE_WORKTREE_OUTPUT"
 
 if echo "$GUARD_OUTPUT" | grep -q 'disk_status=low'; then
   cat <<'LOWDISK'
@@ -157,4 +217,95 @@ if echo "$GUARD_OUTPUT" | grep -q 'disk_status=low'; then
 4. Delete only abandoned worktrees whose branch/PR owner is understood.
 5. Use scripts/setup/clean.sh --full only as a deliberate last resort.
 LOWDISK
+fi
+
+if [[ -n "$JSON_REPORT" ]]; then
+  AGENT="$AGENT" \
+  ROOT="$ROOT" \
+  GUARD_OUTPUT="$GUARD_OUTPUT" \
+  TYPESCRIPT_STATE="$TYPESCRIPT_STATE" \
+  TYPESCRIPT_TARGET="$TYPESCRIPT_TARGET" \
+  PRIMARY_REPO="$PRIMARY_REPO" \
+  PRIMARY_TYPESCRIPT_STATE="$PRIMARY_TYPESCRIPT_STATE" \
+  TYPESCRIPT_REUSE_OUTPUT="$TYPESCRIPT_REUSE_OUTPUT" \
+  CARGO_DOT_TARGET="$CARGO_DOT_TARGET" \
+  CARGO_DOT_TARGET_BENCH="$CARGO_DOT_TARGET_BENCH" \
+  CARGO_TARGET="$CARGO_TARGET" \
+  CARGO_CACHE_STATUS="$CARGO_CACHE_STATUS" \
+  CARGO_CACHE_REUSE_SOURCES="$CARGO_CACHE_SOURCE_COUNT" \
+  REUSABLE_WORKTREE_OUTPUT="$REUSABLE_WORKTREE_OUTPUT" \
+  JSON_REPORT="$JSON_REPORT" \
+  node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+function parseKeyValueLines(text) {
+  const values = {};
+  for (const line of text.split(/\n/)) {
+    if (/^\s/.test(line)) continue;
+    for (const token of line.trim().split(/\s+/)) {
+      const match = /^([A-Za-z0-9_]+)=(.*)$/.exec(token);
+      if (match) values[match[1]] = match[2];
+    }
+  }
+  return values;
+}
+
+function parseTypeScriptReuse(text) {
+  return text
+    .split(/\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^(current|primary|source)=(.*?)(?: (.*))?$/.exec(line);
+      if (!match) return { kind: "unknown", path: line, state: null };
+      return {
+        kind: match[1],
+        path: match[2],
+        state: match[3] ?? null,
+      };
+    });
+}
+
+function parseWorktreeSignals(text) {
+  return text
+    .split(/\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [worktree, rest = ""] = line.split(" branch=");
+      const parts = rest.split(/\s+/).filter(Boolean);
+      const branch = parts.shift() ?? "unknown";
+      return { worktree, branch, signals: parts };
+    });
+}
+
+const guard = parseKeyValueLines(process.env.GUARD_OUTPUT ?? "");
+const bool = (value) => value === "true";
+const report = {
+  agent: process.env.AGENT,
+  repo: process.env.ROOT,
+  disk_guard: guard,
+  typescript: {
+    state: process.env.TYPESCRIPT_STATE,
+    target: process.env.TYPESCRIPT_TARGET || null,
+    primary: {
+      path: process.env.PRIMARY_REPO,
+      state: process.env.PRIMARY_TYPESCRIPT_STATE,
+    },
+    reuse_sources: parseTypeScriptReuse(process.env.TYPESCRIPT_REUSE_OUTPUT ?? ""),
+  },
+  cargo_cache: {
+    status: process.env.CARGO_CACHE_STATUS,
+    local: {
+      ".target": bool(process.env.CARGO_DOT_TARGET),
+      ".target-bench": bool(process.env.CARGO_DOT_TARGET_BENCH),
+      target: bool(process.env.CARGO_TARGET),
+    },
+    reuse_sources: Number(process.env.CARGO_CACHE_REUSE_SOURCES ?? 0),
+  },
+  reusable_worktrees: parseWorktreeSignals(process.env.REUSABLE_WORKTREE_OUTPUT ?? ""),
+};
+
+fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
+fs.writeFileSync(process.env.JSON_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+NODE
 fi
