@@ -53,7 +53,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         mut target: FunctionShape,
         reject_exact_params: bool,
     ) -> SubtypeResult {
-        if !self.return_application_bases_overlap(source.return_type, target.return_type) {
+        if !self.return_application_bases_match(source.return_type, target.return_type) {
             return SubtypeResult::False;
         }
         source.return_type = TypeId::ANY;
@@ -64,28 +64,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_function_subtype_either_direction(&source, &target)
     }
 
-    fn return_application_bases_overlap(
-        &self,
-        source_return: TypeId,
-        target_return: TypeId,
-    ) -> bool {
-        let source_bases = self.application_bases_including_root(source_return);
-        !source_bases.is_empty()
-            && self
-                .application_bases_including_root(target_return)
-                .into_iter()
-                .any(|target_base| source_bases.contains(&target_base))
-    }
-
-    fn application_bases_including_root(&self, type_id: TypeId) -> Vec<TypeId> {
-        let mut types = vec![type_id];
-        types.extend(crate::visitor::collect_all_types(self.interner, type_id));
-        types
-            .into_iter()
-            .filter_map(|ty| {
-                crate::type_queries::get_application_info(self.interner, ty).map(|(base, _)| base)
-            })
-            .collect()
+    fn return_application_bases_match(&self, source_return: TypeId, target_return: TypeId) -> bool {
+        let Some((source_base, _)) =
+            crate::type_queries::get_application_info(self.interner, source_return)
+        else {
+            return false;
+        };
+        let Some((target_base, _)) =
+            crate::type_queries::get_application_info(self.interner, target_return)
+        else {
+            return false;
+        };
+        source_base == target_base
     }
 
     /// Compare a call signature against a function type after erasing both signatures'
