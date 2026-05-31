@@ -515,9 +515,10 @@ impl MergedProgram {
     /// Build the `lib_type_namespace` map for a reconstructed binder.
     ///
     /// Scans only the per-file locals for `file_idx` (not merged globals) for
-    /// VALUE-only user symbols whose names also appear as TYPE symbols in
-    /// `self.globals`. This lets the checker's symbol resolver fall back to
-    /// the lib TYPE symbol when a local VALUE-only symbol would otherwise block it.
+    /// VALUE-only user symbols whose names also appear as TYPE symbols in the
+    /// merged lib namespace. This lets the checker's symbol resolver fall back
+    /// to the lib TYPE symbol when a local VALUE-only symbol would otherwise
+    /// block it.
     #[must_use]
     pub fn build_lib_type_namespace(&self, file_idx: usize) -> FxHashMap<String, SymbolId> {
         use crate::binder::symbol_flags;
@@ -530,14 +531,34 @@ impl MergedProgram {
             if (sym_flags & symbol_flags::VALUE) == 0 || (sym_flags & symbol_flags::TYPE) != 0 {
                 continue;
             }
-            if let Some(global_id) = self.globals.get(name) {
-                let global_flags = self.symbols.get(global_id).map_or(0, |s| s.flags);
-                if (global_flags & symbol_flags::TYPE) != 0 {
-                    result.insert(name.clone(), global_id);
-                }
+            if let Some(lib_type_id) = self.find_lib_type_symbol(name) {
+                result.insert(name.clone(), lib_type_id);
             }
         }
         result
+    }
+
+    fn find_lib_type_symbol(&self, name: &str) -> Option<SymbolId> {
+        use crate::binder::symbol_flags;
+
+        if let Some(global_id) = self.globals.get(name) {
+            let global_flags = self.symbols.get(global_id).map_or(0, |s| s.flags);
+            if (global_flags & symbol_flags::TYPE) != 0 {
+                return Some(global_id);
+            }
+        }
+
+        self.symbols
+            .find_all_by_name(name)
+            .iter()
+            .copied()
+            .find(|candidate_id| {
+                self.lib_symbol_ids.contains(candidate_id)
+                    && self
+                        .symbols
+                        .get(*candidate_id)
+                        .is_some_and(|sym| (sym.flags & symbol_flags::TYPE) != 0)
+            })
     }
 }
 
