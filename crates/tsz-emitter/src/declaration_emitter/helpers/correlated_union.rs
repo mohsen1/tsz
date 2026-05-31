@@ -583,6 +583,31 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            self.infer_tuple_spread_argument_substitutions(
+                &param_type_text,
+                arg_idx,
+                type_param_names,
+                type_param_constraints,
+                &mut substitutions,
+            );
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
             let param_type_text = param_type_text.trim();
             if !type_param_names
                 .iter()
@@ -768,6 +793,13 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            Self::infer_variadic_function_type_substitutions(
+                &source_function_type,
+                &argument_function_type,
+                type_param_names,
+                &substitutions.clone(),
+                &mut substitutions,
+            );
             let blocked_return_type_params = self
                 .no_infer_blocked_return_type_params_from_function_type(
                     source_arena,
@@ -1173,7 +1205,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn tuple_type_text_elements_preserving_rest(type_text: &str) -> Option<Vec<String>> {
+    pub(super) fn tuple_type_text_elements_preserving_rest(type_text: &str) -> Option<Vec<String>> {
         let mut text = type_text.trim();
         if let Some(rest) = text.strip_prefix("readonly ") {
             text = rest.trim();
@@ -1391,7 +1423,7 @@ impl<'a> DeclarationEmitter<'a> {
         (depth == 0).then_some((wrapper, inner.trim()))
     }
 
-    fn type_param_constraint_text<'b>(
+    pub(super) fn type_param_constraint_text<'b>(
         type_param_constraints: &'b [(String, String)],
         type_param_name: &str,
     ) -> Option<&'b str> {

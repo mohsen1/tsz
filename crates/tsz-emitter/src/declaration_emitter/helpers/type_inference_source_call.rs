@@ -292,6 +292,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
+        type_text = Self::flatten_tuple_spread_substitutions_text(&type_text);
         type_text = Self::simplify_string_literal_template_type_text(&type_text);
         type_text = Self::expand_literal_key_mapped_type_text(&type_text).unwrap_or(type_text);
         if type_param_names

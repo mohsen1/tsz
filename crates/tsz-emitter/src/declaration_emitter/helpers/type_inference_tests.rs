@@ -832,6 +832,22 @@ export const literal = merge(acceptObject, acceptLiteral);
 }
 
 #[test]
+fn declared_call_return_infers_tuple_spread_parameters_from_array_literals() {
+    let source = r#"
+export function concat<T extends unknown[], U extends unknown[]>(t: [...T], u: [...U]): [...T, ...U] {
+    return [...t, ...u];
+}
+export const result = concat(["x"], [1, true]);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const result: [string, number, boolean];"),
+        "{output}"
+    );
+}
+
+#[test]
 fn declared_call_return_preserves_bare_type_parameter_literal_argument() {
     let source = r#"
 declare function valueMerge<A>(value: A, left: (value: A) => void, right: (value: A) => void): A;
@@ -887,6 +903,42 @@ declare function unrelated<A>(value: A, callback: (inner: (value: string) => voi
         find_function("unrelated").expect("unrelated function"),
         "A",
     ));
+}
+
+#[test]
+fn declared_call_return_infers_remaining_variadic_function_parameters() {
+    let source = r#"
+export function curry<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, ...a: T): (...b: U) => R {
+    return (...b: U) => f(...a, ...b);
+}
+export const fn = (a: number, b: string, c: boolean) => 0;
+export const curried = curry(fn, 1);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const curried: (b: string, c: boolean) => number;"),
+        "{output}"
+    );
+}
+
+#[test]
+fn declared_call_return_preserves_remaining_variadic_rest_parameter() {
+    let source = r#"
+export function curry<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, ...a: T): (...b: U) => R {
+    return (...b: U) => f(...a, ...b);
+}
+export const fn = (x: number, ready: boolean, ...args: string[]) => 0;
+export const curried = curry(fn, 1);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "export declare const curried: (ready: boolean, ...args: string[]) => number;"
+        ),
+        "{output}"
+    );
 }
 
 #[test]

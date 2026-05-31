@@ -959,7 +959,14 @@ impl<'a> DeclarationEmitter<'a> {
             elements
                 .into_iter()
                 .map(|(name, ty, optional)| {
-                    let unique = Self::unique_parameter_name(&name, used_param_names);
+                    let (rest, name) = name
+                        .strip_prefix("...")
+                        .map(|name| (true, name))
+                        .unwrap_or((false, name.as_str()));
+                    let unique = Self::unique_parameter_name(name, used_param_names);
+                    if rest {
+                        return format!("...{unique}: {ty}");
+                    }
                     if optional {
                         let ty = if Self::contains_whole_word_in_text(&ty, "undefined") {
                             ty
@@ -1092,7 +1099,9 @@ impl<'a> DeclarationEmitter<'a> {
             if part.is_empty() {
                 continue;
             }
-            if let Some(alias_name) = part.strip_prefix("...").map(str::trim) {
+            if let Some(alias_name) = part.strip_prefix("...").map(str::trim)
+                && Self::find_top_level_byte(alias_name, b':').is_none()
+            {
                 let alias_text = self.local_type_alias_annotation_text(from_idx, alias_name)?;
                 elements.extend(self.expand_tuple_type_elements(
                     from_idx,
@@ -1102,6 +1111,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if let Some((name, ty)) = part.split_once(':') {
+                let rest = part.trim_start().starts_with("...");
                 let name = name.trim().trim_start_matches("...");
                 let optional = name.ends_with('?');
                 let name = name.strip_suffix('?').unwrap_or(name).trim();
@@ -1109,7 +1119,12 @@ impl<'a> DeclarationEmitter<'a> {
                 if name.is_empty() || ty.is_empty() {
                     return None;
                 }
-                elements.push((name.to_string(), ty.to_string(), optional));
+                let name = if rest {
+                    format!("...{name}")
+                } else {
+                    name.to_string()
+                };
+                elements.push((name, ty.to_string(), optional));
                 continue;
             }
 

@@ -330,7 +330,8 @@ impl<'a> DeclarationEmitter<'a> {
                 let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
                 let after_ok =
                     i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
-                let qualified_member = i > 0 && bytes[i - 1] == b'.';
+                let qualified_member =
+                    i > 0 && bytes[i - 1] == b'.' && !Self::word_has_ellipsis_prefix(bytes, i);
                 if !before_ok || !after_ok || qualified_member {
                     continue;
                 }
@@ -379,7 +380,8 @@ impl<'a> DeclarationEmitter<'a> {
                 let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
                 let after_ok =
                     i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
-                let qualified_member = i > 0 && bytes[i - 1] == b'.';
+                let qualified_member =
+                    i > 0 && bytes[i - 1] == b'.' && !Self::word_has_ellipsis_prefix(bytes, i);
                 if before_ok && after_ok && !qualified_member {
                     return true;
                 }
@@ -496,6 +498,12 @@ impl<'a> DeclarationEmitter<'a> {
 
     const fn is_ident_char_in_text(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+
+    fn word_has_ellipsis_prefix(bytes: &[u8], word_start: usize) -> bool {
+        word_start >= 3
+            && bytes.get(word_start - 3..word_start) == Some(b"...".as_slice())
+            && (word_start == 3 || !Self::is_ident_char_in_text(bytes[word_start - 4]))
     }
 
     pub(in crate::declaration_emitter) fn object_rest_binding_excluded_names(
@@ -1789,6 +1797,7 @@ impl<'a> DeclarationEmitter<'a> {
             for (protected_name, param_name) in protected_type_param_names {
                 type_text = type_text.replace(&protected_name, &param_name);
             }
+            type_text = Self::flatten_tuple_spread_substitutions_text(&type_text);
             if let Some(surface_text) = self.call_expression_declared_return_surface_text(
                 expr_idx,
                 source_arena,
