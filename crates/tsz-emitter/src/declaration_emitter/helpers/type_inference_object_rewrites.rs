@@ -269,11 +269,10 @@ impl<'a> DeclarationEmitter<'a> {
         if only_numeric_like {
             if has_non_emittable_computed_members {
                 for line in &mut lines {
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with("[x: string]:") {
-                        *line = line.replacen("[x: string]:", "[x: number]:", 1);
-                    } else if trimmed.starts_with("readonly [x: string]:") {
-                        *line = line.replacen("readonly [x: string]:", "readonly [x: number]:", 1);
+                    if let Some(rewritten) =
+                        Self::object_index_signature_line_with_key(line, "[x: number]:")
+                    {
+                        *line = rewritten;
                     }
                 }
                 lines.retain(|line| {
@@ -1236,6 +1235,27 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    fn object_index_signature_line_with_key(line: &str, replacement_key: &str) -> Option<String> {
+        let leading_len = line.len() - line.trim_start().len();
+        let leading = &line[..leading_len];
+        let trimmed = &line[leading_len..];
+        let (readonly, rest) = if let Some(rest) = trimmed.strip_prefix("readonly ") {
+            (true, rest)
+        } else {
+            (false, trimmed)
+        };
+        let suffix = rest.strip_prefix("[x: string]:")?;
+
+        let mut rewritten = String::with_capacity(line.len());
+        rewritten.push_str(leading);
+        if readonly {
+            rewritten.push_str("readonly ");
+        }
+        rewritten.push_str(replacement_key);
+        rewritten.push_str(suffix);
+        Some(rewritten)
+    }
+
     pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(
         existing: &str,
         names: &[String],
@@ -1524,5 +1544,40 @@ mod array_element_paren_tests {
     fn empty_text_is_passed_through() {
         assert_eq!(paren(""), "");
         assert_eq!(paren("   "), "");
+    }
+}
+
+#[cfg(test)]
+mod object_index_signature_rewrite_tests {
+    use super::DeclarationEmitter;
+
+    fn rewrite(line: &str) -> Option<String> {
+        DeclarationEmitter::object_index_signature_line_with_key(line, "[x: number]:")
+    }
+
+    #[test]
+    fn rewrites_string_index_key_to_number_key() {
+        assert_eq!(
+            rewrite("    [x: string]: boolean;").as_deref(),
+            Some("    [x: number]: boolean;")
+        );
+        assert_eq!(
+            rewrite("\t[x: string]: Widget;").as_deref(),
+            Some("\t[x: number]: Widget;")
+        );
+    }
+
+    #[test]
+    fn preserves_readonly_modifier_and_value_text() {
+        assert_eq!(
+            rewrite("    readonly [x: string]: Foo | Bar;").as_deref(),
+            Some("    readonly [x: number]: Foo | Bar;")
+        );
+    }
+
+    #[test]
+    fn ignores_non_string_index_lines() {
+        assert_eq!(rewrite("    [x: number]: boolean;"), None);
+        assert_eq!(rewrite("    value: boolean;"), None);
     }
 }
