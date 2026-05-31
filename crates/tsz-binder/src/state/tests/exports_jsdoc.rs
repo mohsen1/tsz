@@ -84,6 +84,104 @@ namespace M {
     );
 }
 
+/// Duplicate `export { X } from "mod"` re-export specifiers must end up sharing
+/// a single symbol with multiple declarations so the checker's duplicate-
+/// identifier pass can emit TS2300 on each spec node.
+///
+/// Structural rule: two re-export specs that bind the same *exported* name —
+/// independent of source module, original name, or type-only-ness — collide.
+#[test]
+fn duplicate_reexport_specifiers_share_one_symbol_with_multiple_declarations() {
+    let source = r"
+export { Foo } from './a';
+export type { Foo } from './a';
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let foo_sym_id = binder
+        .file_locals
+        .get("Foo")
+        .expect("expected re-export alias for Foo in file_locals");
+    let foo_sym = binder
+        .symbols
+        .get(foo_sym_id)
+        .expect("expected symbol data for Foo");
+
+    assert_ne!(foo_sym.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(
+        foo_sym.declarations.len(),
+        2,
+        "expected two spec declarations on the shared re-export symbol, got: {:?}",
+        foo_sym.declarations
+    );
+
+    // The visible binding keeps the first-bound spec's metadata so downstream
+    // import resolution still routes through the original module specifier.
+    assert_eq!(foo_sym.import_module.as_deref(), Some("./a"));
+    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+    assert!(
+        !foo_sym.is_type_only,
+        "first-bound spec was value-only — the merge must not escalate to type-only"
+    );
+}
+
+/// Same merging behavior when the duplicate uses a different original name
+/// (`Foo as X` + `Bar as X`) — the EXPORTED name is the keying axis, not the
+/// source identifier.
+#[test]
+fn duplicate_reexport_specifiers_with_distinct_originals_share_one_symbol() {
+    let source = r"
+export { Foo as X } from './a';
+export { Bar as X } from './a';
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let x_sym_id = binder
+        .file_locals
+        .get("X")
+        .expect("expected re-export alias for X in file_locals");
+    let x_sym = binder
+        .symbols
+        .get(x_sym_id)
+        .expect("expected symbol data for X");
+
+    assert_eq!(
+        x_sym.declarations.len(),
+        2,
+        "expected two spec declarations on the shared re-export symbol, got: {:?}",
+        x_sym.declarations
+    );
+    assert_eq!(x_sym.import_name.as_deref(), Some("Foo"));
+}
+
+/// Aliased re-exports with DISTINCT exported names must remain separate
+/// symbols (no merge). Guards the literal repro from issue #11334.
+#[test]
+fn distinct_exported_names_remain_separate_re_export_symbols() {
+    let source = r"
+export * from './a';
+export { Foo as Bar } from './a';
+export type { Foo } from './a';
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let bar = binder.file_locals.get("Bar").expect("expected Bar symbol");
+    let foo = binder.file_locals.get("Foo").expect("expected Foo symbol");
+    assert_ne!(
+        bar, foo,
+        "Bar and Foo must remain distinct re-export symbols"
+    );
+
+    let bar_sym = binder.symbols.get(bar).expect("Bar symbol data");
+    let foo_sym = binder.symbols.get(foo).expect("Foo symbol data");
+    assert_eq!(bar_sym.declarations.len(), 1);
+    assert_eq!(foo_sym.declarations.len(), 1);
+    assert_eq!(bar_sym.import_name.as_deref(), Some("Foo"));
+    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+    assert!(foo_sym.is_type_only);
+    assert!(!bar_sym.is_type_only);
+}
+
 #[test]
 fn records_import_metadata_for_exported_reexports() {
     let source = r"
