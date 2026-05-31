@@ -915,6 +915,123 @@ let x: number | undefined;
     );
 }
 
+// ----- namespace + `export * as N` coexistence (issue #11331) ---------------
+
+/// Asserts that after binding `source`, `module_exports["test.ts"][ns_name]`
+/// is a MODULE symbol and `alias_partners[MODULE]` points to an ALIAS with
+/// `import_module = "./mod"` and `import_name = "*"`.
+fn assert_ns_module_alias_partner(source: &str, ns_name: &str) {
+    let (binder, _parser) = parse_and_bind(source);
+
+    let ns_exported_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|e| e.get(ns_name))
+        .unwrap_or_else(|| panic!("expected {ns_name} in module_exports"));
+    let ns_sym = binder
+        .symbols
+        .get(ns_exported_id)
+        .unwrap_or_else(|| panic!("expected symbol data for exported {ns_name}"));
+    assert_ne!(
+        ns_sym.flags & symbol_flags::MODULE,
+        0,
+        "exported {ns_name} should be the namespace MODULE symbol"
+    );
+
+    let alias_id = binder
+        .alias_partners
+        .get(&ns_exported_id)
+        .copied()
+        .unwrap_or_else(|| panic!("expected alias_partners entry for {ns_name} MODULE"));
+    let alias_sym = binder
+        .symbols
+        .get(alias_id)
+        .unwrap_or_else(|| panic!("expected alias partner symbol data for {ns_name}"));
+    assert_ne!(alias_sym.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(alias_sym.import_module.as_deref(), Some("./mod"));
+    assert_eq!(alias_sym.import_name.as_deref(), Some("*"));
+}
+
+/// `export * as N from './mod'` followed by `namespace N { ... }`:
+/// `module_exports` should hold the MODULE symbol and `alias_partners` should link
+/// MODULE → ALIAS so the checker can resolve members from both the local
+/// namespace and the re-exported source module.
+#[test]
+fn namespace_reexport_alias_before_local_namespace_links_alias_partners() {
+    assert_ns_module_alias_partner(
+        r"
+export * as Ns from './mod';
+export namespace Ns { export const x = 1; }
+",
+        "Ns",
+    );
+}
+
+/// `namespace N { ... }` followed by `export * as N from './mod'` (reversed
+/// source order): same invariants must hold — the fix must be order-insensitive.
+#[test]
+fn namespace_reexport_local_namespace_before_alias_links_alias_partners() {
+    assert_ns_module_alias_partner(
+        r"
+export namespace Ns { export const x = 1; }
+export * as Ns from './mod';
+",
+        "Ns",
+    );
+}
+
+/// Verify the fix is name-agnostic: use `K` and `M` as namespace names.
+#[test]
+fn namespace_reexport_alias_partner_is_name_agnostic() {
+    for (source, name) in [
+        (
+            r"
+export * as K from './mod';
+export namespace K { export const y = 2; }
+",
+            "K",
+        ),
+        (
+            r"
+export namespace M { export const z = 3; }
+export * as M from './mod';
+",
+            "M",
+        ),
+    ] {
+        assert_ns_module_alias_partner(source, name);
+    }
+}
+
+/// A plain `export * as N from './mod'` without a companion `namespace N`
+/// must NOT create a spurious `alias_partners` entry — only the ALIAS should
+/// be in `module_exports`, no MODULE to pair it with.
+#[test]
+fn namespace_reexport_without_local_namespace_has_no_alias_partner() {
+    let source = r"
+export * as Ns from './mod';
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let ns_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|e| e.get("Ns"))
+        .expect("expected Ns in module_exports");
+    let ns_sym = binder
+        .symbols
+        .get(ns_id)
+        .expect("expected symbol data for Ns");
+    // Should be ALIAS, not MODULE
+    assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(ns_sym.import_module.as_deref(), Some("./mod"));
+    // No alias_partners entry for a lone ALIAS
+    assert!(
+        !binder.alias_partners.contains_key(&ns_id),
+        "lone export-* alias should not have an alias_partners entry"
+    );
+}
+
 #[test]
 fn arrow_iife_no_flow_start_node() {
     // Arrow function IIFE should also be treated as inline (no FlowStart).
