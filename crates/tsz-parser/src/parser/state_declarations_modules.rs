@@ -642,8 +642,12 @@ impl ParserState {
     /// Parse optional import attributes: `with { type: "json" }` or `assert { type: "json" }`
     /// Returns `NodeIndex::NONE` if no attributes are present.
     pub(crate) fn parse_import_attributes(&mut self) -> NodeIndex {
-        // Check for 'with' or 'assert' keyword (not on a new line to avoid ASI issues)
         if !self.is_token(SyntaxKind::WithKeyword) && !self.is_token(SyntaxKind::AssertKeyword) {
+            return NodeIndex::NONE;
+        }
+        // ASI: 'with'/'assert' on a new line starts a new statement, not import attributes.
+        // Matches tsc's `!scanner.hasPrecedingLineBreak()` check before parseImportAttributes.
+        if self.scanner.has_preceding_line_break() {
             return NodeIndex::NONE;
         }
 
@@ -657,6 +661,8 @@ impl ParserState {
         }
 
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        // multi_line is true when the first attribute (or closing brace) is on a new line after '{'.
+        let multi_line = self.scanner.has_preceding_line_break();
 
         let mut elements = Vec::new();
         while !self.is_token(SyntaxKind::CloseBraceToken)
@@ -700,7 +706,7 @@ impl ParserState {
             crate::parser::node::ImportAttributesData {
                 token,
                 elements: node_list,
-                multi_line: false,
+                multi_line,
             },
         )
     }
