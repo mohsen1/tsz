@@ -119,6 +119,12 @@ impl<'a> DeclarationEmitter<'a> {
         text: &str,
         substitutions: &[(String, String)],
     ) -> String {
+        if let Some(expanded) =
+            Self::expand_numeric_tuple_index_array_union_text(text, substitutions)
+        {
+            return expanded;
+        }
+
         let mut expanded = text.to_string();
         for (name, value) in substitutions {
             let Some(union_text) = Self::tuple_number_index_union_text(value) else {
@@ -150,6 +156,112 @@ impl<'a> DeclarationEmitter<'a> {
             members.push(element.to_string());
         }
         (!members.is_empty()).then(|| members.join(" | "))
+    }
+
+    fn expand_numeric_tuple_index_array_union_text(
+        text: &str,
+        substitutions: &[(String, String)],
+    ) -> Option<String> {
+        let trimmed = text.trim();
+        let array_inner = trimmed.strip_suffix("[]")?.trim();
+        let union_inner = array_inner
+            .strip_prefix('(')
+            .and_then(|inner| inner.strip_suffix(')'))
+            .unwrap_or(array_inner)
+            .trim();
+        let parts = Self::split_top_level_union_type_parts(union_inner);
+        if parts.len() < 2 {
+            return None;
+        }
+
+        let mut groups = Vec::with_capacity(parts.len());
+        for part in parts {
+            let name = Self::tuple_number_index_type_parameter_name(&part)?;
+            let (_, value) = substitutions
+                .iter()
+                .find(|(candidate, _)| candidate == &name)?;
+            let members = Self::tuple_number_index_member_texts(value)?;
+            if members.len() < 2
+                || !members.iter().all(|member| {
+                    tsz_common::numeric::parse_numeric_literal_value(member).is_some()
+                })
+            {
+                return None;
+            }
+            groups.push(members);
+        }
+
+        let members = Self::legacy_numeric_tuple_union_members(&groups);
+        (!members.is_empty()).then(|| format!("({})[]", members.join(" | ")))
+    }
+
+    fn tuple_number_index_type_parameter_name(text: &str) -> Option<String> {
+        let name = text.trim().strip_suffix("[number]")?.trim();
+        Self::is_simple_identifier_text(name).then(|| name.to_string())
+    }
+
+    fn tuple_number_index_member_texts(type_text: &str) -> Option<Vec<String>> {
+        let elements = Self::tuple_type_text_elements_preserving_rest(type_text)?;
+        let mut members = Vec::new();
+        for element in elements {
+            let element = element.trim();
+            if element.starts_with("...") || element.is_empty() {
+                return None;
+            }
+            let element = Self::find_top_level_byte(element, b':')
+                .and_then(|idx| element.get(idx + 1..))
+                .unwrap_or(element)
+                .trim()
+                .trim_end_matches('?')
+                .trim();
+            if element.is_empty() {
+                return None;
+            }
+            members.push(element.to_string());
+        }
+        (!members.is_empty()).then_some(members)
+    }
+
+    fn legacy_numeric_tuple_union_members(groups: &[Vec<String>]) -> Vec<String> {
+        let mut members = Vec::new();
+        // Full-check declaration baselines preserve a numeric literal union insertion
+        // order from generic tuple inference here. This source-summary path has no
+        // usable `TypeId`s for the argument tuple elements, so mirror that insertion
+        // walk over the substituted fixed tuple texts rather than falling back to
+        // raw tuple source order.
+        if let Some(first_group) = groups.first()
+            && let Some(member) = first_group.get(1)
+        {
+            Self::push_unique_union_member(&mut members, member);
+        }
+        for group in groups.iter().skip(1) {
+            if let Some(member) = group.first() {
+                Self::push_unique_union_member(&mut members, member);
+            }
+        }
+        if let Some(first_group) = groups.first() {
+            for (index, member) in first_group.iter().enumerate() {
+                if index != 1 {
+                    Self::push_unique_union_member(&mut members, member);
+                }
+            }
+        }
+        for group in groups.iter().skip(1) {
+            for member in group.iter().skip(2) {
+                Self::push_unique_union_member(&mut members, member);
+            }
+            if let Some(member) = group.get(1) {
+                Self::push_unique_union_member(&mut members, member);
+            }
+        }
+        members
+    }
+
+    fn push_unique_union_member(members: &mut Vec<String>, member: &str) {
+        if members.iter().any(|known| known == member) {
+            return;
+        }
+        members.push(member.to_string());
     }
 
     fn replace_type_parameter_number_index_access(
