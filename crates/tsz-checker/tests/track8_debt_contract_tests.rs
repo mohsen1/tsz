@@ -5,6 +5,7 @@ const SOURCE_FILE_CHECKING: &str = "src/state/state_checking/source_file.rs";
 
 const MAX_SOURCE_FILE_REWRITE_FINGERPRINT_HELPERS: usize = 6;
 const MAX_SOURCE_FILE_SOURCE_TEXT_CONTAINS_DECISIONS: usize = 23;
+const MAX_SOURCE_FILE_SOURCE_TEXT_FIND_DECISIONS: usize = 7;
 const MAX_SOURCE_FILE_RENDERED_MESSAGE_DECISIONS: usize = 15;
 
 #[test]
@@ -23,6 +24,11 @@ fn test_source_file_fingerprint_debt_does_not_increase() {
             "source_text.contains decisions",
             source.matches("source_text.contains(").count(),
             MAX_SOURCE_FILE_SOURCE_TEXT_CONTAINS_DECISIONS,
+        ),
+        (
+            "source_text.find decisions",
+            source.matches("source_text.find(").count(),
+            MAX_SOURCE_FILE_SOURCE_TEXT_FIND_DECISIONS,
         ),
         (
             "rendered diagnostic message decisions",
