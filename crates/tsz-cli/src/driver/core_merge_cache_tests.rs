@@ -1,5 +1,6 @@
 use super::sources::SourceEntry;
 use super::*;
+use std::time::Instant;
 
 fn make_source(path: &str, text: &str) -> SourceEntry {
     SourceEntry {
@@ -164,5 +165,55 @@ fn clear_invalidates_merge_cache() {
         Arc::as_ptr(&r2.program),
         Arc::as_ptr(&r3.program),
         "clear must produce a fresh Arc<MergedProgram>"
+    );
+}
+
+/// Timing evidence: on an unchanged 50-file project the fast path (second call)
+/// is dramatically faster than the full merge (first call).
+///
+/// Run with `cargo test --lib -- merge_cache_tests::unchanged_rebuild_fast_path_timing
+/// --nocapture` to see the raw numbers.
+#[test]
+fn unchanged_rebuild_fast_path_timing() {
+    let (mut cache, libs) = fresh_cache();
+
+    // Build a project with 50 files × 20 exports = 1 000 symbols to make the
+    // merge phase measurable while keeping the test runtime short.
+    let sources: Vec<SourceEntry> = (0..50)
+        .map(|i| {
+            let exports: String = (0..20)
+                .map(|j| format!("export const sym_{i}_{j} = {j};\n"))
+                .collect();
+            make_source(&format!("/{i}.ts"), &exports)
+        })
+        .collect();
+
+    // First call: cold cache, must parse+bind+merge.
+    let t_first = Instant::now();
+    build_program_with_cache(sources.clone(), &mut cache, &libs, ScriptTarget::ES2020);
+    let first_us = t_first.elapsed().as_micros();
+
+    // Second call: identical inputs — all bind results served from cache,
+    // merge phase is skipped entirely (fast path: Arc::clone).
+    let t_second = Instant::now();
+    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let second_us = t_second.elapsed().as_micros();
+
+    // The fast path should return dirty_paths = empty (nothing changed).
+    assert!(
+        r2.dirty_paths.is_empty(),
+        "second build must report no changes"
+    );
+
+    // On any reasonable machine the fast path (Arc clone + 3 integer comparisons)
+    // should be at least 10× cheaper than a full parse+bind+merge pass.
+    // We use 5× to give headroom for loaded CI machines.
+    eprintln!(
+        "merge_cache timing: first={first_us}µs (parse+bind+merge), second={second_us}µs (fast path, merge skipped)"
+    );
+    assert!(
+        second_us * 5 < first_us || second_us < 500,
+        "fast path ({second_us}µs) was not significantly faster than full merge ({first_us}µs); \
+         expected at least 5× speedup or sub-500µs absolute"
     );
 }
