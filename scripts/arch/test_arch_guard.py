@@ -11,12 +11,21 @@ class ArchGuardJsonReportTests(unittest.TestCase):
         self.arch_guard = load_arch_guard_module()
 
     def test_json_payload_includes_boolean_ok_status(self):
+        git_context = {
+            "repo_root": "/repo",
+            "head": "abc123",
+            "branch": "codex/example",
+            "upstream": "origin/main",
+            "dirty": False,
+            "dirty_path_count": 0,
+        }
         self.assertEqual(
-            self.arch_guard.build_json_payload([], 0),
+            self.arch_guard.build_json_payload([], 0, git_context=git_context),
             {
                 "ok": True,
                 "status": "passed",
                 "arch_guard_status": "passed",
+                "git_context": git_context,
                 "total_hits": 0,
                 "failure_count": 0,
                 "failed_hit_count": 0,
@@ -27,11 +36,13 @@ class ArchGuardJsonReportTests(unittest.TestCase):
             self.arch_guard.build_json_payload(
                 [("Rule", ["src/lib.rs:1", "src/lib.rs:2"])],
                 2,
+                git_context=git_context,
             ),
             {
                 "ok": False,
                 "status": "failed",
                 "arch_guard_status": "failed",
+                "git_context": git_context,
                 "total_hits": 2,
                 "failure_count": 1,
                 "failed_hit_count": 2,

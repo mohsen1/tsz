@@ -5,6 +5,62 @@ import unittest
 from test_arch_guard_support import ROOT, load_arch_guard_module
 
 
+class ArchGuardJsonReportTests(unittest.TestCase):
+    """Cover machine-readable report provenance for launch gate artifacts."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_json_payload_includes_git_context(self):
+        git_context = {
+            "repo_root": "/repo",
+            "head": "abc123",
+            "branch": "codex/example",
+            "upstream": "origin/main",
+            "dirty": False,
+            "dirty_path_count": 0,
+        }
+
+        payload = self.arch_guard.build_json_payload(
+            [("Example guard", ["path.rs:1"])],
+            total_hits=1,
+            git_context=git_context,
+        )
+
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["arch_guard_status"], "failed")
+        self.assertEqual(payload["git_context"], git_context)
+
+    def test_git_context_records_branch_upstream_and_dirty_count(self):
+        calls = []
+
+        def fake_run_git(root, args):
+            calls.append((root, tuple(args)))
+            responses = {
+                ("status", "--porcelain"): " M scripts/arch/arch_guard.py\n?? tmp.txt",
+                ("branch", "--show-current"): "codex/studio-f-guard",
+                ("rev-parse", "HEAD"): "abc123",
+                (
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{u}",
+                ): "origin/main",
+            }
+            return responses.get(tuple(args))
+
+        root = pathlib.Path("/repo")
+        context = self.arch_guard.build_git_context(root, run_git=fake_run_git)
+
+        self.assertEqual(context["repo_root"], "/repo")
+        self.assertEqual(context["head"], "abc123")
+        self.assertEqual(context["branch"], "codex/studio-f-guard")
+        self.assertEqual(context["upstream"], "origin/main")
+        self.assertTrue(context["dirty"])
+        self.assertEqual(context["dirty_path_count"], 2)
+        self.assertIn((root, ("status", "--porcelain")), calls)
+
+
 class ArchGuardDebugPrintMacroTests(unittest.TestCase):
     """Cover Track 10's hard debug-print macro guard."""
 
