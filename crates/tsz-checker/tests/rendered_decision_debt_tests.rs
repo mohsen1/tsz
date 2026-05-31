@@ -56,7 +56,7 @@ fn call_parameter_array_display_normalization_is_not_gated_by_rendered_text() {
 fn mapped_target_type_parameter_containment_is_structural() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/assignability/assignability_diagnostics.rs"
+        "/src/assignability/assignability_diagnostics/argument_reports.rs"
     ))
     .expect("assignability diagnostics source should be readable");
 
