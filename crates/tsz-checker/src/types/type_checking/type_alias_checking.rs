@@ -383,6 +383,21 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
             );
         }
+        if let Some(alias_sid) = alias_sym_id
+            && let Some(body_node) = self.ctx.arena.get(alias.type_node)
+            && let Some(conditional) = self.ctx.arena.get_conditional_type(body_node)
+            && self.type_node_references_defaulted_alias_with_omitted_args(
+                conditional.check_type,
+                alias_sid,
+            )
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                conditional.check_type,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+        }
 
         // TS2589: detect excessively deep type instantiation at definition time.
         // tsc emits TS2589 for type aliases whose body contains conditional types
