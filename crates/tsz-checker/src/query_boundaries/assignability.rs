@@ -80,8 +80,12 @@ pub(crate) fn recursive_heritage_property_types_conflict(
     ) {
         return false;
     }
-    if checker.is_assignable_to(member_type, constraint_type)
-        || checker.is_assignable_to(constraint_type, member_type)
+    if checker
+        .assign_relation_outcome(member_type, constraint_type)
+        .related
+        || checker
+            .assign_relation_outcome(constraint_type, member_type)
+            .related
     {
         return false;
     }
@@ -726,10 +730,6 @@ impl RelationRequest {
         self
     }
 }
-
-// ---------------------------------------------------------------------------
-// Existing boundary helpers
-// ---------------------------------------------------------------------------
 
 /// Boundary-safe flag constants for relation policy.
 ///

@@ -33,3 +33,27 @@ fn heritage_type_name_resolution_uses_structural_lookup() {
          `named_type_display_name` produces bare identifier names without renderer artefacts"
     );
 }
+
+#[test]
+fn recursive_heritage_property_conflicts_use_relation_outcome_boundary() {
+    let src = include_str!("../query_boundaries/assignability.rs");
+    let helper = src
+        .split("pub(crate) fn recursive_heritage_property_types_conflict")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(crate) fn mutable_array_element_for_redeclaration")
+                .next()
+        })
+        .expect("failed to locate recursive heritage property conflict helper");
+
+    assert!(
+        helper.contains("assign_relation_outcome(member_type, constraint_type)")
+            && helper.contains("assign_relation_outcome(constraint_type, member_type)")
+            && helper.contains(".related"),
+        "recursive heritage property conflicts must route relation truth through RelationOutcome"
+    );
+    assert!(
+        !helper.contains("checker.is_assignable_to("),
+        "recursive heritage property conflicts must not regress to raw checker assignability"
+    );
+}
