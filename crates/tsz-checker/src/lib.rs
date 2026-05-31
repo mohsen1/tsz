@@ -108,6 +108,9 @@ mod assignability_display_relation_routing_arch_tests;
 #[path = "tests/assignability_reporter_relation_routing_arch_tests.rs"]
 mod assignability_reporter_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/assignability_type_comparability_relation_routing_arch_tests.rs"]
+mod assignability_type_comparability_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
 mod assignment_ops_relation_routing_arch_tests;
 #[cfg(test)]
