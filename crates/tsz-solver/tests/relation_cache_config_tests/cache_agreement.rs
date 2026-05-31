@@ -353,6 +353,28 @@ fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
 }
 
 #[test]
+fn subtype_checker_cache_key_uses_relation_policy_projection() {
+    let source = include_str!("../../src/relations/subtype/helpers.rs");
+    let make_key_start = source
+        .find("pub(crate) fn make_cache_key")
+        .expect("subtype helper must keep make_cache_key");
+    let debug_accessor_start = source[make_key_start..]
+        .find("pub fn debug_cache_key_for")
+        .map(|offset| make_key_start + offset)
+        .expect("debug accessor should follow make_cache_key");
+    let make_key_source = &source[make_key_start..debug_accessor_start];
+
+    assert!(
+        make_key_source.contains("RelationPolicy"),
+        "subtype cache-key construction must project through RelationPolicy",
+    );
+    assert!(
+        !make_key_source.contains("RelationCacheConfig::new"),
+        "subtype cache-key construction must not hand-roll RelationCacheConfig",
+    );
+}
+
+#[test]
 fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
