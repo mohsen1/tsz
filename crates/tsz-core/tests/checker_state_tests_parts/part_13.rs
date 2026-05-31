@@ -853,6 +853,52 @@ aFn(), b;
 }
 
 #[test]
+fn test_adjacent_jsx_recovery_comma_does_not_report_ts2695() {
+    use crate::checker::diagnostics::diagnostic_codes;
+
+    let source = r#"
+declare namespace JSX { interface Element { } }
+
+<div></div>
+<div></div>
+
+var x = <div></div><div></div>
+"#;
+
+    let mut parser = crate::parser::ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let parser_codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        parser_codes.contains(&diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT),
+        "Expected TS2657 parser recovery diagnostic, got: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.tsx".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let checker_codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !checker_codes
+            .contains(&diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS),
+        "Adjacent JSX recovery comma should not report TS2695, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -1792,4 +1838,3 @@ function extract<T>(x: Extract<T, typeof identity>): T {
         "Should not report TS2304 for type parameter T in type query. Found errors: {ts2304_for_type_params:?}"
     );
 }
-
