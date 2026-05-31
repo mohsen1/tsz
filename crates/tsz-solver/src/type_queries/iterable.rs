@@ -181,6 +181,8 @@ pub enum ForOfElementKind {
     Intersection(Vec<TypeId>),
     /// Readonly wrapper - unwrap and compute
     Readonly(TypeId),
+    /// Type parameter - compute element type from the apparent type constraint
+    TypeParameter { constraint: Option<TypeId> },
     /// String type - iteration yields string
     String,
     /// Other types - resolve via iterator protocol or return ANY as fallback
@@ -213,6 +215,9 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             ForOfElementKind::Readonly(inner)
         }
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => ForOfElementKind::TypeParameter {
+            constraint: info.constraint,
+        },
         // String literals iterate to produce `string`
         TypeData::Literal(crate::LiteralValue::String(_)) => ForOfElementKind::String,
         _ => ForOfElementKind::Other,

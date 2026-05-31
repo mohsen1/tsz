@@ -736,6 +736,22 @@ fn for_of_no_infer_unwraps_via_readonly_arm() {
 }
 
 #[test]
+fn for_of_type_parameter_carries_constraint() {
+    let interner = TypeInterner::new();
+    let constraint = interner.lazy(DefId(23));
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("Item"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    match classify_for_of_element_type(&interner, tp) {
+        ForOfElementKind::TypeParameter { constraint: c } => assert_eq!(c, Some(constraint)),
+        other => panic!("expected TypeParameter, got {other:?}"),
+    }
+}
+
+#[test]
 fn for_of_string_literal_returns_string_kind() {
     let interner = TypeInterner::new();
     let lit = interner.literal_string("hello");
