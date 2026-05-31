@@ -1790,3 +1790,58 @@ const r = combine(wrapOuter(42), wrapOuter("hello"));
         );
     }
 }
+
+#[test]
+fn constructor_inference_keeps_outer_type_params_as_source_candidates() {
+    let source = r#"
+export class Test<A, B> {
+    constructor(public a: A, public b: B) { }
+
+    test<C>(c: C): Test<B, C> {
+        return new Test(this.b, c);
+    }
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "outer class TypeParams used as constructor arguments must stay real candidates, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn explicit_callback_param_annotation_keeps_tsc_argument_blame() {
+    let source = r#"
+class C<T> {
+    foo2<T, U>(x: T, cb: (a: T) => U) {
+        return cb(x);
+    }
+}
+
+declare var c: C<number>;
+
+function other<T, U>(t: T, u: U) {
+    var r = c.foo2(1, (x: T) => '');
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345
+            .iter()
+            .any(|d| d.message_text.contains("Argument of type 'number'")),
+        "explicit callback annotation should keep tsc-style blame on the first argument, got: {:?}",
+        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        !ts2345
+            .iter()
+            .any(|d| d.message_text.contains("(x: T) => string")),
+        "explicit callback annotation must not be rewritten into placeholder-based callback blame, got: {:?}",
+        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

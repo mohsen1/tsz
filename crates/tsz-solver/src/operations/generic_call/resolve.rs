@@ -1246,10 +1246,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 contextual_arg_type
             };
-            // Substitute caller TypeParams with inference placeholders before Round 1
-            // constraint collection (prevents `A` from leaking as a candidate for `ph_A`).
-            let source_for_inference =
-                self.substitute_caller_type_params(source_for_inference, &substitution);
+            // Contextual typing can leak the caller signature's TypeParams into
+            // an argument type before overload-specific placeholders exist. Those
+            // leaked params should be rewritten to placeholders for Round 1.
+            // Non-contextual sources, including explicit annotations and outer
+            // generic values, are real candidates and must stay distinct even
+            // when they share a name with the called signature's TypeParams.
+            let source_for_inference = if self.is_contextually_sensitive(arg_type) {
+                self.substitute_caller_type_params(source_for_inference, &substitution)
+            } else {
+                source_for_inference
+            };
             let source_arg_shape = Self::get_contextual_signature_cached(self.interner, arg_type);
             let original_arg_is_generic_function_like = source_arg_shape
                 .as_ref()
