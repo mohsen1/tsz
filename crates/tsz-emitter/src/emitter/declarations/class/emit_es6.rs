@@ -1,9 +1,10 @@
 use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
+use super::private_comma_items::PrivateCommaItems;
 use super::replace_identifier;
 use super::static_field_erasure::static_no_init_field_is_erased;
 use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
-use crate::emitter::core::{PrivateMemberInfo, PrivateMethodDef};
+use crate::emitter::core::{PrivateAccessorDef, PrivateMemberInfo, PrivateMethodDef};
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
     collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
@@ -21,14 +22,14 @@ use tsz_parser::syntax::transform_utils::{
 use tsz_scanner::SyntaxKind;
 
 #[derive(Debug, Clone)]
-struct PrivateAutoAccessorInfo {
-    member_idx: NodeIndex,
-    name: String,
-    get_var_name: String,
-    set_var_name: String,
-    storage_name: String,
-    initializer: Option<NodeIndex>,
-    is_static: bool,
+pub(super) struct PrivateAutoAccessorInfo {
+    pub(super) member_idx: NodeIndex,
+    pub(super) name: String,
+    pub(super) get_var_name: String,
+    pub(super) set_var_name: String,
+    pub(super) storage_name: String,
+    pub(super) initializer: Option<NodeIndex>,
+    pub(super) is_static: bool,
 }
 
 fn collect_private_auto_accessors_with_reserved(
@@ -143,7 +144,7 @@ impl<'a> Printer<'a> {
         name == "constructor"
     }
 
-    fn emit_private_auto_accessor_function_def(
+    pub(in crate::emitter) fn emit_private_auto_accessor_function_def(
         &mut self,
         var_name: &str,
         storage_name: &str,
@@ -1290,6 +1291,7 @@ impl<'a> Printer<'a> {
         // Allocate the class-expression temp after computed-name temps so the
         // generated `_a`, `_b`, `_c` ordering matches tsc.
         let has_static_field_comma_expr = target_needs_field_lowering
+            && target_needs_static_block_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 let Some(member) = self.arena.get(member_idx) else {
                     return false;
@@ -1930,6 +1932,55 @@ impl<'a> Printer<'a> {
                 || has_private_field_inits
                 || has_instances_weakset);
 
+        let prev_scoped_class_expression_self_alias =
+            self.scoped_class_expression_self_alias.take();
+        let scoped_class_expression_self_alias_ancestor_len =
+            self.scoped_class_expression_self_alias_ancestors.len();
+        if let Some((prev_class_name, prev_class_alias)) =
+            prev_scoped_class_expression_self_alias.clone()
+        {
+            let shadows_prev_alias = class_name_is_real
+                && !class_name.is_empty()
+                && class_name == prev_class_name.as_ref();
+            if !shadows_prev_alias {
+                self.scoped_class_expression_self_alias_ancestors
+                    .push((prev_class_name, prev_class_alias));
+            }
+        }
+        if let Some(alias) = assignment_alias {
+            if class_name_is_real && !class_name.is_empty() && class_name != alias {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias),
+                ));
+            }
+        } else if let Some(temp) = class_expr_temp.as_ref() {
+            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
+        } else if let Some(alias) = class_value_alias.as_ref() {
+            if class_name_is_real && !class_name.is_empty() && class_name != *alias {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias.as_str()),
+                ));
+            }
+        } else if let Some((static_class_name, static_class_alias)) =
+            self.private_static_class_alias.clone()
+            && class_name_is_real
+            && !class_name.is_empty()
+            && class_name == static_class_name
+            && class_name != static_class_alias
+        {
+            self.scoped_class_expression_self_alias = Some((
+                Arc::<str>::from(class_name.as_str()),
+                Arc::<str>::from(static_class_alias.as_str()),
+            ));
+        }
+
         if synthesize_constructor {
             // Increment function_scope_depth so async arrow functions inside
             // the synthesized constructor use `this` instead of `void 0` as
@@ -2052,54 +2103,6 @@ impl<'a> Printer<'a> {
             .unwrap_or(node.end);
 
         let mut field_init_comment_idx = 0usize;
-        let prev_scoped_class_expression_self_alias =
-            self.scoped_class_expression_self_alias.take();
-        let scoped_class_expression_self_alias_ancestor_len =
-            self.scoped_class_expression_self_alias_ancestors.len();
-        if let Some((prev_class_name, prev_class_alias)) =
-            prev_scoped_class_expression_self_alias.clone()
-        {
-            let shadows_prev_alias = class_name_is_real
-                && !class_name.is_empty()
-                && class_name == prev_class_name.as_ref();
-            if !shadows_prev_alias {
-                self.scoped_class_expression_self_alias_ancestors
-                    .push((prev_class_name, prev_class_alias));
-            }
-        }
-        if let Some(alias) = assignment_alias {
-            if class_name_is_real && !class_name.is_empty() && class_name != alias {
-                self.scoped_class_expression_self_alias = Some((
-                    Arc::<str>::from(class_name.as_str()),
-                    Arc::<str>::from(alias),
-                ));
-            }
-        } else if let Some(temp) = class_expr_temp.as_ref() {
-            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
-                self.scoped_class_expression_self_alias = Some((
-                    Arc::<str>::from(class_name.as_str()),
-                    Arc::<str>::from(temp.as_str()),
-                ));
-            }
-        } else if let Some(alias) = class_value_alias.as_ref() {
-            if class_name_is_real && !class_name.is_empty() && class_name != *alias {
-                self.scoped_class_expression_self_alias = Some((
-                    Arc::<str>::from(class_name.as_str()),
-                    Arc::<str>::from(alias.as_str()),
-                ));
-            }
-        } else if let Some((static_class_name, static_class_alias)) =
-            self.private_static_class_alias.clone()
-            && class_name_is_real
-            && !class_name.is_empty()
-            && class_name == static_class_name
-            && class_name != static_class_alias
-        {
-            self.scoped_class_expression_self_alias = Some((
-                Arc::<str>::from(class_name.as_str()),
-                Arc::<str>::from(static_class_alias.as_str()),
-            ));
-        }
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip private field declarations entirely when lowering to WeakMap pattern
             if !private_fields.is_empty()
@@ -2997,8 +3000,34 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        // Private helper/state initialization can be part of a class-expression
+        // comma list. Gather it before static element scheduling so lowered
+        // private state can be emitted before static field/block work observes it.
+        let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+        let has_weakmap_inits = !weakmap_inits.is_empty();
+        let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
+        let private_class_alias_pair = self.pending_private_class_alias.take();
+        let instances_ws = self.pending_instances_weakset_add.clone();
+        let method_defs: Vec<PrivateMethodDef> =
+            std::mem::take(&mut self.pending_private_method_defs);
+        let accessor_defs: Vec<PrivateAccessorDef> =
+            std::mem::take(&mut self.pending_private_accessor_defs);
+        let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
+            .iter()
+            .filter(|_| !emitted_private_auto_accessors_pre_static)
+            .filter(|a| !a.is_static)
+            .map(|a| format!("{} = new WeakMap()", a.storage_name))
+            .collect();
+        let has_post_class_inits = private_class_alias_pair.is_some()
+            || has_weakmap_inits
+            || instances_ws.is_some()
+            || !method_defs.is_empty()
+            || !accessor_defs.is_empty()
+            || !private_auto_instance_storage_inits.is_empty();
+
         let class_expr_static_comma_had_scheduled_elements =
             !static_field_inits.is_empty() || !deferred_static_blocks.is_empty();
+        let mut emitted_private_comma_items_before_static_items = false;
         if !static_field_inits.is_empty()
             && let Some(temp) = class_expr_static_temp.as_ref()
         {
@@ -3042,9 +3071,33 @@ impl<'a> Printer<'a> {
             }
             comma_items.sort_by_key(|(pos, _)| *pos);
 
+            if needs_private_comma_expr && has_post_class_inits {
+                emitted_private_comma_items_before_static_items = true;
+                self.emit_private_comma_items(PrivateCommaItems {
+                    weakmap_inits: &weakmap_inits,
+                    instances_ws: instances_ws.as_deref(),
+                    private_auto_instance_storage_inits: &private_auto_instance_storage_inits,
+                    method_defs: &method_defs,
+                    accessor_defs: &accessor_defs,
+                    private_member_def_needs_class_alias,
+                    class_value_alias: class_value_alias.as_deref(),
+                    class_name: &class_name,
+                    emitted_private_auto_accessors_pre_static,
+                    private_auto_accessors: &private_auto_accessors,
+                    private_class_alias_pair: private_class_alias_pair.as_ref(),
+                    set_function_name: class_expr_set_function_name
+                        .as_deref()
+                        .map(|name| (temp.as_str(), name)),
+                    static_private_inits: &static_private_inits,
+                });
+            }
+
             for (_pos, item) in comma_items {
                 match item {
                     CommaItem::SetFunctionName(name) => {
+                        if emitted_private_comma_items_before_static_items {
+                            continue;
+                        }
                         self.emit_class_expr_set_function_name_comma_item(temp, &name);
                     }
                     CommaItem::Field((
@@ -3419,32 +3472,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit private field WeakMap initializations after class body:
-        // _C_field1 = new WeakMap();
-        let has_weakmap_inits = !self.pending_weakmap_inits.is_empty();
-        let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
-        let private_class_alias_pair = self.pending_private_class_alias.take();
-
-        // Emit combined initialization line after class body.
-        // tsc joins class alias, WeakMap inits, WeakSet init, and private method/accessor defs
-        // with commas on a single line, e.g.:
-        // _a = A, _A_foo = new WeakMap(), _A_instances = new WeakSet(), _A_m = function _A_m() { };
-        let instances_ws = self.pending_instances_weakset_add.clone();
-        let method_defs = std::mem::take(&mut self.pending_private_method_defs);
-        let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
-        let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
-            .iter()
-            .filter(|_| !emitted_private_auto_accessors_pre_static)
-            .filter(|a| !a.is_static)
-            .map(|a| format!("{} = new WeakMap()", a.storage_name))
-            .collect();
-        let has_post_class_inits = private_class_alias_pair.is_some()
-            || has_weakmap_inits
-            || instances_ws.is_some()
-            || !method_defs.is_empty()
-            || !accessor_defs.is_empty()
-            || !private_auto_instance_storage_inits.is_empty();
-
         // For class expressions with private field lowering, emit the WeakMap/WeakSet/method
         // initializations as comma-separated items inside the wrapping expression:
         //   (_a = class C { ... },
@@ -3453,137 +3480,33 @@ impl<'a> Printer<'a> {
         //       _C_method = function _C_method() { },
         //       _a)
         // For class declarations, emit as separate statements after the class body.
-        if needs_private_comma_expr && has_post_class_inits {
-            // Emit comma-separated inits inline. tsc orders them as:
-            // instance-member helpers (WeakMap/WeakSet/private method+accessor
-            // functions) first, then `__setFunctionName`, then static value
-            // inits. The named-evaluation step is emitted below, after helpers.
-            // WeakMap inits: _X_field = new WeakMap()
-            let weakmap_inits = self.pending_weakmap_inits.clone();
-            for init in &weakmap_inits {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.write(init);
-                self.decrease_indent();
-            }
-
-            // WeakSet: _X_instances = new WeakSet()
-            if let Some(ref ws_name) = instances_ws {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.write(ws_name);
-                self.write(" = new WeakSet()");
-                self.decrease_indent();
-            }
-
-            for init in &private_auto_instance_storage_inits {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.write(init);
-                self.decrease_indent();
-            }
-
-            // Private method function definitions
-            for def in &method_defs {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.emit_private_method_function_def(
-                    def,
-                    private_member_def_needs_class_alias,
-                    class_value_alias.as_deref(),
-                    &class_name,
-                );
-                self.decrease_indent();
-            }
-
-            // Private accessor function definitions
-            for def in &accessor_defs {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.emit_private_accessor_function_def(
-                    def,
-                    private_member_def_needs_class_alias,
-                    class_value_alias.as_deref(),
-                    &class_name,
-                );
-                self.decrease_indent();
-            }
-
-            if !emitted_private_auto_accessors_pre_static {
-                for accessor in &private_auto_accessors {
-                    self.write(",");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_private_auto_accessor_function_def(
-                        &accessor.get_var_name,
-                        &accessor.storage_name,
-                        accessor.is_static,
-                        true,
-                        private_class_alias_pair
-                            .as_ref()
-                            .map(|(alias, _)| alias.as_str())
-                            .or(class_value_alias.as_deref()),
-                    );
-                    self.write(",");
-                    self.write_line();
-                    self.emit_private_auto_accessor_function_def(
-                        &accessor.set_var_name,
-                        &accessor.storage_name,
-                        accessor.is_static,
-                        false,
-                        private_class_alias_pair
-                            .as_ref()
-                            .map(|(alias, _)| alias.as_str())
-                            .or(class_value_alias.as_deref()),
-                    );
-                    self.decrease_indent();
-                }
-            }
-
-            // Named-evaluation step: after instance helpers, before static
-            // value inits, matching tsc.
-            if (!needs_static_comma_expr || class_expr_static_comma_has_no_scheduled_elements)
-                && let Some(temp) = class_expr_temp.as_ref()
-                && let Some(name) = class_expr_set_function_name.as_ref()
-            {
-                self.emit_class_expr_set_function_name_comma_item(temp, name);
-            }
-
-            // Emit static private field value initializations as comma items
-            // (e.g., `_D_field = { value: __classPrivateFieldGet(...) }`)
-            for (var_name, init_idx) in &static_private_inits {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.write(var_name);
-                self.write(" = { value: ");
-                if init_idx.is_some() {
-                    self.emit_expression(*init_idx);
+        if needs_private_comma_expr
+            && has_post_class_inits
+            && !emitted_private_comma_items_before_static_items
+        {
+            self.emit_private_comma_items(PrivateCommaItems {
+                weakmap_inits: &weakmap_inits,
+                instances_ws: instances_ws.as_deref(),
+                private_auto_instance_storage_inits: &private_auto_instance_storage_inits,
+                method_defs: &method_defs,
+                accessor_defs: &accessor_defs,
+                private_member_def_needs_class_alias,
+                class_value_alias: class_value_alias.as_deref(),
+                class_name: &class_name,
+                emitted_private_auto_accessors_pre_static,
+                private_auto_accessors: &private_auto_accessors,
+                private_class_alias_pair: private_class_alias_pair.as_ref(),
+                set_function_name: if !needs_static_comma_expr
+                    || class_expr_static_comma_has_no_scheduled_elements
+                {
+                    class_expr_temp
+                        .as_deref()
+                        .zip(class_expr_set_function_name.as_deref())
                 } else {
-                    self.write("void 0");
-                }
-                self.write(" }");
-                self.decrease_indent();
-            }
-            for accessor in private_auto_accessors.iter().filter(|a| a.is_static) {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.write(&accessor.storage_name);
-                self.write(" = { value: ");
-                if let Some(init) = accessor.initializer {
-                    self.emit_expression(init);
-                } else {
-                    self.write("void 0");
-                }
-                self.write(" }");
-                self.decrease_indent();
-            }
+                    None
+                },
+                static_private_inits: &static_private_inits,
+            });
 
             if !target_supports_native_private_names && has_legacy_private_name_member_decorators {
                 self.write(",");
@@ -3618,7 +3541,7 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             }
-        } else if has_post_class_inits {
+        } else if has_post_class_inits && !emitted_private_comma_items_before_static_items {
             self.write_line();
             let mut first = true;
 
@@ -3631,7 +3554,6 @@ impl<'a> Printer<'a> {
             }
 
             // WeakMap inits first (tsc order): _X_field = new WeakMap()
-            let weakmap_inits = self.pending_weakmap_inits.clone();
             for init in &weakmap_inits {
                 if !first {
                     self.write(", ");
