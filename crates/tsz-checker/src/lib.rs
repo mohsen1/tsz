@@ -189,6 +189,9 @@ mod flow_inferred_predicate_boundary_tests;
 #[path = "tests/flow_promise_identity_tests.rs"]
 mod flow_promise_identity_tests;
 #[cfg(test)]
+#[path = "tests/flow_usage_relation_routing_arch_tests.rs"]
+mod flow_usage_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/function_type_relation_routing_arch_tests.rs"]
 mod function_type_relation_routing_arch_tests;
 #[cfg(test)]
