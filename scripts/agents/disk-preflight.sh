@@ -346,6 +346,7 @@ const bool = (value) => value === "true";
 const diskOk = guard.disk_status === "ok";
 const report = {
   ok: diskOk,
+  status: diskOk ? "pass" : "fail",
   agent: process.env.AGENT,
   repo: process.env.ROOT,
   disk_guard: {
