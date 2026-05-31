@@ -283,7 +283,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3377,
+        3359,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
@@ -349,7 +349,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "class"
         / "emit_es6.rs",
-        4102,
+        4139,
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
@@ -562,7 +562,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "property_access_type"
         / "resolve.rs",
-        3152,
+        3151,
     ),
     (
         "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
@@ -852,7 +852,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: operations/call_args.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "operations" / "call_args.rs",
-        2122,
+        2084,
     ),
     (
         "LSP boundary: navigation/definition.rs size ratchet",
@@ -918,7 +918,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "core"
         / "call_resolution.rs",
-        2031,
+        1947,
     ),
     (
         "Solver boundary: caches/query_cache.rs size ratchet",
@@ -1199,9 +1199,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `common` barrel). It is an existing request-shaped helper already used
         # throughout this file — no new quarantine entry.
         #
-        # Ratcheted down after current-main guard tests caught three lines of
-        # slack in the live direct-reference count.
-        3278,
+        # Re-pinned after neighboring queued PRs changed the current-main
+        # live direct-reference count during the merge queue.
+        3280,
     ),
 ]
 

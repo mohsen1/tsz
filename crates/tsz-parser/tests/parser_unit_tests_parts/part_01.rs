@@ -921,12 +921,22 @@ fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() 
         "first member must end at its parsed value, not the recovered tail"
     );
 
-    // Member 2: a fresh member whose name is the trailing string literal `""`,
-    // which (lacking a `:`) requires a colon.
+    // Member 2: a fresh member whose name is the trailing string literal `""`.
+    // A string-literal name is never a shorthand (tsc's `tokenIsIdentifier` is
+    // false for it), so it is a property assignment with a missing `:` and an
+    // empty value — emitted as `"": ` (matching tsc's `parserSymbolIndexer5.js`
+    // baseline `[s]: symbol, "": `), not a value-less shorthand `""`.
     let prop1 = arena
         .get(object_data.elements.nodes[1])
         .expect("second member");
-    assert_eq!(prop1.kind, syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT);
+    assert_eq!(prop1.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
+    let assignment1 = arena
+        .get_property_assignment(prop1)
+        .expect("second member property assignment data");
+    assert_ne!(
+        assignment1.name, assignment1.initializer,
+        "missing value must be a distinct empty node so the emitter keeps the colon"
+    );
 
     // The trailing "':' expected." must land at the closing `}` position.
     let close_brace_pos = source.rfind('}').expect("closing brace") as u32;
