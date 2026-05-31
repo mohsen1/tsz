@@ -515,7 +515,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "expressions"
         / "access.rs",
-        2554,
+        1499,
     ),
     # --- Blanket coverage batch: all production files > 2000 lines per §19 ---
     # These entries pin the current baseline and prevent silent growth.
