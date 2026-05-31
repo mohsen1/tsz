@@ -521,18 +521,6 @@ FILE_LINE_LIMIT_CHECKS = [
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
     (
-        "Solver boundary: relations/subtype/rules/generics.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-solver"
-        / "src"
-        / "relations"
-        / "subtype"
-        / "rules"
-        / "generics.rs",
-        2072,
-    ),
-    (
         "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
         ROOT
         / "crates"
