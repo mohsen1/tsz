@@ -1538,7 +1538,8 @@ run_emit_shard() {
   export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
   echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS} timeout_ms=${EMIT_TIMEOUT_MS}"
 
-  local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  local detail_json="$METRICS_DIR/emit-detail-${shard_index}.json"
+  local shard_json="$METRICS_DIR/emit-shard-${shard_index}.json"
   local emit_args=(
     --skip-build
     --concurrency="$EMIT_WORKERS"
@@ -1574,12 +1575,12 @@ run_emit_shard() {
   local result_json
   result_json="$(printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}' \
     "$shard_index" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s")"
-  echo "$result_json" > "$METRICS_DIR/emit-shard-${shard_index}.json"
+  echo "$result_json" > "$shard_json"
   echo "EMIT_SHARD shard=${shard_index} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t}"
 
   if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
     local prefix="${bucket%/}/emit-runs/${run_key}"
-    gsutil cp "$METRICS_DIR/emit-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+    gsutil cp "$shard_json" "${prefix}/shard-${shard_index}.json" \
       && echo "Uploaded emit shard result: shard-${shard_index}.json" \
       || echo "warning: failed to upload emit shard result (non-fatal)" >&2
   fi
