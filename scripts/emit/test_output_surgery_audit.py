@@ -80,6 +80,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         report = self.audit.build_json_report(findings, allowlist, failures)
 
         self.assertFalse(report["ok"])
+        self.assertEqual(report["status"], "failed")
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
@@ -138,6 +139,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         report = self.audit.build_json_report(findings, allowlist, [])
 
         self.assertTrue(report["ok"])
+        self.assertEqual(report["status"], "passed")
         self.assertEqual(report["failures"], [])
 
     def test_pass_summary_names_clean_guardrail_counters(self):
