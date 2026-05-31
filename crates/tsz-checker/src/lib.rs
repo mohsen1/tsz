@@ -834,6 +834,9 @@ mod jsx_props_validation_relation_routing_arch_tests;
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
 #[cfg(test)]
+#[path = "tests/jsx_return_relation_routing_arch_tests.rs"]
+mod jsx_return_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_single_child_precise_relation_routing_arch_tests.rs"]
 mod jsx_single_child_precise_relation_routing_arch_tests;
 #[cfg(test)]

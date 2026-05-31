@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
                             source_params,
                             target_params,
                         ) && self
-                            .assign_relation_outcome(*source_return, *target_return)
+                            .return_relation_outcome(*source_return, *target_return)
                             .related
                     })
             })
@@ -837,7 +837,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if self
-            .assign_relation_outcome(source_render, target_render)
+            .return_relation_outcome(source_render, target_render)
             .related
         {
             return true;
@@ -851,7 +851,7 @@ impl<'a> CheckerState<'a> {
 
         source_returns.iter().any(|&source_return| {
             target_returns.iter().any(|&target_return| {
-                self.assign_relation_outcome(source_return, target_return)
+                self.return_relation_outcome(source_return, target_return)
                     .related
             })
         })
@@ -1008,7 +1008,7 @@ impl<'a> CheckerState<'a> {
                                 all_valid = false;
                             }
                         } else if !self
-                            .assign_relation_outcome(non_null_return, element_type)
+                            .return_relation_outcome(non_null_return, element_type)
                             .related
                         {
                             all_valid = false;
@@ -1084,7 +1084,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 ret
                             };
-                            self.assign_relation_outcome(check_ret, t).related
+                            self.return_relation_outcome(check_ret, t).related
                                 || (!is_call_sig
                                     && self
                                         .jsx_construct_return_can_use_render_fallback(check_ret, t))
@@ -1156,7 +1156,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !self
-            .assign_relation_outcome(non_null_return, jsx_element_type)
+            .return_relation_outcome(non_null_return, jsx_element_type)
             .related
         {
             self.report_invalid_jsx_component_return_type(tag_name_idx);
