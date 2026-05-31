@@ -979,6 +979,89 @@ fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
 }
 
 #[test]
+fn assignability_cache_strict_readonly_identity_matches_uncached_property_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let x = interner.intern_string("x");
+
+    let source = interner.object(vec![PropertyInfo::readonly(x, TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+
+    let permissive_policy = RelationPolicy::unflagged_compatibility();
+    let strict_policy =
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY);
+    let permissive_key =
+        RelationCacheKey::for_assignability(source, target, permissive_policy.cache_config());
+    let strict_key =
+        RelationCacheKey::for_assignability(source, target, strict_policy.cache_config());
+
+    assert_ne!(
+        permissive_key, strict_key,
+        "strict readonly identity must partition assignability cache entries",
+    );
+
+    let permissive_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        permissive_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        permissive_uncached,
+        "permissive readonly assignability should allow a readonly property to satisfy a mutable target",
+    );
+    assert!(
+        !strict_uncached,
+        "strict readonly identity assignability must reject readonly-to-mutable property comparison",
+    );
+
+    let strict_cached = db.is_assignable_to_with_policy(source, target, strict_policy);
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict readonly assignability must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict readonly assignability result must be stored in the strict policy slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(permissive_key),
+        None,
+        "permissive lookup must not hit the strict readonly slot",
+    );
+
+    let permissive_cached = db.is_assignable_to_with_policy(source, target, permissive_policy);
+    assert_eq!(
+        permissive_cached, permissive_uncached,
+        "cached permissive readonly assignability must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(permissive_key),
+        Some(permissive_cached),
+        "permissive readonly assignability result must be stored in the permissive policy slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict readonly assignability slot must remain intact after permissive lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);

@@ -583,6 +583,7 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.subtype.allow_erased_generic_signature_retry =
         policy.allow_erased_generic_signature_retry();
     checker.subtype.in_callback_param_check = policy.in_callback_param_check();
+    checker.subtype.strict_readonly_identity = policy.strict_readonly_identity();
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
