@@ -249,6 +249,9 @@ mod literal_application_alias_display_tests;
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
+#[path = "../tests/missing_name_pass_constrained_type_param_tests.rs"]
+mod missing_name_pass_constrained_type_param_tests;
+#[cfg(test)]
 #[path = "../tests/name_resolution_boundary_tests.rs"]
 mod name_resolution_boundary_tests;
 #[cfg(test)]
