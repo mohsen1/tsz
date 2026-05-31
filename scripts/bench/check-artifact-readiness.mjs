@@ -4,8 +4,9 @@
  *
  * Exit codes:
  *   0 — artifact present, all required rows included
- *   1 — artifact present, one or more required rows are missing or the
- *       --require-green release gate found non-green required rows
+ *   1 — artifact present, one or more required rows are missing, the
+ *       --require-green release gate found non-green required rows, or the
+ *       --require-clean-metadata gate found artifact metadata warnings
  *   2 — artifact file absent or unparseable
  *
  * Without --json: writes a markdown report to stdout (and GITHUB_STEP_SUMMARY
@@ -16,7 +17,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -33,6 +34,7 @@ import {
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
 const requireGreen = args.includes("--require-green");
+const requireCleanMetadata = args.includes("--require-clean-metadata");
 const filePath = args.find((a) => !a.startsWith("-")) ?? null;
 
 function loadArtifact() {
@@ -219,6 +221,7 @@ function uniqueRowsByName(rows) {
 
 function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
+  const metadataWarningsList = metadataWarnings(measurementProfile, validationWarnings);
   const nonGreenRows = rows
     ? uniqueRowsByName([
       ...(red ?? []),
@@ -240,6 +243,8 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
       measurement_profile: [],
       total: 0,
     },
+    metadata_clean: metadataWarningsList.length === 0,
+    metadata_warnings_total: metadataWarningsList.length,
     required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
@@ -322,6 +327,23 @@ function measurementProfileReportWarnings(profile, validationWarnings) {
     });
   }
   return warnings;
+}
+
+function metadataWarnings(profile, validationWarnings) {
+  const runnerWarnings = (validationWarnings?.runner_environment ?? []).map((warning) => ({
+    kind: "runner metadata",
+    file: warning.file ?? "unknown input",
+    message: fmtWarningFields(warning),
+  }));
+  const measurementWarnings = measurementProfileReportWarnings(
+    profile ?? { warning: "measurement_profile missing" },
+    validationWarnings ?? { measurement_profile: [] },
+  ).map((warning) => ({
+    kind: "measurement profile",
+    file: warning.file,
+    message: warning.message,
+  }));
+  return [...runnerWarnings, ...measurementWarnings];
 }
 
 function artifactAge(generatedAt) {
@@ -508,6 +530,17 @@ if (requireGreen && (red.length > 0 || yellow.length > 0 || gray.length > 0)) {
       nonGreen.map((r) => `${r.name} (${r.state})`).join(", ") + "\n",
   );
   process.exit(1);
+}
+
+if (requireCleanMetadata) {
+  const warnings = metadataWarnings(measurementProfile, validationWarnings);
+  if (warnings.length > 0) {
+    process.stderr.write(
+      `bench-artifact-readiness: ${warnings.length} metadata warning(s) present: ` +
+        warnings.map((warning) => `${warning.kind} ${warning.file}: ${warning.message}`).join("; ") + "\n",
+    );
+    process.exit(1);
+  }
 }
 
 process.exit(0);
