@@ -37,6 +37,7 @@ mod state_exports_recovery;
 mod state_expressions;
 mod state_expressions_arrow;
 mod state_expressions_literals;
+mod state_expressions_literals_object;
 mod state_expressions_literals_regex;
 mod state_expressions_tail;
 mod state_import_attributes;
