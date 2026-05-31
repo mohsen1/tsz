@@ -7,6 +7,8 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
     let call_predicate_source =
         fs::read_to_string("src/flow/control_flow/call_condition_narrowing.rs")
             .expect("failed to read call predicate narrowing source");
+    let type_guard_source = fs::read_to_string("src/flow/control_flow/type_guards.rs")
+        .expect("failed to read type guard source");
     let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
         .expect("failed to read flow analysis query boundary");
     let compact_assignment: String = assignment_source
@@ -14,6 +16,10 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         .filter(|c| !c.is_whitespace())
         .collect();
     let compact_call_predicate: String = call_predicate_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_type_guard: String = type_guard_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -52,5 +58,15 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         !compact_call_predicate
             .contains(".filter(|member|self.is_assignable_to(*member,predicate_type))"),
         "call predicate exclusion should not filter union members with a raw relation call"
+    );
+    assert!(
+        compact_type_guard.contains("flow_assignability_outcome(")
+            && compact_type_guard.contains("arg_type,evaluated_pred,false")
+            && compact_type_guard.contains(").related"),
+        "generic predicate cache-skipping should consume outcome-shaped relation truth"
+    );
+    assert!(
+        !compact_type_guard.contains("self.interner.is_assignable_to(arg_type,evaluated_pred)"),
+        "generic predicate cache-skipping should not call raw interner assignability"
     );
 }
