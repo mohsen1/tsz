@@ -39,6 +39,16 @@ def write_json_report(report_path: Path, payload: dict) -> None:
     temp_path.replace(report_path)
 
 
+def build_json_payload(failures: list[tuple[str, list[str]]], total_hits: int) -> dict:
+    ok = not failures
+    return {
+        "ok": ok,
+        "status": "failed" if failures else "passed",
+        "total_hits": total_hits,
+        "failures": [{"name": name, "hits": hits} for name, hits in failures],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run TSZ architecture guardrails"
@@ -294,11 +304,7 @@ def main() -> int:
             )
         )
 
-    payload = {
-        "status": "failed" if failures else "passed",
-        "total_hits": total_hits,
-        "failures": [{"name": name, "hits": hits} for name, hits in failures],
-    }
+    payload = build_json_payload(failures, total_hits)
 
     if args.json_report:
         write_json_report(Path(args.json_report), payload)
