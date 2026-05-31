@@ -13,6 +13,64 @@ if (!tsvPath || !manifestPath) {
   process.exit(2);
 }
 
+/**
+ * Load content-addressed cache from an existing manifest file.
+ *
+ * When the same source content (identified by `sourceSha256`) was processed in
+ * a prior run against the same repository ref, the derived output values
+ * (`outputSha256`, `declarations`, `semanticFamilies`) are deterministic and do
+ * not need to be recomputed.  This avoids re-reading and re-hashing every
+ * generated `.ts` file when most sources are unchanged between runs.
+ *
+ * The cache is keyed by `sourceSha256` alone (not by file path), because the
+ * content hash fully identifies the source content.  Two different source paths
+ * with the same content would share a cache entry, but that is harmless — they
+ * would produce identical output anyway.
+ *
+ * Cache validity conditions (both must hold):
+ *   1. The existing manifest's `source.ref` equals the current ref env var.
+ *   2. The entry's `challenge.sourceSha256` matches the TSV row's value.
+ *
+ * @param {string} existingManifestPath - Path that will be overwritten; read
+ *   before processing starts so the old content is still available.
+ * @param {string} currentRef - Current `TYPE_CHALLENGES_SOLUTIONS_REF` value.
+ * @returns {Map<string, {outputSha256: string, declarations: string[], semanticFamilies: string[]}>}
+ */
+function loadManifestCache(existingManifestPath, currentRef) {
+  let oldManifest;
+  try {
+    oldManifest = JSON.parse(fs.readFileSync(existingManifestPath, "utf8"));
+  } catch {
+    return new Map();
+  }
+  if (oldManifest.source?.ref !== currentRef) return new Map();
+  if (!Array.isArray(oldManifest.entries)) return new Map();
+
+  const cache = new Map();
+  for (const entry of oldManifest.entries) {
+    const sourceSha256 = entry.challenge?.sourceSha256;
+    if (
+      !/^[0-9a-f]{64}$/.test(sourceSha256) ||
+      cache.has(sourceSha256)
+    ) {
+      continue;
+    }
+    if (
+      typeof entry.outputSha256 !== "string" ||
+      !Array.isArray(entry.declarations) ||
+      !Array.isArray(entry.semanticFamilies)
+    ) {
+      continue;
+    }
+    cache.set(sourceSha256, {
+      outputSha256: entry.outputSha256,
+      declarations: entry.declarations,
+      semanticFamilies: entry.semanticFamilies,
+    });
+  }
+  return cache;
+}
+
 const repository = process.env.TYPE_CHALLENGES_SOLUTIONS_REPO;
 const ref = process.env.TYPE_CHALLENGES_SOLUTIONS_REF;
 const expectedGenerated = Number(
@@ -94,6 +152,11 @@ const {
   manifestRoot,
   resolvedManifestPath,
 } = validateManifestOutputPath(tsvPath, manifestPath);
+
+// Load the old manifest before we start writing so we can reuse cached
+// outputSha256/declarations/semanticFamilies for unchanged source entries.
+const manifestCache = loadManifestCache(resolvedManifestPath, ref);
+
 const lines = fs.readFileSync(tsvPath, "utf8").trimEnd().split(/\r?\n/);
 const header = lines.shift();
 
@@ -102,7 +165,15 @@ if (header !== "output\tsource\tsourceSha256\tid\tlevel\ttitle") {
   process.exit(1);
 }
 
-function readOutputMetadata(outputPath) {
+function readOutputMetadata(outputPath, sourceSha256) {
+  // Reuse cached metadata when the source content is unchanged.  The output
+  // `.ts` content is deterministically derived from the source markdown, so
+  // unchanged source => unchanged output => all derived values are stable.
+  const cached = manifestCache.get(sourceSha256);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const text = fs.readFileSync(outputPath, "utf8");
   const names = [];
   const seen = new Set();
@@ -236,7 +307,7 @@ const entries = lines
       declarations,
       semanticFamilies,
       outputSha256,
-    } = readOutputMetadata(outputPath);
+    } = readOutputMetadata(outputPath, sourceSha256);
     if (declarations.length === 0) {
       console.error(`error: manifest output has no declarations: ${output}`);
       process.exit(1);
