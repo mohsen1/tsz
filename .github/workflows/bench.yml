@@ -704,6 +704,8 @@ jobs:
           cloudbuild_id="${{ needs.bench-prepare.outputs.build_id }}"
 
           deadline=$((SECONDS + 9000))
+          success_seen_at=""
+          success_grace_seconds=600
           while true; do
             rm -f bench-prep.env bench-prep.tar
             if storage_cp \
@@ -720,6 +722,10 @@ jobs:
 
             status="$(cloudbuild_status "$cloudbuild_id")"
             if [[ "$status" == "SUCCESS" ]]; then
+              if [[ -z "$success_seen_at" ]]; then
+                success_seen_at="$SECONDS"
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded; waiting up to ${success_grace_seconds}s for prep artifacts to become visible."
+              fi
               if copy_from_latest_prep_artifact; then
                 exit 0
               fi
@@ -727,11 +733,12 @@ jobs:
                 if validate_downloaded_prep_artifact; then
                   exit 0
                 fi
-                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                echo "Cloud Build benchmark prep ${cloudbuild_id} manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha} / PGO=1."
+              fi
+              if (( SECONDS - success_seen_at >= success_grace_seconds )); then
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha} after ${success_grace_seconds}s."
                 exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
-              exit 1
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
@@ -881,6 +888,8 @@ jobs:
           target_sha="${{ env.BENCH_TARGET_SHA }}"
 
           deadline=$((SECONDS + 9000))
+          success_seen_at=""
+          success_grace_seconds=600
           while true; do
             if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
@@ -896,6 +905,10 @@ jobs:
 
             status="$(cloudbuild_status "$cloudbuild_id")"
             if [[ "$status" == "SUCCESS" ]]; then
+              if [[ -z "$success_seen_at" ]]; then
+                success_seen_at="$SECONDS"
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded; waiting up to ${success_grace_seconds}s for prep artifacts to become visible."
+              fi
               if copy_from_latest_prep_artifact; then
                 exit 0
               fi
@@ -903,11 +916,12 @@ jobs:
                 if validate_downloaded_prep_artifact; then
                   exit 0
                 fi
-                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                echo "Cloud Build benchmark prep ${cloudbuild_id} manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha} / PGO=1."
+              fi
+              if (( SECONDS - success_seen_at >= success_grace_seconds )); then
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha} after ${success_grace_seconds}s."
                 exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
-              exit 1
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
