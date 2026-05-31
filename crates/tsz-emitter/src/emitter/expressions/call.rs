@@ -943,10 +943,10 @@ impl<'a> Printer<'a> {
     /// Cases by specifier shape, matching tsc:
     ///
     /// - Captured temp / string literal / no-arg: lazy `Promise.resolve().then(() => require(x))`.
-    /// - `TemplateExpression`: `Promise.resolve(template).then(s => require(s))` — the
-    ///   template already evaluates to a string so no extra coercion wrapper is added.
-    /// - Bare identifier: `Promise.resolve(coerced).then(s => require(s))` where the
-    ///   coerced form wraps the identifier in a template-string coercion.
+    /// - Non-string-like expressions: `Promise.resolve(coerced).then(s => require(s))`
+    ///   where the coerced form wraps the expression in a template-string coercion.
+    ///   If the expression is itself a template expression, that template remains
+    ///   nested inside the coercion wrapper.
     fn emit_dynamic_import_commonjs_promise(
         &mut self,
         first_arg: Option<NodeIndex>,
@@ -957,28 +957,14 @@ impl<'a> Printer<'a> {
             self.emit_dynamic_import_commonjs_branch(first_arg, temp);
             return;
         }
-        // first_arg is guaranteed Some and non-string-like by the guard above.
-        let first = first_arg.unwrap();
-        // TemplateExpression already evaluates to a string: emit it directly in
-        // Promise.resolve() without an extra `${…}` coercion wrapper.
-        if !self.ctx.options.rewrite_relative_import_extensions
-            && self
-                .arena
-                .get(first)
-                .is_some_and(|n| n.kind == syntax_kind_ext::TEMPLATE_EXPRESSION)
-        {
-            self.write("Promise.resolve(");
-            self.emit(first);
-            self.write(").then(s => ");
+        let first = first_arg.expect("non-string-like dynamic import has an argument");
+        self.write("Promise.resolve(`${");
+        if self.ctx.options.rewrite_relative_import_extensions {
+            self.emit_rewrite_helper_call(first);
         } else {
-            self.write("Promise.resolve(`${");
-            if self.ctx.options.rewrite_relative_import_extensions {
-                self.emit_rewrite_helper_call(first);
-            } else {
-                self.emit_dynamic_import_template_specifier(first);
-            }
-            self.write("}`).then(s => ");
+            self.emit_dynamic_import_template_specifier(first);
         }
+        self.write("}`).then(s => ");
         self.write_helper("__importStar");
         self.write("(require(s)))");
     }
