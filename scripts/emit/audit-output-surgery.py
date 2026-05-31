@@ -263,11 +263,20 @@ def build_category_summaries(file_summaries: list[dict[str, object]]) -> list[di
 
     result: list[dict[str, object]] = []
     for entry in sorted(categories.values(), key=lambda item: str(item["category"])):
+        count = int(entry["count"])
+        max_count = entry["max_count"]
+        remaining_capacity = None
+        budget_status = "unallowlisted"
+        if max_count is not None:
+            remaining_capacity = max(0, int(max_count) - count)
+            budget_status = classify_budget_status(count, int(max_count))
         result.append(
             {
                 "category": entry["category"],
-                "count": entry["count"],
-                "max_count": entry["max_count"],
+                "count": count,
+                "max_count": max_count,
+                "remaining_capacity": remaining_capacity,
+                "budget_status": budget_status,
                 "files": entry["files"],
                 "statuses": dict(sorted(entry["statuses"].items())),
             }
@@ -323,7 +332,8 @@ def format_category_budget_metrics(file_summaries: list[dict[str, object]]) -> s
         if max_count is None:
             parts.append(f"{category}=unallowlisted:{count}")
         else:
-            parts.append(f"{category}={count}/{int(max_count)}")
+            budget_status = str(summary["budget_status"])
+            parts.append(f"{category}={count}/{int(max_count)}:{budget_status}")
     return "category_budgets=" + ",".join(parts)
 
 
