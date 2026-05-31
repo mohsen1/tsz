@@ -1191,6 +1191,37 @@ impl ParserState {
                 if self.is_token(SyntaxKind::ColonToken) {
                     use tsz_common::diagnostics::diagnostic_codes;
 
+                    // A `:` that follows an initializer recovered from a
+                    // template-literal-as-property-name object literal (e.g.
+                    // `var x = {} \`tpl\` : 321`) is never a type annotation.
+                    // tsc closes the object literal at the template, attaches
+                    // the template as a tagged-template tail, then treats the
+                    // `:` as a missing comma between declarators: it reports
+                    // TS1005 at the `:` and retries the declarator list at the
+                    // next token. That next token then either starts a new
+                    // declarator or, when it cannot (e.g. a numeric literal),
+                    // yields TS1134 and is left for the surrounding statement
+                    // parser. Recover the same way here so the AST — and emit
+                    // — match tsc (tagged-template initializer plus a separate
+                    // trailing statement) instead of swallowing the value as a
+                    // type. Gated on the dedicated recovery flag so it does not
+                    // perturb other `:`-after-initializer shapes such as
+                    // failed-arrow recovery (`var y = x:number => x*x`).
+                    if self.recovered_template_literal_property_in_object {
+                        self.recovered_template_literal_property_in_object = false;
+                        // Bypass the distance-based suppression gate (the `:`
+                        // can sit within `ERROR_SUPPRESSION_DISTANCE` of the
+                        // prior TS1136 from the recovered template-literal
+                        // property name); tsc dedups only on exact position,
+                        // and the `:` is at a distinct position.
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token(); // consume `:`
+                        continue;
+                    }
+
                     let recover_invalid_jsx_namespace_head =
                         self.recover_jsx_invalid_namespace_head_tail;
                     if self.recover_jsx_closing_tag_extra_namespace_tail
@@ -1727,6 +1758,12 @@ impl ParserState {
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_variable_declaration_with_flags_pre_checks(flags);
+
+        // Clear any stale template-literal-property recovery signal so that it
+        // can only reflect *this* declarator's initializer (e.g. an object
+        // literal in a non-declaration context must not leak into a later
+        // `var`).
+        self.recovered_template_literal_property_in_object = false;
 
         let name = self.parse_variable_declaration_name();
         let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);

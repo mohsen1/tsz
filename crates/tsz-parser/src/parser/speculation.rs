@@ -34,6 +34,7 @@ pub(crate) struct ParserCheckpoint {
     import_attribute_tail_recovered: bool,
     suppress_object_literal_comma_once: bool,
     abort_object_literal_recovery_once: bool,
+    recovered_template_literal_property_in_object: bool,
     suppress_next_missing_close_paren_error_once: bool,
     saw_arrow_parameter_recovery: bool,
 }
@@ -58,6 +59,8 @@ impl ParserState {
             import_attribute_tail_recovered: self.import_attribute_tail_recovered,
             suppress_object_literal_comma_once: self.suppress_object_literal_comma_once,
             abort_object_literal_recovery_once: self.abort_object_literal_recovery_once,
+            recovered_template_literal_property_in_object: self
+                .recovered_template_literal_property_in_object,
             suppress_next_missing_close_paren_error_once: self
                 .suppress_next_missing_close_paren_error_once,
             saw_arrow_parameter_recovery: self.saw_arrow_parameter_recovery,
@@ -81,6 +84,7 @@ impl ParserState {
             import_attribute_tail_recovered,
             suppress_object_literal_comma_once,
             abort_object_literal_recovery_once,
+            recovered_template_literal_property_in_object,
             suppress_next_missing_close_paren_error_once,
             saw_arrow_parameter_recovery,
         } = checkpoint;
@@ -99,6 +103,8 @@ impl ParserState {
         self.import_attribute_tail_recovered = import_attribute_tail_recovered;
         self.suppress_object_literal_comma_once = suppress_object_literal_comma_once;
         self.abort_object_literal_recovery_once = abort_object_literal_recovery_once;
+        self.recovered_template_literal_property_in_object =
+            recovered_template_literal_property_in_object;
         self.suppress_next_missing_close_paren_error_once =
             suppress_next_missing_close_paren_error_once;
         self.saw_arrow_parameter_recovery = saw_arrow_parameter_recovery;
