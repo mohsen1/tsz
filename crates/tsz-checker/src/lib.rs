@@ -987,6 +987,9 @@ mod satisfies_callback_return_widening_tests;
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;
 #[cfg(test)]
+#[path = "tests/state_type_environment_relation_routing_arch_tests.rs"]
+mod state_type_environment_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/strict_callback_param_method_tests.rs"]
 mod strict_callback_param_method_tests;
 #[cfg(test)]

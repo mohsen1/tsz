@@ -556,8 +556,8 @@ impl<'a> CheckerState<'a> {
 
                 let seen = discriminants.entry(prop.name).or_default();
                 if seen.iter().any(|&other| {
-                    !self.is_subtype_of(prop.type_id, other)
-                        && !self.is_subtype_of(other, prop.type_id)
+                    !self.diagnostic_subtype_outcome(prop.type_id, other).related
+                        && !self.diagnostic_subtype_outcome(other, prop.type_id).related
                 }) {
                     return true;
                 }
@@ -607,8 +607,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if units.iter().any(|&other| {
-                !self.is_subtype_of(evaluated_member, other)
-                    && !self.is_subtype_of(other, evaluated_member)
+                !self
+                    .diagnostic_subtype_outcome(evaluated_member, other)
+                    .related
+                    && !self
+                        .diagnostic_subtype_outcome(other, evaluated_member)
+                        .related
             }) {
                 return true;
             }
