@@ -257,6 +257,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
 mod comments_source;
 mod computed_declarations;
 mod correlated_union;
+mod correlated_union_mapped_arrays;
 mod default_import_alias_rewrite;
 mod emit_node;
 mod function_analysis;
@@ -298,6 +299,7 @@ mod type_inference_object_members;
 mod type_inference_object_rewrites;
 mod type_inference_object_unions;
 mod type_inference_package_matching;
+mod type_inference_parameter_return;
 mod type_inference_portable_mapped_objects;
 mod type_inference_public_packages;
 mod type_inference_return_guards;

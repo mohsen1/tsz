@@ -115,6 +115,74 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(super) fn expand_tuple_index_substitutions_text(
+        text: &str,
+        substitutions: &[(String, String)],
+    ) -> String {
+        let mut expanded = text.to_string();
+        for (name, value) in substitutions {
+            let Some(union_text) = Self::tuple_number_index_union_text(value) else {
+                continue;
+            };
+            expanded =
+                Self::replace_type_parameter_number_index_access(&expanded, name, &union_text);
+        }
+        expanded
+    }
+
+    fn tuple_number_index_union_text(type_text: &str) -> Option<String> {
+        let elements = Self::tuple_type_text_elements_preserving_rest(type_text)?;
+        let mut members = Vec::new();
+        for element in elements {
+            let element = element.trim();
+            if element.starts_with("...") || element.is_empty() {
+                return None;
+            }
+            let element = Self::find_top_level_byte(element, b':')
+                .and_then(|idx| element.get(idx + 1..))
+                .unwrap_or(element)
+                .trim()
+                .trim_end_matches('?')
+                .trim();
+            if element.is_empty() {
+                return None;
+            }
+            members.push(element.to_string());
+        }
+        (!members.is_empty()).then(|| members.join(" | "))
+    }
+
+    fn replace_type_parameter_number_index_access(
+        text: &str,
+        name: &str,
+        replacement: &str,
+    ) -> String {
+        let needle = format!("{name}[number]");
+        let mut result = String::with_capacity(text.len());
+        let mut cursor = 0usize;
+        while let Some(relative_idx) = text[cursor..].find(&needle) {
+            let idx = cursor + relative_idx;
+            let end = idx + needle.len();
+            let before_ok = idx == 0
+                || !text.as_bytes()[idx - 1].is_ascii_alphanumeric()
+                    && text.as_bytes()[idx - 1] != b'_'
+                    && text.as_bytes()[idx - 1] != b'$';
+            let after_ok = end == text.len()
+                || !text.as_bytes()[end].is_ascii_alphanumeric()
+                    && text.as_bytes()[end] != b'_'
+                    && text.as_bytes()[end] != b'$';
+            result.push_str(&text[cursor..idx]);
+            if before_ok && after_ok {
+                result.push_str(replacement);
+            } else {
+                result.push_str(&text[idx..end]);
+            }
+            cursor = end;
+        }
+        result.push_str(&text[cursor..]);
+        result
+    }
+
     pub(super) fn infer_tuple_spread_argument_substitutions(
         &self,
         param_type_text: &str,
@@ -187,7 +255,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    fn array_literal_tuple_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn array_literal_tuple_argument_type_text(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
         let arg_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(arg_idx);
@@ -272,7 +343,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(known_elements) =
                         Self::tuple_type_text_elements_preserving_rest(known_text)
                 {
-                    argument_index += known_elements.len();
+                    argument_index = Self::advance_variadic_argument_index(
+                        argument,
+                        argument_index,
+                        known_elements.len(),
+                    );
                     continue;
                 }
                 if substitutions
@@ -300,6 +375,23 @@ impl<'a> DeclarationEmitter<'a> {
                 ));
             }
         }
+    }
+
+    fn advance_variadic_argument_index(
+        argument: &super::type_inference_function_text::FunctionTypeTextParts,
+        mut argument_index: usize,
+        known_element_count: usize,
+    ) -> usize {
+        for _ in 0..known_element_count {
+            let Some(argument_param) = argument.parameters.get(argument_index) else {
+                break;
+            };
+            if argument_param.rest {
+                break;
+            }
+            argument_index += 1;
+        }
+        argument_index
     }
 
     fn variadic_tuple_item_text_for_function_param(

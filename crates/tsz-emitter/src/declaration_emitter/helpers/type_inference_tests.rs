@@ -906,6 +906,23 @@ declare function unrelated<A>(value: A, callback: (inner: (value: string) => voi
 }
 
 #[test]
+fn declared_call_return_infers_const_tuple_spread_parameters_from_array_literals() {
+    let source = r#"
+export function tup<T extends unknown[], U extends unknown[]>(t: [...T], u: [...U]) {
+    return [1, ...t, 2, ...u, 3] as const;
+}
+export const result = tup(["x"], [1, true]);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output
+            .contains("export declare const result: readonly [1, string, 2, number, boolean, 3];"),
+        "{output}"
+    );
+}
+
+#[test]
 fn declared_call_return_infers_remaining_variadic_function_parameters() {
     let source = r#"
 export function curry<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, ...a: T): (...b: U) => R {
@@ -937,6 +954,72 @@ export const curried = curry(fn, 1);
         output.contains(
             "export declare const curried: (ready: boolean, ...args: string[]) => number;"
         ),
+        "{output}"
+    );
+}
+
+#[test]
+fn declared_call_return_infers_unannotated_variadic_curry_return_type() {
+    let source = r#"
+export function curry<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, ...a: T) {
+    return (...b: U) => f(...a, ...b);
+}
+export const fn = (a: number, b: string, c: boolean) => 0;
+export const curried = curry(fn, 1);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const curried: (b: string, c: boolean) => number;"),
+        "{output}"
+    );
+}
+
+#[test]
+fn declaration_emit_preserves_variadic_parameter_call_return_type() {
+    let source = r#"
+export function invoke<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, t: [...T], u: [...U]) {
+    return f(...t, ...u);
+}
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "export declare function invoke<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, t: [...T], u: [...U]): R;"
+        ),
+        "{output}"
+    );
+}
+
+#[test]
+fn declaration_emit_summarizes_spread_array_parameter_return_type() {
+    let source = r#"
+	export function concat<T extends readonly unknown[], U extends readonly unknown[]>(t: T, u: U) {
+	    return [...t, ...u];
+}
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "export declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(t: T, u: U): (T[number] | U[number])[];"
+        ),
+        "{output}"
+    );
+}
+
+#[test]
+fn declared_call_return_infers_arrayified_variadic_tuple_rest() {
+    let source = r#"
+type Arrayify<T> = { [P in keyof T]: T[P][] };
+declare function fm<T extends unknown[]>(t: Arrayify<[string, number, ...T]>): T;
+let value = fm([["abc"], [42], [true], ["def"]]);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("declare let value: [boolean, string];"),
         "{output}"
     );
 }
