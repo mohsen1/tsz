@@ -1,5 +1,5 @@
 use super::super::super::Printer;
-use crate::emitter::core::PrivateMethodDef;
+use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef};
 use std::sync::Arc;
 
 impl<'a> Printer<'a> {
@@ -48,6 +48,54 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_generator = def.is_generator;
         self.emit(def.body);
         self.ctx.flags.in_generator = prev_in_generator;
+        self.declared_namespace_names = prev_declared;
+        self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
+        self.emitting_function_body_block = prev_emitting_function_body_block;
+        self.function_scope_depth -= 1;
+        self.scoped_class_expression_self_alias = prev_self_alias;
+    }
+
+    pub(in crate::emitter) fn emit_private_accessor_function_def(
+        &mut self,
+        def: &PrivateAccessorDef,
+        private_member_def_needs_class_alias: bool,
+        class_value_alias: Option<&str>,
+        class_name: &str,
+    ) {
+        self.write(&def.var_name);
+        self.write(" = function ");
+        self.write(&def.var_name);
+        self.write("(");
+        self.function_scope_depth += 1;
+        if let Some(param_idx) = def.param
+            && let Some(param_node) = self.arena.get(param_idx)
+            && let Some(param_data) = self.arena.get_parameter(param_node)
+        {
+            self.emit(param_data.name);
+        }
+        self.write(") ");
+
+        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+        if private_member_def_needs_class_alias
+            && let Some(alias) = class_value_alias
+            && !class_name.is_empty()
+        {
+            self.scoped_class_expression_self_alias =
+                Some((Arc::<str>::from(class_name), Arc::<str>::from(alias)));
+        }
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            def.param.into_iter().collect(),
+        );
+        self.ctx.block_scope_state.enter_scope();
+        self.push_temp_scope();
+        let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+        self.prepare_logical_assignment_value_temps(def.body);
+        self.emit_single_line_block(def.body);
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
