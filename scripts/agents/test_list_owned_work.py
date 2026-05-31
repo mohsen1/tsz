@@ -74,6 +74,7 @@ exec "$@"
             self.assertEqual("scripts/agents/list-owned-work.sh", report["generated_by"])
             self.assertEqual("mohsen1/tsz", report["repository"])
             self.assertFalse(report["with_pr_state"])
+            self.assertFalse(report["ok"])
             self.assertFalse(report["owned_work_clear"])
             self.assertEqual("active", report["owned_work_status"])
             self.assertEqual(1, report["total_pr_count"])
@@ -103,6 +104,7 @@ exec "$@"
             self.run_list_owned_work(["Studio-F", "--json-report", str(report_path)])
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertTrue(report["ok"])
             self.assertTrue(report["owned_work_clear"])
             self.assertEqual("clear", report["owned_work_status"])
             self.assertEqual(0, report["total_pr_count"])
