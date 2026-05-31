@@ -482,7 +482,7 @@ impl ParserState {
     ) -> NodeIndex {
         let pos = self.arena.get(left).map_or(0, |n| n.pos);
         let end = self.arena.get(right).map_or(pos, |n| n.end);
-        self.arena.add_binary_expr(
+        let binary = self.arena.add_binary_expr(
             syntax_kind_ext::BINARY_EXPRESSION,
             pos,
             end,
@@ -491,7 +491,11 @@ impl ParserState {
                 operator_token: comma,
                 right,
             },
-        )
+        );
+        if let Some(node) = self.arena.get_mut(binary) {
+            node.flags |= crate::parser::node_flags::SYNTHESIZED as u16;
+        }
+        binary
     }
 
     /// Parse JSX opening element, self-closing element, or opening fragment.

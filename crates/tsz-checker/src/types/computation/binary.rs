@@ -420,6 +420,9 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(node_idx)
                     .is_some_and(|n| n.this_node_has_error() || n.this_or_subtree_has_error());
+                let node_is_synthesized = self.ctx.arena.get(node_idx).is_some_and(|n| {
+                    n.has_any_node_flags(tsz_parser::parser::node_flags::SYNTHESIZED)
+                });
                 // Also suppress TS2695 when the comma expression is inside a bare
                 // block statement (not a function/method body).  This matches tsc's
                 // behavior: `{ a, b } = fn()` is parsed as a block followed by `=`,
@@ -429,6 +432,7 @@ impl<'a> CheckerState<'a> {
                 // and may miss file-local grammar errors like TS2809).
                 let in_bare_block = self.is_inside_bare_block(node_idx);
                 if !node_has_parse_error
+                    && !node_is_synthesized
                     && !in_bare_block
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
