@@ -769,7 +769,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
-                for source_module in source_modules {
+                for (source_module, _is_type_only) in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
             }
@@ -792,7 +792,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
-                for source_module in source_modules {
+                for (source_module, _is_type_only) in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
             }
