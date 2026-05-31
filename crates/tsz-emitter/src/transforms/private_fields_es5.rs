@@ -245,6 +245,14 @@ pub fn make_unique_private_name(base: &str, used_names: &mut FxHashSet<String>) 
     }
 }
 
+pub fn private_helper_base(class_name: &str, clean_name: &str) -> String {
+    if class_name.is_empty() {
+        format!("_{clean_name}")
+    } else {
+        format!("_{class_name}_{clean_name}")
+    }
+}
+
 fn collect_statement_binding_names(
     arena: &NodeArena,
     stmt_idx: NodeIndex,
@@ -456,8 +464,10 @@ pub fn collect_private_fields_with_reserved(
             if is_private_identifier(arena, prop_data.name) {
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                let weakmap_name =
-                    make_unique_private_name(&format!("_{class_name}_{clean_name}"), used_names);
+                let weakmap_name = make_unique_private_name(
+                    &private_helper_base(class_name, clean_name),
+                    used_names,
+                );
                 let is_static = arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword);
 
                 fields.push(PrivateFieldInfo {
@@ -529,11 +539,11 @@ pub fn collect_private_accessors_with_reserved(
                         member_indices: Vec::new(),
                         name: clean_name.to_string(),
                         get_var_name: Some(make_unique_private_name(
-                            &format!("_{class_name}_{clean_name}_get"),
+                            &format!("{}_get", private_helper_base(class_name, clean_name)),
                             used_names,
                         )),
                         set_var_name: Some(make_unique_private_name(
-                            &format!("_{class_name}_{clean_name}_set"),
+                            &format!("{}_set", private_helper_base(class_name, clean_name)),
                             used_names,
                         )),
                         getter_body: None,
@@ -635,7 +645,7 @@ pub fn collect_private_methods_with_reserved(
             let field_name = get_private_field_name(arena, method_data.name).unwrap_or_default();
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
             let fn_var_name =
-                make_unique_private_name(&format!("_{class_name}_{clean_name}"), used_names);
+                make_unique_private_name(&private_helper_base(class_name, clean_name), used_names);
             let is_static = arena.has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword);
             let is_async = arena.has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
 
