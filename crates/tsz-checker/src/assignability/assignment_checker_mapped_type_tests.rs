@@ -255,7 +255,7 @@ const bad: M = { a: 1 };
 // ── Intersection-with-indexed-access source vs. mapped-type target ───────────
 //
 // When source is `T[K] & { a: string }` and target is a structural type (mapped,
-// intersection, conditional, index-access, or string intrinsic), the checker must
+// intersection, conditional, or string intrinsic), the checker must
 // not suppress TS2322 — the solver checks property membership directly.
 // Structural rule: `T[K] & { a: string } <: { [P in "a" | "b"]: string }` must
 // emit TS2322 because "b" is guaranteed absent from the source.
@@ -309,5 +309,28 @@ function test<T extends { a: string }, K extends keyof T>(x: T[K] & { a: string 
     assert!(
         !diagnostics.iter().any(|d| d.code == 2322),
         "valid assignment to single-key mapped type must not emit TS2322; got: {diagnostics:?}"
+    );
+}
+
+/// Indexed-access targets still need the generic non-nullish narrowing
+/// suppression. `Partial<T>[K] & {}` is the flow-narrowed form of
+/// `Partial<T>[K]`, and `tsc` accepts assigning it back to `T[K]`.
+#[test]
+fn intersection_indexed_access_source_to_indexed_access_target_no_ts2322() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+function test<T, K extends keyof T>(
+    target: T[K],
+    narrowed: Partial<T>[K] & {},
+    nullable: Partial<T>[K] & ({} | null),
+): void {
+    target = narrowed;
+    target = nullable;
+}
+"#,
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "non-nullish narrowed indexed access should remain assignable to its indexed-access target; got: {diagnostics:?}"
     );
 }
