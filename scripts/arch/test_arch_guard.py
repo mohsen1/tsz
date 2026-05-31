@@ -492,7 +492,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._generic_call_resolver_size_check()
-        self.assertEqual(limit, 3378)
+        self.assertEqual(limit, 3377)
         self.assertTrue(
             str(path).endswith(
                 "crates/tsz-solver/src/operations/generic_call/resolve.rs"
@@ -603,7 +603,7 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
 
     def test_line_limit_exclusion_count_cannot_grow(self):
         """The number of excluded files in LINE_LIMIT_CHECKS must not increase."""
-        # Current ceiling: 38 excluded files.
+        # Current ceiling: 11 excluded files.
         # When a file drops below 2000 lines, remove it and lower this ceiling.
         # 2026-05-01: ratcheted from 17 → 35 after the inherited list went
         # to 66 entries (mostly stale). The 35 set now matches the actual
@@ -613,7 +613,9 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
         # resolution.rs` crossed the 2000-LOC threshold (2001 lines after #2717).
         # 2026-05-12: pruned stale under-limit files and re-pinned the live
         # audited over-limit set at 38.
-        MAX_EXCLUDED = 38
+        # 2026-05-31: pruned seven stale under-limit files and re-pinned the
+        # live checker src over-limit set at 11.
+        MAX_EXCLUDED = 11
         for entry in self.arch_guard.LINE_LIMIT_CHECKS:
             excludes = entry[3] if len(entry) > 3 else set()
             self.assertLessEqual(
