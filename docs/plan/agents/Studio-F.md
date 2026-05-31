@@ -18,6 +18,7 @@ git fetch origin main
 scripts/agents/show-goal.sh Studio-F
 scripts/agents/disk-preflight.sh Studio-F
 scripts/agents/list-owned-work.sh Studio-F
+scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json
 python3 scripts/arch/arch_guard.py --json-report /tmp/tsz-arch-guard.json
 python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json
 ```

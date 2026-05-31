@@ -34,7 +34,7 @@ git fetch origin main
 scripts/agents/show-goal.sh Reviewer
 scripts/agents/disk-preflight.sh Reviewer
 scripts/agents/list-owned-work.sh Reviewer
-scripts/agents/ensure-agent-labels.sh --audit
+scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json
 gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt,url
 ```
 
