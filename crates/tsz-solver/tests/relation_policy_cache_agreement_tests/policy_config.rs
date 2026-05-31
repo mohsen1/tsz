@@ -6,6 +6,7 @@ use crate::intern::TypeInterner;
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
+use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
     FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, RelationFlags, TypeId,
 };
@@ -85,6 +86,74 @@ fn relation_policy_builder_overrides_remove_prior_flag_bits_from_cache_config() 
             "{name} builder override must remove stale flag bits from the cache config",
         );
     }
+}
+
+#[test]
+fn relation_policy_behavior_builders_partition_cache_config() {
+    let base = RelationPolicy::default();
+    let cases = [
+        (
+            "disable generic erasure",
+            base.with_erase_generics(false).cache_config(),
+        ),
+        (
+            "strict subtype checking",
+            base.with_strict_subtype_checking(true).cache_config(),
+        ),
+        (
+            "strict any propagation",
+            base.with_strict_any_propagation(true).cache_config(),
+        ),
+        (
+            "top-level-only any propagation",
+            base.with_any_propagation_mode(AnyPropagationMode::TopLevelOnly)
+                .cache_config(),
+        ),
+        (
+            "reject cycles instead of assuming related",
+            base.with_assume_related_on_cycle(false).cache_config(),
+        ),
+        (
+            "skip weak type checks",
+            base.with_skip_weak_type_checks(true).cache_config(),
+        ),
+    ];
+
+    for (name, config) in cases {
+        assert_ne!(
+            base.cache_config(),
+            config,
+            "{name} must occupy a distinct relation cache config",
+        );
+    }
+}
+
+#[test]
+fn relation_policy_builder_cache_matrix_covers_current_behavior_builders() {
+    let source = include_str!("../../src/relations/relation_queries.rs");
+    let builders: Vec<&str> = source
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub const fn ")
+                .and_then(|rest| rest.split_once('('))
+                .map(|(name, _)| name)
+                .filter(|name| name.starts_with("with_"))
+        })
+        .collect();
+
+    assert_eq!(
+        builders,
+        [
+            "with_erase_generics",
+            "with_strict_subtype_checking",
+            "with_strict_any_propagation",
+            "with_any_propagation_mode",
+            "with_assume_related_on_cycle",
+            "with_skip_weak_type_checks",
+        ],
+        "new behavior-affecting RelationPolicy builders must update the cache-config partition matrix",
+    );
 }
 
 #[test]
