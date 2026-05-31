@@ -856,17 +856,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2117,
     ),
     (
-        "Emitter boundary: emitter/module_wrapper/system_emit.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-emitter"
-        / "src"
-        / "emitter"
-        / "module_wrapper"
-        / "system_emit.rs",
-        2093,
-    ),
-    (
         "LSP boundary: hierarchy/call_hierarchy.rs size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "hierarchy" / "call_hierarchy.rs",
         2091,
