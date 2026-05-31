@@ -228,6 +228,7 @@ const row = {
   issues: JSON.parse(process.env.ROW_ISSUES ?? "[]"),
   pr_count: Number(process.env.ROW_PR_COUNT ?? 0),
   issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
+  owned_work_clear: process.env.ROW_STATUS === "clear",
   owned_work_status: process.env.ROW_STATUS,
 };
 process.stdout.write(`${JSON.stringify(row)}\n`);
@@ -250,11 +251,23 @@ const agents = (process.env.REPORT_ROWS ?? "")
   .split(/\n/)
   .filter(Boolean)
   .map((line) => JSON.parse(line));
+const totalPrCount = agents.reduce((sum, agent) => sum + Number(agent.pr_count ?? 0), 0);
+const totalIssueCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.issue_count ?? 0),
+  0,
+);
+const totalOwnedCount = totalPrCount + totalIssueCount;
+const ownedWorkClear = totalOwnedCount === 0;
 
 const report = {
   generated_by: "scripts/agents/list-owned-work.sh",
   repository: process.env.REPOSITORY,
   with_pr_state: process.env.WITH_PR_STATE === "true",
+  owned_work_clear: ownedWorkClear,
+  owned_work_status: ownedWorkClear ? "clear" : "active",
+  total_pr_count: totalPrCount,
+  total_issue_count: totalIssueCount,
+  total_owned_count: totalOwnedCount,
   agents,
 };
 

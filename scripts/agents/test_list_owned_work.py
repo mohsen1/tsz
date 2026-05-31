@@ -74,12 +74,18 @@ exec "$@"
             self.assertEqual("scripts/agents/list-owned-work.sh", report["generated_by"])
             self.assertEqual("mohsen1/tsz", report["repository"])
             self.assertFalse(report["with_pr_state"])
+            self.assertFalse(report["owned_work_clear"])
+            self.assertEqual("active", report["owned_work_status"])
+            self.assertEqual(1, report["total_pr_count"])
+            self.assertEqual(1, report["total_issue_count"])
+            self.assertEqual(2, report["total_owned_count"])
             self.assertEqual(1, len(report["agents"]))
             row = report["agents"][0]
             self.assertEqual("Studio-F", row["agent"])
             self.assertEqual("agent:Studio-F", row["label"])
             self.assertEqual(1, row["pr_count"])
             self.assertEqual(1, row["issue_count"])
+            self.assertFalse(row["owned_work_clear"])
             self.assertEqual("active", row["owned_work_status"])
             self.assertEqual(
                 ["#1 ready first PR https://github.com/mohsen1/tsz/pull/1"],
@@ -89,6 +95,21 @@ exec "$@"
                 ["#2 issue https://github.com/mohsen1/tsz/issues/2"],
                 row["issues"],
             )
+
+    def test_json_report_marks_clear_runway(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "owned-work.json"
+
+            self.run_list_owned_work(["Studio-F", "--json-report", str(report_path)])
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertTrue(report["owned_work_clear"])
+            self.assertEqual("clear", report["owned_work_status"])
+            self.assertEqual(0, report["total_pr_count"])
+            self.assertEqual(0, report["total_issue_count"])
+            self.assertEqual(0, report["total_owned_count"])
+            self.assertTrue(report["agents"][0]["owned_work_clear"])
+            self.assertEqual("clear", report["agents"][0]["owned_work_status"])
 
     def test_json_report_requires_path(self):
         result = subprocess.run(
