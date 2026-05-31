@@ -9,11 +9,17 @@ fn function_type_predicate_validation_uses_relation_outcome_boundary() {
             .expect("failed to read function_declaration_checks.rs");
     let type_node_source =
         fs::read_to_string("src/types/type_node.rs").expect("failed to read type_node.rs");
+    let boundary_source = fs::read_to_string("src/query_boundaries/type_predicates.rs")
+        .expect("failed to read type_predicates.rs");
     let compact_relation: String = relation_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
     let compact_type_node: String = type_node_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_boundary: String = boundary_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -40,5 +46,16 @@ fn function_type_predicate_validation_uses_relation_outcome_boundary() {
     assert!(
         !compact_type_node.contains("|source,target|types.is_assignable_to(source,target)"),
         "type-node predicate validation should not pass raw TypeDatabase assignability from checker code"
+    );
+    assert!(
+        compact_boundary.contains("fntype_predicate_relation_outcome(")
+            && compact_boundary.contains(
+                "|source,target|type_predicate_relation_outcome(db,source,target).related"
+            ),
+        "type-node predicate boundary should route recursive relation probes through a RelationOutcome"
+    );
+    assert!(
+        !compact_boundary.contains("db.is_assignable_to(source,target)"),
+        "type-node predicate boundary should not call raw TypeDatabase assignability directly"
     );
 }

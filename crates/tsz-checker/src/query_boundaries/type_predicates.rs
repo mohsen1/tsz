@@ -137,13 +137,37 @@ pub(crate) fn type_predicate_type_assignability_outcome(
         db,
         predicate_type,
         param_type,
-        |source, target| db.is_assignable_to(source, target),
+        |source, target| type_predicate_relation_outcome(db, source, target).related,
     );
 
     super::assignability::RelationOutcome {
         related,
         depth_exceeded: false,
         iteration_exceeded: false,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
+}
+
+fn type_predicate_relation_outcome(
+    db: &dyn QueryDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> super::assignability::RelationOutcome {
+    let result = tsz_solver::relations::relation_queries::query_relation(
+        db.as_type_database(),
+        source,
+        target,
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::unflagged_compatibility(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
+    );
+
+    super::assignability::RelationOutcome {
+        related: result.related,
+        depth_exceeded: result.depth_exceeded,
+        iteration_exceeded: result.iteration_exceeded,
         failure: None,
         weak_union_violation: false,
         property_classification: None,
