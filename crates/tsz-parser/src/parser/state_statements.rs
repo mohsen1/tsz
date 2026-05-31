@@ -300,13 +300,12 @@ impl ParserState {
                     // Got a valid private identifier — let the normal statement
                     // parser handle it (it will likely fail with a meaningful error).
                     self.current_token = rescanned;
+                } else if self.bare_hash_is_followed_by_statement_boundary() {
+                    // Preserve a standalone invalid `#` as a statement expression.
+                    // tsc still emits `#;` for this recovery shape.
                 } else {
                     // Bare `#` — emit TS1127 and skip, matching tsc.
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                        diagnostic_codes::INVALID_CHARACTER,
-                    );
+                    self.report_bare_hash_invalid_character();
                     self.next_token();
                     previous_statement_was_block = false;
                     continue;

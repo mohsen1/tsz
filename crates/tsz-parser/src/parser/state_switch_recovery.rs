@@ -327,7 +327,9 @@ impl ParserState {
                 // This prevents TS1109 from being emitted for tokens that are obviously not expressions
                 // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
                 // parse_statement()'s wildcard match.
-                if !self.is_expression_start() {
+                let recoverable_bare_hash_expression = self.is_token(SyntaxKind::HashToken)
+                    && self.bare_hash_is_followed_by_statement_boundary();
+                if !self.is_expression_start() && !recoverable_bare_hash_expression {
                     // Don't emit error here - let the statement-level error handling deal with it
                     // Just return NONE to indicate failure
                     self.jsx_missing_brace_semicolon_window_start = None;
