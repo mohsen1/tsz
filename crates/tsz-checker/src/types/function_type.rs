@@ -581,7 +581,11 @@ impl<'a> CheckerState<'a> {
                                         self.evaluate_type_with_env(constraint);
                                     evaluated_constraint == from_expected
                                         || self
-                                            .is_assignable_to(from_expected, evaluated_constraint)
+                                            .assign_relation_outcome(
+                                                from_expected,
+                                                evaluated_constraint,
+                                            )
+                                            .related
                                 });
                             let direct_is_rest_tuple_container = !param.dot_dot_dot_token
                                 && extracted != from_expected
@@ -1614,8 +1618,8 @@ impl<'a> CheckerState<'a> {
                     && union_members.contains(&TypeId::UNDEFINED)
                     && union_members.iter().copied().any(|member| {
                         member != TypeId::UNDEFINED
-                            && self.is_assignable_to(member, instance_type)
-                            && self.is_assignable_to(instance_type, member)
+                            && self.assign_relation_outcome(member, instance_type).related
+                            && self.assign_relation_outcome(instance_type, member).related
                     })
                 {
                     return_type = instance_type;
@@ -1628,10 +1632,8 @@ impl<'a> CheckerState<'a> {
             // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // maybe_report_implicit_any_return handles the noImplicitAny check internally
             //
-            // CRITICAL FIX: Skip TS7010 check if there's a contextual return type
-            // When a function is used as a callback (e.g., array.map(x => ...)), the
-            // contextual type provides the expected return type. TypeScript doesn't
-            // emit TS7010 in these cases because the contextual type guides inference.
+            // Skip TS7010 if a callback has a contextual return type; TypeScript
+            // treats that context as inference guidance rather than implicit any.
             //
             // JSDoc type annotations also suppress TS7010/TS7011 in JS files.
             // When a function has any JSDoc type info (@param, @returns, @template),
