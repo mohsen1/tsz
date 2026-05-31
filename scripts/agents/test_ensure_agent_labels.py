@@ -283,6 +283,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertEqual("fail", report["status"])
+        self.assertFalse(report["ok"])
         self.assertEqual(2, report["metrics"]["agent_label_audit_findings"])
         self.assertEqual(1, report["metrics"]["open_prs_missing_agent_label"])
         self.assertEqual(1, report["metrics"]["open_prs_noncanonical_agent_label"])
@@ -307,6 +308,29 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             ],
             report["open_prs_noncanonical_agent_label"],
         )
+
+    def test_json_report_records_ok_for_clean_audit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "reports" / "agent-labels.json"
+            result = self.run_audit_result(
+                [
+                    {
+                        "number": 32,
+                        "title": "fix: owned",
+                        "labels": [{"name": "agent:Studio-F"}],
+                        "body": "AgentName: Studio-F",
+                        "url": "https://github.com/mohsen1/tsz/pull/32",
+                    }
+                ],
+                args=["--audit", "--json-report", str(report_path)],
+            )
+
+            self.assertIn("agent_label_audit_status=pass", result.stdout)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(report["ok"])
+        self.assertEqual("pass", report["status"])
+        self.assertEqual(0, report["metrics"]["agent_label_audit_findings"])
 
     def test_json_report_requires_audit_mode(self):
         result = self.run_audit_result(

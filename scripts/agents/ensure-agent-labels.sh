@@ -201,6 +201,7 @@ const findingCount =
   missingIssues.length +
   multipleIssues.length +
   noncanonicalIssues.length;
+const ok = findingCount === 0;
 const metrics = {
   missing_canonical_labels: missingCanonicalLabels.length,
   noncanonical_agent_labels: noncanonicalLabels.length,
@@ -214,7 +215,7 @@ const metrics = {
   agent_label_audit_findings: findingCount,
 };
 console.log(`agent_label_audit_findings=${findingCount}`);
-console.log(`agent_label_audit_status=${findingCount === 0 ? "pass" : "fail"}`);
+console.log(`agent_label_audit_status=${ok ? "pass" : "fail"}`);
 
 const summarizeWorkItem = (item) => ({
   number: item.number,
@@ -227,7 +228,8 @@ const summarizeLabeledWorkItem = (item) => ({
 });
 if (process.env.JSON_REPORT) {
   const report = {
-    status: findingCount === 0 ? "pass" : "fail",
+    ok,
+    status: ok ? "pass" : "fail",
     metrics,
     missing_canonical_labels: missingCanonicalLabels,
     noncanonical_agent_labels: noncanonicalLabels,
