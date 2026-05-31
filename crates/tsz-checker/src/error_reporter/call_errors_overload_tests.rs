@@ -830,3 +830,50 @@ n = fn(true);
         "tsc does not cascade TS2322 after TS2769 in assignment stmt when overloads share return type; got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn nested_overload_failure_does_not_suppress_outer_decl_ts2322() {
+    let source = r#"
+function inner(x: string): string;
+function inner(x: number): string;
+function inner(x: any): any { return ""; }
+function outer(value: any): string { return ""; }
+const n: number = outer(inner(true));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected nested TS2769 for inner(true), got: {diagnostics:?}"
+    );
+    let n_pos = source.find("const n").unwrap() as u32 + "const ".len() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == n_pos),
+        "nested overload failures must not suppress the real outer assignment TS2322 at `n`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_overload_failure_does_not_suppress_outer_assignment_ts2322() {
+    let source = r#"
+function inner(x: string): string;
+function inner(x: number): string;
+function inner(x: any): any { return ""; }
+function outer(value: any): string { return ""; }
+let n: number;
+n = outer(inner(true));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected nested TS2769 for inner(true), got: {diagnostics:?}"
+    );
+    let assignment_pos = source.rfind("n =").unwrap() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == assignment_pos),
+        "nested overload failures must not suppress the real outer assignment TS2322, got: {diagnostics:?}"
+    );
+}

@@ -233,11 +233,7 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            return self.ctx.diagnostics.iter().any(|diag| {
-                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
-                    && diag.start >= rhs_node.pos
-                    && diag.start < rhs_node.end
-            });
+            return self.call_or_new_expr_emitted_no_overload_failure(rhs_idx, rhs_node);
         }
 
         // Case 2: `const x: T = fn(true);` — anchor is the variable name IDENTIFIER.
@@ -268,14 +264,23 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            return self.ctx.diagnostics.iter().any(|diag| {
-                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
-                    && diag.start >= init_node.pos
-                    && diag.start < init_node.end
-            });
+            return self.call_or_new_expr_emitted_no_overload_failure(init_idx, init_node);
         }
 
         false
+    }
+
+    fn call_or_new_expr_emitted_no_overload_failure(
+        &self,
+        expr_idx: NodeIndex,
+        expr_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.ctx.no_overload_call_nodes.contains(&expr_idx.0)
+            && self.ctx.diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                    && diag.start >= expr_node.pos
+                    && diag.start < expr_node.end
+            })
     }
 
     pub(super) fn private_or_protected_member_missing_display(
