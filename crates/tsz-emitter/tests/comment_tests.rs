@@ -87,6 +87,70 @@ fn object_literal_accessor_leading_comment_stays_before_accessor() {
 }
 
 #[test]
+fn trailing_comment_after_single_line_method_body_stays_after_body() {
+    let source = r#"class C {
+    set value(v: number) { this._value = v; } // error
+}
+
+const o = {
+    run() { this.count++; } // note
+};"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("set value(v) { this._value = v; } // error"),
+        "Class accessor body trailing comment must stay after the body close.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this._value = v; // error }"),
+        "Class accessor body must not absorb the following line comment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("run() { this.count++; } // note"),
+        "Object method body trailing comment must stay after the body close.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.count++; // note }"),
+        "Object method body must not absorb the following line comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_comment_after_arrow_block_statement_stays_after_call() {
+    let source = r#"class Derived extends Base {
+    constructor() {
+        super(() => { this._t; }); // keep
+    }
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("super(() => { this._t; }); // keep"),
+        "Trailing comment after a call with an arrow block must stay on the call statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this._t; // keep }"),
+        "Arrow block body must not absorb the following call-statement comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn same_line_statement_trailing_comment_still_stays_on_statement() {
+    let source = r#"function f() {
+    let x = 1; // inside
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("let x = 1; // inside"),
+        "Statement-owned trailing comments must still be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn object_literal_property_comments_stay_around_function_value() {
     let source = r#"var Person = makeClass(
    {

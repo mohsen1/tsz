@@ -1058,7 +1058,13 @@ impl<'a> Printer<'a> {
             self.map_opening_brace(block_node);
             self.write("{ ");
             let var_insert_pos = self.writer.len();
+            let block_close_pos = self
+                .find_block_closing_brace_end(block_node)
+                .saturating_sub(1);
+            let previous_trailing_comment_scan_max = self.trailing_comment_scan_max_pos;
+            self.trailing_comment_scan_max_pos = Some(block_close_pos);
             self.emit(block.statements.nodes[0]);
+            self.trailing_comment_scan_max_pos = previous_trailing_comment_scan_max;
             // A `??=` read-cache temp (or optional-chaining temp) can be created
             // while emitting the single statement; declare it inline so the body
             // stays runnable instead of referencing an undeclared `_a`.

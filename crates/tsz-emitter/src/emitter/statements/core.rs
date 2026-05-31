@@ -199,6 +199,7 @@ impl<'a> Printer<'a> {
             }
             self.map_opening_brace(node);
             self.write("{ ");
+            let block_close_pos = self.find_block_closing_brace_end(node).saturating_sub(1);
             let var_insert_pos = if is_function_body_block {
                 Some(self.writer.len())
             } else {
@@ -208,7 +209,10 @@ impl<'a> Printer<'a> {
                 if si > 0 {
                     self.write(" ");
                 }
+                let previous_trailing_comment_scan_max = self.trailing_comment_scan_max_pos;
+                self.trailing_comment_scan_max_pos = Some(block_close_pos);
                 self.emit(stmt_idx);
+                self.trailing_comment_scan_max_pos = previous_trailing_comment_scan_max;
             }
             // Inject hoisted temp vars inline for single-line function bodies.
             // Temps like `_a` are created during emit (e.g. optional chaining
@@ -1826,7 +1830,10 @@ impl<'a> Printer<'a> {
         };
 
         let bytes = text.as_bytes();
-        let stmt_end = std::cmp::min(range_end as usize, bytes.len());
+        let capped_range_end = self
+            .trailing_comment_scan_max_pos
+            .map_or(range_end, |cap| cap.min(range_end));
+        let stmt_end = std::cmp::min(capped_range_end as usize, bytes.len());
         let stmt_start = range_start as usize;
 
         // Scan forwards and keep the last outermost semicolon within this node's range.
@@ -1851,6 +1858,11 @@ impl<'a> Printer<'a> {
         if let Some(pos) = semi_pos {
             let comments = get_trailing_comment_ranges(text, pos);
             for comment in comments {
+                if let Some(max_pos) = self.trailing_comment_scan_max_pos
+                    && comment.pos >= max_pos
+                {
+                    break;
+                }
                 self.write_space();
                 if let Ok(comment_text) =
                     safe_slice::slice(text, comment.pos as usize, comment.end as usize)

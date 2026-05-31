@@ -114,13 +114,19 @@ impl<'a> Printer<'a> {
     /// duplicate emission when the leading comment scanner has already advanced
     /// `comment_emit_idx` past a comment.
     pub(in crate::emitter) fn emit_trailing_comments(&mut self, end_pos: u32) {
-        self.emit_trailing_comments_impl(end_pos, u32::MAX);
+        self.emit_trailing_comments_impl(
+            end_pos,
+            self.trailing_comment_scan_max_pos.unwrap_or(u32::MAX),
+        );
     }
 
     /// Like `emit_trailing_comments` but only emit comments whose start position
     /// is before `max_pos`. Used to prevent a statement inside a block from
     /// consuming comments that belong on the block's closing line.
     pub(in crate::emitter) fn emit_trailing_comments_before(&mut self, end_pos: u32, max_pos: u32) {
+        let max_pos = self
+            .trailing_comment_scan_max_pos
+            .map_or(max_pos, |cap| cap.min(max_pos));
         self.emit_trailing_comments_impl(end_pos, max_pos);
     }
 

@@ -335,6 +335,7 @@ impl<'a> Printer<'a> {
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             arrow_concise_body_trailing_comment_defer_range: None,
+            trailing_comment_scan_max_pos: None,
             pending_class_field_inits: Vec::new(),
             pending_auto_accessor_inits: Vec::new(),
             next_auto_accessor_name_index: 0,
