@@ -710,4 +710,11 @@ withTempDir((dir) => {
 
   // Unknown codes fall through to "unclassified diagnostic".
   assert.equal(subsystemForCode("TS9999"), "unclassified diagnostic");
+
+  // Contextual callback failures such as the Kysely TS7006/TS7031 fallout and
+  // the downstream TS2347 generic-call surface should route to inference
+  // ownership instead of the unclassified triage bucket.
+  assert.equal(subsystemForCode("TS7006"), "contextual-inference");
+  assert.equal(subsystemForCode("TS7031"), "contextual-inference");
+  assert.equal(subsystemForCode("TS2347"), "contextual-inference");
 }
