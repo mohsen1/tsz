@@ -123,21 +123,11 @@ pub(crate) fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> b
 pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_keyof_type(db, type_id)
 }
-
-/// Returns `true` when `type_id`'s structural surface contains any `keyof`
-/// operator. Structural analogue of `format_type(t).contains("keyof ")`.
 pub(crate) fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_keyof_type(db, type_id)
 }
-
 pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_index_access_type(db, type_id)
-}
-
-/// Returns `true` when `type_id`'s structural surface contains any indexed
-/// access node. Structural analogue of `format_type(t).contains('[')`.
-pub(crate) fn contains_any_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_any_index_access_type(db, type_id)
 }
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

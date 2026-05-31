@@ -444,22 +444,6 @@ pub fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(db, type_id, |key| matches!(key, TypeData::KeyOf(_)))
 }
 
-/// Check if a type contains any indexed access type (deep walk).
-///
-/// This is the structural analogue of inspecting a rendered type for a `[`
-/// bracket: it returns `true` when the type tree contains any
-/// `TypeData::IndexAccess` node, including index accesses nested inside
-/// unions, intersections, applications, conditionals, mapped, etc.
-///
-/// Use this in checker decisions that previously relied on
-/// `format_type(t).contains('[')`, where the rendered string was being
-/// inspected to detect "type is or contains an index access like `T[K]`".
-pub fn contains_any_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::IndexAccess(_, _))
-    })
-}
-
 /// Check if a type contains an indexed access whose object is a type parameter.
 pub fn contains_index_access_with_type_parameter_object(
     db: &dyn TypeDatabase,
