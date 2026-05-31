@@ -178,6 +178,26 @@ class A {
 }
 
 #[test]
+fn private_field_trailing_comments_move_to_weakmap_initializers() {
+    let source = r#"
+class A {
+    #a = 1; // first
+    #b = 2; // second
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_a.set(this, 1); // first"),
+        "trailing comment for #a should move with the constructor WeakMap initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_b.set(this, 2); // second"),
+        "trailing comment for #b should move with the constructor WeakMap initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn private_accessor_helpers_follow_source_order() {
     let source = r#"
 class A {
@@ -204,6 +224,79 @@ class A {
     assert!(
         a_pos < b_pos && b_pos < c_pos,
         "Private accessor helper initialization order should match source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn no_body_private_accessors_emit_empty_extracted_helpers() {
+    let source = r#"
+class A {
+    declare get #value(): number;
+    declare set #value(value: number);
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_value_get = function _A_value_get() { }"),
+        "no-body private getter should recover as an empty extracted helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_value_set = function _A_value_set(value) { }"),
+        "no-body private setter should recover as an empty extracted helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get ()") && !output.contains("set ("),
+        "recovered no-body private accessors should not be printed in the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn private_async_helpers_downlevel_for_es2015_but_preserve_native_for_es2019() {
+    let source = r#"
+class A {
+    async #method() { return 1; }
+    async *#stream() { return 2; }
+    async get #value() { return 3; }
+    async set #value(value: number) { }
+}
+"#;
+    let es2015 = emit(source, ScriptTarget::ES2015);
+    assert!(
+        es2015.contains("_A_method = function _A_method()")
+            && es2015
+                .contains("return __awaiter(this, void 0, void 0, function* () { return 1; });"),
+        "private async methods should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_stream = function _A_stream() { return __asyncGenerator(this, arguments, function* _A_stream_1() { return yield __await(2); }); }"),
+        "private async generators should lower through __asyncGenerator for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_value_get = function _A_value_get()")
+            && es2015
+                .contains("return __awaiter(this, void 0, void 0, function* () { return 3; });"),
+        "private async getters should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        es2015.contains("_A_value_set = function _A_value_set(value)")
+            && es2015.contains("return __awaiter(this, void 0, void 0, function* () { });"),
+        "private async setters should lower through __awaiter for ES2015.\nOutput:\n{es2015}"
+    );
+    assert!(
+        !es2015.contains("async function _A_method")
+            && !es2015.contains("async function* _A_stream"),
+        "ES2015 private helpers should not keep native async helper functions.\nOutput:\n{es2015}"
+    );
+
+    let es2019 = emit(source, ScriptTarget::ES2019);
+    assert!(
+        es2019.contains("_A_method = async function _A_method()"),
+        "ES2019 should preserve native async private method helpers.\nOutput:\n{es2019}"
+    );
+    assert!(
+        es2019.contains("_A_stream = async function* _A_stream()"),
+        "ES2019 should preserve native async-generator private method helpers.\nOutput:\n{es2019}"
     );
 }
 

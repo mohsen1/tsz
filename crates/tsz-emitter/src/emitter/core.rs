@@ -19,6 +19,12 @@ use tsz_scanner::SyntaxKind;
 /// `trailing_comments`, `source_order`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>, u32);
 
+/// A private field constructor initializer entry:
+/// (`weakmap_name`, `has_initializer`, `initializer_node`, `leading_comments`,
+/// `trailing_comments`, `source_order`).
+pub(crate) type PrivateFieldConstructorInit =
+    (String, bool, NodeIndex, Vec<String>, Vec<String>, u32);
+
 /// A const enum entry scoped to a specific region of the source.
 /// File-level const enums use `(0, u32::MAX)` so they match any position.
 /// Function-scoped const enums use the enclosing function's `(pos, end)`.
@@ -52,10 +58,13 @@ pub(crate) struct PrivateMemberInfo {
 pub(crate) struct PrivateAccessorDef {
     /// The variable name (e.g., `_C_prop_get`).
     pub var_name: String,
-    /// The body node index.
-    pub body: NodeIndex,
+    /// The body node index, or `None` for invalid no-body accessors that `tsc`
+    /// recovers as empty extracted helpers.
+    pub body: Option<NodeIndex>,
     /// Optional setter parameter node index.
     pub param: Option<NodeIndex>,
+    /// Whether the extracted accessor function is async.
+    pub is_async: bool,
 }
 
 /// Info about a private method function to emit after the class body.
@@ -884,10 +893,9 @@ pub struct Printer<'a> {
 
     /// Private field constructor inits:
     /// (`weakmap_name`, `has_initializer`, `initializer_idx`,
-    /// `leading_comments`, `source_order`).
+    /// `leading_comments`, `trailing_comments`, `source_order`).
     /// Emitted as `_C_field.set(this, <init>)` at the start of the constructor.
-    pub(crate) pending_private_field_constructor_inits:
-        Vec<(String, bool, NodeIndex, Vec<String>, u32)>,
+    pub(crate) pending_private_field_constructor_inits: Vec<PrivateFieldConstructorInit>,
 
     /// `WeakSet` instance name for `_X_instances.add(this)` in the constructor.
     /// Set when the class has private instance methods or accessors.

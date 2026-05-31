@@ -71,12 +71,20 @@ pub struct PrivateAccessorInfo {
     pub get_var_name: Option<String>,
     /// The `WeakMap` variable name for the setter (e.g., "_`C_value_set`")
     pub set_var_name: Option<String>,
+    /// Whether a getter declaration appeared for this private name.
+    pub has_getter: bool,
+    /// Whether a setter declaration appeared for this private name.
+    pub has_setter: bool,
     /// The node index of the getter body (if any)
     pub getter_body: Option<NodeIndex>,
     /// The node index of the setter body (if any)
     pub setter_body: Option<NodeIndex>,
     /// The node index of the setter parameter (if any)
     pub setter_param: Option<NodeIndex>,
+    /// Whether the getter declaration carried an `async` modifier.
+    pub getter_is_async: bool,
+    /// Whether the setter declaration carried an `async` modifier.
+    pub setter_is_async: bool,
     /// Whether this is a static private accessor
     pub is_static: bool,
 }
@@ -555,22 +563,31 @@ pub fn collect_private_accessors_with_reserved(
                             &format!("{}_set", private_helper_base(class_name, clean_name)),
                             used_names,
                         )),
+                        has_getter: false,
+                        has_setter: false,
                         getter_body: None,
                         setter_body: None,
                         setter_param: None,
+                        getter_is_async: false,
+                        setter_is_async: false,
                         is_static,
                     });
                     accessors.len() - 1
                 };
             let entry = &mut accessors[entry_idx];
             entry.member_indices.push(member_idx);
+            let is_async = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AsyncKeyword);
 
             // Update based on accessor type
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                entry.has_getter = true;
+                entry.getter_is_async = is_async;
                 if accessor_data.body.is_some() {
                     entry.getter_body = Some(accessor_data.body);
                 }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                entry.has_setter = true;
+                entry.setter_is_async = is_async;
                 if accessor_data.body.is_some() {
                     entry.setter_body = Some(accessor_data.body);
                 }
@@ -583,11 +600,7 @@ pub fn collect_private_accessors_with_reserved(
         }
     }
 
-    // Convert to Vec, filtering out entries that have neither getter nor setter
     accessors
-        .into_iter()
-        .filter(|a| a.getter_body.is_some() || a.setter_body.is_some())
-        .collect()
 }
 
 /// Information about a private method in a class
