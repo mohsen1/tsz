@@ -1301,6 +1301,45 @@ fn es2015_nested_class_expression_inherits_enclosing_private_self_alias() {
 }
 
 #[test]
+fn es2015_anonymous_class_expression_private_helper_names_follow_static_private_state() {
+    let source = "export const Alpha = class {\n    #value = 1;\n    #read() { return this.#value; }\n    public x = 2;\n};\nexport const Delta = (class {\n    #value = 4;\n    #read() { return this.#value; }\n});\nexport const Beta = class {\n    static #secret = 1;\n    #value = 2;\n    public y = 3;\n};\nconst Gamma = class {\n    #value = 3;\n    #read() { return this.#value; }\n};\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _instances, _value, _read")
+            && output.contains("_Beta_secret")
+            && output.contains("_Beta_value"),
+        "Private helper declarations should use bare stems for instance-only anonymous class expressions and binding stems when static private state needs named evaluation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_Alpha_value")
+            && !output.contains("_Alpha_instances")
+            && !output.contains("_Delta_value")
+            && !output.contains("_Delta_instances"),
+        "Instance-only exported anonymous class expression private helpers should not be named from direct or wrapped bindings.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_Gamma_instances")
+            && output.contains("_Gamma_value")
+            && output.contains("_Gamma_read"),
+        "Unexported variable class expressions should keep binding-derived private helper stems.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
     let source = "// order comment\n\
 class C {\n\

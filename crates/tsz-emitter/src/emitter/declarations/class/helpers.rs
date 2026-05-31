@@ -158,6 +158,85 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(in crate::emitter) fn class_expr_is_exported_variable_initializer(
+        &self,
+        class_idx: NodeIndex,
+    ) -> bool {
+        let mut current = class_idx;
+        let mut hops = 0;
+
+        while hops < 8 {
+            let Some(parent_idx) = self
+                .arena
+                .get_extended(current)
+                .map(|ext| ext.parent)
+                .filter(|p| !p.is_none())
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let Some(decl) = self.arena.get_variable_declaration(parent_node) else {
+                        return false;
+                    };
+                    if decl.initializer != current {
+                        return false;
+                    }
+                    let Some(list_idx) = self
+                        .arena
+                        .get_extended(parent_idx)
+                        .map(|ext| ext.parent)
+                        .filter(|p| !p.is_none())
+                    else {
+                        return false;
+                    };
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        return false;
+                    }
+                    let Some(statement_idx) = self
+                        .arena
+                        .get_extended(list_idx)
+                        .map(|ext| ext.parent)
+                        .filter(|p| !p.is_none())
+                    else {
+                        return false;
+                    };
+                    let Some(statement_node) = self.arena.get(statement_idx) else {
+                        return false;
+                    };
+                    if statement_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                        return false;
+                    }
+                    return self
+                        .arena
+                        .get_variable(statement_node)
+                        .is_some_and(|variable| {
+                            self.arena
+                                .has_modifier(&variable.modifiers, SyntaxKind::ExportKeyword)
+                        });
+                }
+                _ => return false,
+            }
+        }
+
+        false
+    }
+
     fn identifier_binding_name(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.arena.get(name_idx)?;
         if name_node.kind != SyntaxKind::Identifier as u16 {

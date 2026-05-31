@@ -8,7 +8,7 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
     collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
     collect_private_fields_with_reserved, collect_private_methods_with_reserved,
-    get_private_field_name, is_private_identifier, make_unique_private_name,
+    get_private_field_name, is_private_identifier, make_unique_private_name, private_helper_base,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -601,9 +601,48 @@ impl<'a> Printer<'a> {
         let emit_auto_accessor_instance_inits_after_class =
             auto_accessor_instance_storage_inits_in_computed_key.is_empty();
 
+        let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
+
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        let anonymous_class_expression_has_static_private = class.name.is_none()
+            && is_class_expression
+            && class.members.nodes.iter().any(|&member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                let (modifiers, name_idx) = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(member_node)
+                        .map(|prop| (&prop.modifiers, prop.name)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .map(|method| (&method.modifiers, method.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .map(|accessor| (&accessor.modifiers, accessor.name))
+                    }
+                    _ => None,
+                }
+                .unwrap_or((&None, NodeIndex::NONE));
+
+                self.arena.is_static(modifiers) && is_private_identifier(self.arena, name_idx)
+            });
+        let private_helper_class_name = if class.name.is_none()
+            && is_class_expression
+            && !anonymous_class_expression_has_static_private
+            && (class_name.is_empty() || self.class_expr_is_exported_variable_initializer(_idx))
+        {
+            ""
+        } else {
+            &class_name
+        };
         // Generated private-helper names are uniquified against a single file-wide
         // set so nested or sibling classes that reuse a class name receive
         // `_N`-suffixed helpers instead of colliding (matches tsc's per-file name
@@ -620,7 +659,7 @@ impl<'a> Printer<'a> {
             collect_private_fields_with_reserved(
                 self.arena,
                 _idx,
-                &class_name,
+                private_helper_class_name,
                 &mut used_private_names,
             )
         } else {
@@ -630,7 +669,7 @@ impl<'a> Printer<'a> {
             collect_private_methods_with_reserved(
                 self.arena,
                 _idx,
-                &class_name,
+                private_helper_class_name,
                 &mut used_private_names,
             )
         } else {
@@ -640,7 +679,7 @@ impl<'a> Printer<'a> {
             collect_private_accessors_with_reserved(
                 self.arena,
                 _idx,
-                &class_name,
+                private_helper_class_name,
                 &mut used_private_names,
             )
         } else {
@@ -651,7 +690,7 @@ impl<'a> Printer<'a> {
                 collect_private_auto_accessors_with_reserved(
                     self,
                     class,
-                    &class_name,
+                    private_helper_class_name,
                     &mut used_private_names,
                 )
             } else {
@@ -676,7 +715,7 @@ impl<'a> Printer<'a> {
             || private_auto_accessors.iter().any(|a| !a.is_static);
         let instances_weakset_name = if has_instance_methods_or_accessors {
             Some(make_unique_private_name(
-                &format!("_{class_name}_instances"),
+                &private_helper_base(private_helper_class_name, "instances"),
                 &mut used_private_names,
             ))
         } else {
@@ -692,8 +731,6 @@ impl<'a> Printer<'a> {
 
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
-        let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
-
         let static_initializer_alias_source_nodes: Vec<NodeIndex> =
             if target_needs_static_block_lowering {
                 class
