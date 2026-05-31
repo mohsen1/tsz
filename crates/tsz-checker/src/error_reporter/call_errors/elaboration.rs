@@ -995,7 +995,7 @@ impl<'a> CheckerState<'a> {
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(body_type, expected_return_type)
+                        .return_relation_outcome(body_type, expected_return_type)
                         .related
                 {
                     return false;
@@ -1073,7 +1073,7 @@ impl<'a> CheckerState<'a> {
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(body_type, expected_return_type)
+                        .return_relation_outcome(body_type, expected_return_type)
                         .related
                 {
                     return false;

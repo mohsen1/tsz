@@ -61,10 +61,14 @@ fn call_elaboration_return_probes_use_relation_outcome_boundary() {
     let callback_helper = &source[callback_start..callback_end];
     assert_eq!(
         callback_helper
-            .matches("assign_relation_outcome(body_type, expected_return_type)")
+            .matches("return_relation_outcome(body_type, expected_return_type)")
             .count(),
         2,
-        "callback return elaboration should route both body relation probes through RelationOutcome"
+        "callback return elaboration should route both body relation probes through the return RelationOutcome"
+    );
+    assert!(
+        !callback_helper.contains("assign_relation_outcome(body_type, expected_return_type)"),
+        "callback return elaboration should not regress to generic assign relation outcomes"
     );
     assert!(
         !callback_helper
@@ -114,9 +118,18 @@ fn call_elaboration_object_literal_properties_use_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome(").count(),
-        8,
-        "object literal property elaboration should route local relation probes through RelationOutcome"
+        helper.matches("call_arg_relation_outcome(").count(),
+        7,
+        "object literal property elaboration should route parameter-derived probes through call_arg_relation_outcome"
+    );
+    assert_eq!(
+        helper.matches("return_relation_outcome(").count(),
+        1,
+        "object literal property callback return elaboration should route through return_relation_outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "object literal property elaboration should not regress to generic assign relation outcomes"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard("),
@@ -136,9 +149,14 @@ fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
     let helpers = &source[helper_start..];
 
     assert_eq!(
+        helpers.matches("call_arg_relation_outcome(").count(),
+        5,
+        "object/array call elaboration helper probes should route through call_arg_relation_outcome"
+    );
+    assert_eq!(
         helpers.matches("assign_relation_outcome(").count(),
-        6,
-        "object/array elaboration helper relation probes should route through RelationOutcome"
+        1,
+        "tail helper region should keep only the variable-initializer assignability probe as a generic assignment request"
     );
     assert!(
         !helpers.contains("diagnostic_relation_boolean_guard("),
