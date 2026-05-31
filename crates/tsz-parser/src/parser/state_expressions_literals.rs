@@ -1602,6 +1602,29 @@ impl ParserState {
         }
     }
 
+    /// Whether the current token can start an object-literal element, mirroring
+    /// tsc's `isListElement(ParsingContext.ObjectLiteralMembers)`:
+    /// `[` (computed), `*` (generator), `...` (spread), `.` (kept so the object
+    /// is not closed mid-completion), or any literal property name
+    /// (identifier/keyword/string/numeric/bigint/`#private`). Tokens outside
+    /// this set are not members and are skipped by the member loop's recovery.
+    ///
+    /// Template literals are also routed here so that the dedicated
+    /// template-literal-property recovery inside `parse_property_assignment`
+    /// (which closes the object and recovers the template as a tagged-template
+    /// tail) keeps running instead of being skipped by the generic recovery.
+    pub(crate) const fn is_object_literal_element_start(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::OpenBracketToken
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::DotDotDotToken
+                | SyntaxKind::DotToken
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+        ) || self.is_property_name()
+    }
+
     /// Parse object literal
     pub(crate) fn parse_object_literal(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1609,6 +1632,28 @@ impl ParserState {
 
         let mut properties = Vec::new();
         while !self.is_token(SyntaxKind::CloseBraceToken) {
+            // Mirror tsc's `parseDelimitedList(ObjectLiteralMembers)`:
+            // before parsing a member, a token that cannot start an object
+            // literal element (and is not `}` / `;` / EOF, which are handled
+            // by the terminator/separator logic below) is reported via
+            // `parsingContextErrors` (TS1136 "Property assignment expected.")
+            // and skipped — it never produces a member. Without this, a stray
+            // operator/punctuation taken as a property name (e.g. the `:` left
+            // after recovering `x()?: 1`) would be folded into a bogus
+            // empty-named member instead of being skipped like tsc.
+            if !self.is_object_literal_element_start()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Property assignment expected.",
+                    diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                );
+                self.next_token();
+                self.suppress_object_literal_comma_once = true;
+                continue;
+            }
             let prop = self.parse_property_assignment();
             if prop.is_some() {
                 properties.push(prop);
@@ -1882,6 +1927,13 @@ impl ParserState {
             || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_token(SyntaxKind::OpenBracketToken);
 
+        // tsc captures whether the property-name token was a *real* identifier
+        // (`isIdentifier()` — Identifier or a contextual keyword, but NOT a
+        // reserved word, string/numeric/bigint literal, or computed `[`)
+        // before consuming it. This drives the shorthand-vs-assignment decision
+        // below exactly as tsc does (`parser.ts`: `tokenIsIdentifier`).
+        let token_is_identifier = self.is_identifier();
+
         let name = self.parse_property_name();
 
         // TS18016: Check for private identifiers in object literals
@@ -1951,7 +2003,53 @@ impl ParserState {
             return self.parse_object_method_after_name(start_pos, name, false, false);
         }
 
-        if self.parse_optional(SyntaxKind::ColonToken) {
+        // tsc's shorthand-vs-property decision (`parser.ts`):
+        //   const isShorthandPropertyAssignment =
+        //       tokenIsIdentifier && (token() !== SyntaxKind.ColonToken);
+        // A member is shorthand *only* when its name was a real identifier and
+        // the next token is not `:`. Reserved words, string/numeric/bigint
+        // literals, computed `[`, and any stray punctuation taken as a name are
+        // never shorthand — they always become a property assignment whose `:`
+        // is parsed with `parseExpected` (reporting `':' expected` if missing,
+        // but never consuming the following value token) and whose initializer
+        // is the following assignment expression. This is what makes tsc emit
+        // `class: C4` for `{ class C4 {} }` instead of a value-less shorthand.
+        let is_shorthand = token_is_identifier && !self.is_token(SyntaxKind::ColonToken);
+        if !is_shorthand {
+            // When the colon is missing but the name was a literal name that
+            // already received a `':' expected` diagnostic at this position and
+            // the next token is `;`, defer to the object-literal comma-recovery
+            // path (matches tsc's malformed-arrow object recovery, e.g.
+            // `foo((1)=>{return 0;})`), which reports `',' expected` at the `;`
+            // rather than a second missing-colon diagnostic here.
+            let defer_to_comma_recovery = literal_property_name
+                && property_name_had_prior_missing_colon
+                && self.is_token(SyntaxKind::SemicolonToken);
+            if defer_to_comma_recovery {
+                // Preserve the prior shorthand recovery: emit no `':' expected`
+                // here and let the outer object-literal loop recover the `;` as a
+                // missing comma, producing a shorthand member (matches tsc's
+                // malformed-arrow object recovery, e.g. `foo((1)=>{return 0;})`).
+                let end_pos = self.token_end();
+                return self.arena.add_shorthand_property(
+                    syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::ShorthandPropertyData {
+                        modifiers: None,
+                        name,
+                        equals_token: false,
+                        equals_token_pos: 0,
+                        exclamation_token_pos: exclamation_pos,
+                        question_token_pos: question_pos,
+                        object_assignment_initializer: NodeIndex::NONE,
+                    },
+                );
+            }
+            // `parseExpected(ColonToken)` reports `':' expected.` when the colon
+            // is absent (without consuming the next token) and consumes it when
+            // present, exactly like tsc.
+            self.parse_expected(SyntaxKind::ColonToken);
             let expr = self.parse_assignment_expression();
             let mut end_pos = self.token_end();
             let initializer = if expr.is_none() {
@@ -1960,7 +2058,13 @@ impl ParserState {
                 if self.scanner.has_preceding_line_break() && self.is_property_start() {
                     self.suppress_object_literal_comma_once = true;
                 }
-                name // Use property name as fallback for error recovery
+                // Use a *distinct* missing-expression node (not the name node) so
+                // this stays a property assignment with an empty value. The
+                // emitter detects shorthand via `name == initializer`; reusing
+                // `name` here would render `1`/`""` instead of tsc's `1:`/`"":`
+                // for a value-less property such as `{ x()?: 1 }` → `1:` or the
+                // recovered `{ [s: symbol]: "" }` tail → `"": `.
+                self.create_missing_property_value(self.token_pos())
             } else {
                 // Recover a stray-annotation computed-indexer tail
                 // (`{ [s: symbol]: "" }`): emits the diagnostics, consumes the
@@ -1986,16 +2090,10 @@ impl ParserState {
                 },
             )
         } else {
-            // Shorthand property - but certain property names require `:` syntax
-            if requires_colon {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let defer_to_comma_recovery = literal_property_name
-                    && property_name_had_prior_missing_colon
-                    && self.is_token(SyntaxKind::SemicolonToken);
-                if !defer_to_comma_recovery {
-                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
-                }
-            }
+            // Shorthand property (`{ name }` / `{ name = expr }`). The
+            // `requires_colon` cases are handled in the property-assignment
+            // branch above, so no `':' expected` is emitted here.
+            let _ = requires_colon;
 
             // CoverInitializedName: `{ x = expr }` in destructuring patterns
             // ECMAScript: CoverInitializedName[Yield] : IdentifierReference[?Yield] Initializer[In, ?Yield]
@@ -2569,6 +2667,27 @@ impl ParserState {
                 parameters,
                 type_annotation,
                 body,
+            },
+        )
+    }
+
+    /// Create a distinct empty/missing expression node to use as the value of a
+    /// property assignment whose initializer is absent (`{ x: }`). It is a
+    /// zero-length empty identifier at `pos`, separate from the property name so
+    /// the emitter does not mistake the property for a shorthand (which keys on
+    /// `name == initializer`) and instead renders `name:` with an empty value,
+    /// matching tsc.
+    fn create_missing_property_value(&mut self, pos: u32) -> NodeIndex {
+        let atom = self.scanner.interner_mut().intern("");
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            pos,
+            pos,
+            IdentifierData {
+                atom,
+                escaped_text: String::new(),
+                original_text: None,
+                type_arguments: None,
             },
         )
     }
