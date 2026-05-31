@@ -393,6 +393,13 @@ impl<'a> TypePrinter<'a> {
         }
 
         if non_undefined.len() == 1
+            && visitor::type_param_info(self.interner, non_undefined[0])
+                .is_some_and(|info| info.default.is_some())
+        {
+            return type_id;
+        }
+
+        if non_undefined.len() == 1
             && visitor::function_shape_id(self.interner, non_undefined[0]).is_none()
             && visitor::callable_shape_id(self.interner, non_undefined[0]).is_none()
         {
@@ -1485,6 +1492,57 @@ mod tests {
             TypeId::VOID,
         );
         assert_eq!(printed, "set(value?: string | undefined): void");
+    }
+
+    #[test]
+    fn optional_param_display_strips_plain_type_param_undefined() {
+        let interner = TypeInterner::new();
+        let t_name = interner.intern_string("T");
+        let value = interner.intern_string("value");
+        let t_param = tsz_solver::types::TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let t_type = interner.type_param(t_param);
+        let ty = interner.union2(t_type, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "set",
+            false,
+            &[t_param],
+            &[tsz_solver::ParamInfo::optional(value, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(printed, "set<T>(value?: T): void");
+    }
+
+    #[test]
+    fn optional_param_display_preserves_defaulted_type_param_undefined() {
+        let interner = TypeInterner::new();
+        let this_name = interner.intern_string("This");
+        let this_arg = interner.intern_string("thisArg");
+        let this_param = tsz_solver::types::TypeParamInfo {
+            name: this_name,
+            constraint: None,
+            default: Some(TypeId::UNDEFINED),
+            is_const: false,
+        };
+        let this_type = interner.type_param(this_param);
+        let ty = interner.union2(this_type, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "flatMap",
+            false,
+            &[this_param],
+            &[tsz_solver::ParamInfo::optional(this_arg, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(
+            printed,
+            "flatMap<This = undefined>(thisArg?: This | undefined): void"
+        );
     }
 
     #[test]
