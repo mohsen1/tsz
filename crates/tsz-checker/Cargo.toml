@@ -39,6 +39,10 @@ name = "closure_boundary_property_narrowing_tests"
 path = "tests/closure_boundary_property_narrowing_tests.rs"
 
 [[test]]
+name = "assignment_branch_merge_narrowing_tests"
+path = "tests/assignment_branch_merge_narrowing_tests.rs"
+
+[[test]]
 name = "mapped_remapped_excess_function_property_tests"
 path = "tests/mapped_remapped_excess_function_property_tests.rs"
 
