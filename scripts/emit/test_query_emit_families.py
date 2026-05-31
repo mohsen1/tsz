@@ -84,6 +84,26 @@ after
         self.assertIn("README/public emit aggregate is newer", note)
         self.assertIn("JS 13,459/13,530 vs 13,094/13,530", note)
         self.assertIn("DTS 1,644/1,669 vs 1,606/1,669", note)
+        self.assertIn("Pass delta: JS +365, DTS +38", note)
+
+    def test_freshness_status_reports_stale_detail(self):
+        status = self.mod.emit_freshness_status(
+            {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            {
+                "jsPass": 13459,
+                "jsTotal": 13530,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+        self.assertEqual(status["state"], "stale")
+        self.assertEqual(status["jsPassDelta"], 365)
+        self.assertEqual(status["dtsPassDelta"], 38)
 
     def test_freshness_note_ignores_different_emit_domains(self):
         note = self.mod.emit_freshness_note(
@@ -101,6 +121,34 @@ after
             },
         )
         self.assertIsNone(note)
+
+    def test_freshness_status_reports_different_domain(self):
+        status = self.mod.emit_freshness_status(
+            {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            {
+                "jsPass": 13459,
+                "jsTotal": 14000,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+        self.assertEqual(status["state"], "different-domain")
+        self.assertEqual(status["jsTotalDelta"], 470)
+
+    def test_freshness_status_reports_current_detail(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        status = self.mod.emit_freshness_status(summary, dict(summary))
+        self.assertEqual(status["state"], "current")
 
 
 class TestQueryFilters(unittest.TestCase):
