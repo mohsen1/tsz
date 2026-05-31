@@ -48,6 +48,56 @@ impl<'a> CheckerState<'a> {
                 || self
                     .assign_relation_outcome(branch_evaluated, constraint)
                     .related
+                || self.indexed_object_map_branch_satisfies_constraint(branch, constraint)
+        })
+    }
+
+    fn indexed_object_map_branch_satisfies_constraint(
+        &mut self,
+        branch: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let Some((object_type, _index_type)) =
+            query::index_access_components(self.ctx.types.as_type_database(), branch)
+        else {
+            return false;
+        };
+        let object_type = self.resolve_lazy_type(object_type);
+        let value_types = {
+            let Some(shape) =
+                query::get_object_shape(self.ctx.types.as_type_database(), object_type)
+            else {
+                return false;
+            };
+            let mut values: Vec<TypeId> = shape
+                .properties
+                .iter()
+                .map(|property| property.type_id)
+                .collect();
+            if let Some(index) = &shape.string_index {
+                values.push(index.value_type);
+            }
+            if let Some(index) = &shape.number_index {
+                values.push(index.value_type);
+            }
+            values
+        };
+        if value_types.is_empty() {
+            return false;
+        }
+
+        let constraint = self.resolve_lazy_type(constraint);
+        let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
+        value_types.into_iter().all(|value| {
+            if value == TypeId::NEVER {
+                return true;
+            }
+            let value = self.resolve_lazy_type(value);
+            let value_evaluated = self.evaluate_type_for_assignability(value);
+            self.assign_relation_outcome(value, constraint).related
+                || self
+                    .assign_relation_outcome(value_evaluated, constraint_evaluated)
+                    .related
         })
     }
 
@@ -68,6 +118,7 @@ impl<'a> CheckerState<'a> {
                     branch == TypeId::NEVER
                         || (!query::contains_free_type_parameters(self.ctx.types, branch)
                             && !query::is_infer_type(self.ctx.types.as_type_database(), branch))
+                        || self.is_indexed_object_map_branch(branch)
                 };
                 if branch_is_simple(true_type) && branch_is_simple(false_type) {
                     return Some(components);
@@ -97,6 +148,18 @@ impl<'a> CheckerState<'a> {
             type_arg = instantiated;
         }
         None
+    }
+
+    fn is_indexed_object_map_branch(&self, branch: TypeId) -> bool {
+        query::index_access_components(self.ctx.types.as_type_database(), branch)
+            .and_then(|(object_type, _index_type)| {
+                query::get_object_shape(self.ctx.types.as_type_database(), object_type)
+            })
+            .is_some_and(|shape| {
+                !shape.properties.is_empty()
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+            })
     }
 
     pub(crate) fn type_alias_application_infer_result_conditional_components(
@@ -194,6 +257,8 @@ impl<'a> CheckerState<'a> {
                     || self
                         .assign_relation_outcome(true_resolved, constraint)
                         .related
+                    || self
+                        .indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
                 {
                     return true;
                 }
