@@ -1396,6 +1396,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
 
+            self.emit_property_leading_comment(body, field.member_idx);
             let value = if field.has_initializer && field.initializer.is_some() {
                 self.convert_expression(field.initializer)
             } else {

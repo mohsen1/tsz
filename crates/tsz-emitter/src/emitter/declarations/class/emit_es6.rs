@@ -1078,11 +1078,44 @@ impl<'a> Printer<'a> {
                 .iter()
                 .filter(|f| !f.is_static)
                 .map(|f| {
-                    let source_order = self.arena.get(f.member_idx).map_or(u32::MAX, |n| n.pos);
+                    let Some(member_pos) = class
+                        .members
+                        .nodes
+                        .iter()
+                        .position(|&member_idx| member_idx == f.member_idx)
+                    else {
+                        return (
+                            f.weakmap_name.clone(),
+                            f.has_initializer,
+                            f.initializer,
+                            Vec::new(),
+                            u32::MAX,
+                        );
+                    };
+                    let member_node = self.arena.get(f.member_idx);
+                    let source_order = member_node.map_or(u32::MAX, |n| n.pos);
+                    let leading_comments = if !self.ctx.options.remove_comments {
+                        let prev_end = if member_pos > 0 {
+                            class
+                                .members
+                                .nodes
+                                .get(member_pos - 1)
+                                .and_then(|&prev_idx| self.arena.get(prev_idx))
+                                .map_or(source_order, |prev| {
+                                    self.find_token_end_before_trivia(prev.pos, prev.end)
+                                })
+                        } else {
+                            source_order.saturating_sub(64)
+                        };
+                        self.collect_leading_comments_in_range(prev_end, source_order)
+                    } else {
+                        Vec::new()
+                    };
                     (
                         f.weakmap_name.clone(),
                         f.has_initializer,
                         f.initializer,
+                        leading_comments,
                         source_order,
                     )
                 })

@@ -883,9 +883,11 @@ pub struct Printer<'a> {
     pub(crate) pending_private_class_alias: Option<(String, String)>,
 
     /// Private field constructor inits:
-    /// (`weakmap_name`, `has_initializer`, `initializer_idx`, `source_order`).
+    /// (`weakmap_name`, `has_initializer`, `initializer_idx`,
+    /// `leading_comments`, `source_order`).
     /// Emitted as `_C_field.set(this, <init>)` at the start of the constructor.
-    pub(crate) pending_private_field_constructor_inits: Vec<(String, bool, NodeIndex, u32)>,
+    pub(crate) pending_private_field_constructor_inits:
+        Vec<(String, bool, NodeIndex, Vec<String>, u32)>,
 
     /// `WeakSet` instance name for `_X_instances.add(this)` in the constructor.
     /// Set when the class has private instance methods or accessors.

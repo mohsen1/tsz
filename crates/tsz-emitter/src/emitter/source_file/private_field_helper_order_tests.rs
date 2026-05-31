@@ -141,3 +141,94 @@ class Box {
         "instance-only class must not emit a static field assignment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn private_field_leading_comments_move_to_weakmap_initializers() {
+    let source = r#"
+class A {
+    /**
+     * @public
+     */
+    #a = 1;
+    /**
+     * @private
+     */
+    #b = 2;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let public_comment = output
+        .find("* @public")
+        .unwrap_or_else(|| panic!("expected public JSDoc on lowered private field\n{output}"));
+    let public_init = output
+        .find("_A_a.set(this, 1);")
+        .unwrap_or_else(|| panic!("expected lowered private #a initializer\n{output}"));
+    let private_comment = output
+        .find("* @private")
+        .unwrap_or_else(|| panic!("expected private JSDoc on lowered private field\n{output}"));
+    let private_init = output
+        .find("_A_b.set(this, 2);")
+        .unwrap_or_else(|| panic!("expected lowered private #b initializer\n{output}"));
+
+    assert!(
+        public_comment < public_init && private_comment < private_init,
+        "Private field comments should move with constructor WeakMap initializers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn private_accessor_helpers_follow_source_order() {
+    let source = r#"
+class A {
+    get #a() { return 1; }
+    set #a(value) { }
+    get #b() { return 2; }
+    set #b(value) { }
+    get #c() { return 3; }
+    set #c(value) { }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let a_pos = output
+        .find("_A_a_get = function _A_a_get()")
+        .unwrap_or_else(|| panic!("expected #a getter helper\n{output}"));
+    let b_pos = output
+        .find("_A_b_get = function _A_b_get()")
+        .unwrap_or_else(|| panic!("expected #b getter helper\n{output}"));
+    let c_pos = output
+        .find("_A_c_get = function _A_c_get()")
+        .unwrap_or_else(|| panic!("expected #c getter helper\n{output}"));
+
+    assert!(
+        a_pos < b_pos && b_pos < c_pos,
+        "Private accessor helper initialization order should match source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn declare_and_abstract_private_fields_do_not_allocate_storage() {
+    let source = r#"
+class A {
+    declare #erased: number;
+    declare #method(): void;
+    #kept = 1;
+}
+abstract class B {
+    abstract #missing: number;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("_A_kept = new WeakMap()"),
+        "ordinary private field should still allocate storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_erased")
+            && !output.contains("_A_method")
+            && !output.contains("_B_missing"),
+        "declare/abstract private members should not allocate runtime storage.\nOutput:\n{output}"
+    );
+}

@@ -1298,16 +1298,18 @@ impl<'a> Printer<'a> {
         while private_idx < private_inits.len() || public_idx < field_inits.len() {
             let next_private_order = private_inits
                 .get(private_idx)
-                .map_or(u32::MAX, |(_, _, _, source_order)| *source_order);
+                .map_or(u32::MAX, |(_, _, _, _, source_order)| *source_order);
             let next_public_order = field_inits
                 .get(public_idx)
                 .map_or(u32::MAX, |(_, _, _, _, _, source_order)| *source_order);
             if next_private_order <= next_public_order {
-                let (weakmap_name, has_initializer, initializer, _) = &private_inits[private_idx];
+                let (weakmap_name, has_initializer, initializer, leading_comments, _) =
+                    &private_inits[private_idx];
                 self.emit_private_field_constructor_init(
                     weakmap_name,
                     *has_initializer,
                     *initializer,
+                    leading_comments,
                 );
                 private_idx += 1;
             } else {
@@ -1332,7 +1334,12 @@ impl<'a> Printer<'a> {
         weakmap_name: &str,
         has_initializer: bool,
         initializer: NodeIndex,
+        leading_comments: &[String],
     ) {
+        for comment in leading_comments {
+            self.write_comment(comment);
+            self.write_line();
+        }
         self.write(weakmap_name);
         self.write(".set(this, ");
         if has_initializer {

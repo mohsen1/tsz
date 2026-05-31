@@ -29,7 +29,7 @@
 //! as a shared utility to avoid circular dependencies. This module re-exports it
 //! for backward compatibility.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -462,6 +462,12 @@ pub fn collect_private_fields_with_reserved(
 
             // Check if this is a private field
             if is_private_identifier(arena, prop_data.name) {
+                if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
+
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
                 let weakmap_name = make_unique_private_name(
@@ -502,7 +508,7 @@ pub fn collect_private_accessors_with_reserved(
     class_name: &str,
     used_names: &mut FxHashSet<String>,
 ) -> Vec<PrivateAccessorInfo> {
-    let mut accessors: FxHashMap<String, PrivateAccessorInfo> = FxHashMap::default();
+    let mut accessors: Vec<PrivateAccessorInfo> = Vec::new();
 
     let Some(class_node) = arena.get(class_idx) else {
         return Vec::new();
@@ -531,11 +537,14 @@ pub fn collect_private_accessors_with_reserved(
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
             let is_static = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
 
-            // Get or create the accessor info for this name
-            let entry =
-                accessors
-                    .entry(clean_name.to_string())
-                    .or_insert_with(|| PrivateAccessorInfo {
+            // Get or create the accessor info for this name. Keep entries in
+            // source order so helper declaration/initialization order matches
+            // `tsc` for classes with several private accessor pairs.
+            let entry_idx =
+                if let Some(idx) = accessors.iter().position(|entry| entry.name == clean_name) {
+                    idx
+                } else {
+                    accessors.push(PrivateAccessorInfo {
                         member_indices: Vec::new(),
                         name: clean_name.to_string(),
                         get_var_name: Some(make_unique_private_name(
@@ -551,6 +560,9 @@ pub fn collect_private_accessors_with_reserved(
                         setter_param: None,
                         is_static,
                     });
+                    accessors.len() - 1
+                };
+            let entry = &mut accessors[entry_idx];
             entry.member_indices.push(member_idx);
 
             // Update based on accessor type
@@ -573,7 +585,7 @@ pub fn collect_private_accessors_with_reserved(
 
     // Convert to Vec, filtering out entries that have neither getter nor setter
     accessors
-        .into_values()
+        .into_iter()
         .filter(|a| a.getter_body.is_some() || a.setter_body.is_some())
         .collect()
 }
@@ -639,6 +651,10 @@ pub fn collect_private_methods_with_reserved(
 
             // Check if this is a private method
             if !is_private_identifier(arena, method_data.name) {
+                continue;
+            }
+
+            if method_data.body.is_none() {
                 continue;
             }
 

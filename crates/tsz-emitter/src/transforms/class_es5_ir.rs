@@ -513,35 +513,54 @@ impl<'a> ES5ClassTransformer<'a> {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
         };
+        let prop_name_pos = self
+            .arena
+            .get_property_decl(prop_node)
+            .and_then(|prop| self.arena.get(prop.name))
+            .map(|name| name.pos as usize);
         let Some(text) = self.source_text else {
             return;
         };
         let bytes = text.as_bytes();
-        let mut i = prop_node.pos as usize;
+        let scan_positions = prop_name_pos
+            .into_iter()
+            .chain(std::iter::once(prop_node.pos as usize));
+        for scan_pos in scan_positions {
+            if let Some(comment) = Self::property_leading_comment_before(text, bytes, scan_pos) {
+                body.push(IRNode::Raw(comment.into()));
+                return;
+            }
+        }
+    }
+
+    fn property_leading_comment_before(
+        text: &str,
+        bytes: &[u8],
+        scan_pos: usize,
+    ) -> Option<String> {
+        let mut i = scan_pos;
         if i > bytes.len() {
-            return;
+            return None;
         }
         while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') {
             i -= 1;
         }
         let line_start = text[..i].rfind('\n').map_or(0, |idx| idx + 1);
         if text[line_start..i].trim_start().starts_with("//") {
-            body.push(IRNode::Raw(text[line_start..i].to_string().into()));
-            return;
+            return Some(text[line_start..i].to_string());
         }
         if i < 2 || &bytes[i - 2..i] != b"*/" {
-            return;
+            return None;
         }
         let comment_end = i;
         let mut start = i.saturating_sub(2);
         loop {
             if start + 2 <= bytes.len() && &bytes[start..start + 2] == b"/*" {
                 let comment_text = &text[start..comment_end];
-                body.push(IRNode::Raw(comment_text.to_string().into()));
-                return;
+                return Some(comment_text.to_string());
             }
             if start == 0 {
-                return;
+                return None;
             }
             start -= 1;
         }
