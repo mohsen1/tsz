@@ -826,3 +826,187 @@ export type PropertiesReduce<T extends TProperties> = PropertiesReducer<T, {
          tsz output:\n{tsz_output}"
     );
 }
+
+#[test]
+fn imported_conditional_select_object_map_satisfies_string_constraint() {
+    let temp = TempDir::new("imported_conditional_select_object_map").expect("temp dir");
+    write_file(&temp.path.join("Any/Key.ts"), "export type Key = string | number | symbol\n");
+    write_file(
+        &temp.path.join("Any/_Internal.ts"),
+        "export type Match = 'default' | 'contains->' | 'extends->' | '<-contains' | '<-extends' | 'equals'\n",
+    );
+    write_file(
+        &temp.path.join("Any/Extends.ts"),
+        r#"
+export type Extends<A1 extends any, A2 extends any> =
+  [A1] extends [never] ? 0 : A1 extends A2 ? 1 : 0
+"#,
+    );
+    write_file(
+        &temp.path.join("Any/Contains.ts"),
+        r#"
+import {Extends} from './Extends'
+export type Contains<A1 extends any, A2 extends any> =
+  Extends<A1, A2> extends 1 ? 1 : 0
+"#,
+    );
+    write_file(
+        &temp.path.join("Any/Equals.ts"),
+        r#"
+export type Equals<A1 extends any, A2 extends any> =
+  (<A>() => A extends A2 ? 1 : 0) extends (<A>() => A extends A1 ? 1 : 0)
+    ? 1
+    : 0
+"#,
+    );
+    write_file(
+        &temp.path.join("Any/Is.ts"),
+        r#"
+import {Match} from './_Internal'
+import {Extends} from './Extends'
+import {Equals} from './Equals'
+import {Contains} from './Contains'
+
+export type Is<A extends any, A1 extends any, match extends Match = 'default'> = {
+  'default': Extends<A, A1>
+  'contains->': Contains<A, A1>
+  'extends->': Extends<A, A1>
+  '<-contains': Contains<A1, A>
+  '<-extends': Extends<A1, A>
+  'equals': Equals<A1, A>
+}[match]
+"#,
+    );
+    write_file(
+        &temp.path.join("List/List.ts"),
+        "export type List<A = any> = ReadonlyArray<A>\n",
+    );
+    write_file(
+        &temp.path.join("List/Head.ts"),
+        r#"
+import {List} from './List'
+export type Head<L extends List> = L extends readonly [] ? never : L[0]
+"#,
+    );
+    write_file(
+        &temp.path.join("List/Tail.ts"),
+        r#"
+import {List} from './List'
+export type Tail<L extends List> =
+  L extends readonly [] ? L : L extends readonly [any?, ...infer LTail] ? LTail : L
+"#,
+    );
+    write_file(
+        &temp.path.join("List/Pop.ts"),
+        r#"
+import {List} from './List'
+export type Pop<L extends List> =
+  L extends (readonly [...infer LBody, any] | readonly [...infer LBody, any?]) ? LBody : L
+"#,
+    );
+    write_file(
+        &temp.path.join("Object/Path.ts"),
+        r#"
+import {Key} from '../Any/Key'
+import {List} from '../List/List'
+
+export type Path<O, P extends List<Key>> =
+  P extends readonly []
+    ? O
+    : P extends readonly [infer K, ...infer R]
+      ? K extends keyof O ? Path<O[K], Extract<R, List<Key>>> : never
+      : O
+"#,
+    );
+    write_file(
+        &temp.path.join("Object/UnionOf.ts"),
+        r#"
+export type UnionOf<O extends object> =
+  O extends unknown ? O[keyof O] : never
+"#,
+    );
+    write_file(
+        &temp.path.join("Union/Select.ts"),
+        r#"
+import {Is} from '../Any/Is'
+import {Match} from '../Any/_Internal'
+
+export type Select<U extends any, M extends any, match extends Match = 'default'> =
+  U extends unknown ? {1: U & M, 0: never}[Is<U, M, match>] : never
+"#,
+    );
+    write_file(
+        &temp.path.join("String/Join.ts"),
+        r#"
+import {List} from '../List/List'
+export type Join<T extends List, D extends string = ''> = string
+"#,
+    );
+    write_file(
+        &temp.path.join("String/Split.ts"),
+        "export type Split<S extends string, D extends string = ''> = string[]\n",
+    );
+    write_file(
+        &temp.path.join("Function/AutoPath.ts"),
+        r#"
+import {Key} from '../Any/Key'
+import {Head} from '../List/Head'
+import {List} from '../List/List'
+import {Pop} from '../List/Pop'
+import {Tail} from '../List/Tail'
+import {Path} from '../Object/Path'
+import {UnionOf} from '../Object/UnionOf'
+import {Select} from '../Union/Select'
+import {Join} from '../String/Join'
+import {Split} from '../String/Split'
+
+type Index = number | string;
+type KeyToIndex<K extends Key, SP extends List<Index>> =
+  number extends K ? Head<SP> : K & Index;
+type MetaPath<O, D extends string, SP extends List<Index> = [], P extends List<Index> = []> = {
+  [K in keyof O]:
+    | MetaPath<O[K], D, Tail<SP>, [...P, KeyToIndex<K, SP>]>
+    | Join<[...P, KeyToIndex<K, SP>], D>;
+};
+type NextPath<OP> = Select<UnionOf<Exclude<OP, string> & {}>, string>;
+type ExecPath<A, SP extends List<Index>, Delimiter extends string> =
+  NextPath<Path<MetaPath<A, Delimiter, SP>, SP>>;
+type HintPath<A, P extends string, SP extends List<Index>, Exec extends string, D extends string> =
+  [Exec] extends [never] ? ExecPath<A, Pop<SP>, D> : Exec | P;
+type _AutoPath<A, P extends string, D extends string, SP extends List<Index> = Split<P, D>> =
+  HintPath<A, P, SP, ExecPath<A, SP, D>, D>;
+export type AutoPath<O extends any, P extends string, D extends string = '.'> =
+  _AutoPath<O, P, D>;
+"#,
+    );
+
+    let (tsc_code, tsc_output) = run_tsc_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es2022",
+            "Function/AutoPath.ts",
+        ],
+    )
+    .expect("tsc should run");
+    assert_eq!(tsc_code, 0, "tsc accepted the imported Select shape: {tsc_output}");
+
+    let (tsz_code, tsz_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es2022",
+            "Function/AutoPath.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        tsz_code, 0,
+        "Conditional object-map filters must satisfy the string constraint like tsc.\n\
+         tsz output:\n{tsz_output}"
+    );
+}
