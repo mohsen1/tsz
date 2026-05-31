@@ -66,10 +66,27 @@ impl<'a> Printer<'a> {
             self.write(", ");
         }
 
+        // A nested *empty array* binding pattern in a variable declaration still
+        // runs the iterator protocol on its source under downlevelIteration, so
+        // tsc extracts `__read(source, 0)`. A nested empty *object* pattern reads
+        // the source property directly. (Empty array *assignment* patterns are a
+        // separate path and never call `__read`.)
+        let is_empty_array = self
+            .arena
+            .get(elem.name)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+
         let value_name = self.get_temp_var_name();
         self.write(&value_name);
         self.write(" = ");
-        self.emit_assignment_target_es5_with_computed(key_idx, temp_name, computed_key_temp);
+        if is_empty_array && self.ctx.options.downlevel_iteration && elem.initializer.is_none() {
+            self.write_helper("__read");
+            self.write("(");
+            self.emit_assignment_target_es5_with_computed(key_idx, temp_name, computed_key_temp);
+            self.write(", 0)");
+        } else {
+            self.emit_assignment_target_es5_with_computed(key_idx, temp_name, computed_key_temp);
+        }
 
         if elem.initializer.is_some() {
             let defaulted_name = self.get_temp_var_name();
@@ -86,7 +103,14 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.write(&empty_name);
             self.write(" = ");
-            self.write(&defaulted_name);
+            if is_empty_array && self.ctx.options.downlevel_iteration {
+                self.write_helper("__read");
+                self.write("(");
+                self.write(&defaulted_name);
+                self.write(", 0)");
+            } else {
+                self.write(&defaulted_name);
+            }
         }
     }
 

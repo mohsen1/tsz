@@ -61,25 +61,22 @@ impl<'a> LoweringPass<'a> {
                             TransformDirective::ES5VariableDeclarationList { decl_list: idx },
                         );
 
+                        // Under downlevelIteration, any *array* binding pattern in
+                        // a variable declaration runs the iterator protocol and
+                        // emits `__read`, even when the pattern is empty
+                        // (`var [];` → `__read(void 0, 0)`, `var [] = x;` →
+                        // `__read(x, 0)`). Object binding patterns never read.
                         let need_downlevel_read = self.ctx.options.downlevel_iteration
                             && decl_list.declarations.nodes.iter().any(|&decl_idx| {
-                                if let Some(decl_node) = self.arena.get(decl_idx) {
-                                    if let Some(decl) =
+                                self.arena
+                                    .get(decl_idx)
+                                    .and_then(|decl_node| {
                                         self.arena.get_variable_declaration(decl_node)
-                                    {
-                                        self.arena.get(decl.name).is_some_and(|name_node| {
-                                            name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                                && self
-                                                    .arena
-                                                    .get_binding_pattern(name_node)
-                                                    .is_some_and(|p| !p.elements.nodes.is_empty())
-                                        })
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
+                                    })
+                                    .and_then(|decl| self.arena.get(decl.name))
+                                    .is_some_and(|name_node| {
+                                        name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                    })
                             });
 
                         if need_downlevel_read {

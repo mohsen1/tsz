@@ -87,9 +87,11 @@ impl<'a> Printer<'a> {
                 }
                 first = false;
                 self.write(&temp_name);
-                let is_empty = self.binding_pattern_is_empty(decl.name);
-                let downlevel_array_binding = !is_empty
-                    && self.ctx.options.downlevel_iteration
+                // An array binding pattern in a variable declaration runs the
+                // iterator protocol under downlevelIteration even when empty:
+                // `var [];` emits `_a = __read(void 0, 0)`. (Empty *object*
+                // patterns just assign `void 0`.)
+                let downlevel_array_binding = self.ctx.options.downlevel_iteration
                     && self
                         .arena
                         .get(decl.name)
@@ -748,14 +750,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Empty patterns — zero bindings, no rest — skip __read entirely.
-        // When a pattern has nothing to extract, tsc assigns the initializer
-        // directly to a temp (`_a = x`) regardless of downlevelIteration; calling
-        // `__read(x, 0)` to trigger the iterator protocol is incorrect for this case.
+        // Empty patterns assign the initializer directly to a temp (`_a = x`)
+        // instead of destructuring, because there is nothing to extract.
+        //
+        // The one exception is an empty *array* binding pattern in a variable
+        // declaration under downlevelIteration: tsc still runs the iterator
+        // protocol on the initializer, emitting `_a = __read(x, 0)`. (This is a
+        // declaration-only quirk; empty array *assignment* patterns like
+        // `([] = x)` are handled separately and assign `x` directly.) Empty
+        // object patterns never call `__read`.
         let is_empty = self.binding_pattern_is_empty(decl.name);
         let needs_downlevel_read = self.ctx.options.downlevel_iteration
             && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
-        if is_empty {
+        if is_empty && !needs_downlevel_read {
             self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
             return;
         }
