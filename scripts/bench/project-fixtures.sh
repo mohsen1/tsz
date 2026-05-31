@@ -525,13 +525,46 @@ tsz_write_type_challenges_solutions_config() {
   local source_dir="$1"
   local compile_dir="$2"
 
-  rm -rf "$compile_dir"
+  # Preserve the existing manifest JSON across runs so that
+  # type-challenges-solutions-manifest.mjs can reuse cached outputSha256,
+  # declarations, and semanticFamilies for unchanged source entries.
+  # Only the solutions directory is selectively cleaned below.
   mkdir -p "$compile_dir/solutions"
 
   local generated=0
   local manifest_tsv="$compile_dir/type-challenges-solutions-manifest.tsv"
   local manifest_json="$compile_dir/type-challenges-solutions-manifest.json"
   printf 'output\tsource\tsourceSha256\tid\tlevel\ttitle\n' > "$manifest_tsv"
+
+  # Build a cache of sourceSha256 values from the existing manifest so we can
+  # skip re-extracting solution code for unchanged source files.
+  # The cache maps "sourceStem" -> "sourceSha256".
+  declare -A _tsz_source_sha_cache=()
+  if [[ -f "$manifest_json" ]] && command -v node >/dev/null 2>&1; then
+    local _cache_raw _cache_ref
+    # Single Node.js invocation: first line = source.ref, rest = stem<TAB>sha pairs.
+    # Two-call pattern avoided to halve process-start and JSON-parse overhead.
+    _cache_raw="$(
+      MANIFEST_FILE="$manifest_json" node --input-type=module <<'NODE'
+import fs from "node:fs";
+try {
+  const m = JSON.parse(fs.readFileSync(process.env.MANIFEST_FILE, "utf8"));
+  process.stdout.write((m.source?.ref ?? "") + "\n");
+  for (const e of (m.entries ?? [])) {
+    const stem = e.challenge?.sourceStem;
+    const sha = e.challenge?.sourceSha256;
+    if (stem && sha) process.stdout.write(stem + "\t" + sha + "\n");
+  }
+} catch {}
+NODE
+    )"
+    IFS= read -r _cache_ref <<< "$_cache_raw"
+    if [[ "$_cache_ref" == "$TYPE_CHALLENGES_SOLUTIONS_REF" ]]; then
+      while IFS=$'\t' read -r _stem _sha; do
+        [[ -n "$_stem" ]] && _tsz_source_sha_cache["$_stem"]="$_sha"
+      done <<< "${_cache_raw#*$'\n'}"
+    fi
+  fi
 
   local markdown
   while IFS= read -r markdown; do
@@ -543,6 +576,20 @@ tsz_write_type_challenges_solutions_config() {
     output="$compile_dir/solutions/${base}.ts"
     tmp="$compile_dir/solutions/.${base}.tmp"
     source_sha256="$(perl -MDigest::SHA=sha256_hex -0777 -ne 'print sha256_hex($_)' "$markdown")"
+
+    # Skip extraction when output is current: source SHA unchanged and file exists.
+    if [[ -f "$output" ]] && [[ "${_tsz_source_sha_cache["$base"]:-}" == "$source_sha256" ]]; then
+      generated=$((generated + 1))
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "solutions/${base}.ts" \
+        "en/${base}.md" \
+        "$source_sha256" \
+        "$id" \
+        "$level" \
+        "${title//$'\t'/ }" \
+        >> "$manifest_tsv"
+      continue
+    fi
 
     perl -0ne '
       my ($solution) = /## Solution\n(.*?)(?:\n## References|\z)/s;
@@ -598,6 +645,20 @@ tsz_write_type_challenges_solutions_config() {
       "${title//$'\t'/ }" \
       >> "$manifest_tsv"
   done < <(find "$source_dir/en" -maxdepth 1 -name '*.md' ! -name 'index.md' | sort)
+
+  # Remove stale solution files from sources that no longer exist.
+  # Build an in-memory set from the TSV so we avoid one grep per .ts file.
+  declare -A _tsz_current_outputs=()
+  local _tsv_output
+  while IFS=$'\t' read -r _tsv_output _rest; do
+    [[ -n "$_tsv_output" && "$_tsv_output" != "output" ]] && \
+      _tsz_current_outputs["$_tsv_output"]=1
+  done < "$manifest_tsv"
+  local _ts_file
+  while IFS= read -r _ts_file; do
+    local _ts_rel="solutions/$(basename "$_ts_file")"
+    [[ -z "${_tsz_current_outputs["$_ts_rel"]:-}" ]] && rm -f "$_ts_file"
+  done < <(find "$compile_dir/solutions" -maxdepth 1 -name '*.ts' 2>/dev/null)
 
   if [[ "$generated" -eq 0 ]]; then
     echo "error: no Type Challenges solution sources were generated from $source_dir/en" >&2

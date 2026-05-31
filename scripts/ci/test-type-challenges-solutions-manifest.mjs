@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -476,5 +477,159 @@ withTempDir((dir) => {
   assert.match(
     sourceResult.stderr,
     /duplicate Type Challenges solution source en\/alpha\.md/,
+  );
+});
+
+// Cache hit: when sourceSha256 and source.ref are unchanged on a second run,
+// the manifest script reuses outputSha256/declarations/semanticFamilies from
+// the existing manifest without re-reading the output file.
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "gamma.ts"), "type Gamma = string;\n");
+
+  const tsvPath = path.join(compileDir, "gamma.tsv");
+  const SOURCE_SHA_GAMMA = "a".repeat(64);
+  fs.writeFileSync(
+    tsvPath,
+    manifestRows([["solutions/gamma.ts", "en/gamma.md", SOURCE_SHA_GAMMA, "3", "easy", "Gamma"]]),
+    "utf8",
+  );
+
+  // First run: manifest written from scratch.
+  const firstResult = runManifest(tsvPath, manifestPath);
+  assert.equal(firstResult.status, 0, firstResult.stderr || firstResult.stdout);
+  const firstManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const firstOutputSha = firstManifest.entries[0].outputSha256;
+  assert.match(firstOutputSha, /^[0-9a-f]{64}$/);
+
+  // Corrupt the output file between runs (same sourceSha256 in TSV).
+  fs.writeFileSync(
+    path.join(compileDir, "solutions", "gamma.ts"),
+    "// corrupted content that changes the file hash\ntype Gamma = never;\n",
+  );
+
+  // Second run with same TSV: the cached outputSha256 from the first manifest
+  // must be reused, not the corrupted file's hash.
+  const secondResult = runManifest(tsvPath, manifestPath);
+  assert.equal(secondResult.status, 0, secondResult.stderr || secondResult.stdout);
+  const secondManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  assert.equal(
+    secondManifest.entries[0].outputSha256,
+    firstOutputSha,
+    "cache hit: outputSha256 must equal first-run value when sourceSha256 is unchanged",
+  );
+  assert.deepEqual(
+    secondManifest.entries[0].declarations,
+    firstManifest.entries[0].declarations,
+    "cache hit: declarations must equal first-run value",
+  );
+});
+
+// Cache miss: when sourceSha256 changes, the manifest script re-reads the
+// output file and computes a fresh outputSha256.
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "delta.ts"), "type Delta = string;\n");
+
+  const INITIAL_SOURCE_SHA = "b".repeat(64);
+  const tsvPath = path.join(compileDir, "delta.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    manifestRows([["solutions/delta.ts", "en/delta.md", INITIAL_SOURCE_SHA, "4", "easy", "Delta"]]),
+    "utf8",
+  );
+
+  // First run: establish the manifest with INITIAL_SOURCE_SHA.
+  const firstResult = runManifest(tsvPath, manifestPath);
+  assert.equal(firstResult.status, 0, firstResult.stderr || firstResult.stdout);
+  const firstManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const firstOutputSha = firstManifest.entries[0].outputSha256;
+
+  // Update the output file AND change the sourceSha256 in the TSV (simulating
+  // a changed source that was re-extracted).
+  const newContent = "type Delta = number; // regenerated\n";
+  fs.writeFileSync(path.join(compileDir, "solutions", "delta.ts"), newContent);
+  const CHANGED_SOURCE_SHA = "c".repeat(64);
+  fs.writeFileSync(
+    tsvPath,
+    manifestRows([["solutions/delta.ts", "en/delta.md", CHANGED_SOURCE_SHA, "4", "easy", "Delta"]]),
+    "utf8",
+  );
+
+  // Second run: cache key (sourceSha256) changed so the file is re-read.
+  const secondResult = runManifest(tsvPath, manifestPath);
+  assert.equal(secondResult.status, 0, secondResult.stderr || secondResult.stdout);
+  const secondManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const expectedFreshSha = crypto.createHash("sha256").update(newContent).digest("hex");
+  assert.equal(
+    secondManifest.entries[0].outputSha256,
+    expectedFreshSha,
+    "cache miss: outputSha256 must be freshly computed when sourceSha256 changes",
+  );
+  assert.notEqual(
+    secondManifest.entries[0].outputSha256,
+    firstOutputSha,
+    "cache miss: outputSha256 must differ from first-run value after source change",
+  );
+});
+
+// Cache invalidation: when source.ref changes, the entire cache is discarded
+// because the generated .ts header comment includes the ref.
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  const outputContent = "type Epsilon = string;\n";
+  fs.writeFileSync(path.join(compileDir, "solutions", "epsilon.ts"), outputContent);
+
+  const EPSILON_SOURCE_SHA = "d".repeat(64);
+  const tsvPath = path.join(compileDir, "epsilon.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    manifestRows([["solutions/epsilon.ts", "en/epsilon.md", EPSILON_SOURCE_SHA, "5", "easy", "Epsilon"]]),
+    "utf8",
+  );
+
+  // First run with ref "ref-v1".
+  const firstResult = spawnSync(process.execPath, [MANIFEST_SCRIPT, tsvPath, manifestPath], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_SOLUTIONS_REPO: "https://example.invalid/type-challenges-solutions.git",
+      TYPE_CHALLENGES_SOLUTIONS_REF: "ref-v1",
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+    },
+  });
+  assert.equal(firstResult.status, 0, firstResult.stderr || firstResult.stdout);
+  const firstManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const firstOutputSha = firstManifest.entries[0].outputSha256;
+
+  // Second run with a different ref — same sourceSha256 but different ref.
+  // The cache must be invalidated so the output file is re-read.
+  const secondResult = spawnSync(process.execPath, [MANIFEST_SCRIPT, tsvPath, manifestPath], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_SOLUTIONS_REPO: "https://example.invalid/type-challenges-solutions.git",
+      TYPE_CHALLENGES_SOLUTIONS_REF: "ref-v2",
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+    },
+  });
+  assert.equal(secondResult.status, 0, secondResult.stderr || secondResult.stdout);
+  const secondManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+
+  // With a ref change the cache is cleared; the manifest script re-reads the
+  // file and computes a fresh hash equal to the actual file content's hash.
+  const expectedSha = crypto.createHash("sha256").update(outputContent).digest("hex");
+  assert.equal(
+    secondManifest.entries[0].outputSha256,
+    expectedSha,
+    "ref-change invalidation: outputSha256 must be freshly computed",
   );
 });
