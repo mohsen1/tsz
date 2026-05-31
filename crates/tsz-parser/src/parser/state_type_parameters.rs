@@ -119,8 +119,14 @@ impl ParserState {
         };
 
         // Parse optional default: = DefaultType
+        //
+        // The default is a complete-type-expression scope, so re-enable
+        // conditional types even if the surrounding context (e.g. an outer
+        // `infer T extends X` constraint) had them disabled. Matches tsc's
+        // `parseDefaultType` which wraps the parse in
+        // `allowConditionalTypesAnd(parseType)`.
         let default = if self.parse_optional(SyntaxKind::EqualsToken) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };

@@ -23,8 +23,11 @@ impl ParserState {
             return false;
         }
 
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
+        // Lookahead invokes real `parse_*` routines (`parse_string_literal`
+        // or `parse_identifier_name`) which push arena nodes. Use the full
+        // speculation checkpoint so those nodes (and any diagnostics, flag
+        // toggles) are reverted; a scanner-only restore would leak them.
+        let checkpoint = self.speculation_checkpoint();
 
         if self.is_token(SyntaxKind::StringLiteral) {
             self.parse_string_literal();
@@ -34,8 +37,7 @@ impl ParserState {
 
         let result = self.is_token(SyntaxKind::ColonToken);
 
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
+        self.restore_speculation_checkpoint(checkpoint);
         result
     }
 

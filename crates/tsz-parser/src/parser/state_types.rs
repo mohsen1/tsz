@@ -294,6 +294,21 @@ impl ParserState {
         )
     }
 
+    /// Parse a complete type expression with the `DISALLOW_CONDITIONAL_TYPES`
+    /// flag cleared, then restore the previous flags. Mirrors tsc's
+    /// `allowConditionalTypesAnd(parseType)`: positions that are complete type
+    /// expressions (parenthesized type, true/false branch of a conditional,
+    /// the `as` clause of a mapped type, the `default` of a type parameter,
+    /// etc.) must accept nested conditional types without parentheses even
+    /// when the surrounding context disabled them.
+    pub(crate) fn allow_conditional_types_and_parse_type(&mut self) -> NodeIndex {
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+        let result = self.parse_type();
+        self.context_flags = saved_flags;
+        result
+    }
+
     /// Parse conditional type: T extends U ? X : Y
     pub(crate) fn parse_conditional_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -329,14 +344,18 @@ impl ParserState {
         // Expect ?
         self.parse_expected(SyntaxKind::QuestionToken);
 
-        // Parse true type
-        let true_type = self.parse_type();
+        // Parse the true and false branches with conditional types re-enabled.
+        // Matches tsc's `allowConditionalTypesAnd(parseType)` for both branches:
+        // even when the outer context disabled conditional types (e.g. this
+        // conditional appeared inside an `infer T extends X` constraint), the
+        // branch positions of a conditional type are complete type expressions
+        // and must accept nested conditional types without parentheses.
+        let true_type = self.allow_conditional_types_and_parse_type();
 
         // Expect :
         self.parse_expected(SyntaxKind::ColonToken);
 
-        // Parse false type
-        let false_type = self.parse_type();
+        let false_type = self.allow_conditional_types_and_parse_type();
 
         let end_pos = self.token_full_start();
 
