@@ -803,7 +803,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    pub(crate) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+    fn flow_assignability_related(&self, source: TypeId, target: TypeId) -> bool {
         let env = self.type_environment.map(std::cell::RefCell::borrow);
         query::flow_assignability_outcome(
             self.interner,
@@ -812,19 +812,6 @@ impl<'a> FlowAnalyzer<'a> {
             source,
             target,
             false,
-        )
-        .related
-    }
-
-    pub(crate) fn is_assignable_to_strict_null(&self, source: TypeId, target: TypeId) -> bool {
-        let env = self.type_environment.map(std::cell::RefCell::borrow);
-        query::flow_assignability_outcome(
-            self.interner,
-            env.as_deref(),
-            self.concrete_this_type,
-            source,
-            target,
-            true,
         )
         .related
     }
@@ -1137,7 +1124,9 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn types_overlap(&self, left: TypeId, right: TypeId) -> bool {
-        left == right || self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+        left == right
+            || self.flow_assignability_related(left, right)
+            || self.flow_assignability_related(right, left)
     }
 
     fn intersect_types(&self, left: TypeId, right: TypeId) -> Option<TypeId> {
@@ -1849,7 +1838,9 @@ impl<'a> FlowAnalyzer<'a> {
                                                 || callable_read_preserves_declared_type(widened);
                                         if preserves_declared_callable_read_type {
                                             initial_type
-                                        } else if self.is_assignable_to(widened, initial_type) {
+                                        } else if self
+                                            .flow_assignability_related(widened, initial_type)
+                                        {
                                             widened
                                         } else {
                                             initial_type
@@ -1896,7 +1887,10 @@ impl<'a> FlowAnalyzer<'a> {
                                             narrowing_base,
                                         )
                                         .is_some()
-                                        && self.is_assignable_to(assigned_type, narrowing_base)
+                                        && self.flow_assignability_related(
+                                            assigned_type,
+                                            narrowing_base,
+                                        )
                                     {
                                         return self.narrow_enum_assignment_target(
                                             narrowing_base,

@@ -52,15 +52,29 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         "flow assignment reduction should consume outcome-shaped relation truth"
     );
     assert!(
-        compact_core.matches("flow_assignability_outcome(").count() >= 2
-            && compact_core.contains("source,target,false")
-            && compact_core.contains("source,target,true"),
-        "FlowAnalyzer assignability helpers should consume outcome-shaped relation truth"
+        compact_core.contains("fnflow_assignability_related(")
+            && compact_core.contains("query::flow_assignability_outcome(")
+            && compact_core.contains("source,target,false,).related"),
+        "FlowAnalyzer boolean relation helper should stay backed by RelationOutcome.related"
+    );
+    assert!(
+        compact_core.contains("flow_assignability_related(left,right)")
+            && compact_core.contains("flow_assignability_related(right,left)")
+            && compact_core.contains("flow_assignability_related(widened,initial_type)")
+            && compact_core.contains("flow_assignability_related(assigned_type,narrowing_base,)"),
+        "flow analyzer relation decisions should route through the outcome-backed helper"
     );
     assert!(
         !compact_core.contains("query::is_assignable_with_env(")
             && !compact_core.contains("query::is_assignable_strict_null("),
         "FlowAnalyzer assignability helpers should not call raw boolean relation boundaries"
+    );
+    assert!(
+        !compact_core.contains("fnis_assignable_to(")
+            && !compact_core.contains("self.is_assignable_to(")
+            && !compact_core.contains("fnis_assignable_to_strict_null(")
+            && !compact_core.contains("self.is_assignable_to_strict_null("),
+        "flow analyzer should not route relation decisions through raw boolean shims"
     );
     assert!(
         compact_assignment.contains("assignment_relation_outcome(assigned_type,read_type,true)")
