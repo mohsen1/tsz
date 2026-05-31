@@ -113,6 +113,7 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertIn("agent=Studio-F", result.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual("pass", report["status"])
+            self.assertEqual("pass", report["disk_preflight_status"])
             self.assertEqual("Studio-F", report["agent"])
             self.assertEqual(str(fake_repo), report["repo"])
             self.assertEqual("populated-local-submodule", report["typescript"]["state"])
@@ -148,6 +149,7 @@ class DiskPreflightTests(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertFalse(report["ok"])
             self.assertEqual("fail", report["status"])
+            self.assertEqual("fail", report["disk_preflight_status"])
             self.assertEqual("low", report["disk_guard"]["disk_status"])
             self.assertFalse(report["disk_guard"]["ok"])
 
