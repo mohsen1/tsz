@@ -579,7 +579,7 @@ impl ParserState {
         // token_end() overshoots: it returns the end of the *next* token, not the type.
         let end_pos = self.token_full_start();
 
-        let result = self.arena.add_type_assertion(
+        self.arena.add_type_assertion(
             if is_satisfies {
                 syntax_kind_ext::SATISFIES_EXPRESSION
             } else {
@@ -592,14 +592,7 @@ impl ParserState {
                 type_node,
                 keyword_pos,
             },
-        );
-
-        // Allow chaining: x as T as U
-        if self.is_token(SyntaxKind::AsKeyword) || self.is_token(SyntaxKind::SatisfiesKeyword) {
-            return self.parse_as_or_satisfies_expression(result, start_pos);
-        }
-
-        result
+        )
     }
 
     // Parse unary expression
