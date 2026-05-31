@@ -960,3 +960,103 @@ interface I extends A, B {
         "Should NOT emit TS2430 when method overloads satisfy both bases. Got: {diags:?}"
     );
 }
+
+// =========================================================================
+// TS2430: Generic method with `T & Record<K, V>` return type (issue #10820)
+// =========================================================================
+
+#[test]
+fn test_generic_method_intersection_return_no_false_ts2430() {
+    // Derived extends Container<number, {}>, so the base return becomes
+    // `{} & Record<M, true>`. Derived's own return `Record<N, true>` must
+    // satisfy that: any mapped type is an object, hence assignable to `{}`.
+    let source = r#"
+interface Container<N, T> {
+  withOption<M extends string>(opt: M): Container<N, T & Record<M, true>>;
+}
+interface NumberContainer extends Container<number, {}> {
+  withOption<N extends string>(opt: N): Container<number, Record<N, true>>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2430),
+        "Record<N, true> must be assignable to {{}} & Record<N, true>. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_method_intersection_return_renamed_param_no_false_ts2430() {
+    // Same rule, different type-parameter names — result must not depend on spelling.
+    let source = r#"
+interface Builder<A, B> {
+  tag<K extends string>(key: K): Builder<A, B & Record<K, true>>;
+}
+interface LogBuilder extends Builder<string, {}> {
+  tag<K extends string>(key: K): Builder<string, Record<K, true>>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2430),
+        "Renamed type-param must not change the decision. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_method_intersection_return_wider_value_no_false_ts2430() {
+    // `Record<K, boolean>` satisfies `{} & Record<K, unknown>`.
+    let source = r#"
+interface Table<T> {
+  col<K extends string>(key: K): Table<T & Record<K, unknown>>;
+}
+interface StrictTable extends Table<{}> {
+  col<K extends string>(key: K): Table<Record<K, boolean>>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2430),
+        "Record<K, boolean> must satisfy {{}} & Record<K, unknown>. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_method_completely_wrong_return_still_ts2430() {
+    // Negative: the derived override returns a totally unrelated type (`string`).
+    // No cycle issue — `string` is never coinductively assumed compatible with
+    // Container<...>.  The generic_method_override guard must NOT suppress this.
+    let source = r#"
+interface Container<N, T> {
+  withOption<M extends string>(opt: M): Container<N, T & Record<M, true>>;
+}
+interface BrokenContainer extends Container<number, {}> {
+  withOption<N extends string>(opt: N): string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2430),
+        "Return type `string` is wholly incompatible; must still error. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_method_wrong_primitive_return_still_ts2430() {
+    // Negative: derived generic method returns `number` where `string` is required.
+    // Tests that generic_method_override_is_valid_specialization uses assignability
+    // correctly and does not suppress genuine primitive-type mismatches.
+    let source = r#"
+interface Base {
+  make<K extends string>(key: K): string;
+}
+interface Broken extends Base {
+  make<K extends string>(key: K): number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2430),
+        "Return type `number` is not assignable to `string`; must still error. Got: {diags:?}"
+    );
+}
