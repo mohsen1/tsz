@@ -940,12 +940,18 @@ impl<'a> CheckerState<'a> {
             // Copy all cross-file state: arenas, binders, all 6 global indices,
             // resolved_module_paths, and module_specifiers.
             checker.ctx.copy_cross_file_state_from(&self.ctx);
-            // Copy cross-file symbol targets (local overlay only; global index
-            // is already shared via copy_cross_file_state_from)
-            self.ctx.copy_symbol_file_targets_to_attributed(
-                &mut checker.ctx,
-                tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
-            );
+            if super::cross_file_overlay_gate::symbol_delegation_needs_parent_targets(
+                delegate_arena_source,
+                symbol_arena,
+                needs_cross_file_delegation,
+            ) {
+                // Copy cross-file symbol targets (local overlay only; global index
+                // is already shared via copy_cross_file_state_from).
+                self.ctx.copy_symbol_file_targets_to_attributed(
+                    &mut checker.ctx,
+                    tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
+                );
+            }
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // The parent cache is cloned into the child for performance, but raw
             // SymbolIds can still collide across binders in direct multi-file tests.
