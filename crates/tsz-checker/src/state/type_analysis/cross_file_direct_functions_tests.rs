@@ -177,6 +177,24 @@ fn direct_source_file_function_declaration_lowers_readonly_array_of_local_shape(
 }
 
 #[test]
+fn direct_source_file_function_declaration_rejects_non_readonly_type_operator() {
+    let result = direct_function_type_for_source(
+        r#"
+                interface Payload { value: number; label: string; }
+                export function summarize(key: keyof Payload): string {
+                    return key;
+                }
+            "#,
+        "summarize",
+    );
+
+    assert!(
+        result.is_none(),
+        "keyof changes the annotated type and must fall back to normal lowering",
+    );
+}
+
+#[test]
 fn direct_source_file_function_declaration_rejects_inferred_signature_parts() {
     let (arena, binder, types) = parse_bound_source(
         r#"
