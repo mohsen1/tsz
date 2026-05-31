@@ -75,6 +75,7 @@ exec "$@"
             self.assertEqual("mohsen1/tsz", report["repository"])
             self.assertFalse(report["with_pr_state"])
             self.assertFalse(report["ok"])
+            self.assertEqual("active", report["status"])
             self.assertFalse(report["owned_work_clear"])
             self.assertEqual("active", report["owned_work_status"])
             self.assertEqual(1, report["total_pr_count"])
@@ -105,6 +106,7 @@ exec "$@"
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertTrue(report["ok"])
+            self.assertEqual("clear", report["status"])
             self.assertTrue(report["owned_work_clear"])
             self.assertEqual("clear", report["owned_work_status"])
             self.assertEqual(0, report["total_pr_count"])
