@@ -16,6 +16,7 @@ class ArchGuardJsonReportTests(unittest.TestCase):
             {
                 "ok": True,
                 "status": "passed",
+                "arch_guard_status": "passed",
                 "total_hits": 0,
                 "failure_count": 0,
                 "failed_hit_count": 0,
@@ -30,6 +31,7 @@ class ArchGuardJsonReportTests(unittest.TestCase):
             {
                 "ok": False,
                 "status": "failed",
+                "arch_guard_status": "failed",
                 "total_hits": 2,
                 "failure_count": 1,
                 "failed_hit_count": 2,
@@ -44,6 +46,7 @@ class ArchGuardJsonReportTests(unittest.TestCase):
             "ok": True,
             "total_hits": 0,
             "status": "passed",
+            "arch_guard_status": "passed",
             "failure_count": 0,
             "failed_hit_count": 0,
             "failures": [],

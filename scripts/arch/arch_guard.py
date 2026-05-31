@@ -45,6 +45,7 @@ def build_json_payload(failures: list[tuple[str, list[str]]], total_hits: int) -
     return {
         "ok": ok,
         "status": "failed" if failures else "passed",
+        "arch_guard_status": "failed" if failures else "passed",
         "total_hits": total_hits,
         "failure_count": len(failures),
         "failed_hit_count": failed_hit_count,
