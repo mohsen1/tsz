@@ -1845,6 +1845,11 @@ impl ParserState {
                 diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
             );
             self.abort_object_literal_recovery_once = true;
+            // Signal the variable-declaration-list recovery that a `:` after
+            // this object-literal initializer is a misplaced separator, not a
+            // type annotation, so a trailing `\`tpl\`: value` recovers as a
+            // tagged template plus a separate statement (matching tsc).
+            self.recovered_template_literal_property_in_object = true;
             return NodeIndex::NONE;
         }
 

@@ -227,6 +227,12 @@ pub struct ParserState {
     /// appear. Abort the object-literal member list so the return-token tail is
     /// recovered as ordinary statements.
     pub(crate) abort_object_literal_recovery_once: bool,
+    /// An object literal aborted because a template literal appeared where a
+    /// property name was expected (e.g. `{ \`b\`: 321 }`). The object closes at
+    /// the template, the template becomes a tagged-template tail, and the
+    /// variable-declaration-list recovery should treat a following `:` as a
+    /// missing comma between declarators rather than a type annotation.
+    pub(crate) recovered_template_literal_property_in_object: bool,
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
@@ -388,6 +394,7 @@ impl ParserState {
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
             abort_object_literal_recovery_once: false,
+            recovered_template_literal_property_in_object: false,
             suppress_next_missing_close_paren_error_once: false,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
@@ -442,6 +449,7 @@ impl ParserState {
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
         self.abort_object_literal_recovery_once = false;
+        self.recovered_template_literal_property_in_object = false;
         self.suppress_next_missing_close_paren_error_once = false;
         self.suppress_next_missing_class_close_brace_error_once = false;
         self.non_block_close_brace_statement_errors_remaining = 0;
