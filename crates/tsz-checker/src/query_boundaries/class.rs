@@ -421,6 +421,83 @@ pub(crate) fn interface_overload_trailing_signature_assignable(
         || (allow_fresh_generic_retry && checker.assign_relation_outcome(source, target).related)
 }
 
+fn call_signature_function_type(
+    checker: &mut CheckerState<'_>,
+    sig: &tsz_solver::CallSignature,
+) -> TypeId {
+    checker
+        .ctx
+        .types
+        .factory()
+        .function(tsz_solver::FunctionShape {
+            type_params: sig.type_params.clone(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor: false,
+            is_method: sig.is_method,
+        })
+}
+
+/// True when a single class implementation-style method covers an overloaded
+/// interface method. This mirrors `tsc`'s overload implementation compatibility:
+/// each exposed overload must be compatible with the implementation signature,
+/// rather than requiring the implementation signature to be a subtype of the
+/// whole overload set.
+pub(crate) fn implementation_signature_covers_interface_overloads(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let source_sigs = member_call_signatures(checker.ctx.types, source);
+    let target_sigs = member_call_signatures(checker.ctx.types, target);
+    if source_sigs.len() != 1 || target_sigs.is_empty() {
+        return false;
+    }
+
+    let source_type = call_signature_function_type(checker, &source_sigs[0]);
+    if target_sigs.len() == 1 {
+        let target_type = call_signature_function_type(checker, &target_sigs[0]);
+        return overload_return_base_matches_and_params_cover(checker, source_type, target_type);
+    }
+
+    target_sigs.iter().all(|target_sig| {
+        let target_type = call_signature_function_type(checker, target_sig);
+        checker.is_implementation_compatible_with_overload(source_type, target_type)
+            || checker
+                .assign_relation_outcome(target_type, source_type)
+                .related
+            || overload_return_base_matches_and_params_cover(checker, source_type, target_type)
+    })
+}
+
+fn overload_return_base_matches_and_params_cover(
+    checker: &mut CheckerState<'_>,
+    source_type: TypeId,
+    target_type: TypeId,
+) -> bool {
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
+        checker.ctx.pack_relation_flags(),
+    );
+    let context = tsz_solver::relations::relation_queries::RelationContext {
+        query_db: Some(checker.ctx.types),
+        inheritance_graph: Some(&checker.ctx.inheritance_graph),
+        class_check: None,
+    };
+    tsz_solver::relations::relation_queries::query_erased_overload_params_with_matching_return_base(
+        checker.ctx.types.as_type_database(),
+        &checker.ctx,
+        source_type,
+        target_type,
+        policy,
+        context,
+    )
+    .is_related()
+}
+
 /// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
 ///
 /// Unlike `should_report_member_type_mismatch`, this variant uses a targeted
@@ -443,6 +520,9 @@ pub(crate) fn should_report_own_member_type_mismatch(
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
+        return false;
+    }
+    if implementation_signature_covers_interface_overloads(checker, source, target) {
         return false;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
@@ -635,6 +715,9 @@ pub(crate) fn should_report_member_type_mismatch_bivariant(
     target: TypeId,
     node_idx: NodeIndex,
 ) -> bool {
+    if implementation_signature_covers_interface_overloads(checker, source, target) {
+        return false;
+    }
     checker.should_report_assignability_mismatch_bivariant(source, target, node_idx)
 }
 
