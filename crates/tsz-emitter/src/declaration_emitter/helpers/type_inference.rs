@@ -500,12 +500,6 @@ impl<'a> DeclarationEmitter<'a> {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 
-    fn word_has_ellipsis_prefix(bytes: &[u8], word_start: usize) -> bool {
-        word_start >= 3
-            && bytes.get(word_start - 3..word_start) == Some(b"...".as_slice())
-            && (word_start == 3 || !Self::is_ident_char_in_text(bytes[word_start - 4]))
-    }
-
     pub(in crate::declaration_emitter) fn object_rest_binding_excluded_names(
         &self,
         identifier_idx: NodeIndex,
