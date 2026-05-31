@@ -388,7 +388,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn is_unbound_undefined_value_reference(&self, expr_idx: NodeIndex) -> bool {
+    /// Returns `true` when `expr_idx` resolves to the builtin `undefined`
+    /// value: either the `undefined` keyword token, or an `Identifier`
+    /// spelled `undefined` that is not shadowed by a local binding.
+    ///
+    /// All declaration-emit code that recognizes the builtin `undefined`
+    /// value — DTS narrowing/widening, JS namespace-export classification,
+    /// CommonJS export alias typing, and similar fallbacks — must route
+    /// through this helper. Without the binder gate, a parameter / variable
+    /// / import named `undefined` would falsely trigger the rule and
+    /// distort public surfaces (see issue #11861).
+    pub(in crate::declaration_emitter) fn is_unbound_undefined_value_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(node) = self.arena.get(expr_idx) else {
             return false;
         };
