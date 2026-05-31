@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
                         )
                     })?
                 });
-        let Some((_check_type, _extends_type, true_type, false_type)) = components else {
+        let Some((check_type, extends_type, true_type, false_type)) = components else {
             return false;
         };
         let db = self.ctx.types.as_type_database();
@@ -49,7 +49,26 @@ impl<'a> CheckerState<'a> {
                     .assign_relation_outcome(branch_evaluated, constraint)
                     .related
                 || self.indexed_object_map_branch_satisfies_constraint(branch, constraint)
+                || (branch == true_type
+                    && branch == check_type
+                    && self.conditional_extends_type_satisfies_constraint(extends_type, constraint))
         })
+    }
+
+    fn conditional_extends_type_satisfies_constraint(
+        &mut self,
+        extends_type: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let extends_type = self.resolve_lazy_type(extends_type);
+        let extends_evaluated = self.evaluate_type_for_assignability(extends_type);
+        let constraint = self.resolve_lazy_type(constraint);
+        let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
+        self.assign_relation_outcome(extends_type, constraint)
+            .related
+            || self
+                .assign_relation_outcome(extends_evaluated, constraint_evaluated)
+                .related
     }
 
     fn indexed_object_map_branch_satisfies_constraint(
@@ -98,6 +117,7 @@ impl<'a> CheckerState<'a> {
                 || self
                     .assign_relation_outcome(value_evaluated, constraint_evaluated)
                     .related
+                || self.conditional_result_branches_satisfy_constraint(value, constraint)
         })
     }
 
@@ -238,6 +258,9 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
     ) -> bool {
         for _ in 0..8 {
+            if self.indexed_object_map_branch_satisfies_constraint(type_arg, constraint) {
+                return true;
+            }
             if let Some((check, extends_type, true_type, false_type)) =
                 query::full_conditional_type_components(self.ctx.types.as_type_database(), type_arg)
             {

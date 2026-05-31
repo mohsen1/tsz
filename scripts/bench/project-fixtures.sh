@@ -537,9 +537,12 @@ tsz_write_type_challenges_solutions_config() {
   printf 'output\tsource\tsourceSha256\tid\tlevel\ttitle\n' > "$manifest_tsv"
 
   # Build a cache of sourceSha256 values from the existing manifest so we can
-  # skip re-extracting solution code for unchanged source files.
-  # The cache maps "sourceStem" -> "sourceSha256".
-  declare -A _tsz_source_sha_cache=()
+  # skip re-extracting solution code for unchanged source files. Keep the cache
+  # in a TSV temp file instead of a Bash associative array so this script still
+  # runs under macOS Bash 3.2 in local lint.
+  local _tsz_source_sha_cache_tsv
+  _tsz_source_sha_cache_tsv="$(mktemp "${TMPDIR:-/tmp}/tsz-source-sha-cache.XXXXXX")"
+  : > "$_tsz_source_sha_cache_tsv"
   if [[ -f "$manifest_json" ]] && command -v node >/dev/null 2>&1; then
     local _cache_raw _cache_ref
     # Single Node.js invocation: first line = source.ref, rest = stem<TAB>sha pairs.
@@ -560,9 +563,7 @@ NODE
     )"
     IFS= read -r _cache_ref <<< "$_cache_raw"
     if [[ "$_cache_ref" == "$TYPE_CHALLENGES_SOLUTIONS_REF" ]]; then
-      while IFS=$'\t' read -r _stem _sha; do
-        [[ -n "$_stem" ]] && _tsz_source_sha_cache["$_stem"]="$_sha"
-      done <<< "${_cache_raw#*$'\n'}"
+      printf '%s\n' "${_cache_raw#*$'\n'}" > "$_tsz_source_sha_cache_tsv"
     fi
   fi
 
@@ -578,7 +579,12 @@ NODE
     source_sha256="$(perl -MDigest::SHA=sha256_hex -0777 -ne 'print sha256_hex($_)' "$markdown")"
 
     # Skip extraction when output is current: source SHA unchanged and file exists.
-    if [[ -f "$output" ]] && [[ "${_tsz_source_sha_cache["$base"]:-}" == "$source_sha256" ]]; then
+    local cached_source_sha256
+    cached_source_sha256="$(
+      awk -F '\t' -v stem="$base" '$1 == stem { print $2; exit }' \
+        "$_tsz_source_sha_cache_tsv"
+    )"
+    if [[ -f "$output" ]] && [[ "$cached_source_sha256" == "$source_sha256" ]]; then
       generated=$((generated + 1))
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "solutions/${base}.ts" \
@@ -647,18 +653,15 @@ NODE
   done < <(find "$source_dir/en" -maxdepth 1 -name '*.md' ! -name 'index.md' | sort)
 
   # Remove stale solution files from sources that no longer exist.
-  # Build an in-memory set from the TSV so we avoid one grep per .ts file.
-  declare -A _tsz_current_outputs=()
-  local _tsv_output
-  while IFS=$'\t' read -r _tsv_output _rest; do
-    [[ -n "$_tsv_output" && "$_tsv_output" != "output" ]] && \
-      _tsz_current_outputs["$_tsv_output"]=1
-  done < "$manifest_tsv"
+  local _tsz_current_outputs_tsv
+  _tsz_current_outputs_tsv="$(mktemp "${TMPDIR:-/tmp}/tsz-current-outputs.XXXXXX")"
+  awk -F '\t' 'NR > 1 && $1 != "" { print $1 }' "$manifest_tsv" > "$_tsz_current_outputs_tsv"
   local _ts_file
   while IFS= read -r _ts_file; do
     local _ts_rel="solutions/$(basename "$_ts_file")"
-    [[ -z "${_tsz_current_outputs["$_ts_rel"]:-}" ]] && rm -f "$_ts_file"
+    grep -Fxq "$_ts_rel" "$_tsz_current_outputs_tsv" || rm -f "$_ts_file"
   done < <(find "$compile_dir/solutions" -maxdepth 1 -name '*.ts' 2>/dev/null)
+  rm -f "$_tsz_source_sha_cache_tsv" "$_tsz_current_outputs_tsv"
 
   if [[ "$generated" -eq 0 ]]; then
     echo "error: no Type Challenges solution sources were generated from $source_dir/en" >&2
