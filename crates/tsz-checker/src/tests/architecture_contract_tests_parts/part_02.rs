@@ -105,6 +105,7 @@ fn test_relation_request_constructors_encode_relation_kind() {
         ("fn call_arg", "RelationKind::CallArg"),
         ("fn return_stmt", "RelationKind::Return"),
         ("fn jsx_props", "RelationKind::JsxProps"),
+        ("fn jsx_children", "RelationKind::JsxChildren"),
         ("fn satisfies", "RelationKind::Satisfies"),
         ("fn destructuring", "RelationKind::Destructuring"),
     ] {

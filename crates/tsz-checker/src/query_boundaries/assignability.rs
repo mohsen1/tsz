@@ -593,8 +593,8 @@ pub(crate) enum RelationKind {
     CallArg,
     /// Return statement: `return expr` where function returns T
     Return,
-    /// JSX props: `<Comp prop={expr} />`
     JsxProps,
+    JsxChildren,
     /// Destructuring: `const { a, b } = expr`
     Destructuring,
     /// Satisfies expression: `expr satisfies T`
@@ -643,17 +643,15 @@ pub(crate) struct RelationRequest {
     pub source: TypeId,
     /// Prepared target type for the relation.
     pub target: TypeId,
-    /// Relation context for diagnostics and tracing. Currently advisory only.
+    /// Diagnostic/tracing context. Currently advisory only.
     pub kind: RelationKind,
     /// Requested excess-property policy. Currently advisory.
     pub excess_property_mode: ExcessPropertyMode,
     /// Requested missing-property policy. Currently advisory.
     pub missing_property_mode: MissingPropertyMode,
-    /// Whether the source is a fresh object literal. Currently advisory.
+    /// Fresh object literal marker. Currently advisory.
     pub source_is_fresh: bool,
-    /// Whether failed contextual generic-signature inference may retry with
-    /// erased signatures. This is a targeted interface property compatibility
-    /// mode, not the default assignment relation.
+    /// Allow targeted erased-signature retry for interface property compatibility.
     pub allow_erased_generic_signature_retry: bool,
 }
 
@@ -684,6 +682,10 @@ impl RelationRequest {
 
     pub(crate) const fn jsx_props(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsxProps)
+    }
+
+    pub(crate) const fn jsx_children(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::JsxChildren)
     }
 
     pub(crate) const fn satisfies(source: TypeId, target: TypeId) -> Self {

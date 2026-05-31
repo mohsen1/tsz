@@ -810,6 +810,9 @@ mod jsdoc_typedef_distinct_alias_names_tests;
 #[path = "../tests/jsdoc_typedef_module_export_tests.rs"]
 mod jsdoc_typedef_module_export_tests;
 #[cfg(test)]
+#[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
+mod jsx_children_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_element_type_constraint_tests.rs"]
 mod jsx_element_type_constraint_tests;
 #[cfg(test)]
@@ -836,6 +839,9 @@ mod jsx_single_child_precise_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/jsx_spread_assignability_relation_routing_arch_tests.rs"]
 mod jsx_spread_assignability_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_text_child_relation_routing_arch_tests.rs"]
+mod jsx_text_child_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
