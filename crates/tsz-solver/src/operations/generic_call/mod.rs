@@ -512,6 +512,7 @@ mod resolve;
 pub mod result;
 mod return_context;
 mod return_context_feedback;
+mod visited;
 
 pub use request::GenericCallRequest;
 pub use result::GenericCallResult;

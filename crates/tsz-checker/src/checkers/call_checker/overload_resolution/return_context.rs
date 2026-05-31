@@ -194,18 +194,56 @@ impl<'a> CheckerState<'a> {
             return sig.clone();
         }
 
+        // A TypeParam that appears in arg_types because it was used AS the contextual
+        // type for that argument position is NOT a collision: it IS sig's own TypeParam
+        // (same fresh TypeId, same entity).  Only a truly FOREIGN TypeParam from an outer
+        // scope that merely shares the same atom name triggers ambiguity and needs
+        // renaming.  We distinguish the two cases by comparing fresh TypeIds rather than
+        // atom names alone.
+        //
+        // The sig's own TypeParam TypeIds are obtained by collecting TypeParameters from
+        // the sig's own param types and return type — these are the *fresh* TypeIds
+        // allocated per declaration, not structurally-interned TypeIds.
+        let own_tp_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            sig.type_params.iter().map(|tp| tp.name).collect();
+        let own_type_param_ids: rustc_hash::FxHashSet<TypeId> = sig
+            .params
+            .iter()
+            .map(|p| p.type_id)
+            .chain(std::iter::once(sig.return_type))
+            .chain(sig.this_type)
+            .flat_map(|ty| {
+                crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
+            })
+            .filter(|&referenced| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, referenced)
+                    .is_some_and(|info| own_tp_names.contains(&info.name))
+            })
+            .collect();
         let collides = sig.type_params.iter().any(|tp| {
-            arg_types
+            // A TypeParam in arg_types is a collision when it has the same name as one
+            // of the sig's own type params but a *different* TypeId (i.e. it comes from
+            // an outer/caller scope). `own_type_param_ids` contains the interned TypeIds
+            // of TypeParams that actually belong to this signature; TypeId identity is
+            // the reliable scope discriminant (structural metadata is not — two
+            // independently-scoped unconstrained `<T>`s are indistinguishable by
+            // constraint/default/is_const but have distinct TypeIds).
+            let found = arg_types
                 .iter()
                 .copied()
                 .chain(contextual_type)
                 .flat_map(|ty| {
                     crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
                 })
-                .any(|referenced| {
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, referenced)
-                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
-                })
+                .find(|&referenced| {
+                    !own_type_param_ids.contains(&referenced)
+                        && crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            referenced,
+                        )
+                        .is_some_and(|info| info.name == tp.name)
+                });
+            found.is_some()
         });
         if !collides {
             return sig.clone();
