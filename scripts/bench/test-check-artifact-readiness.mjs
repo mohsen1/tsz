@@ -162,6 +162,8 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, `all-green artifact should exit 0, got:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.all_required_rows_green, true, "all-green JSON should mark release gate ready");
+  assert.equal(parsed.metadata_clean, true, "all-green artifact should be metadata-clean");
+  assert.equal(parsed.metadata_warnings_total, 0, "all-green artifact should not report metadata warnings");
   assert.deepEqual(parsed.non_green_required_rows, [], "all-green JSON should not report non-green rows");
   assert.match(result.stderr, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
   assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
@@ -185,6 +187,22 @@ withTempDir((dir) => {
   assert.match(result.stdout, /artifact measurement_profile.*measurement_profile missing/);
 });
 console.log("✅ missing measurement profile is reported without failing readiness");
+
+// ---------------------------------------------------------------------------
+// Test: --require-clean-metadata fails when measurement_profile is missing.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-clean-metadata"]);
+  assert.equal(result.status, 1, "missing measurement profile should fail clean metadata gate");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.metadata_clean, false, "JSON should mark missing measurement profile as unclean");
+  assert.equal(parsed.metadata_warnings_total, 1, "JSON should count missing measurement profile warning");
+  assert.match(result.stderr, /measurement profile artifact measurement_profile: measurement_profile missing/);
+});
+console.log("✅ --require-clean-metadata fails on missing measurement profile");
 
 // ---------------------------------------------------------------------------
 // Test: merged artifact validation warnings are surfaced in readiness output so
@@ -217,6 +235,8 @@ withTempDir((dir) => {
   const result = run(file, ["--json"]);
   assert.equal(result.status, 0, `validation warnings should not fail readiness:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.metadata_clean, false, "JSON should mark validation warnings as unclean");
+  assert.equal(parsed.metadata_warnings_total, 2, "JSON should count all metadata warnings");
   assert.equal(parsed.validation_warnings.total, 2, "JSON should count validation warnings");
   assert.deepEqual(
     parsed.validation_warnings.runner_environment[0].mismatched_fields,
@@ -232,6 +252,34 @@ withTempDir((dir) => {
   assert.match(result.stderr, /Measurement profile warnings \(1\)/);
 });
 console.log("✅ validation warnings are surfaced in readiness output");
+
+// ---------------------------------------------------------------------------
+// Test: --require-clean-metadata fails when merged validation warnings exist.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, {
+    measurement_profile: SAMPLE_MEASUREMENT_PROFILE,
+    validation: {
+      runner_environment_warnings: [
+        {
+          file: "bench-results-b.json",
+          mismatched_fields: ["cpu_model"],
+          expected: { cpu_model: "Intel Xeon" },
+          actual: { cpu_model: "AMD EPYC" },
+        },
+      ],
+    },
+  }));
+  const result = run(file, ["--json", "--require-clean-metadata"]);
+  assert.equal(result.status, 1, "runner metadata warnings should fail clean metadata gate");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.metadata_clean, false, "JSON should mark runner warning artifact as unclean");
+  assert.equal(parsed.metadata_warnings_total, 1, "JSON should count the runner warning");
+  assert.match(result.stderr, /runner metadata bench-results-b\.json: cpu_model/);
+});
+console.log("✅ --require-clean-metadata fails on runner metadata warnings");
 
 // ---------------------------------------------------------------------------
 // Test: artifact missing one required row → exit 1
