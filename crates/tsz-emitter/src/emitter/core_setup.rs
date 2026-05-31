@@ -410,6 +410,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_index_value_access: false,
             scoped_static_super_assignment_target: false,
             scoped_class_expression_self_alias: None,
+            scoped_class_expression_self_alias_ancestors: Vec::new(),
             pending_tc39_class_expression_name: None,
             es5_class_expression_extends_this_captured: false,
             tagged_template_var_map: FxHashMap::default(),

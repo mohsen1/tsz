@@ -1389,9 +1389,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
-        if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
-            es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
-        }
+        self.configure_nested_es5_class_aliases(&mut es5_emitter);
         if self.es5_class_expression_extends_this_captured {
             es5_emitter.set_extends_this_captured(true);
         }

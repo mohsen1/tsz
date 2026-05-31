@@ -3,6 +3,7 @@ use crate::context::plan::EmitPlan;
 use crate::context::transform::{TransformContext, TransformDirective};
 use crate::enums::evaluator::EnumValue;
 use crate::output::source_writer::{LineMap, SourcePosition, SourceWriter};
+use crate::transforms::ClassES5Emitter;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -945,6 +946,9 @@ pub struct Printer<'a> {
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
+    /// Enclosing class-value aliases still visible inside nested class bodies
+    /// whose names do not shadow the outer class binding.
+    pub(crate) scoped_class_expression_self_alias_ancestors: Vec<(Arc<str>, Arc<str>)>,
 
     /// Named-evaluation context for the next TC39-decorated anonymous class
     /// expression. The boolean is true when the name is a runtime expression
@@ -960,6 +964,32 @@ pub struct Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn configure_nested_es5_class_aliases(
+        &self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+    ) {
+        if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
+            es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
+        }
+
+        let mut outer_rename_map = self.ctx.block_scope_state.visible_outer_rename_map();
+        for (class_name, class_alias) in &self.scoped_class_expression_self_alias_ancestors {
+            outer_rename_map.insert(
+                class_name.as_ref().to_string(),
+                class_alias.as_ref().to_string(),
+            );
+        }
+        if let Some((class_name, class_alias)) = &self.scoped_class_expression_self_alias {
+            outer_rename_map.insert(
+                class_name.as_ref().to_string(),
+                class_alias.as_ref().to_string(),
+            );
+        }
+        if !outer_rename_map.is_empty() {
+            es5_emitter.set_outer_rename_map(outer_rename_map);
+        }
+    }
+
     /// Emit a node.
     pub(in crate::emitter) fn emit_node(&mut self, node: &Node, idx: NodeIndex) {
         // Recursion depth check to prevent infinite loops
