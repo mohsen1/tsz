@@ -83,6 +83,14 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
+        self.assertEqual(report["allowlisted_calls"], 1)
+        self.assertEqual(report["allowlist_cap"], 2)
+        self.assertEqual(report["remaining_allowlist_capacity"], 1)
+        self.assertEqual(report["allowlist_budget_status"], "available")
+        self.assertEqual(report["unallowlisted_calls"], 1)
+        self.assertEqual(report["over_allowlist_files"], 0)
+        self.assertEqual(report["over_allowlist_excess_calls"], 0)
+        self.assertEqual(report["stale_allowlist_files"], 0)
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
         self.assertEqual(
             report["budget_summary"],

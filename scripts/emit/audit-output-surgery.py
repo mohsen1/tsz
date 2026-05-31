@@ -345,13 +345,22 @@ def build_json_report(
     counts = grouped_counts(findings)
     summary = summarize_failures(failures)
     file_summaries = build_file_summaries(counts, allowlist)
+    budget = summarize_budget(file_summaries)
     return {
         "ok": not failures,
         "status": "failed" if failures else "passed",
         "total_findings": len(findings),
         "files_with_findings": len(counts),
+        "allowlisted_calls": budget.allowlisted_calls,
+        "allowlist_cap": budget.allowlist_cap,
+        "remaining_allowlist_capacity": budget.remaining_allowlist_capacity,
+        "allowlist_budget_status": budget.budget_status,
+        "unallowlisted_calls": summary.unallowlisted,
+        "over_allowlist_files": summary.over_allowlist_files,
+        "over_allowlist_excess_calls": summary.over_allowlist_excess_calls,
+        "stale_allowlist_files": summary.stale_allowlist_files,
         "failure_summary": dataclasses.asdict(summary),
-        "budget_summary": dataclasses.asdict(summarize_budget(file_summaries)),
+        "budget_summary": dataclasses.asdict(budget),
         "failures": failures,
         "categories": build_category_summaries(file_summaries),
         "files": file_summaries,
