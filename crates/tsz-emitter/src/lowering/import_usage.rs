@@ -4,6 +4,12 @@ use super::*;
 use crate::emitter::JsxEmit;
 use crate::jsx_pragmas::JsxRuntimePragma;
 
+#[derive(Default)]
+struct ClassicJsxSyntaxUsage {
+    needs_factory: bool,
+    needs_fragment_factory: bool,
+}
+
 impl<'a> LoweringPass<'a> {
     pub(super) fn visit_import_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(import_decl) = self.arena.get_import_decl(node) else {
@@ -177,24 +183,35 @@ impl<'a> LoweringPass<'a> {
         if !uses_classic_factory {
             return Vec::new();
         }
-        if !self.has_jsx_syntax() {
+        let usage = self.classic_jsx_syntax_usage();
+        if !usage.needs_factory && !usage.needs_fragment_factory {
             return Vec::new();
         }
 
         self.current_jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
+            usage.needs_factory,
+            usage.needs_fragment_factory,
         )
     }
 
-    fn has_jsx_syntax(&self) -> bool {
-        (0..self.arena.len()).any(|idx| {
-            self.arena.get(NodeIndex(idx as u32)).is_some_and(|node| {
-                node.kind == syntax_kind_ext::JSX_ELEMENT
-                    || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
-                    || node.kind == syntax_kind_ext::JSX_FRAGMENT
-            })
-        })
+    fn classic_jsx_syntax_usage(&self) -> ClassicJsxSyntaxUsage {
+        let mut usage = ClassicJsxSyntaxUsage::default();
+        for idx in 0..self.arena.len() {
+            let Some(node) = self.arena.get(NodeIndex(idx as u32)) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::JSX_ELEMENT
+                || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            {
+                usage.needs_factory = true;
+            } else if node.kind == syntax_kind_ext::JSX_FRAGMENT {
+                usage.needs_factory = true;
+                usage.needs_fragment_factory = true;
+            }
+        }
+        usage
     }
 
     pub(super) fn import_has_value_usage_after_node(
