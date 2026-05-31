@@ -1,14 +1,19 @@
 use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
+use super::duplicate_private_names::{
+    PrivateDuplicateConflictPlan, collect_private_duplicate_conflicts,
+};
 use super::private_comma_items::PrivateCommaItems;
 use super::replace_identifier;
 use super::static_field_erasure::static_no_init_field_is_erased;
 use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
-use crate::emitter::core::{PrivateAccessorDef, PrivateMemberInfo, PrivateMethodDef};
+use crate::emitter::core::{
+    PrivateAccessorDef, PrivateFieldStorageKind, PrivateMemberInfo, PrivateMethodDef,
+    StaticPrivateInit,
+};
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
-    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
-    collect_private_fields_with_reserved, collect_private_methods_with_reserved,
+    collect_enclosing_source_binding_names, collect_private_members_with_reserved,
     get_private_field_name, is_private_identifier, make_unique_private_name, private_helper_base,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -142,6 +147,37 @@ impl<'a> Printer<'a> {
 
     fn is_reserved_private_constructor_name(name: &str) -> bool {
         name == "constructor"
+    }
+
+    pub(super) fn emit_static_private_init(
+        &mut self,
+        init: &StaticPrivateInit,
+        class_name: &str,
+        with_semicolon: bool,
+    ) {
+        self.write(&init.storage_name);
+        match init.storage_kind {
+            PrivateFieldStorageKind::WeakMap => {
+                self.write(".set(");
+                self.write(class_name);
+                self.write(", ");
+            }
+            PrivateFieldStorageKind::Value => {
+                self.write(" = { value: ");
+            }
+        }
+        if init.initializer.is_some() {
+            self.emit_expression(init.initializer);
+        } else {
+            self.write("void 0");
+        }
+        match init.storage_kind {
+            PrivateFieldStorageKind::WeakMap => self.write(")"),
+            PrivateFieldStorageKind::Value => self.write(" }"),
+        }
+        if with_semicolon {
+            self.write(";");
+        }
     }
 
     pub(in crate::emitter) fn emit_private_auto_accessor_function_def(
@@ -656,35 +692,19 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashSet::default()
         };
-        let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
-            collect_private_fields_with_reserved(
+        let (private_fields, private_methods, private_accessors): (
+            Vec<PrivateFieldInfo>,
+            Vec<PrivateMethodInfo>,
+            Vec<PrivateAccessorInfo>,
+        ) = if needs_private_field_lowering {
+            collect_private_members_with_reserved(
                 self.arena,
                 _idx,
                 private_helper_class_name,
                 &mut used_private_names,
             )
         } else {
-            Vec::new()
-        };
-        let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
-            collect_private_methods_with_reserved(
-                self.arena,
-                _idx,
-                private_helper_class_name,
-                &mut used_private_names,
-            )
-        } else {
-            Vec::new()
-        };
-        let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
-            collect_private_accessors_with_reserved(
-                self.arena,
-                _idx,
-                private_helper_class_name,
-                &mut used_private_names,
-            )
-        } else {
-            Vec::new()
+            (Vec::new(), Vec::new(), Vec::new())
         };
         let private_auto_accessors: Vec<PrivateAutoAccessorInfo> =
             if needs_private_field_lowering && lower_auto_accessors_to_weakmap {
@@ -697,6 +717,11 @@ impl<'a> Printer<'a> {
             } else {
                 Vec::new()
             };
+        let private_duplicate_conflicts = if needs_private_field_lowering {
+            collect_private_duplicate_conflicts(self, class, &private_fields)
+        } else {
+            PrivateDuplicateConflictPlan::default()
+        };
         let constructor_auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>)> =
             auto_accessor_instance_inits
                 .iter()
@@ -922,15 +947,20 @@ impl<'a> Printer<'a> {
                             if !emitted_accessor_entries.insert(entry_pos) {
                                 continue;
                             }
-                            if let Some(ref name) = accessor.get_var_name
-                                && accessor.has_getter
-                            {
-                                var_names.push(name.clone());
-                            }
-                            if let Some(ref name) = accessor.set_var_name
-                                && accessor.has_setter
-                            {
-                                var_names.push(name.clone());
+                            for &accessor_member_idx in &accessor.member_indices {
+                                let Some(accessor_node) = self.arena.get(accessor_member_idx)
+                                else {
+                                    continue;
+                                };
+                                if accessor_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                                    if let Some(ref name) = accessor.get_var_name {
+                                        var_names.push(name.clone());
+                                    }
+                                } else if accessor_node.kind == syntax_kind_ext::SET_ACCESSOR
+                                    && let Some(ref name) = accessor.set_var_name
+                                {
+                                    var_names.push(name.clone());
+                                }
                             }
                         }
                     }
@@ -1059,7 +1089,21 @@ impl<'a> Printer<'a> {
             self.pending_static_private_inits = private_fields
                 .iter()
                 .filter(|f| f.is_static)
-                .map(|f| (f.weakmap_name.clone(), f.initializer))
+                .filter_map(|f| {
+                    let (storage_name, storage_kind) = if private_duplicate_conflicts
+                        .is_conflicting(f.member_idx)
+                    {
+                        let selected = private_duplicate_conflicts.selected_field_for(&f.name)?;
+                        (selected.helper_name.clone(), selected.storage_kind)
+                    } else {
+                        (f.weakmap_name.clone(), PrivateFieldStorageKind::Value)
+                    };
+                    Some(StaticPrivateInit {
+                        storage_name,
+                        initializer: f.initializer,
+                        storage_kind,
+                    })
+                })
                 .collect();
 
             // Store class alias for static elements/private bodies:
@@ -1077,21 +1121,30 @@ impl<'a> Printer<'a> {
             self.pending_private_field_constructor_inits = private_fields
                 .iter()
                 .filter(|f| !f.is_static)
-                .map(|f| {
+                .filter_map(|f| {
+                    let (storage_name, storage_kind) = if private_duplicate_conflicts
+                        .is_conflicting(f.member_idx)
+                    {
+                        let selected = private_duplicate_conflicts.selected_field_for(&f.name)?;
+                        (selected.helper_name.clone(), selected.storage_kind)
+                    } else {
+                        (f.weakmap_name.clone(), PrivateFieldStorageKind::WeakMap)
+                    };
                     let Some(member_pos) = class
                         .members
                         .nodes
                         .iter()
                         .position(|&member_idx| member_idx == f.member_idx)
                     else {
-                        return (
-                            f.weakmap_name.clone(),
+                        return Some((
+                            storage_name,
                             f.has_initializer,
                             f.initializer,
                             Vec::new(),
                             Vec::new(),
                             u32::MAX,
-                        );
+                            storage_kind,
+                        ));
                     };
                     let member_node = self.arena.get(f.member_idx);
                     let source_order = member_node.map_or(u32::MAX, |n| n.pos);
@@ -1129,14 +1182,15 @@ impl<'a> Printer<'a> {
                     } else {
                         Vec::new()
                     };
-                    (
-                        f.weakmap_name.clone(),
+                    Some((
+                        storage_name,
                         f.has_initializer,
                         f.initializer,
                         leading_comments,
                         trailing_comments,
                         source_order,
-                    )
+                        storage_kind,
+                    ))
                 })
                 .collect();
 
@@ -1149,6 +1203,9 @@ impl<'a> Printer<'a> {
             // Both instance and static private methods are extracted.
             for method in &private_methods {
                 if Self::is_reserved_private_constructor_name(&method.name) {
+                    continue;
+                }
+                if private_duplicate_conflicts.is_conflicting(method.member_idx) {
                     continue;
                 }
                 if let Some(body_idx) = method.body {
@@ -1165,29 +1222,40 @@ impl<'a> Printer<'a> {
             // Prepare private accessor function defs for after the class body
             // Both instance and static private accessors are extracted.
             for accessor in &private_accessors {
-                if accessor.has_getter
-                    && let Some(ref var_name) = accessor.get_var_name
+                if accessor
+                    .member_indices
+                    .iter()
+                    .any(|&idx| private_duplicate_conflicts.is_conflicting(idx))
                 {
-                    self.pending_private_accessor_defs.push(
-                        crate::emitter::core::PrivateAccessorDef {
-                            var_name: var_name.clone(),
-                            body: accessor.getter_body,
-                            param: None,
-                            is_async: accessor.getter_is_async,
-                        },
-                    );
+                    continue;
                 }
-                if accessor.has_setter
-                    && let Some(ref var_name) = accessor.set_var_name
-                {
-                    self.pending_private_accessor_defs.push(
-                        crate::emitter::core::PrivateAccessorDef {
-                            var_name: var_name.clone(),
-                            body: accessor.setter_body,
-                            param: accessor.setter_param,
-                            is_async: accessor.setter_is_async,
-                        },
-                    );
+                for &accessor_member_idx in &accessor.member_indices {
+                    let Some(accessor_node) = self.arena.get(accessor_member_idx) else {
+                        continue;
+                    };
+                    if accessor_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        if let Some(ref var_name) = accessor.get_var_name {
+                            self.pending_private_accessor_defs.push(
+                                crate::emitter::core::PrivateAccessorDef {
+                                    var_name: var_name.clone(),
+                                    body: accessor.getter_body,
+                                    param: None,
+                                    is_async: accessor.getter_is_async,
+                                },
+                            );
+                        }
+                    } else if accessor_node.kind == syntax_kind_ext::SET_ACCESSOR
+                        && let Some(ref var_name) = accessor.set_var_name
+                    {
+                        self.pending_private_accessor_defs.push(
+                            crate::emitter::core::PrivateAccessorDef {
+                                var_name: var_name.clone(),
+                                body: accessor.setter_body,
+                                param: accessor.setter_param,
+                                is_async: accessor.setter_is_async,
+                            },
+                        );
+                    }
                 }
             }
 
@@ -1196,13 +1264,22 @@ impl<'a> Printer<'a> {
                 if Self::is_reserved_private_constructor_name(&method.name) {
                     continue;
                 }
-                self.private_members_to_skip.insert(method.name.clone());
+                if !private_duplicate_conflicts.is_conflicting(method.member_idx) {
+                    self.private_members_to_skip.insert(method.member_idx);
+                }
             }
             for accessor in &private_accessors {
-                self.private_members_to_skip.insert(accessor.name.clone());
+                if accessor
+                    .member_indices
+                    .iter()
+                    .all(|&idx| !private_duplicate_conflicts.is_conflicting(idx))
+                {
+                    self.private_members_to_skip
+                        .extend(accessor.member_indices.iter().copied());
+                }
             }
             for accessor in &private_auto_accessors {
-                self.private_members_to_skip.insert(accessor.name.clone());
+                self.private_members_to_skip.insert(accessor.member_idx);
             }
         }
 
@@ -1976,7 +2053,7 @@ impl<'a> Printer<'a> {
         }
 
         // If no constructor but we have field inits, synthesize one
-        let has_private_field_inits = private_fields.iter().any(|f| !f.is_static);
+        let has_private_field_inits = !self.pending_private_field_constructor_inits.is_empty();
         let has_instances_weakset = self.pending_instances_weakset_add.is_some();
         let synthesize_constructor = !has_constructor
             && (!field_inits.is_empty()
@@ -2167,6 +2244,7 @@ impl<'a> Printer<'a> {
                     .arena
                     .get(prop.name)
                     .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+                && !private_duplicate_conflicts.is_conflicting(member_idx)
             {
                 // Skip comments that belong to this erased member
                 if let Some(mn) = self.arena.get(member_idx) {
@@ -2185,37 +2263,8 @@ impl<'a> Printer<'a> {
                 continue;
             }
             // Skip private methods and accessors that are extracted as standalone functions
-            if !self.private_members_to_skip.is_empty()
-                && let Some(member_node) = self.arena.get(member_idx)
-            {
-                let should_skip = match member_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                        .arena
-                        .get_property_decl(member_node)
-                        .filter(|p| {
-                            self.arena
-                                .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword)
-                        })
-                        .and_then(|p| get_private_field_name(self.arena, p.name))
-                        .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
-                        .is_some_and(|n| self.private_members_to_skip.contains(&n)),
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|m| get_private_field_name(self.arena, m.name))
-                        .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
-                        .is_some_and(|n| self.private_members_to_skip.contains(&n)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|a| get_private_field_name(self.arena, a.name))
-                            .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
-                            .is_some_and(|n| self.private_members_to_skip.contains(&n))
-                    }
-                    _ => false,
-                };
+            if !self.private_members_to_skip.is_empty() {
+                let should_skip = self.private_members_to_skip.contains(&member_idx);
                 if should_skip {
                     // When source has trailing `;` after private method/accessor
                     // (e.g., `#foo() { };`), tsc preserves the semicolon.
@@ -2281,6 +2330,9 @@ impl<'a> Printer<'a> {
                 && !(self.arena.get(prop.name).is_some_and(|n| {
                     n.kind == SyntaxKind::PrivateIdentifier as u16
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
+                && !(self.arena.get(prop.name).is_some_and(|n| {
+                    n.kind == SyntaxKind::PrivateIdentifier as u16
+                }) && private_duplicate_conflicts.is_conflicting(member_idx))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
                 && (!self.has_effective_static_modifier_js(&prop.modifiers)
@@ -3041,16 +3093,9 @@ impl<'a> Printer<'a> {
                     emitted_private_auto_accessors_pre_static = true;
                 }
                 self.write(";");
-                for (var_name, init_idx) in &static_private_inits {
+                for init in &static_private_inits {
                     self.write_line();
-                    self.write(var_name);
-                    self.write(" = { value: ");
-                    if init_idx.is_some() {
-                        self.emit_expression(*init_idx);
-                    } else {
-                        self.write("void 0");
-                    }
-                    self.write(" };");
+                    self.emit_static_private_init(init, &class_name, true);
                 }
             }
         }
@@ -3723,16 +3768,9 @@ impl<'a> Printer<'a> {
         if needs_private_comma_expr {
             // Already emitted above in the comma expression block.
         } else {
-            for (var_name, init_idx) in &static_private_inits {
+            for init in &static_private_inits {
                 self.write_line();
-                self.write(var_name);
-                self.write(" = { value: ");
-                if init_idx.is_some() {
-                    self.emit_expression(*init_idx);
-                } else {
-                    self.write("void 0");
-                }
-                self.write(" };");
+                self.emit_static_private_init(init, &class_name, true);
             }
             for accessor in private_auto_accessors.iter().filter(|a| a.is_static) {
                 self.write_line();

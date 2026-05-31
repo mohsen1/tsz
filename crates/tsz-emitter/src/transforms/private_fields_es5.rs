@@ -499,6 +499,182 @@ pub fn collect_private_fields_with_reserved(
     fields
 }
 
+pub fn collect_private_members_with_reserved(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+    used_names: &mut FxHashSet<String>,
+) -> (
+    Vec<PrivateFieldInfo>,
+    Vec<PrivateMethodInfo>,
+    Vec<PrivateAccessorInfo>,
+) {
+    let mut fields = Vec::new();
+    let mut methods = Vec::new();
+    let mut accessors: Vec<PrivateAccessorInfo> = Vec::new();
+
+    let Some(class_node) = arena.get(class_idx) else {
+        return (fields, methods, accessors);
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return (fields, methods, accessors);
+    };
+
+    for &member_idx in &class_data.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop_data) = arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                    || arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                    || !is_private_identifier(arena, prop_data.name)
+                {
+                    continue;
+                }
+
+                let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
+                let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                let weakmap_name = make_unique_private_name(
+                    &private_helper_base(class_name, clean_name),
+                    used_names,
+                );
+                fields.push(PrivateFieldInfo {
+                    member_idx,
+                    name: clean_name.to_string(),
+                    weakmap_name,
+                    has_initializer: prop_data.initializer.is_some(),
+                    initializer: prop_data.initializer,
+                    is_static: arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword),
+                });
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method_data) = arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                if method_data.body.is_none() || !is_private_identifier(arena, method_data.name) {
+                    continue;
+                }
+
+                let field_name =
+                    get_private_field_name(arena, method_data.name).unwrap_or_default();
+                let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                let fn_var_name = make_unique_private_name(
+                    &private_helper_base(class_name, clean_name),
+                    used_names,
+                );
+                methods.push(PrivateMethodInfo {
+                    member_idx,
+                    name: clean_name.to_string(),
+                    fn_var_name,
+                    body: Some(method_data.body),
+                    parameters: method_data.parameters.nodes.clone(),
+                    is_static: arena
+                        .has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword),
+                    is_async: arena.has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword),
+                    is_generator: method_data.asterisk_token,
+                });
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor_data) = arena.get_accessor(member_node) else {
+                    continue;
+                };
+                if !is_private_identifier(arena, accessor_data.name) {
+                    continue;
+                }
+
+                let field_name =
+                    get_private_field_name(arena, accessor_data.name).unwrap_or_default();
+                let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+                let is_static =
+                    arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
+                let is_getter = k == syntax_kind_ext::GET_ACCESSOR;
+                let entry_idx = if let Some(idx) = accessors.iter().position(|entry| {
+                    entry.name == clean_name
+                        && entry.is_static == is_static
+                        && ((is_getter && !entry.has_getter) || (!is_getter && !entry.has_setter))
+                }) {
+                    idx
+                } else {
+                    accessors.push(PrivateAccessorInfo {
+                        member_indices: Vec::new(),
+                        name: clean_name.to_string(),
+                        get_var_name: None,
+                        set_var_name: None,
+                        has_getter: false,
+                        has_setter: false,
+                        getter_body: None,
+                        setter_body: None,
+                        setter_param: None,
+                        getter_is_async: false,
+                        setter_is_async: false,
+                        is_static,
+                    });
+                    accessors.len() - 1
+                };
+                let entry = &mut accessors[entry_idx];
+                entry.member_indices.push(member_idx);
+                let is_async =
+                    arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AsyncKeyword);
+                if is_getter {
+                    entry.has_getter = true;
+                    entry.getter_is_async = is_async;
+                    if entry.get_var_name.is_none() {
+                        entry.get_var_name = Some(make_unique_private_accessor_name(
+                            class_name, clean_name, "get", used_names,
+                        ));
+                    }
+                    if accessor_data.body.is_some() {
+                        entry.getter_body = Some(accessor_data.body);
+                    }
+                } else {
+                    entry.has_setter = true;
+                    entry.setter_is_async = is_async;
+                    if entry.set_var_name.is_none() {
+                        entry.set_var_name = Some(make_unique_private_accessor_name(
+                            class_name, clean_name, "set", used_names,
+                        ));
+                    }
+                    if accessor_data.body.is_some() {
+                        entry.setter_body = Some(accessor_data.body);
+                    }
+                    if let Some(first_param) = accessor_data.parameters.nodes.first() {
+                        entry.setter_param = Some(*first_param);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (fields, methods, accessors)
+}
+
+fn make_unique_private_accessor_name(
+    class_name: &str,
+    clean_name: &str,
+    accessor_kind: &str,
+    used_names: &mut FxHashSet<String>,
+) -> String {
+    let base = private_helper_base(class_name, clean_name);
+    let mut counter = 0usize;
+    loop {
+        let candidate = if counter == 0 {
+            format!("{base}_{accessor_kind}")
+        } else {
+            format!("{base}_{counter}_{accessor_kind}")
+        };
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
 /// Collect private accessors from a class
 pub fn collect_private_accessors(
     arena: &NodeArena,
@@ -548,38 +724,42 @@ pub fn collect_private_accessors_with_reserved(
             // Get or create the accessor info for this name. Keep entries in
             // source order so helper declaration/initialization order matches
             // `tsc` for classes with several private accessor pairs.
-            let entry_idx =
-                if let Some(idx) = accessors.iter().position(|entry| entry.name == clean_name) {
-                    idx
-                } else {
-                    accessors.push(PrivateAccessorInfo {
-                        member_indices: Vec::new(),
-                        name: clean_name.to_string(),
-                        get_var_name: Some(make_unique_private_name(
-                            &format!("{}_get", private_helper_base(class_name, clean_name)),
-                            used_names,
-                        )),
-                        set_var_name: Some(make_unique_private_name(
-                            &format!("{}_set", private_helper_base(class_name, clean_name)),
-                            used_names,
-                        )),
-                        has_getter: false,
-                        has_setter: false,
-                        getter_body: None,
-                        setter_body: None,
-                        setter_param: None,
-                        getter_is_async: false,
-                        setter_is_async: false,
-                        is_static,
-                    });
-                    accessors.len() - 1
-                };
+            let is_getter = member_node.kind == syntax_kind_ext::GET_ACCESSOR;
+            let entry_idx = if let Some(idx) = accessors.iter().position(|entry| {
+                entry.name == clean_name
+                    && entry.is_static == is_static
+                    && ((is_getter && !entry.has_getter) || (!is_getter && !entry.has_setter))
+            }) {
+                idx
+            } else {
+                accessors.push(PrivateAccessorInfo {
+                    member_indices: Vec::new(),
+                    name: clean_name.to_string(),
+                    get_var_name: Some(make_unique_private_name(
+                        &format!("{}_get", private_helper_base(class_name, clean_name)),
+                        used_names,
+                    )),
+                    set_var_name: Some(make_unique_private_name(
+                        &format!("{}_set", private_helper_base(class_name, clean_name)),
+                        used_names,
+                    )),
+                    has_getter: false,
+                    has_setter: false,
+                    getter_body: None,
+                    setter_body: None,
+                    setter_param: None,
+                    getter_is_async: false,
+                    setter_is_async: false,
+                    is_static,
+                });
+                accessors.len() - 1
+            };
             let entry = &mut accessors[entry_idx];
             entry.member_indices.push(member_idx);
             let is_async = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AsyncKeyword);
 
             // Update based on accessor type
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+            if is_getter {
                 entry.has_getter = true;
                 entry.getter_is_async = is_async;
                 if accessor_data.body.is_some() {

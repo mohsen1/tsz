@@ -36,6 +36,10 @@ impl<'a> Printer<'a> {
             && let Some(ident) = self.arena.get_identifier_at(name)
         {
             let private_name = ident.escaped_text.as_str();
+            if self.class_member_emit_depth > 0 {
+                self.write(private_name);
+                return;
+            }
             if private_name.trim_start_matches('#') == "constructor" {
                 if private_name.starts_with('#') {
                     self.write(private_name);
@@ -1298,7 +1302,7 @@ impl<'a> Printer<'a> {
         while private_idx < private_inits.len() || public_idx < field_inits.len() {
             let next_private_order = private_inits
                 .get(private_idx)
-                .map_or(u32::MAX, |(_, _, _, _, _, source_order)| *source_order);
+                .map_or(u32::MAX, |(_, _, _, _, _, source_order, _)| *source_order);
             let next_public_order = field_inits
                 .get(public_idx)
                 .map_or(u32::MAX, |(_, _, _, _, _, source_order)| *source_order);
@@ -1310,6 +1314,7 @@ impl<'a> Printer<'a> {
                     leading_comments,
                     trailing_comments,
                     _,
+                    storage_kind,
                 ) = &private_inits[private_idx];
                 self.emit_private_field_constructor_init(
                     weakmap_name,
@@ -1317,6 +1322,7 @@ impl<'a> Printer<'a> {
                     *initializer,
                     leading_comments,
                     trailing_comments,
+                    *storage_kind,
                 );
                 private_idx += 1;
             } else {
@@ -1343,19 +1349,30 @@ impl<'a> Printer<'a> {
         initializer: NodeIndex,
         leading_comments: &[String],
         trailing_comments: &[String],
+        storage_kind: crate::emitter::core::PrivateFieldStorageKind,
     ) {
         for comment in leading_comments {
             self.write_comment(comment);
             self.write_line();
         }
         self.write(weakmap_name);
-        self.write(".set(this, ");
+        match storage_kind {
+            crate::emitter::core::PrivateFieldStorageKind::WeakMap => {
+                self.write(".set(this, ");
+            }
+            crate::emitter::core::PrivateFieldStorageKind::Value => {
+                self.write(" = { value: ");
+            }
+        }
         if has_initializer {
             self.emit_expression(initializer);
         } else {
             self.write("void 0");
         }
-        self.write(");");
+        match storage_kind {
+            crate::emitter::core::PrivateFieldStorageKind::WeakMap => self.write(");"),
+            crate::emitter::core::PrivateFieldStorageKind::Value => self.write(" };"),
+        }
         for comment in trailing_comments {
             self.write_space();
             self.write_comment(comment);

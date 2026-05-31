@@ -325,3 +325,74 @@ abstract class B {
         "declare/abstract private members should not allocate runtime storage.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn duplicate_private_field_and_static_field_use_last_static_storage() {
+    let source = r#"
+class A {
+    #foo = 1;
+    static #foo = true;
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("#foo = 1;") && output.contains("static #foo = true;"),
+        "conflicting private fields should be preserved in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_foo_1 = { value: 1 };")
+            && output.contains("_A_foo_1 = { value: true };"),
+        "field initializers in a conflict ending with a static field should use the selected value storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_foo.set(this, 1);"),
+        "the earlier instance storage should not receive the conflicting initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn duplicate_static_field_then_field_uses_last_instance_storage() {
+    let source = r#"
+class A {
+    static #foo = "static";
+    #foo = "instance";
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("static #foo = \"static\";") && output.contains("#foo = \"instance\";"),
+        "conflicting static/instance fields should stay in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_foo_1 = new WeakMap()")
+            && output.contains("_A_foo_1.set(this, \"instance\");")
+            && output.contains("_A_foo_1.set(A, \"static\");"),
+        "a conflict ending with an instance field should route both field initializers through that WeakMap.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn duplicate_private_methods_are_preserved_without_extracted_defs() {
+    let source = r#"
+class A {
+    #foo() { return 1; }
+    #foo() { return 2; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("#foo() { return 1; }") && output.contains("#foo() { return 2; }"),
+        "conflicting private methods should remain in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_foo = function") && !output.contains("_A_foo_1 = function"),
+        "conflicting private methods should not emit extracted helper definitions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_instances = new WeakSet()"),
+        "instance-brand storage is still emitted for conflicting private methods.\nOutput:\n{output}"
+    );
+}

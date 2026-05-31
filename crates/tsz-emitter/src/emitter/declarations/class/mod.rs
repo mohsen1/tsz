@@ -1,6 +1,7 @@
 mod constructor_temp_estimation;
 mod constructor_using_region;
 mod decorators;
+mod duplicate_private_names;
 mod emit_declaration;
 mod emit_es6;
 mod helpers;

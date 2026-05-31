@@ -1,7 +1,6 @@
 use super::emit_es6::PrivateAutoAccessorInfo;
 use crate::emitter::Printer;
-use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef};
-use tsz_parser::parser::NodeIndex;
+use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef, StaticPrivateInit};
 
 pub(super) struct PrivateCommaItems<'a> {
     pub(super) weakmap_inits: &'a [String],
@@ -16,7 +15,7 @@ pub(super) struct PrivateCommaItems<'a> {
     pub(super) private_auto_accessors: &'a [PrivateAutoAccessorInfo],
     pub(super) private_class_alias_pair: Option<&'a (String, String)>,
     pub(super) set_function_name: Option<(&'a str, &'a str)>,
-    pub(super) static_private_inits: &'a [(String, NodeIndex)],
+    pub(super) static_private_inits: &'a [StaticPrivateInit],
 }
 
 impl<'a> Printer<'a> {
@@ -107,18 +106,11 @@ impl<'a> Printer<'a> {
             self.emit_class_expr_set_function_name_comma_item(temp, name);
         }
 
-        for (var_name, init_idx) in items.static_private_inits {
+        for init in items.static_private_inits {
             self.write(",");
             self.write_line();
             self.increase_indent();
-            self.write(var_name);
-            self.write(" = { value: ");
-            if init_idx.is_some() {
-                self.emit_expression(*init_idx);
-            } else {
-                self.write("void 0");
-            }
-            self.write(" }");
+            self.emit_static_private_init(init, items.class_name, false);
             self.decrease_indent();
         }
 
