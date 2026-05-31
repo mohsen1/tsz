@@ -6,6 +6,8 @@ cases confirm that unsupported shapes still fall through to "other".
 """
 
 import importlib.util
+import contextlib
+import io
 import pathlib
 import sys
 import unittest
@@ -99,6 +101,45 @@ after
             },
         )
         self.assertIsNone(note)
+
+
+class TestQueryFilters(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_query_emit()
+
+    def test_name_filter_scopes_dts_failures(self):
+        data = {
+            "results": [
+                make_result("checkJsdocSatisfiesTag15", dts_error="+1/-1 lines"),
+                make_result("jsDeclarationsClasses", dts_error="+21/-17 lines"),
+            ]
+        }
+        filtered = self.mod.filter_data_by_name(data, "checkJsdoc")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.mod.show_dts_failures(filtered)
+
+        text = out.getvalue()
+        self.assertIn("DTS failures: 1", text)
+        self.assertIn("checkJsdocSatisfiesTag15", text)
+        self.assertNotIn("jsDeclarationsClasses", text)
+
+    def test_name_filter_scopes_paths_only_failure_output(self):
+        data = {
+            "results": [
+                make_result("checkJsdocSatisfiesTag15", dts_error="+1/-1 lines"),
+                make_result("jsDeclarationsClasses", dts_error="+21/-17 lines"),
+            ]
+        }
+        filtered = self.mod.filter_data_by_name(data, "jsDeclarations")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.mod.show_dts_failures(filtered, paths_only=True)
+
+        self.assertEqual(out.getvalue(), "jsDeclarationsClasses\n")
 
 
 class TestJSFamilyClassifier(unittest.TestCase):

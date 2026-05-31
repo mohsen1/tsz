@@ -311,6 +311,16 @@ def show_dts_failures(data, top=40, paths_only=False):
     print_truncated_more(fails, top)
 
 
+def filter_data_by_name(data, pattern):
+    if not pattern:
+        return data
+
+    lower = pattern.lower()
+    filtered = dict(data)
+    filtered["results"] = [r for r in data["results"] if lower in r["name"].lower()]
+    return filtered
+
+
 def show_top_errors(data, top=20):
     results = data["results"]
 
@@ -445,21 +455,22 @@ def main():
     args = parser.parse_args()
 
     data = load_detail()
+    filtered_data = filter_data_by_name(data, args.filter)
 
     if args.js_failures:
-        show_js_failures(data, args.top, args.paths_only)
+        show_js_failures(filtered_data, args.top, args.paths_only)
     elif args.dts_failures:
-        show_dts_failures(data, args.top, args.paths_only)
+        show_dts_failures(filtered_data, args.top, args.paths_only)
     elif args.top_errors:
-        show_top_errors(data, args.top)
+        show_top_errors(filtered_data, args.top)
     elif args.families:
-        show_failure_families(data, args.top)
+        show_failure_families(filtered_data, args.top)
     elif args.close:
-        show_close(data, args.top)
+        show_close(filtered_data, args.top)
+    elif args.status:
+        show_status(filtered_data, args.status, args.top)
     elif args.filter:
         show_filter(data, args.filter, args.top, args.paths_only)
-    elif args.status:
-        show_status(data, args.status, args.top)
     else:
         show_overview(data)
 
