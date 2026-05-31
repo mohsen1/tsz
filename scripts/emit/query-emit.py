@@ -269,6 +269,10 @@ def emit_freshness_status_line(data):
     return f"Emit detail freshness: {state}."
 
 
+def emit_detail_is_current(freshness_status):
+    return freshness_status.get("state") == "current"
+
+
 def emit_pass_rate(summary, prefix):
     passed = summary.get(f"{prefix}Pass")
     total = summary.get(f"{prefix}Total")
@@ -575,7 +579,7 @@ def main():
     parser.add_argument(
         "--require-current-detail",
         action="store_true",
-        help="Exit non-zero when README/public aggregate is ahead of emit-detail.json",
+        help="Exit non-zero unless README/public aggregate matches emit-detail.json",
     )
     args = parser.parse_args()
 
@@ -583,7 +587,7 @@ def main():
     filtered_data = filter_data_by_name(data, args.filter)
     freshness_status = emit_freshness_status(emit_summary(data), emit_summary_from_readme())
 
-    if args.require_current_detail and freshness_status["state"] == "stale":
+    if args.require_current_detail and not emit_detail_is_current(freshness_status):
         print(emit_freshness_status_line(data), file=sys.stderr)
         return 1
 
