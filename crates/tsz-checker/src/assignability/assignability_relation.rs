@@ -766,7 +766,7 @@ impl<'a> CheckerState<'a> {
             types,
             predicate_type,
             param_type,
-            |source, target| self.is_assignable_to(source, target),
+            |source, target| self.assign_relation_outcome(source, target).related,
         )
     }
 
