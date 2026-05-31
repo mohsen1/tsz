@@ -679,6 +679,11 @@ withTempDir((dir) => {
       diagnostic: "src/index.ts(2,1): error TS18048: 'value' is possibly 'undefined'.",
       ownerTrack: "Track 6 flow/narrowing",
     },
+    {
+      name: "contextual-callback",
+      diagnostic: "src/builder.ts(3,12): error TS7006: Parameter 'eb' implicitly has an 'any' type.",
+      ownerTrack: "Track 3 inference/session/contextual typing",
+    },
   ];
 
   for (const testCase of cases) {
