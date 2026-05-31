@@ -156,10 +156,10 @@ impl<'a> CheckerState<'a> {
                             )
                             && !query::contains_type_parameters(self.ctx.types, evaluated_original)
                         {
-                            if self.diagnostic_relation_boolean_guard(
-                                evaluated_original,
-                                constraint_resolved,
-                            ) {
+                            if self
+                                .assign_relation_outcome(evaluated_original, constraint_resolved)
+                                .related
+                            {
                                 if self.generic_boolean_literal_probe_should_remain_indeterminate(
                                     type_arg,
                                     evaluated_original,
@@ -187,7 +187,9 @@ impl<'a> CheckerState<'a> {
                         }
                         let concrete_arg = self.resolve_lazy_type(concrete_arg);
                         let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
-                        if self.diagnostic_relation_boolean_guard(concrete_arg, constraint_resolved)
+                        if self
+                            .assign_relation_outcome(concrete_arg, constraint_resolved)
+                            .related
                         {
                             if self.generic_boolean_literal_probe_should_remain_indeterminate(
                                 type_arg,
@@ -371,7 +373,8 @@ impl<'a> CheckerState<'a> {
                         ) || self
                             .type_alias_application_filters_to_constraint(type_arg, inst_constraint)
                             || self
-                                .diagnostic_relation_boolean_guard(evaluated_arg, inst_constraint)
+                            .assign_relation_outcome(evaluated_arg, inst_constraint)
+                            .related
                             || query::homomorphic_mapped_application_should_defer_constraint(
                                 self, type_arg,
                             )
@@ -642,15 +645,19 @@ impl<'a> CheckerState<'a> {
                                             // `unknown` infer bases fail constraints like `string`.
                                             let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                                 || inst_constraint == TypeId::ANY
-                                                || self.diagnostic_relation_boolean_guard(infer_base, inst_constraint)
+                                                || self
+                                                    .assign_relation_outcome(infer_base, inst_constraint)
+                                                    .related
                                                 || {
                                                     let evaluated =
                                                         self.evaluate_type_for_assignability(type_arg);
                                                     evaluated != type_arg
-                                                        && self.diagnostic_relation_boolean_guard(
+                                                        && self
+                                                            .assign_relation_outcome(
                                                             evaluated,
                                                             inst_constraint,
                                                         )
+                                                            .related
                                                 }
                                                 || self
                                                     .infer_result_satisfies_via_check_constraint(
@@ -714,13 +721,19 @@ impl<'a> CheckerState<'a> {
                                         let ext_resolved = self.resolve_lazy_type(cond_extends);
                                         let ext_evaluated =
                                             self.evaluate_type_for_assignability(ext_resolved);
-                                        if self.diagnostic_relation_boolean_guard(
-                                            ext_evaluated,
-                                            constraint_resolved,
-                                        ) || self.diagnostic_relation_boolean_guard(
-                                            ext_resolved,
-                                            constraint_resolved,
-                                        ) {
+                                        if self
+                                            .assign_relation_outcome(
+                                                ext_evaluated,
+                                                constraint_resolved,
+                                            )
+                                            .related
+                                            || self
+                                                .assign_relation_outcome(
+                                                    ext_resolved,
+                                                    constraint_resolved,
+                                                )
+                                                .related
+                                        {
                                             continue;
                                         }
                                         // Extract-like pattern (? T : never) but the
@@ -1044,20 +1057,22 @@ impl<'a> CheckerState<'a> {
                             let base_for_check = self.resolve_lazy_members_in_union(base);
                             let base_for_check =
                                 self.evaluate_type_for_assignability(base_for_check);
-                            let mut is_satisfied =
-                                self.diagnostic_relation_boolean_guard(
+                            let mut is_satisfied = self
+                                .assign_relation_outcome(base_for_check, inst_constraint)
+                                .related
+                                || self.base_union_members_satisfy_constraint(
                                     base_for_check,
                                     inst_constraint,
-                                ) || self.base_union_members_satisfy_constraint(
+                                )
+                                || self.satisfies_array_like_constraint(
                                     base_for_check,
                                     inst_constraint,
-                                ) || self.satisfies_array_like_constraint(
-                                    base_for_check,
-                                    inst_constraint,
-                                ) || self.infer_result_satisfies_via_referenced_constraints(
+                                )
+                                || self.infer_result_satisfies_via_referenced_constraints(
                                     type_arg,
                                     inst_constraint,
-                                ) || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                )
+                                || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.type_arg_satisfies_via_hidden_infer_constraints(
                                         type_arg,
                                         arg_idx,
@@ -1156,9 +1171,16 @@ impl<'a> CheckerState<'a> {
                                         .unwrap_or(TypeId::UNKNOWN);
                                 let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                     || inst_constraint == TypeId::ANY
-                                    || self.diagnostic_relation_boolean_guard(infer_base, inst_constraint)
+                                    || self
+                                        .assign_relation_outcome(infer_base, inst_constraint)
+                                        .related
                                     || (type_arg_evaluated != type_arg
-                                        && self.diagnostic_relation_boolean_guard(type_arg_evaluated, inst_constraint))
+                                        && self
+                                            .assign_relation_outcome(
+                                                type_arg_evaluated,
+                                                inst_constraint,
+                                            )
+                                            .related)
                                     || self.infer_result_satisfies_via_check_constraint(
                                         type_arg,
                                         (cond_check, cond_extends, cond_true),
@@ -1210,13 +1232,18 @@ impl<'a> CheckerState<'a> {
                                 // If false branch is `never` (Extract pattern) and the
                                 // extends type satisfies the constraint, skip TS2344.
                                 if false_type == TypeId::NEVER
-                                    && (self.diagnostic_relation_boolean_guard(
-                                        extends_evaluated,
-                                        constraint_resolved,
-                                    ) || self.diagnostic_relation_boolean_guard(
-                                        extends_resolved,
-                                        constraint_resolved,
-                                    ))
+                                    && (self
+                                        .assign_relation_outcome(
+                                            extends_evaluated,
+                                            constraint_resolved,
+                                        )
+                                        .related
+                                        || self
+                                            .assign_relation_outcome(
+                                                extends_resolved,
+                                                constraint_resolved,
+                                            )
+                                            .related)
                                 {
                                     // Skip: Extract<T, C> always produces subtype of C
                                 } else {
@@ -1324,10 +1351,9 @@ impl<'a> CheckerState<'a> {
                             );
                             if inst_constraint == TypeId::UNKNOWN
                                 || inst_constraint == TypeId::ANY
-                                || self.diagnostic_relation_boolean_guard(
-                                    positional_constraint,
-                                    inst_constraint,
-                                )
+                                || self
+                                    .assign_relation_outcome(positional_constraint, inst_constraint)
+                                    .related
                             {
                                 continue;
                             }
@@ -1390,10 +1416,9 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.types,
                                             inst_constraint,
                                         )
-                                        && !self.diagnostic_relation_boolean_guard(
-                                            hidden_base,
-                                            inst_constraint,
-                                        )
+                                        && !self
+                                            .assign_relation_outcome(hidden_base, inst_constraint)
+                                            .related
                                     {
                                         self.error_type_constraint_not_satisfied(
                                             type_arg,
@@ -1436,16 +1461,17 @@ impl<'a> CheckerState<'a> {
                             });
                             if is_checkable
                                 && base_for_check.is_none_or(|base_for_check| {
-                                    !self.diagnostic_relation_boolean_guard(
-                                        base_for_check,
-                                        inst_constraint,
-                                    ) && !self.base_union_members_satisfy_constraint(
-                                        base_for_check,
-                                        inst_constraint,
-                                    ) && !self.satisfies_array_like_constraint(
-                                        base_for_check,
-                                        inst_constraint,
-                                    )
+                                    !self
+                                        .assign_relation_outcome(base_for_check, inst_constraint)
+                                        .related
+                                        && !self.base_union_members_satisfy_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
+                                        && !self.satisfies_array_like_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
                                 })
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -1553,10 +1579,9 @@ impl<'a> CheckerState<'a> {
                                         &[base, base_evaluated],
                                     );
                                 present.into_iter().any(|primitive_key| {
-                                    !self.diagnostic_relation_boolean_guard(
-                                        primitive_key,
-                                        inst_constraint,
-                                    )
+                                    !self
+                                        .assign_relation_outcome(primitive_key, inst_constraint)
+                                        .related
                                 })
                             }
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -1572,7 +1597,8 @@ impl<'a> CheckerState<'a> {
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
-                            .diagnostic_relation_boolean_guard(base_for_check, inst_constraint)
+                            .assign_relation_outcome(base_for_check, inst_constraint)
+                            .related
                             || self.base_union_members_satisfy_constraint(
                                 base_for_check,
                                 inst_constraint,
@@ -1750,10 +1776,8 @@ impl<'a> CheckerState<'a> {
                                 type_arg,
                             )
                         {
-                            self.diagnostic_relation_boolean_guard(
-                                type_arg,
-                                instantiated_constraint,
-                            )
+                            self.assign_relation_outcome(type_arg, instantiated_constraint)
+                                .related
                         } else {
                             self.no_weak_relation_outcome(type_arg, instantiated_constraint)
                                 .related
@@ -1850,7 +1874,8 @@ impl<'a> CheckerState<'a> {
                     let base = self.resolve_lazy_members_in_union(base);
                     let base = self.evaluate_type_for_assignability(base);
                     is_satisfied = self
-                        .diagnostic_relation_boolean_guard(base, instantiated_constraint)
+                        .assign_relation_outcome(base, instantiated_constraint)
+                        .related
                         || self
                             .base_union_members_satisfy_constraint(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
