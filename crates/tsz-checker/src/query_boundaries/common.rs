@@ -122,6 +122,9 @@ pub(crate) fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_index_access_type(db, type_id)
 }
+pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_index_access_type(db, type_id)
+}
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::contains_type_parameters(db, type_id)

@@ -136,3 +136,21 @@ fn global_object_special_diagnostic_is_structural() {
         "global Object special diagnostic should route through the diagnostic query boundary"
     );
 }
+
+#[test]
+fn indexed_access_ts2339_suppression_is_structural() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/types/type_checking/indexed_access.rs"
+    ))
+    .expect("indexed access checker source should be readable");
+
+    assert!(
+        !source.contains("type_str_for_check.contains('[')"),
+        "indexed-access TS2339 suppression must not infer T[K] from rendered text"
+    );
+    assert!(
+        source.contains("contains_index_access_type("),
+        "indexed-access TS2339 suppression should route through the structural query boundary"
+    );
+}
