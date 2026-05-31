@@ -66,4 +66,13 @@ fn call_checker_adapter_uses_relation_outcome_boundary() {
         !adapter.contains("state.is_assignable_to(a_resolved, b_resolved)"),
         "call checker adapter identity comparison should not regress to raw checker assignability"
     );
+    assert!(
+        adapter.contains("bivariant_callbacks_relation_outcome(source, target)")
+            && adapter.contains(".related"),
+        "call checker adapter bivariant callback probes should route through RelationOutcome"
+    );
+    assert!(
+        !adapter.contains("state.is_assignable_to_bivariant(source, target)"),
+        "call checker adapter bivariant callback probes should not regress to raw bivariant assignability"
+    );
 }

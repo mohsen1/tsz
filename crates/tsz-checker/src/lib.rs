@@ -525,6 +525,9 @@ mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_checker_diagnostic_relation_routing_arch_tests.rs"]
+mod call_checker_diagnostic_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_context_relation_routing_arch_tests.rs"]
 mod call_context_relation_routing_arch_tests;
 #[cfg(test)]

@@ -104,7 +104,9 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        self.state.is_assignable_to_bivariant(source, target)
+        self.state
+            .bivariant_callbacks_relation_outcome(source, target)
+            .related
     }
 
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
