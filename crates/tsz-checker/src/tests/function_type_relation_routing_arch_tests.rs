@@ -19,6 +19,11 @@ fn function_type_relation_probes_use_relation_outcome_boundary() {
         "JS constructor return instance/member reverse probe should use relation outcomes"
     );
     assert!(
+        compact.contains("diagnostic_subtype_outcome(extracted,from_expected).related")
+            && compact.contains("diagnostic_subtype_outcome(from_expected,extracted).related"),
+        "contextual function-type specificity checks should use subtype outcomes"
+    );
+    assert!(
         !compact.contains("is_assignable_to(from_expected,evaluated_constraint)"),
         "contextual constrained type-parameter extraction should not use raw assignability"
     );
@@ -29,5 +34,10 @@ fn function_type_relation_probes_use_relation_outcome_boundary() {
     assert!(
         !compact.contains("is_assignable_to(instance_type,member)"),
         "JS constructor return instance/member reverse probe should not use raw assignability"
+    );
+    assert!(
+        !compact.contains("is_subtype_of(extracted,from_expected)")
+            && !compact.contains("is_subtype_of(from_expected,extracted)"),
+        "contextual function-type specificity checks should not use raw subtype probes"
     );
 }

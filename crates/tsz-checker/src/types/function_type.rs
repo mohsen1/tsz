@@ -611,12 +611,16 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     extracted,
                                 );
-                            let direct_is_strict_subtype = extracted != from_expected
-                                && self.is_subtype_of(extracted, from_expected)
-                                && !self.is_subtype_of(from_expected, extracted);
-                            let expected_is_strict_subtype = extracted != from_expected
-                                && self.is_subtype_of(from_expected, extracted)
-                                && !self.is_subtype_of(extracted, from_expected);
+                            let direct_subtype = self
+                                .diagnostic_subtype_outcome(extracted, from_expected)
+                                .related;
+                            let expected_subtype = self
+                                .diagnostic_subtype_outcome(from_expected, extracted)
+                                .related;
+                            let direct_is_strict_subtype =
+                                extracted != from_expected && direct_subtype && !expected_subtype;
+                            let expected_is_strict_subtype =
+                                extracted != from_expected && expected_subtype && !direct_subtype;
                             if preserve_mixed_context_direct {
                                 Some(extracted)
                             } else if direct_is_rest_tuple_container
@@ -1284,11 +1288,9 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.deferred_implicit_any_closures.push(idx);
         }
-
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in regular functions
         self.check_parameter_properties(&parameters.nodes);
-
         // Get return type from annotation or infer
         let has_type_annotation = type_annotation.is_some();
         let (mut return_type, mut type_predicate) = if has_type_annotation {
@@ -1303,7 +1305,6 @@ impl<'a> CheckerState<'a> {
             // This ensures return statements are checked even without annotation
             (TypeId::UNKNOWN, None)
         };
-
         // Check JSDoc @returns for type predicates (e.g., @returns {x is string})
         // This covers JS files where return types are specified via JSDoc instead of syntax.
         if type_predicate.is_none()
@@ -1317,7 +1318,6 @@ impl<'a> CheckerState<'a> {
             };
             type_predicate = Some(predicate);
         }
-
         // Check JSDoc @type {CallbackType} for type predicates (e.g., @callback with @return {x is number}).
         if type_predicate.is_none()
             && let Some(ref jsdoc) = func_jsdoc
