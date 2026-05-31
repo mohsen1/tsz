@@ -154,3 +154,26 @@ fn indexed_access_ts2339_suppression_is_structural() {
         "indexed-access TS2339 suppression should route through the structural query boundary"
     );
 }
+
+#[test]
+fn mixin_anonymous_class_display_rewrite_is_idempotent() {
+    let heritage_source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/classes/class_abstract_checker.rs"
+    ))
+    .expect("class abstract checker source should be readable");
+    assert!(
+        !heritage_source.contains("base_str.contains(\"(Anonymous class)\")"),
+        "mixin heritage display should apply the anonymous-class rewrite idempotently"
+    );
+
+    let constructor_source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/classes/constructor_checker.rs"
+    ))
+    .expect("constructor checker source should be readable");
+    assert!(
+        !constructor_source.contains("name.contains(\"(Anonymous class)\")"),
+        "mixin constructor display should apply the anonymous-class rewrite idempotently"
+    );
+}

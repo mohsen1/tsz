@@ -515,7 +515,6 @@ impl<'a> CheckerState<'a> {
         let mut base_str = self.format_type(display_type);
         if let Some(mixin_display) =
             self.mixin_call_anonymous_instance_display(h_expr_idx, type_arguments)
-            && base_str.contains("(Anonymous class)")
         {
             base_str = base_str.replacen("(Anonymous class)", &mixin_display, 1);
         }
