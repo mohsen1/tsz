@@ -8,7 +8,7 @@ fn flow_analysis_uses_boundary_relation_flags_surface() {
         .expect("failed to read query_boundaries/flow_analysis.rs");
 
     assert!(
-        source.contains("use super::assignability::RelationFlags;"),
+        source.contains("assignability::RelationFlags"),
         "flow_analysis relation helpers must import boundary-owned RelationFlags"
     );
 
@@ -21,4 +21,26 @@ fn flow_analysis_uses_boundary_relation_flags_surface() {
         !source.contains("RelationCacheKey::FLAG_STRICT_NULL_CHECKS"),
         "flow_analysis relation helpers must not reach directly into RelationCacheKey bits"
     );
+}
+
+/// Checker relation helpers are the compatibility edge for packed `u16`
+/// relation flags. Keep that edge explicit so new code does not treat the
+/// packed protocol as an ordinary solver policy constructor.
+#[test]
+fn checker_boundaries_use_explicit_legacy_relation_policy_constructor() {
+    for path in [
+        "src/query_boundaries/assignability.rs",
+        "src/query_boundaries/flow_analysis.rs",
+    ] {
+        let source = fs::read_to_string(path).expect("failed to read checker query boundary");
+
+        assert!(
+            source.contains("relation_policy::from_checker_flags_u16"),
+            "{path} must name the packed-flag compatibility edge explicitly",
+        );
+        assert!(
+            !source.contains("RelationPolicy::from_flags"),
+            "{path} must not use the ambiguous packed-flag constructor name",
+        );
+    }
 }

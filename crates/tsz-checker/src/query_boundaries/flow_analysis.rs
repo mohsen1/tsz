@@ -2,7 +2,7 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
-use super::assignability::RelationFlags;
+use super::{assignability::RelationFlags, relation_policy};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -536,9 +536,7 @@ pub(crate) fn is_assignable_strict_null(
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
-        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
-            RelationFlags::STRICT_NULL_CHECKS,
-        ),
+        relation_policy::from_checker_flags_u16(RelationFlags::STRICT_NULL_CHECKS),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
@@ -616,7 +614,7 @@ pub(crate) fn is_assignable_with_env(
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
-        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        relation_policy::from_checker_flags_u16(flags),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
@@ -727,7 +725,7 @@ fn types_are_subtype_with_env(
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Subtype,
-        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        relation_policy::from_checker_flags_u16(flags),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
