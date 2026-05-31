@@ -157,6 +157,40 @@ impl<'a> Printer<'a> {
             .is_some()
     }
 
+    pub(in crate::emitter) fn emit_recovered_unparsed_token_assignment_statement(
+        &mut self,
+        node: &Node,
+        next: Option<&Node>,
+    ) -> bool {
+        let Some(next) = next else {
+            return false;
+        };
+        let Some(expr_stmt) = self.arena.get_expression_statement(node) else {
+            return false;
+        };
+        let Some(next_expr_stmt) = self.arena.get_expression_statement(next) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_stmt.expression) else {
+            return false;
+        };
+        let Some(next_expr_node) = self.arena.get(next_expr_stmt.expression) else {
+            return false;
+        };
+        if expr_node.end <= node.end || next_expr_node.pos >= expr_node.end {
+            return false;
+        }
+        if !self.has_trailing_recovered_equality_token(node) {
+            return false;
+        }
+
+        self.emit_expression_in_statement_position(expr_stmt.expression);
+        self.write(" = ");
+        self.emit_expression_in_statement_position(next_expr_stmt.expression);
+        self.write_semicolon();
+        true
+    }
+
     pub(in crate::emitter) fn recovered_ambient_class_parenthesized_tail_text(
         &self,
         node: &Node,
@@ -204,6 +238,29 @@ impl<'a> Printer<'a> {
 
         let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
         Some(format!("{recovered};"))
+    }
+
+    fn has_trailing_recovered_equality_token(&self, node: &Node) -> bool {
+        let text = match self.source_text {
+            Some(text) => text,
+            None => return false,
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        let current = match text.get(start..end) {
+            Some(current) => current.trim_end(),
+            None => return false,
+        };
+        if current.contains('\n') || current.contains('\r') {
+            return false;
+        }
+        current
+            .as_bytes()
+            .iter()
+            .rev()
+            .take_while(|&&byte| byte == b'=')
+            .count()
+            >= 4
     }
 
     pub(in crate::emitter) fn is_recovered_yield_operand_statement(&self, node: &Node) -> bool {

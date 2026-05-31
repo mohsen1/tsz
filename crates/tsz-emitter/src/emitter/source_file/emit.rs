@@ -1569,6 +1569,7 @@ impl<'a> Printer<'a> {
         let mut has_non_empty_runtime_export = has_synthesized_esm_import;
         let mut has_deferred_empty_export = false;
         let mut skip_recovered_yield_operand_statement = false;
+        let mut skip_recovered_unparsed_token_assignment_statement = false;
         let mut skip_recovered_debugger_namespace_until: Option<u32> = None;
         if source.statements.nodes.is_empty()
             && self
@@ -1588,21 +1589,21 @@ impl<'a> Printer<'a> {
             if stmt_i < cjs_pre_preamble_prologue_count {
                 continue;
             }
-
             if skip_recovered_yield_operand_statement {
                 skip_recovered_yield_operand_statement = false;
                 if self.is_recovered_yield_operand_statement(stmt_node) {
                     continue;
                 }
             }
-
+            if std::mem::take(&mut skip_recovered_unparsed_token_assignment_statement) {
+                continue;
+            }
             if let Some(skip_until) = skip_recovered_debugger_namespace_until {
                 if stmt_node.pos < skip_until {
                     continue;
                 }
                 skip_recovered_debugger_namespace_until = None;
             }
-
             if let Some((line_end, trailing_comment)) =
                 self.recovered_debugger_namespace_line(stmt_node)
             {
@@ -1947,7 +1948,9 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            if let Some(recovered_jsx_closing) =
+            if self.emit_recovered_unparsed_token_assignment_statement(stmt_node, next_stmt_node) {
+                skip_recovered_unparsed_token_assignment_statement = true;
+            } else if let Some(recovered_jsx_closing) =
                 self.recovered_invalid_jsx_closing_fragment_statement_text(stmt_node)
             {
                 self.write(&recovered_jsx_closing);
@@ -1989,9 +1992,7 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
-
                 self.emit(stmt_idx);
-
                 if use_deferred_nested_cjs_exports {
                     if use_deferred_single_cjs_exports {
                         self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
@@ -2002,7 +2003,6 @@ impl<'a> Printer<'a> {
             }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
-
             if emitted_output
                 && is_top_level_cjs
                 && self.ctx.options.legacy_decorators
