@@ -299,7 +299,3 @@ pub(crate) fn env_flag(name: &str) -> bool {
 #[cfg(test)]
 #[path = "resolution_tests.rs"]
 mod resolution_tests;
-
-#[cfg(test)]
-#[path = "resolution_paths_imports_tests.rs"]
-mod resolution_paths_imports_tests;

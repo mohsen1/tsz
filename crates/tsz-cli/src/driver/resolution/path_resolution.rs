@@ -758,3 +758,7 @@ pub(crate) const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
 pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
     ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
+
+#[cfg(test)]
+#[path = "paths_imports_tests.rs"]
+mod paths_imports_tests;
