@@ -1970,5 +1970,9 @@ path = "tests/class_interface_namespace_merge_tests.rs"
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 
+[[test]]
+name = "polymorphic_this_display_tests"
+path = "tests/polymorphic_this_display_tests.rs"
+
 [lints]
 workspace = true

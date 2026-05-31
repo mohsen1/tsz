@@ -82,3 +82,30 @@ fn mapped_target_type_parameter_containment_is_structural() {
         "mapped target type-parameter containment should route through the structural query boundary"
     );
 }
+
+#[test]
+fn polymorphic_this_intersection_display_is_structural() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/assignability/assignment_checker/assignment_ops.rs"
+    ))
+    .expect("assignment ops source should be readable");
+
+    let start = source
+        .find("fn check_polymorphic_this_property_assignment")
+        .expect("polymorphic this assignment helper should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n    /// Check if an expression produces a `this`-typed value.")
+        .expect("polymorphic this assignment helper should end before expression helper");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("source_display.contains(\" & \")"),
+        "polymorphic this source display must not branch on rendered intersection text"
+    );
+    assert!(
+        helper_body.contains("simple_intersection_head_display_for_this_assignment"),
+        "polymorphic this source display should use the structural intersection helper"
+    );
+}
