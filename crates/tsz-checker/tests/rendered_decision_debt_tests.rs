@@ -211,3 +211,16 @@ fn jsx_children_strip_display_uses_type_surface_predicate() {
         "JSX stripped-children display should preserve named surfaces structurally"
     );
 }
+
+#[test]
+fn jsx_children_display_append_is_property_resolution_driven() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/diagnostics.rs"
+    ))
+    .expect("JSX diagnostics source should be readable");
+    assert!(
+        !source.contains("children_display.is_empty()"),
+        "JSX children display append should be driven by property resolution, not formatted text emptiness"
+    );
+}

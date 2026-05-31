@@ -982,11 +982,7 @@ impl<'a> CheckerState<'a> {
                 ..
             } => {
                 let children_display = self.format_type(type_id);
-                if children_display.is_empty() {
-                    props_display
-                } else {
-                    format!("{props_display} & {{ children?: {children_display}; }}")
-                }
+                format!("{props_display} & {{ children?: {children_display}; }}")
             }
             _ => props_display,
         }
