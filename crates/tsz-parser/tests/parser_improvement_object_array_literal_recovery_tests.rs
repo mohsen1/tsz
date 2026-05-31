@@ -1,5 +1,6 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — object array literal recovery.
 
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -364,5 +365,229 @@ fn test_object_literal_comma_recovery_after_short_distance_colon_error() {
                 && d.start == open_brace_pos
                 && d.message == "',' expected."),
         "expected TS1005 `',' expected.` at `{{` after `C4`, got {diagnostics:?}"
+    );
+}
+
+/// Member nodes of the first object-literal expression in the parse tree.
+fn first_object_literal_members(parser: &crate::parser::ParserState) -> Vec<NodeIndex> {
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .find(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        .and_then(|node| arena.get_literal_expr(node))
+        .map(|data| data.elements.nodes.clone())
+        .unwrap_or_default()
+}
+
+/// Text of an identifier node, or `None` if the node is not an identifier.
+fn identifier_text(parser: &crate::parser::ParserState, node: NodeIndex) -> Option<String> {
+    let arena = parser.get_arena();
+    let n = arena.get(node)?;
+    arena.get_identifier(n).map(|id| id.escaped_text.clone())
+}
+
+/// Structural rule: when a reserved word is used as an object-literal property
+/// name and is followed by a value expression instead of `:`, tsc reports
+/// `':' expected.` but still parses the member as a property assignment whose
+/// initializer is that value (`{ class C4 {} }` → `class: C4`). It is never a
+/// value-less shorthand. Keyed on the token category (reserved word), not the
+/// spelling — exercised with `class`, `for`, and `if`.
+#[test]
+fn reserved_word_property_name_without_colon_recovers_as_property_assignment() {
+    for keyword in ["class", "for", "if"] {
+        let source = format!("var x = {{\n    {keyword} C4 {{\n    }}\n}}\n");
+        let (parser, _root) = parse_source(&source);
+
+        let members = first_object_literal_members(&parser);
+        assert!(
+            !members.is_empty(),
+            "expected at least one recovered member for `{keyword}`, got none"
+        );
+        let arena = parser.get_arena();
+        let first = arena.get(members[0]).expect("first member node");
+        assert_eq!(
+            first.kind,
+            syntax_kind_ext::PROPERTY_ASSIGNMENT,
+            "`{keyword}` as a property name with a following value must be a property assignment, not a shorthand"
+        );
+        let prop = arena
+            .get_property_assignment(first)
+            .expect("property assignment data");
+        assert_eq!(
+            identifier_text(&parser, prop.name).as_deref(),
+            Some(keyword),
+            "property name should be the reserved word `{keyword}`"
+        );
+        assert_eq!(
+            identifier_text(&parser, prop.initializer).as_deref(),
+            Some("C4"),
+            "`{keyword}` member's value should be the following identifier `C4`"
+        );
+    }
+}
+
+/// Structural rule: a stray operator/punctuation token that cannot start an
+/// object-literal element (here the `:` left after recovering `x()?: 1`) is
+/// reported via TS1136 and skipped — it must not be folded into a bogus
+/// empty-named member. The following numeric literal `1` becomes a property
+/// assignment with a missing value (rendered `1:` by the emitter), not a
+/// shorthand. Two iteration-variable spellings prove the rule is structural.
+#[test]
+fn optional_method_then_colon_value_skips_stray_colon_and_keeps_numeric_member() {
+    for method in ["x", "method"] {
+        let source = format!("var b = {{\n    {method}()?: 1\n}}\n");
+        let (parser, _root) = parse_source(&source);
+
+        let members = first_object_literal_members(&parser);
+        assert_eq!(
+            members.len(),
+            2,
+            "expected exactly two members (the method and the numeric `1`) for `{method}`, got {members:?}"
+        );
+        let arena = parser.get_arena();
+        let m0 = arena.get(members[0]).expect("method member");
+        assert_eq!(
+            m0.kind,
+            syntax_kind_ext::METHOD_DECLARATION,
+            "first member should be the recovered method `{method}()`"
+        );
+        let m1 = arena.get(members[1]).expect("numeric member");
+        assert_eq!(
+            m1.kind,
+            syntax_kind_ext::PROPERTY_ASSIGNMENT,
+            "numeric `1` member must be a property assignment with a missing value"
+        );
+        let prop = arena
+            .get_property_assignment(m1)
+            .expect("numeric member property assignment data");
+        assert_ne!(
+            prop.name, prop.initializer,
+            "missing value must be a distinct empty node so the emitter renders `1:`"
+        );
+    }
+}
+
+/// Structural rule: when an identifier shorthand member is immediately followed
+/// by a non-comma token (`{ a[1], }`), tsc recovers `a` as shorthand (`',' expected.`
+/// at the trailing token) and then parses the next computed/literal member; the
+/// missing `:` on that member is reported via `parseErrorAtCurrentToken`, whose
+/// dedup is *exact-position only*. tsz must not drop that `:' expected.` even
+/// when the prior `',' expected.` lands within its distance-suppression window
+/// (which only happens for *short* computed names like `[1]`). Exercised with a
+/// numeric and a string computed key, and a renamed leading binding, to prove the
+/// rule is keyed on the recovery shape, not the spelling/length of the key.
+#[test]
+fn short_computed_member_after_shorthand_still_reports_missing_colon() {
+    for (lead, key) in [("a", "1"), ("a", "\"s\""), ("zzz", "1"), ("zzz", "\"ss\"")] {
+        let source = format!("var x = {{ {lead}[{key}], }};\n");
+        let (parser, _root) = parse_source(&source);
+        let diagnostics = parser.get_diagnostics();
+
+        // `',' expected.` at the `[` immediately after the shorthand identifier.
+        let bracket_pos = source.find('[').expect("`[` in source") as u32;
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::EXPECTED
+                    && d.start == bracket_pos
+                    && d.message == "',' expected."),
+            "expected `',' expected.` at the `[` for `{lead}[{key}]`, got {diagnostics:?}"
+        );
+
+        // `':' expected.` at the trailing `,` that closes the computed member.
+        let comma_pos = source.find("],").expect("`],` in source") as u32 + 1;
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::EXPECTED
+                    && d.start == comma_pos
+                    && d.message == "':' expected."),
+            "expected `':' expected.` at the trailing `,` for `{lead}[{key}]`, got {diagnostics:?}"
+        );
+    }
+}
+
+/// Structural rule: tsc's `isIdentifier()` returns false for a contextually
+/// reserved keyword — `await` inside a `static { }` block (or async context) and
+/// `yield` inside a generator. Such a token can never start a shorthand member,
+/// so `({ await })` inside a static block is a property assignment missing its
+/// `:`, and tsc reports `':' expected.` at the `}`. Before the fix tsz treated
+/// `await` as an identifier and silently produced a shorthand, dropping the
+/// diagnostic.
+#[test]
+fn contextually_reserved_keyword_member_reports_missing_colon() {
+    let source = "class C {\n    static {\n        ({ await });\n    }\n}\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    // The `:' expected.` lands at the `}` that closes the object literal.
+    let close_brace_pos = source.find(" });").expect("` });` in source") as u32 + 1;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == close_brace_pos
+                && d.message == "':' expected."),
+        "expected `':' expected.` at the `}}` after `await` in a static block, got {diagnostics:?}"
+    );
+
+    let members = first_object_literal_members(&parser);
+    assert_eq!(members.len(), 1, "expected one member, got {members:?}");
+    let arena = parser.get_arena();
+    let member = arena.get(members[0]).expect("member node");
+    assert_eq!(
+        member.kind,
+        syntax_kind_ext::PROPERTY_ASSIGNMENT,
+        "`await` in a static block must be a property assignment, not a shorthand"
+    );
+}
+
+/// Negative case proving the contextual-reserved rule is context-sensitive:
+/// outside an async/generator/static-block context, `await` and `yield` are
+/// ordinary identifiers, so `({ await })` is a valid shorthand member with no
+/// `':' expected.` diagnostic.
+#[test]
+fn await_outside_reserved_context_stays_shorthand() {
+    let source = "function f() { ({ await }); }\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "':' expected."),
+        "`await` outside a reserved context is a shorthand, not a missing-colon member, got {diagnostics:?}"
+    );
+    let members = first_object_literal_members(&parser);
+    assert_eq!(members.len(), 1, "expected one member, got {members:?}");
+    let arena = parser.get_arena();
+    let member = arena.get(members[0]).expect("member node");
+    assert_eq!(
+        member.kind,
+        syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
+        "`await` outside a reserved context must stay a shorthand member"
+    );
+}
+
+/// A value-less object property with an explicit colon (`{ prop: }`) is a
+/// property assignment with a distinct missing-value node (so the emitter keeps
+/// the colon, matching tsc's `prop:`), not a shorthand that drops it.
+#[test]
+fn object_property_with_explicit_colon_and_missing_value_keeps_distinct_initializer() {
+    let source = "var b = {\n    prop:\n}\n";
+    let (parser, _root) = parse_source(source);
+
+    let members = first_object_literal_members(&parser);
+    assert_eq!(members.len(), 1, "expected one member, got {members:?}");
+    let arena = parser.get_arena();
+    let member = arena.get(members[0]).expect("member node");
+    assert_eq!(member.kind, syntax_kind_ext::PROPERTY_ASSIGNMENT);
+    let prop = arena
+        .get_property_assignment(member)
+        .expect("property assignment data");
+    assert_ne!(
+        prop.name, prop.initializer,
+        "missing value must be a distinct node so the emitter renders `prop:`"
     );
 }

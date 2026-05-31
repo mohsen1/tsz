@@ -1602,118 +1602,6 @@ impl ParserState {
         }
     }
 
-    /// Parse object literal
-    pub(crate) fn parse_object_literal(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-
-        let mut properties = Vec::new();
-        while !self.is_token(SyntaxKind::CloseBraceToken) {
-            let prop = self.parse_property_assignment();
-            if prop.is_some() {
-                properties.push(prop);
-            }
-            if self.abort_object_literal_recovery_once {
-                self.abort_object_literal_recovery_once = false;
-                break;
-            }
-
-            // Try to parse comma separator
-            if !self.parse_optional(SyntaxKind::CommaToken) {
-                if self.suppress_object_literal_comma_once && self.is_property_start() {
-                    self.suppress_object_literal_comma_once = false;
-                    continue;
-                }
-                self.suppress_object_literal_comma_once = false;
-
-                if self.is_token(SyntaxKind::SemicolonToken) {
-                    // Semicolons in object literals: look ahead to decide whether to
-                    // treat as a mistyped comma (continue) or abort the list (break).
-                    // tsc's parseDelimitedList aborts when the token after `;` is in
-                    // some other parsing context (e.g., EOF, statement keyword without
-                    // subsequent property-like content). We look ahead past `;` to
-                    // decide: if the next token looks like it could continue the object
-                    // literal (property start, or `}` to close it), treat `;` as a
-                    // mistyped comma. Otherwise, abort the list so the outer parser
-                    // can handle the rest as statements.
-                    let snapshot = self.scanner.save_state();
-                    let saved_token = self.current_token;
-                    self.next_token(); // look past `;`
-                    let should_continue =
-                        self.is_property_start() || self.is_token(SyntaxKind::CloseBraceToken);
-                    let follows_eof = self.is_token(SyntaxKind::EndOfFileToken);
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = saved_token;
-
-                    if should_continue {
-                        // Treat `;` as mistyped `,` — emit error and continue
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "',' expected.",
-                            diagnostic_codes::EXPECTED,
-                        );
-                        self.next_token(); // skip `;`
-                    } else if follows_eof {
-                        // tsc emits ',' expected at the `;` position
-                        // (its delimited-list parser reports the expected comma
-                        // before it knows whether the list is also unclosed).
-                        let diag_count_before = self.parse_diagnostics.len();
-                        self.error_comma_expected();
-                        let comma_error_emitted = self.parse_diagnostics.len() > diag_count_before;
-                        self.next_token(); // skip `;`, now at EOF
-                        if comma_error_emitted {
-                            // The comma error was actually emitted at `;`.
-                            // In tsc, both the comma error and the subsequent
-                            // close-brace error land at the same position
-                            // (because tsc's abortParsingList doesn't consume
-                            // the token). Set last_error_pos to EOF so that
-                            // parse_expected(CloseBrace) sees the same position
-                            // and deduplicates.
-                            self.last_error_pos = self.token_pos();
-                        }
-                        break;
-                    } else {
-                        // `;` followed by non-property → abort the list
-                        // so the outer parser can handle the rest as statements.
-                        break;
-                    }
-                } else if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
-                    // We have a property-like token but no comma - likely missing comma
-                    // Emit the comma error and continue parsing for better recovery
-                    // This handles cases like: {a: 1 b: 2} instead of {a: 1, b: 2}
-                    self.error_comma_expected();
-                } else if self.is_token(SyntaxKind::EndOfFileToken)
-                    || self.is_token(SyntaxKind::CloseBraceToken)
-                {
-                    break;
-                } else {
-                    // Bypass `error_comma_expected`'s 3-byte distance gate so the
-                    // recovery emits even when the separator sits 3 cols after a
-                    // prior emission (e.g. `{` after `:' expected.` at 3 cols out
-                    // in `{ class C4 {} }`). tsc's parseErrorAtPosition only
-                    // dedups exact same-position duplicates; `parse_error_at`'s
-                    // dedup mirrors that.
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
-                    self.next_token();
-                }
-            }
-        }
-
-        let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        self.arena.add_literal_expr(
-            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION,
-            start_pos,
-            end_pos,
-            LiteralExprData {
-                elements: self.make_node_list(properties),
-                multi_line: false,
-            },
-        )
-    }
-
     /// Parse property assignment, method, getter, setter, or spread element
     pub(crate) fn parse_property_assignment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1882,6 +1770,19 @@ impl ParserState {
             || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_token(SyntaxKind::OpenBracketToken);
 
+        // tsc captures whether the property-name token was a *real* identifier
+        // (`isIdentifier()` — Identifier or a contextual keyword, but NOT a
+        // reserved word, string/numeric/bigint literal, or computed `[`)
+        // before consuming it. This drives the shorthand-vs-assignment decision
+        // below exactly as tsc does (`parser.ts`: `tokenIsIdentifier`).
+        //
+        // tsc's `isIdentifier()` also returns false for a contextually reserved
+        // keyword: `yield` in a generator and `await` in an async/static-block
+        // context. Such a token can never start a shorthand member, so it must
+        // fall into the property-assignment branch and report `':' expected`
+        // (e.g. `({ await })` inside a `static { }` block).
+        let token_is_identifier = self.is_identifier() && !self.is_contextually_reserved_label();
+
         let name = self.parse_property_name();
 
         // TS18016: Check for private identifiers in object literals
@@ -1951,7 +1852,66 @@ impl ParserState {
             return self.parse_object_method_after_name(start_pos, name, false, false);
         }
 
-        if self.parse_optional(SyntaxKind::ColonToken) {
+        // tsc's shorthand-vs-property decision (`parser.ts`):
+        //   const isShorthandPropertyAssignment =
+        //       tokenIsIdentifier && (token() !== SyntaxKind.ColonToken);
+        // A member is shorthand *only* when its name was a real identifier and
+        // the next token is not `:`. Reserved words, string/numeric/bigint
+        // literals, computed `[`, and any stray punctuation taken as a name are
+        // never shorthand — they always become a property assignment whose `:`
+        // is parsed with `parseExpected` (reporting `':' expected` if missing,
+        // but never consuming the following value token) and whose initializer
+        // is the following assignment expression. This is what makes tsc emit
+        // `class: C4` for `{ class C4 {} }` instead of a value-less shorthand.
+        let is_shorthand = token_is_identifier && !self.is_token(SyntaxKind::ColonToken);
+        if !is_shorthand {
+            // When the colon is missing but the name was a literal name that
+            // already received a `':' expected` diagnostic at this position and
+            // the next token is `;`, defer to the object-literal comma-recovery
+            // path (matches tsc's malformed-arrow object recovery, e.g.
+            // `foo((1)=>{return 0;})`), which reports `',' expected` at the `;`
+            // rather than a second missing-colon diagnostic here.
+            let defer_to_comma_recovery = literal_property_name
+                && property_name_had_prior_missing_colon
+                && self.is_token(SyntaxKind::SemicolonToken);
+            if defer_to_comma_recovery {
+                // Preserve the prior shorthand recovery: emit no `':' expected`
+                // here and let the outer object-literal loop recover the `;` as a
+                // missing comma, producing a shorthand member (matches tsc's
+                // malformed-arrow object recovery, e.g. `foo((1)=>{return 0;})`).
+                let end_pos = self.token_end();
+                return self.arena.add_shorthand_property(
+                    syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::ShorthandPropertyData {
+                        modifiers: None,
+                        name,
+                        equals_token: false,
+                        equals_token_pos: 0,
+                        exclamation_token_pos: exclamation_pos,
+                        question_token_pos: question_pos,
+                        object_assignment_initializer: NodeIndex::NONE,
+                    },
+                );
+            }
+            // Replicate tsc's `parseExpected(ColonToken)`: consume the colon when
+            // present, otherwise report `':' expected.` at the current token
+            // *without consuming it*. tsc emits this through
+            // `parseErrorAtCurrentToken` → `parseErrorAtPosition`, which dedups
+            // only against an error at the exact same position. tsz's
+            // `parse_expected` instead routes the missing-token error through the
+            // distance-based `should_report_error()` gate, which wrongly
+            // *suppresses* the colon error when a `',' expected.` recovery error
+            // was emitted within three columns just before — e.g. `{ a[1], }`,
+            // where `a` recovers as shorthand (`',' expected.` at `[`) and the
+            // short `[1]` puts the trailing `,` within the suppression window.
+            // Use the exact-position-dedup path so this matches tsc for short and
+            // long computed/literal names alike (`a[1],` vs `a["ss"],`).
+            if !self.parse_optional(SyntaxKind::ColonToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+            }
             let expr = self.parse_assignment_expression();
             let mut end_pos = self.token_end();
             let initializer = if expr.is_none() {
@@ -1960,7 +1920,13 @@ impl ParserState {
                 if self.scanner.has_preceding_line_break() && self.is_property_start() {
                     self.suppress_object_literal_comma_once = true;
                 }
-                name // Use property name as fallback for error recovery
+                // Use a *distinct* missing-expression node (not the name node) so
+                // this stays a property assignment with an empty value. The
+                // emitter detects shorthand via `name == initializer`; reusing
+                // `name` here would render `1`/`""` instead of tsc's `1:`/`"":`
+                // for a value-less property such as `{ x()?: 1 }` → `1:` or the
+                // recovered `{ [s: symbol]: "" }` tail → `"": `.
+                self.create_missing_property_value(self.token_pos())
             } else {
                 // Recover a stray-annotation computed-indexer tail
                 // (`{ [s: symbol]: "" }`): emits the diagnostics, consumes the
@@ -1986,16 +1952,10 @@ impl ParserState {
                 },
             )
         } else {
-            // Shorthand property - but certain property names require `:` syntax
-            if requires_colon {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let defer_to_comma_recovery = literal_property_name
-                    && property_name_had_prior_missing_colon
-                    && self.is_token(SyntaxKind::SemicolonToken);
-                if !defer_to_comma_recovery {
-                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
-                }
-            }
+            // Shorthand property (`{ name }` / `{ name = expr }`). The
+            // `requires_colon` cases are handled in the property-assignment
+            // branch above, so no `':' expected` is emitted here.
+            let _ = requires_colon;
 
             // CoverInitializedName: `{ x = expr }` in destructuring patterns
             // ECMAScript: CoverInitializedName[Yield] : IdentifierReference[?Yield] Initializer[In, ?Yield]
