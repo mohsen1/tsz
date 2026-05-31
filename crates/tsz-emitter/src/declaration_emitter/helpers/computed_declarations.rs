@@ -173,11 +173,60 @@ impl<'a> DeclarationEmitter<'a> {
             return printed;
         }
 
-        printed.replacen(
-            &format!("{property_name}: any;"),
-            &format!("{property_name}: {};", crate::ELIDED_ANY),
-            1,
-        )
+        Self::elide_recursive_static_class_expression_member_text(&printed, &property_name)
+    }
+
+    fn elide_recursive_static_class_expression_member_text(
+        printed: &str,
+        property_name: &str,
+    ) -> String {
+        let mut output = String::with_capacity(printed.len() + crate::ELIDED_ANY.len());
+        let mut elided = false;
+
+        for segment in printed.split_inclusive('\n') {
+            if elided {
+                output.push_str(segment);
+                continue;
+            }
+
+            let (line, newline) = segment
+                .strip_suffix('\n')
+                .map_or((segment, ""), |line| (line, "\n"));
+            if let Some(line) =
+                Self::elide_recursive_static_class_expression_member_line(line, property_name)
+            {
+                output.push_str(&line);
+                output.push_str(newline);
+                elided = true;
+            } else {
+                output.push_str(segment);
+            }
+        }
+
+        if elided { output } else { printed.to_string() }
+    }
+
+    fn elide_recursive_static_class_expression_member_line(
+        line: &str,
+        property_name: &str,
+    ) -> Option<String> {
+        let trimmed_start = line.trim_start();
+        let leading_len = line.len() - trimmed_start.len();
+        let trimmed = trimmed_start.trim_end();
+        if trimmed != format!("{property_name}: any;") {
+            return None;
+        }
+
+        let trailing_len = trimmed_start.len() - trimmed.len();
+        let trailing_start = line.len() - trailing_len;
+        let mut output = String::with_capacity(line.len() + crate::ELIDED_ANY.len());
+        output.push_str(&line[..leading_len]);
+        output.push_str(property_name);
+        output.push_str(": ");
+        output.push_str(crate::ELIDED_ANY);
+        output.push(';');
+        output.push_str(&line[trailing_start..]);
+        Some(output)
     }
 
     pub(in crate::declaration_emitter) fn property_initializer_is_recursive_class_expression(
@@ -225,5 +274,35 @@ impl<'a> DeclarationEmitter<'a> {
                 .and_then(|expr_idx| self.arena.get_identifier_at(expr_idx))
                 .is_some_and(|ident| ident.escaped_text == enclosing_class_name)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn recursive_static_class_expression_elision_rewrites_exact_member_line() {
+        let printed = "{\n    new(): Root;\n    Root: any;\n}\n";
+
+        let actual = DeclarationEmitter::elide_recursive_static_class_expression_member_text(
+            printed, "Root",
+        );
+
+        assert_eq!(
+            "{\n    new(): Root;\n    Root: /*elided*/ any;\n}\n",
+            actual
+        );
+    }
+
+    #[test]
+    fn recursive_static_class_expression_elision_preserves_unmatched_text() {
+        let printed = "{ Root: any; }\n    OtherRoot: any;\n";
+
+        let actual = DeclarationEmitter::elide_recursive_static_class_expression_member_text(
+            printed, "Root",
+        );
+
+        assert_eq!(printed, actual);
     }
 }
