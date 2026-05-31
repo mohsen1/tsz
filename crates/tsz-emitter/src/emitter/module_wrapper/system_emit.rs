@@ -336,14 +336,17 @@ impl<'a> Printer<'a> {
         }
         self.emit_system_import_binding_exports(source, system_plan);
 
+        let mut previous_stmt_end = source_node.pos;
         for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let leading_comment_start = previous_stmt_end;
+            previous_stmt_end = stmt_node.end;
             // Skip function declarations that were already hoisted to the outer scope
             if hoisted_func_stmts.contains(&stmt_idx) {
                 continue;
             }
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
             // Skip "use strict" prologue directives — the System.register callback
             // already emits "use strict" at the module scope (line 315 above), so
             // re-emitting the source's own directive inside execute() would duplicate it.
@@ -408,7 +411,7 @@ impl<'a> Printer<'a> {
             }
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                self.emit_system_variable_initializers(stmt_node);
+                self.emit_system_variable_initializers(stmt_node, leading_comment_start);
             } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
                 // Non-exported class declarations: var is hoisted, emit as assignment
                 self.emit_system_class_as_expression(stmt_node, stmt_idx);
@@ -668,7 +671,7 @@ impl<'a> Printer<'a> {
         }
 
         if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-            self.emit_system_variable_initializers(clause_node);
+            self.emit_system_variable_initializers(clause_node, node.pos);
             return true;
         }
 
@@ -1050,10 +1053,22 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_system_variable_initializers(
         &mut self,
         node: &tsz_parser::parser::node::Node,
+        leading_comment_start: u32,
     ) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
+        let actual_start = self.skip_trivia_forward(node.pos, node.end);
+        let before_comments_len = self.writer.len();
+        self.emit_comments_before_pos(actual_start);
+        if self.writer.len() == before_comments_len {
+            self.emit_comments_in_range_untracked(
+                leading_comment_start,
+                actual_start,
+                false,
+                false,
+            );
+        }
         let is_exported = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);

@@ -1,5 +1,6 @@
 use super::super::{JsxEmit, Printer};
 use super::{SystemDependencyAction, SystemDependencyPlan};
+use crate::emitter::core::SystemForAwaitTempPlan;
 use std::collections::HashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -14,6 +15,7 @@ impl<'a> Printer<'a> {
         self.system_empty_binding_temps.clear();
         self.system_object_rest_export_temps.clear();
         self.system_binding_pattern_temps.clear();
+        self.system_for_await_temp_plans.clear();
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
         let mut seen_deferred_named_export_names = HashSet::new();
@@ -55,6 +57,8 @@ impl<'a> Printer<'a> {
         {
             names.push("_jsxFileName".to_string());
         }
+
+        self.collect_system_for_await_hoisted_temps(source, &mut names, &mut seen);
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -563,6 +567,201 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn collect_system_for_await_hoisted_temps(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        let mut for_of_counter = self.ctx.destructuring_state.for_of_counter;
+        for &stmt_idx in &source.statements.nodes {
+            self.collect_system_for_await_hoisted_temps_from_node(
+                stmt_idx,
+                names,
+                seen,
+                &mut for_of_counter,
+            );
+        }
+    }
+
+    fn collect_system_for_await_hoisted_temps_from_node(
+        &mut self,
+        idx: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+        for_of_counter: &mut u32,
+    ) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    if for_in_of.await_modifier {
+                        let loop_done_name = self.make_unique_name();
+                        let error_container_name = format!("e_{}", *for_of_counter + 1);
+                        let return_temp_name = self.make_unique_name();
+                        let value_temp_name = self.make_unique_name();
+                        *for_of_counter += 1;
+
+                        for name in [
+                            &loop_done_name,
+                            &error_container_name,
+                            &return_temp_name,
+                            &value_temp_name,
+                        ] {
+                            if seen.insert(name.clone()) {
+                                names.push(name.clone());
+                            }
+                        }
+                        self.system_for_await_temp_plans.insert(
+                            idx,
+                            SystemForAwaitTempPlan {
+                                loop_done_name,
+                                return_temp_name,
+                                value_temp_name,
+                            },
+                        );
+                    }
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        for_in_of.statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_system_for_await_hoisted_temps_from_node(
+                            stmt,
+                            names,
+                            seen,
+                            for_of_counter,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        if_stmt.then_statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        if_stmt.else_statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        try_stmt.try_block,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        try_stmt.catch_clause,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        try_stmt.finally_block,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        catch_clause.block,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        loop_data.statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                } else if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        for_in_of.statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(sw) = self.arena.get_switch(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        sw.case_block,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    for &stmt in &clause.statements.nodes {
+                        self.collect_system_for_await_hoisted_temps_from_node(
+                            stmt,
+                            names,
+                            seen,
+                            for_of_counter,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        labeled.statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(node) {
+                    self.collect_system_for_await_hoisted_temps_from_node(
+                        with_stmt.then_statement,
+                        names,
+                        seen,
+                        for_of_counter,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     fn system_hoist_legacy_decorated_class_alias(

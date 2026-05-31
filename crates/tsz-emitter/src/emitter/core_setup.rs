@@ -351,6 +351,7 @@ impl<'a> Printer<'a> {
             system_object_rest_export_temps: FxHashMap::default(),
             system_binding_pattern_temps: FxHashMap::default(),
             preplanned_legacy_decorated_class_aliases: FxHashMap::default(),
+            system_for_await_temp_plans: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),

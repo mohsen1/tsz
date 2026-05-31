@@ -106,7 +106,7 @@ fn system_for_await_of_downlevel_makes_execute_async_es2015() {
     // `for await...of` downleveled to ES2015 emits `await iterator.next()` /
     // `await iterator.return()` inside execute, which requires async.
     let output = emit_system_lowered(
-        "export {};\nconst arr = [Promise.resolve()];\nfor await (const item of arr) {\n    item;\n}\n",
+        "export {};\n// for-await-of\nconst arr = [Promise.resolve()];\nfor await (const item of arr) {\n    item;\n}\n",
         ScriptTarget::ES2015,
     );
     assert!(
@@ -116,6 +116,18 @@ fn system_for_await_of_downlevel_makes_execute_async_es2015() {
     assert!(
         output.contains("await "),
         "downleveled for-await-of should emit await operators.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a, e_1, _b, _c, arr;"),
+        "System wrapper must hoist for-await temps before execute.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("// for-await-of\n            arr = [Promise.resolve()];"),
+        "System variable initializer emit must preserve leading comments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (var _a = true, arr_1 = __asyncValues(arr), arr_1_1;"),
+        "System top-level for-await should reuse the planned done temp as the loop guard.\nOutput:\n{output}"
     );
 }
 
@@ -130,6 +142,10 @@ fn system_for_await_of_renamed_binder_makes_execute_async_es2015() {
     assert!(
         output.contains("execute: async function () {"),
         "renamed for-await-of binder must still mark execute async.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a, e_1, _b, _c, xs;"),
+        "renamed for-await-of source must still plan wrapper hoists structurally.\nOutput:\n{output}"
     );
 }
 

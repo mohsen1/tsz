@@ -106,7 +106,7 @@ impl<'a> Printer<'a> {
             }
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                self.emit_system_variable_initializers(stmt_node);
+                self.emit_system_variable_initializers(stmt_node, stmt_node.pos);
             } else {
                 self.emit(stmt_idx);
             }
