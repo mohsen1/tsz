@@ -147,6 +147,21 @@ fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
         "object literal contextual-property diagnostics must not pre-gate the \
          canonical relation diagnostic helper with raw is_assignable_to"
     );
+    let jsdoc_declared_property = source
+        .split("let value_type = if let Some(declared_type) = jsdoc_declared_type")
+        .nth(1)
+        .and_then(|tail| tail.split("let value_has_non_widening_source").next())
+        .expect("failed to locate object-literal JSDoc declared-property block");
+    assert!(
+        jsdoc_declared_property.contains("assign_relation_outcome(value_type, declared_type)"),
+        "object literal JSDoc declared-property diagnostics must pre-gate \
+         through RelationOutcome"
+    );
+    assert!(
+        !jsdoc_declared_property.contains("!self.is_assignable_to(value_type, declared_type)"),
+        "object literal JSDoc declared-property diagnostics must not pre-gate \
+         the canonical relation diagnostic helper with raw is_assignable_to"
+    );
 }
 
 /// Mapped contextual object-literal property lookup should keep checker-owned
