@@ -183,8 +183,10 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             },
         ]
 
+        summary = self.audit.format_category_budget_metrics(file_summaries)
+
         self.assertEqual(
-            self.audit.format_category_budget_metrics(file_summaries),
+            summary,
             "category_budgets=UNALLOWLISTED=unallowlisted:4,"
             "dts-output-surgery=2/3:available,"
             "ir-output-surgery=1/1:exhausted",
