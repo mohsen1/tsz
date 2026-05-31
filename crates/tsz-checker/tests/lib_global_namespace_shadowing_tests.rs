@@ -283,3 +283,42 @@ type X = Readonly<Partial<{ a: number }>>;
         "TS2749 must not fire for nested lib types Readonly<Partial<T>> with local unique-symbol shadow; got: {codes:?}"
     );
 }
+
+#[test]
+fn exported_unique_symbol_shadow_does_not_hide_lib_type_alias() {
+    // `deeplyNestedMappedTypes.ts` exports its unique-symbol values. Exporting
+    // the VALUE-only declaration must still leave the global TYPE alias
+    // reachable in type position.
+    let codes = diagnostic_codes(
+        r#"
+export declare const Readonly: unique symbol;
+export declare const Optional: unique symbol;
+export interface TSchema {
+    [Readonly]?: string;
+    [Optional]?: string;
+    static: unknown;
+}
+export type TReadonly<T extends TSchema> = T & { [Readonly]: "Readonly" };
+export type TOptional<T extends TSchema> = T & { [Optional]: "Optional" };
+export type TProperties = Record<string | number, TSchema>;
+export type ReadonlyPropertyKeys<T extends TProperties> = {
+    [K in keyof T]: T[K] extends TReadonly<TSchema>
+        ? (T[K] extends TOptional<T[K]> ? never : K)
+        : never
+}[keyof T];
+export type OptionalPropertyKeys<T extends TProperties> = {
+    [K in keyof T]: T[K] extends TOptional<TSchema>
+        ? (T[K] extends TReadonly<T[K]> ? never : K)
+        : never
+}[keyof T];
+export type R<T extends TProperties, V extends Record<keyof any, unknown>> =
+    Readonly<Partial<Pick<V, ReadonlyPropertyKeys<T>>>> &
+    Partial<Pick<V, OptionalPropertyKeys<T>>>;
+"#,
+    );
+    assert!(
+        !codes.contains(&2749),
+        "TS2749 must not fire when exported unique-symbol consts shadow only VALUE; \
+         lib type aliases must remain visible in type position; got: {codes:?}"
+    );
+}

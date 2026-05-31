@@ -776,3 +776,53 @@ if (container.hasValue()) {
         "`this is ...` predicates must narrow receiver properties, got: {output}"
     );
 }
+
+#[test]
+fn exported_value_only_lib_type_shadow_in_mapped_reducer_has_no_ts2749() {
+    let temp = TempDir::new("exported_value_only_lib_type_shadow").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+export declare const Readonly: unique symbol;
+export declare const Optional: unique symbol;
+export interface TSchema {
+  [Readonly]?: string
+  [Optional]?: string
+  params: unknown[]
+  static: unknown
+}
+export type TReadonly<T extends TSchema> = T & { [Readonly]: 'Readonly' }
+export type TOptional<T extends TSchema> = T & { [Optional]: 'Optional' }
+export type TPropertyKey = string | number
+export type TProperties = Record<TPropertyKey, TSchema>
+export type ReadonlyPropertyKeys<T extends TProperties> = {
+  [K in keyof T]: T[K] extends TReadonly<TSchema>
+    ? (T[K] extends TOptional<T[K]> ? never : K)
+    : never
+}[keyof T]
+export type OptionalPropertyKeys<T extends TProperties> = {
+  [K in keyof T]: T[K] extends TOptional<TSchema>
+    ? (T[K] extends TReadonly<T[K]> ? never : K)
+    : never
+}[keyof T]
+export type PropertiesReducer<T extends TProperties, R extends Record<keyof any, unknown>> =
+  Readonly<Partial<Pick<R, ReadonlyPropertyKeys<T>>>> &
+  Partial<Pick<R, OptionalPropertyKeys<T>>>
+export type PropertiesReduce<T extends TProperties> = PropertiesReducer<T, {
+  [K in keyof T]: T[K]['static']
+}>
+"#,
+    );
+
+    let (tsz_code, tsz_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--target", "es2015", "test.ts"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(
+        tsz_code, 0,
+        "tsz must not emit TS2749 for VALUE-only exported Readonly shadowing lib type alias\n\
+         tsz output:\n{tsz_output}"
+    );
+}
