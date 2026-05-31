@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_five() {
+    fn schema_version_is_six() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 5);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 6);
     }
 
     #[test]
@@ -40,6 +40,7 @@ mod json_tests {
             "compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcomes",
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
+            "direct_interface_complex_reasons",
             "direct_actual_lib_alias_body_outcomes",
             "direct_source_file_type_alias_lowering_outcomes",
             "direct_source_file_type_alias_body_rejection_kinds",
@@ -55,7 +56,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 5);
+        assert_eq!(json["schema_version"], 6);
     }
 
     #[test]
@@ -1078,6 +1079,14 @@ mod json_tests {
                 "direct_interface_lowering_outcomes[{i}].count should be a number",
             );
         }
+        let rows = json["direct_interface_complex_reasons"]
+            .as_array()
+            .expect("direct_interface_complex_reasons is array");
+        assert_eq!(rows.len(), DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT);
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(row["name"], DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES[i]);
+            assert!(row["count"].is_u64());
+        }
     }
 
     #[test]
@@ -1570,6 +1579,7 @@ mod json_tests {
         let aso_idx = CrossArenaAliasShortcutOutcome::Success.as_index();
         let sfsa_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
+        let dicr_idx = DirectCrossFileInterfaceComplexReason::Heritage.as_index();
         let dalabo_idx = DirectActualLibAliasBodyOutcome::Success.as_index();
         let daliio_idx = DirectActualLibIntlInterfaceOutcome::SuccessByName.as_index();
         let ctos_source_idx = ComputeTypeOfSymbolSourceOutcome::GlobalSymbol.as_index();
@@ -1602,6 +1612,8 @@ mod json_tests {
             c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx].load(Ordering::Relaxed);
         let before_dilo =
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
+        let before_dicr =
+            c.direct_cross_file_interface_complex_reason[dicr_idx].load(Ordering::Relaxed);
         let before_dalabo =
             c.direct_actual_lib_alias_body_outcome[dalabo_idx].load(Ordering::Relaxed);
         let before_daliio =
@@ -1654,6 +1666,7 @@ mod json_tests {
         c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
+        c.direct_cross_file_interface_complex_reason[dicr_idx].fetch_add(1, Ordering::Relaxed);
         c.direct_actual_lib_alias_body_outcome[dalabo_idx].fetch_add(1, Ordering::Relaxed);
         c.direct_actual_lib_intl_interface_outcome[daliio_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_source_outcome[ctos_source_idx].fetch_add(1, Ordering::Relaxed);
@@ -1743,6 +1756,15 @@ mod json_tests {
         assert!(
             dilo_row["count"].as_u64().unwrap_or(0) > before_dilo,
             "direct_interface_lowering_outcomes[success] did not reflect the bump",
+        );
+        let dicr = json["direct_interface_complex_reasons"]
+            .as_array()
+            .expect("direct_interface_complex_reasons is array");
+        let dicr_row = &dicr[dicr_idx];
+        assert_eq!(dicr_row["name"], "heritage");
+        assert!(
+            dicr_row["count"].as_u64().unwrap_or(0) > before_dicr,
+            "direct_interface_complex_reasons[heritage] did not reflect the bump",
         );
 
         let dalabo = json["direct_actual_lib_alias_body_outcomes"]

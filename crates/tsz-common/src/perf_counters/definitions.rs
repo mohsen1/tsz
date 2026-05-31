@@ -252,6 +252,21 @@ perf_counter_enum! {
     pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES;
 }
 
+perf_counter_enum! {
+    /// Structural reason recorded alongside
+    /// `DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration`.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectCrossFileInterfaceComplexReason {
+        Heritage = 0 => "heritage",
+        ComputedName = 1 => "computed_name",
+        HeritageAndComputedName = 2 => "heritage_and_computed_name",
+        SourceFileShape = 3 => "source_file_shape",
+    }
+
+    pub const DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT;
+    pub const DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES;
+}
+
 /// How `compute_type_of_symbol` found the symbol payload for a call.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(usize)]

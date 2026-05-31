@@ -30,6 +30,9 @@ pub struct PerfCounters {
     /// Outcome buckets for direct cross-file interface lowering attempts.
     pub direct_cross_file_interface_lowering_outcome:
         [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+    /// Reason buckets for complex direct cross-file interface declarations.
+    pub direct_cross_file_interface_complex_reason:
+        [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT],
     /// Outcome buckets for direct actual-lib alias-body attempts.
     pub direct_actual_lib_alias_body_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
@@ -188,6 +191,8 @@ impl PerfCounters {
                 CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
             direct_cross_file_interface_lowering_outcome: [const { AtomicU64::new(0) };
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+            direct_cross_file_interface_complex_reason: [const { AtomicU64::new(0) };
+                DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT],
             direct_actual_lib_alias_body_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
             direct_source_file_type_alias_lowering_outcome: [const { AtomicU64::new(0) };
@@ -1327,6 +1332,18 @@ pub fn record_direct_cross_file_interface_lowering_outcome(
     }
     let c = counters();
     c.direct_cross_file_interface_lowering_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_direct_cross_file_interface_complex_reason(
+    reason: DirectCrossFileInterfaceComplexReason,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_cross_file_interface_complex_reason[reason.as_index()]
         .fetch_add(1, Ordering::Relaxed);
 }
 

@@ -128,6 +128,7 @@ impl PerfCounters {
             + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
+            + &Self::dump_direct_cross_file_interface_complex_reasons()
             + &Self::dump_direct_actual_lib_alias_body_outcomes()
             + &Self::dump_direct_source_file_type_alias_lowering_outcomes()
             + &Self::dump_direct_source_file_type_alias_body_rejection_kinds()
@@ -491,6 +492,31 @@ impl PerfCounters {
             .enumerate()
         {
             let count = load(&c.direct_cross_file_interface_lowering_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_direct_cross_file_interface_complex_reasons() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_cross_file_interface_complex_reason
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect cross-file interface complex reasons:\n");
+        for (idx, name) in DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_cross_file_interface_complex_reason[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<28} {count:>12}\n"));
             }
