@@ -496,7 +496,7 @@ impl<'a> DeclarationEmitter<'a> {
         spans
     }
 
-    const fn is_ident_char_in_text(b: u8) -> bool {
+    pub(super) const fn is_ident_char_in_text(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 

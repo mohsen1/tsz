@@ -461,6 +461,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type_node_text_impl(type_idx, false)
     }
 
+    pub(super) fn word_has_ellipsis_prefix(bytes: &[u8], word_start: usize) -> bool {
+        word_start >= 3
+            && bytes.get(word_start - 3..word_start) == Some(b"...".as_slice())
+            && (word_start == 3 || !Self::is_ident_char_in_text(bytes[word_start - 4]))
+    }
+
     fn emit_type_node_text_impl(
         &self,
         type_idx: NodeIndex,
