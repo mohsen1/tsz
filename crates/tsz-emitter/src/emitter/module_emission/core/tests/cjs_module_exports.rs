@@ -284,6 +284,46 @@ import("./foo.ts");
     );
 }
 
+#[test]
+fn commonjs_dynamic_import_template_expression_keeps_nested_coercion() {
+    let source = r#"declare const directory: string;
+declare const moduleFile: number;
+var p0 = import(`${directory}\\${moduleFile}`);
+"#;
+
+    let output = emit_commonjs_es_module_interop(source);
+
+    assert!(
+        output.contains(
+            r#"var p0 = Promise.resolve(`${`${directory}\\${moduleFile}`}`).then(s => __importStar(require(s)));"#,
+        ),
+        "CJS dynamic import should preserve a template-expression specifier as a nested template inside the tsc coercion wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_dynamic_import_expression_uses_template_coercion() {
+    let source = r#"declare function getSpecifier(): string;
+const p1 = import(getSpecifier());
+const p2 = import(true ? getSpecifier() : "fallback");
+"#;
+
+    let output = emit_commonjs_es_module_interop(source);
+
+    assert!(
+        output.contains(
+            "const p1 = Promise.resolve(`${getSpecifier()}`).then(s => __importStar(require(s)));",
+        ),
+        "CJS dynamic import should coerce call-expression specifiers through a template wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            r#"const p2 = Promise.resolve(`${true ? getSpecifier() : "fallback"}`).then(s => __importStar(require(s)));"#,
+        ),
+        "CJS dynamic import should coerce conditional specifiers through a template wrapper.\nOutput:\n{output}"
+    );
+}
+
 /// Without moduleDetection=force, a file without import/export syntax
 /// should NOT get the CJS __esModule preamble.
 #[test]
