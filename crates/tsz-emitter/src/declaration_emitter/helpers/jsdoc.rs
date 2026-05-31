@@ -1459,8 +1459,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
-        let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
-        let trimmed = normalized_legacy_generics.as_str();
+        let trimmed = type_expr.trim();
         if trimmed.is_empty() {
             return "any".to_string();
         }
@@ -1519,7 +1518,10 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let base = type_expr[..open].trim();
+        let base_end = type_expr[..open]
+            .strip_suffix('.')
+            .map_or(open, |base| base.len());
+        let base = type_expr[..base_end].trim();
         if base.is_empty()
             || !base
                 .chars()
@@ -1530,7 +1532,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let args = type_expr[open + 1..type_expr.len() - 1].trim();
         if args.is_empty() {
-            return None;
+            return Some(match base {
+                "Array" => "any[]".to_string(),
+                "Promise" => "Promise<any>".to_string(),
+                _ => format!("{base}<>"),
+            });
         }
 
         let normalized_args = Self::split_jsdoc_params(args)
@@ -1723,12 +1729,9 @@ impl<'a> DeclarationEmitter<'a> {
             "Null" => "null".to_string(),
             "function" => "Function".to_string(),
             "event" => "Event".to_string(),
-            // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
-            // the legacy `.<` → `<` so both `Array` and `Array.<>` reach this
-            // arm. tsc treats empty-args generic JSDoc references as
-            // implicit-any (`Array.<>` → `any[]`); without the `Array<>` arm
-            // the DTS surfaces a literal `Array<>` token that is not valid
-            // TypeScript.
+            // tsc treats empty-args generic JSDoc references as implicit-any
+            // (`Array.<>` → `any[]`); without the empty generic arms the DTS
+            // surfaces literal `Array<>` tokens that are not valid TypeScript.
             "array" | "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
             "promise" | "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
