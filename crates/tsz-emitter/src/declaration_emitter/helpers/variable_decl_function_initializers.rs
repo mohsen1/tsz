@@ -425,7 +425,8 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             let type_text = self
-                .source_slice_from_arena(self.arena, param.type_annotation)
+                .type_literal_annotation_text(param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
                 .or_else(|| self.preferred_annotation_name_text(param.type_annotation))
                 .or_else(|| self.emit_type_node_text(param.type_annotation))?;
             let trimmed = type_text.trim_end();

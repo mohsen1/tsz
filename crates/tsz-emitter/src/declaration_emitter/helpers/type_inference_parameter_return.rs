@@ -14,8 +14,39 @@ impl<'a> DeclarationEmitter<'a> {
         let type_annotation = self.function_parameter_type_annotation(func, returned_identifier)?;
         let type_text = self
             .single_line_mapped_type_annotation_text(type_annotation)
+            .or_else(|| self.returned_parameter_type_literal_text(type_annotation))
             .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
         (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn returned_parameter_type_literal_text(&self, type_annotation: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+
+        self.type_literal_annotation_text(type_annotation)
+    }
+
+    pub(in crate::declaration_emitter) fn type_literal_annotation_text(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+
+        self.emit_type_node_text(type_annotation)
+            .map(|type_text| Self::trim_trailing_type_literal_annotation_punctuation(&type_text))
+    }
+
+    fn trim_trailing_type_literal_annotation_punctuation(type_text: &str) -> String {
+        type_text
+            .trim()
+            .trim_end_matches(';')
+            .trim_end()
+            .to_string()
     }
 
     pub(in crate::declaration_emitter) fn function_body_spread_array_return_type_text(
