@@ -210,8 +210,8 @@ impl<'a> CheckerState<'a> {
                     .and_then(|param| param.constraint)
                     .is_some_and(|constraint| {
                         constraint == source_arg
-                            || (self.is_assignable_to(source_arg, constraint)
-                                && self.is_assignable_to(constraint, source_arg))
+                            || (self.assign_relation_outcome(source_arg, constraint).related
+                                && self.assign_relation_outcome(constraint, source_arg).related)
                             || query::type_param_info(self.ctx.types, constraint)
                                 .zip(query::type_param_info(self.ctx.types, source_arg))
                                 .is_some_and(|(constraint_param, source_param)| {

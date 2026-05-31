@@ -25,8 +25,15 @@ fn keyof_assignability_suppression_uses_relation_outcome_boundary() {
         "keyof interface augmentation coverage should route member probes through RelationOutcome"
     );
     assert!(
+        helpers.contains("assign_relation_outcome(source_arg, constraint)")
+            && helpers.contains("assign_relation_outcome(constraint, source_arg)"),
+        "application/keyof type-argument fallback should route mutual probes through RelationOutcome"
+    );
+    assert!(
         !checker.contains("ctx.types.is_assignable_to(source, resolved_keyof)")
-            && !helpers.contains("ctx.types.is_assignable_to(member, target)"),
+            && !helpers.contains("ctx.types.is_assignable_to(member, target)")
+            && !helpers.contains("is_assignable_to(source_arg, constraint)")
+            && !helpers.contains("is_assignable_to(constraint, source_arg)"),
         "keyof diagnostic suppression should not bypass CheckerState relation boundaries"
     );
 }
