@@ -104,6 +104,28 @@ fn relation_cache_config_does_not_expose_raw_flags_constructor() {
 }
 
 #[test]
+fn relation_cache_config_does_not_expose_raw_constructor() {
+    let source = include_str!("../src/types.rs");
+    let impl_start = source
+        .find("impl RelationCacheConfig")
+        .expect("types.rs must keep RelationCacheConfig impl");
+    let key_start = source[impl_start..]
+        .find("pub struct RelationCacheKey")
+        .map(|offset| impl_start + offset)
+        .expect("RelationCacheKey should follow RelationCacheConfig");
+    let config_impl = &source[impl_start..key_start];
+
+    assert!(
+        config_impl.contains("pub(crate) const fn new"),
+        "raw RelationCacheConfig construction should stay internal to tsz-solver",
+    );
+    assert!(
+        !config_impl.contains("pub const fn new"),
+        "external callers should project cache configs through RelationPolicy",
+    );
+}
+
+#[test]
 fn legacy_flag_constructor_stores_typed_relation_flags() {
     let policy = RelationPolicy::from_flags(
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS
@@ -154,7 +176,9 @@ fn each_relation_flag_bit_produces_a_distinct_key() {
     ];
 
     for bit in single_bits {
-        let flipped = RelationCacheConfig::new(base.flags | bit, base.any_mode);
+        let flipped = RelationPolicy::from_relation_flags(base.flags | bit)
+            .cache_config()
+            .with_any_mode(base.any_mode);
         let flipped_key = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, flipped);
         assert_ne!(
             base_key, flipped_key,
@@ -269,12 +293,16 @@ fn any_propagation_mode_differences_produce_distinct_keys() {
             let ka = RelationCacheKey::for_subtype(
                 TypeId::STRING,
                 TypeId::NUMBER,
-                RelationCacheConfig::new(RelationFlags::empty(), a),
+                RelationPolicy::from_relation_flags(RelationFlags::empty())
+                    .cache_config()
+                    .with_any_mode(a),
             );
             let kb = RelationCacheKey::for_subtype(
                 TypeId::STRING,
                 TypeId::NUMBER,
-                RelationCacheConfig::new(RelationFlags::empty(), b),
+                RelationPolicy::from_relation_flags(RelationFlags::empty())
+                    .cache_config()
+                    .with_any_mode(b),
             );
             if i == j {
                 assert_eq!(ka, kb, "same any_mode should produce the same key");

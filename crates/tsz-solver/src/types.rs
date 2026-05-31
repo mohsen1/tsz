@@ -376,7 +376,7 @@ pub struct RelationCacheConfig {
 
 impl RelationCacheConfig {
     /// Construct a cache config with the given flags and any-mode.
-    pub const fn new(flags: RelationFlags, any_mode: CachedAnyMode) -> Self {
+    pub(crate) const fn new(flags: RelationFlags, any_mode: CachedAnyMode) -> Self {
         Self { flags, any_mode }
     }
 
