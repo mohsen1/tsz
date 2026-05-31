@@ -299,3 +299,83 @@ class Container {
          names.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn nested_class_private_getter_helpers_hoist_to_enclosing_constructor() {
+    let source = r#"
+class Outer {
+    get #value() { return 1; }
+    constructor() {
+        class Inner {
+            get #value() { return 2; }
+            read(other: Inner) {
+                return other.#value;
+            }
+        }
+    }
+}
+"#;
+    let output = parse_lower_emit(source, es2015_esnext());
+
+    let constructor_pos = output
+        .find("constructor() {")
+        .expect("constructor should be emitted");
+    let inner_decl_pos = output[constructor_pos..]
+        .find("var _Inner_instances, _Inner_value_get;")
+        .map(|pos| constructor_pos + pos)
+        .expect("nested class private helpers should be declared in the constructor");
+    let inner_class_pos = output[constructor_pos..]
+        .find("class Inner")
+        .map(|pos| constructor_pos + pos)
+        .expect("nested class should be emitted inside the constructor");
+    let inner_init_pos = output[constructor_pos..]
+        .find("_Inner_instances = new WeakSet(), _Inner_value_get = function _Inner_value_get()")
+        .map(|pos| constructor_pos + pos)
+        .expect("nested class private accessor helper should be initialized after the class");
+
+    assert!(
+        inner_decl_pos < inner_class_pos && inner_class_pos < inner_init_pos,
+        "Nested class private accessor declarations should be hoisted to the enclosing constructor before the class executes.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(
+            "_Inner_value_get = function _Inner_value_get() { var _Inner_instances, _Inner_value_get;"
+        ),
+        "Outer private-helper declarations must not be inserted into the generated getter body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_class_private_setter_helpers_keep_their_own_function_scope() {
+    let source = r#"
+class Host {
+    set #score(value) { this.total = value; }
+    constructor() {
+        class Local {
+            set #score(value) { this.total = value; }
+            write(other: Local) {
+                other.#score = 1;
+            }
+        }
+    }
+}
+"#;
+    let output = parse_lower_emit(source, es2015_esnext());
+
+    assert!(
+        output.contains("var _Local_instances, _Local_score_set;"),
+        "Nested class private setter helpers should be declared in the enclosing constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_Local_score_set = function _Local_score_set(value) { this.total = value; };"
+        ),
+        "Generated setter helper should preserve its parameter and body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(
+            "_Local_score_set = function _Local_score_set(value) { var _Local_instances, _Local_score_set;"
+        ),
+        "Outer private-helper declarations must not be inserted into the generated setter body.\nOutput:\n{output}"
+    );
+}
