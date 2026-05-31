@@ -151,12 +151,8 @@ const fn flow_step_budget(flow_node_count: usize) -> usize {
     }
 }
 
-/// Schedule `ant` to be processed before `current_flow` by pushing it to the
-/// front of the worklist and re-enqueuing `current_flow` at the back.
-///
-/// Used by the BFS traversal when a node must defer until an antecedent's
-/// narrowing result is available. Caller must still `continue` after invoking
-/// this — the helper only manages the shared buffers.
+/// Re-enqueue `current_flow` after an antecedent whose narrowing result is needed.
+/// Caller must still `continue`; the helper only manages shared buffers.
 fn defer_to_antecedent(
     worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
     in_worklist: &mut FxHashSet<FlowNodeId>,
@@ -2105,17 +2101,12 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 };
 
-                // Check if this array mutation affects our reference
                 let affects_ref = self.array_mutation_affects_reference(call, reference);
-
-                // For affected references, ARRAY_MUTATION acts as a merge point to preserve narrowing
                 let needs_antecedent = affects_ref && !flow.antecedent.is_empty();
 
                 if needs_antecedent {
-                    // Check if antecedent is ready (similar to merge point logic)
                     if let Some(&ant) = flow.antecedent.first() {
                         if !visited.contains(&ant) && !results.contains_key(&ant) {
-                            // Antecedent not ready - schedule it and defer self
                             defer_to_antecedent(
                                 worklist,
                                 in_worklist,
@@ -2125,7 +2116,6 @@ impl<'a> FlowAnalyzer<'a> {
                             );
                             continue;
                         }
-                        // Antecedent is ready - get its result
                         let antecedent_type = *results.get(&ant).unwrap_or(&current_type);
                         let (evolved_type, complete) =
                             self.array_mutation_evolved_type(antecedent_type, call, reference);
@@ -2137,9 +2127,15 @@ impl<'a> FlowAnalyzer<'a> {
                         current_type
                     }
                 } else if affects_ref {
-                    // For local variables, TypeScript preserves narrowing across method calls
                     current_type
                 } else if let Some(&ant) = flow.antecedent.first() {
+                    if self.antecedent_requires_defer(ant, reference, symbol_id)
+                        && !visited.contains(&ant)
+                        && !results.contains_key(&ant)
+                    {
+                        defer_to_antecedent(worklist, in_worklist, ant, current_flow, current_type);
+                        continue;
+                    }
                     if !in_worklist.contains(&ant) && !visited.contains(&ant) {
                         worklist.push_back((ant, current_type));
                         in_worklist.insert(ant);
@@ -2149,7 +2145,14 @@ impl<'a> FlowAnalyzer<'a> {
                     current_type
                 }
             } else if flow.has_any_flags(flow_flags::CALL) {
-                // Call expression - check for type predicates
+                if let Some(&ant) = flow.antecedent.first()
+                    && self.antecedent_requires_defer(ant, reference, symbol_id)
+                    && !visited.contains(&ant)
+                    && !results.contains_key(&ant)
+                {
+                    defer_to_antecedent(worklist, in_worklist, ant, current_flow, current_type);
+                    continue;
+                }
                 self.handle_call_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::START) {
                 // Start node - check if we're crossing a closure boundary.
@@ -2554,20 +2557,14 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         };
 
-        // Check if the call expression returns `never`. If so, this branch
-        // is dead — no control flow continues past a never-returning call.
-        // Return UNREACHABLE_NEVER (not TypeId::NEVER) to distinguish from
-        // legitimate narrowing to never (e.g., exhaustive type checks).
-        // This matches tsc's getTypeAtFlowCall which returns unreachableNeverType
-        // when getReturnTypeOfSignature(signature).flags & TypeFlags.Never.
+        // A never-returning call makes this branch dead; keep it distinct from
+        // legitimate narrowing to `never` (for example exhaustive type checks).
         if let Some(&call_return_type) = node_types.get(&flow.node.0) {
             if call_return_type == TypeId::NEVER {
                 return Self::UNREACHABLE_NEVER;
             }
-            // When the cached call return type is `any`, it may be stale from early
-            // type environment building (where `this` wasn't fully resolved yet).
-            // Fall back to checking the callee's signature for a `never` return type,
-            // first via node_types, then via binder declaration lookup.
+            // Stale early `any` call caches still need the callee/binder fallback
+            // for explicit `never` returns.
             if call_return_type == TypeId::ANY {
                 if let Some(&callee_type) = node_types.get(&call.expression.0)
                     && callee_type != TypeId::ANY
@@ -2577,10 +2574,7 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     return Self::UNREACHABLE_NEVER;
                 }
-                // When both the call and callee types are stale `any` (common for
-                // `this.method()` during early type env building), resolve the callee
-                // through the binder's symbol table and check its declaration's return
-                // type annotation directly. This avoids relying on the stale cache.
+                // When both caches are stale, use binder declarations directly.
                 if self.callee_declaration_returns_never(call.expression) {
                     return Self::UNREACHABLE_NEVER;
                 }
