@@ -1191,6 +1191,37 @@ impl ParserState {
                 if self.is_token(SyntaxKind::ColonToken) {
                     use tsz_common::diagnostics::diagnostic_codes;
 
+                    // A `:` that follows a declarator which already has an
+                    // initializer (`var x = INIT :`) is never a type
+                    // annotation — type annotations precede `=`. tsc therefore
+                    // treats the `:` as a missing comma between declarators,
+                    // reports TS1005 at the `:`, and retries the declarator
+                    // list at the next token rather than parsing a type. The
+                    // next token then either starts a new declarator or, when
+                    // it cannot (e.g. a numeric literal), yields TS1134 and is
+                    // left for the surrounding statement parser. This recovers
+                    // shapes like `var x = {} \`tpl\` : 321` the way tsc does
+                    // (tagged-template initializer + a separate `321;`
+                    // statement) instead of swallowing `321` as a type.
+                    let decl_has_initializer = self
+                        .arena
+                        .get(decl)
+                        .and_then(|node| self.arena.get_variable_declaration(node))
+                        .is_some_and(|decl| decl.initializer.is_some());
+                    if decl_has_initializer {
+                        // Bypass the distance-based suppression gate (the `:`
+                        // can sit within `ERROR_SUPPRESSION_DISTANCE` of a
+                        // prior TS1136 from a recovered template-literal
+                        // property name); tsc dedups only on exact position,
+                        // and the `:` is at a distinct position.
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token(); // consume `:`
+                        continue;
+                    }
+
                     let recover_invalid_jsx_namespace_head =
                         self.recover_jsx_invalid_namespace_head_tail;
                     if self.recover_jsx_closing_tag_extra_namespace_tail

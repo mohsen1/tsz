@@ -1829,69 +1829,23 @@ impl ParserState {
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
             || self.is_token(SyntaxKind::TemplateHead)
         {
+            // A template literal cannot be a property name. tsc's
+            // `parsePropertyName` does not accept template literals, so
+            // `parseObjectLiteralElement` reports TS1136 and aborts the
+            // member list *without consuming the template*. The object
+            // literal then closes (synthetic `}`), and the surrounding
+            // expression/statement parser handles the template as a tagged
+            // template tail on the object expression, with anything after it
+            // parsed as separate statements. Mirror that recovery here so the
+            // recovered AST — and therefore emit — matches tsc, instead of
+            // absorbing the template (and a trailing value) as a property.
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Property assignment expected.",
                 diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
             );
-            let name = self.parse_template_literal();
-            // tsc emits cascading errors when a template literal is used
-            // as a property name with `: value` following:
-            //   TS1136 on the template, TS1005 "',' expected" at `:`,
-            //   TS1134 "Variable declaration expected." at the value.
-            // We emit these inline to match tsc's diagnostic output.
-            let initializer = if self.is_token(SyntaxKind::ColonToken) {
-                let colon_pos = self.token_pos();
-                let colon_len = self.token_end() - colon_pos;
-                self.parse_error_at(
-                    colon_pos,
-                    colon_len,
-                    "',' expected.",
-                    diagnostic_codes::EXPECTED,
-                );
-                self.next_token(); // consume `:`
-                // Emit TS1134 at the value position
-                if !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
-                    let val_pos = self.token_pos();
-                    let val_len = self.token_end() - val_pos;
-                    self.parse_error_at(
-                        val_pos,
-                        val_len,
-                        "Variable declaration expected.",
-                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
-                    );
-                }
-                let expr = self.parse_assignment_expression();
-                // Emit TS1128 at the next token (typically `}` or next line)
-                // tsc sees the closing `}` in statement context, not as
-                // the object literal closer.
-                if !self.is_token(SyntaxKind::EndOfFileToken) {
-                    let next_pos = self.token_pos();
-                    let next_len = self.token_end() - next_pos;
-                    self.parse_error_at(
-                        next_pos,
-                        next_len,
-                        "Declaration or statement expected.",
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                }
-                expr
-            } else {
-                name
-            };
-            let end_pos = self.token_end();
-            return self.arena.add_property_assignment(
-                syntax_kind_ext::PROPERTY_ASSIGNMENT,
-                start_pos,
-                end_pos,
-                crate::parser::node::PropertyAssignmentData {
-                    modifiers: None,
-                    name,
-                    initializer,
-                },
-            );
+            self.abort_object_literal_recovery_once = true;
+            return NodeIndex::NONE;
         }
 
         // Check if the property name requires `:` syntax (can't be a shorthand property).
