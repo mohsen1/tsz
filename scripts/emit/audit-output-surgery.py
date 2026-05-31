@@ -349,6 +349,7 @@ def build_json_report(
     return {
         "ok": not failures,
         "status": "failed" if failures else "passed",
+        "output_surgery_status": "failed" if failures else "passed",
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "allowlisted_calls": budget.allowlisted_calls,
