@@ -247,10 +247,10 @@ impl<'a> CheckerState<'a> {
         let had_excess_property_error =
             self.check_excess_properties_for_fresh_source(source, target, source_idx);
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
+        // Use the canonical satisfies relation outcome so the weak-union hint is collected
+        // alongside the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.satisfies_relation_outcome(source, target);
         if outcome.related {
             return true;
         }
@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.assign_relation_outcome(inner, target).related
+            && self.satisfies_relation_outcome(inner, target).related
         {
             return true;
         }

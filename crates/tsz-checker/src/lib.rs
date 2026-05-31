@@ -987,6 +987,9 @@ mod reverse_mapped_inference_tests;
 #[path = "tests/satisfies_callback_return_widening_tests.rs"]
 mod satisfies_callback_return_widening_tests;
 #[cfg(test)]
+#[path = "tests/satisfies_relation_routing_arch_tests.rs"]
+mod satisfies_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;
 #[cfg(test)]

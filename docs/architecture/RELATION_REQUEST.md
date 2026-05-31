@@ -57,14 +57,21 @@ recomputing weak-union and property-classification analysis.
 `assignability/assignment_checker/destructuring.rs` builds `RelationRequest::assign` for rest
 destructuring assignment diagnostics.
 
+`assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
+`expr satisfies T` diagnostics.
+
+Return diagnostics in `types/type_checking`, decorator checks, contextual return
+utilities, and function-type helpers build `RelationRequest::return_stmt` through
+`return_relation_outcome`.
+
 `query_boundaries/class.rs` builds `RelationRequest::assign` with
 `with_erased_generic_signature_retry` for class/interface member compatibility
 where erased generic signature retry is allowed.
 
-No current production call site uses `return_stmt`, `satisfies`, `destructuring`,
-`with_excess_property_mode`, or `with_missing_property_mode`. They are retained
-as explicit policy shapes and are covered by architecture tests so follow-up
-work can centralize one policy decision at a time.
+No current production call site uses `destructuring`, `with_excess_property_mode`,
+or `with_missing_property_mode`. They are retained as explicit policy shapes and
+are covered by architecture tests so follow-up work can centralize one policy
+decision at a time.
 
 ## Boundary Responsibilities
 
