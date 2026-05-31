@@ -239,22 +239,15 @@ LINE_LIMIT_CHECKS = [
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
-            "crates/tsz-checker/src/declarations/import/declaration.rs",
-            "crates/tsz-checker/src/error_reporter/properties.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/jsdoc/params.rs",
-            "crates/tsz-checker/src/state/state_checking/property.rs",
             "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
-            "crates/tsz-checker/src/state/variable_checking/core.rs",
-            "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
         },
     ),
@@ -290,7 +283,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3378,
+        3377,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
@@ -313,7 +306,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Emitter boundary: es_decorators monolith size ratchet (#10778)",
         ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "es_decorators.rs",
-        5755,
+        1147,
     ),
     # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
     # splitting into option-domain submodules. Ratchet down as each domain lands.
@@ -322,7 +315,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
-        4981,
+        4275,
     ),
     # LSP signature-help: carries TypeData and direct lookup() baseline debt
     # (see arch_guard_policy.toml exclusions). Ratchet down per §19 splitting
@@ -336,7 +329,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Scanner boundary: scanner_impl monolith size ratchet (#9431)",
         ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
-        4190,
+        1463,
     ),
     # CLI driver resolution: split into discovery/exports_imports/package_resolution/
     # path_resolution/type_packages submodules; ratchet holds the orchestrator at 301.
@@ -356,7 +349,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "class"
         / "emit_es6.rs",
-        4191,
+        4102,
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
@@ -415,14 +408,14 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "CLI boundary: tsz main binary size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "bin" / "tsz.rs",
-        3573,
+        3566,
     ),
     # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
     # as pipeline stages are extracted per §19.
     (
         "CLI boundary: driver/core monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
-        3195,
+        3186,
     ),
     # CLI LSP server: structure/outline handler — split by request kind per §19.
     (
@@ -528,6 +521,39 @@ FILE_LINE_LIMIT_CHECKS = [
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
     (
+        "Solver boundary: relations/subtype/rules/generics.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "relations"
+        / "subtype"
+        / "rules"
+        / "generics.rs",
+        2072,
+    ),
+    (
+        "Emitter boundary: transforms/enum_es5.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "enum_es5.rs",
+        2014,
+    ),
+    (
+        "Emitter boundary: transforms/ir_printer.rs size ratchet",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "ir_printer.rs",
+        2008,
+    ),
+    (
+        "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "type_inference_return_normalization.rs",
+        2006,
+    ),
+    (
         "Checker boundary: types/property_access_type/resolve.rs size ratchet",
         ROOT
         / "crates"
@@ -547,12 +573,12 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "type_checking"
         / "duplicate_identifiers_helpers.rs",
-        3150,
+        1657,
     ),
     (
         "Checker boundary: error_reporter/properties.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "error_reporter" / "properties.rs",
-        3107,
+        1897,
     ),
     (
         "Checker boundary: declarations/import/declaration.rs size ratchet",
@@ -563,7 +589,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "import"
         / "declaration.rs",
-        3066,
+        429,
     ),
     (
         "Checker boundary: state/state_checking/property.rs size ratchet",
@@ -574,7 +600,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "state_checking"
         / "property.rs",
-        3036,
+        1480,
     ),
     (
         "Parser boundary: parser/state_expressions_literals.rs size ratchet",
@@ -584,12 +610,12 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "parser"
         / "state_expressions_literals.rs",
-        3054,
+        3011,
     ),
     (
         "Checker boundary: jsdoc/params.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "params.rs",
-        2941,
+        577,
     ),
     (
         "Checker boundary: types/type_checking/duplicate_identifiers.rs size ratchet",
@@ -600,7 +626,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "type_checking"
         / "duplicate_identifiers.rs",
-        2916,
+        2914,
     ),
     (
         "Checker boundary: flow/control_flow/core.rs size ratchet",
@@ -616,7 +642,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: type_queries/flow.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "type_queries" / "flow.rs",
-        2874,
+        2755,
     ),
     (
         "Checker boundary: types/utilities/core.rs size ratchet",
@@ -659,7 +685,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "diagnostics"
         / "format"
         / "compound.rs",
-        2602,
+        458,
     ),
     (
         "Checker boundary: assignability/assignability_diagnostics.rs size ratchet",
@@ -669,7 +695,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "assignability"
         / "assignability_diagnostics.rs",
-        2600,
+        2539,
     ),
     (
         "Checker boundary: state/type_resolution/module.rs size ratchet",
@@ -729,7 +755,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "source_file"
         / "emit.rs",
-        2462,
+        2426,
     ),
     (
         "Checker boundary: jsdoc/diagnostics.rs size ratchet",
@@ -745,7 +771,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "variable_checking"
         / "destructuring.rs",
-        2250,
+        1606,
     ),
     (
         "Checker boundary: state/state_checking_members/interface_checks.rs size ratchet",
@@ -780,7 +806,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "es5"
         / "helpers_async.rs",
-        2263,
+        2261,
     ),
     (
         "Checker boundary: state/variable_checking/core.rs size ratchet",
@@ -791,7 +817,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "variable_checking"
         / "core.rs",
-        2207,
+        1979,
     ),
     (
         "Emitter boundary: emitter/helpers.rs size ratchet",
@@ -811,7 +837,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Emitter boundary: emitter/transform_dispatch.rs size ratchet",
         ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "transform_dispatch.rs",
-        2124,
+        2119,
     ),
     (
         "Solver boundary: visitors/visitor_predicates.rs size ratchet",
@@ -821,7 +847,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "visitors"
         / "visitor_predicates.rs",
-        2123,
+        2120,
     ),
     (
         "Solver boundary: operations/call_args.rs size ratchet",
@@ -913,7 +939,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "statements"
         / "control_flow.rs",
-        2029,
+        2014,
     ),
     (
         "Solver boundary: evaluation/evaluate.rs size ratchet",
@@ -1172,7 +1198,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # derived through `query_boundaries::type_computation::access`, not the
         # `common` barrel). It is an existing request-shaped helper already used
         # throughout this file — no new quarantine entry.
-        3281,
+        #
+        # Ratcheted down after current-main guard tests caught three lines of
+        # slack in the live direct-reference count.
+        3278,
     ),
 ]
 
