@@ -1157,7 +1157,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `object_shape_for_type`, `types_are_comparable_for_assertion`).
         # All routes are existing request-shaped boundaries — no new
         # quarantine entry — so the count rises by the expected delta.
-        3277,
+        #
+        # Bumped by 3 for the rendered-type-decision cleanup (#8775): TS2536
+        # display picks up two structural keyof references
+        # (`is_keyof_type`, `contains_keyof_type`) and the readonly-key
+        # widening guard picks up one `union_members` reference. All three
+        # route through existing `query_boundaries::common` wrappers; no new
+        # quarantine entry — `contains_keyof_type` reuses the existing
+        # `contains_*` one-liner pattern in `common.rs`.
+        3280,
     ),
 ]
 

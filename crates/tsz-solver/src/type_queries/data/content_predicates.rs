@@ -434,6 +434,16 @@ pub fn contains_type_parameters_except_name_db(
     )
 }
 
+/// Check if a type's structural surface contains any `keyof` operator
+/// (deep walk).
+///
+/// Structural analogue of `format_type(t).contains("keyof ")`. Returns
+/// `true` when the type tree includes a `TypeData::KeyOf` node, including
+/// nested inside unions/intersections/applications/conditionals/mapped.
+pub fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| matches!(key, TypeData::KeyOf(_)))
+}
+
 /// Check if a type contains an indexed access whose object is a type parameter.
 pub fn contains_index_access_with_type_parameter_object(
     db: &dyn TypeDatabase,

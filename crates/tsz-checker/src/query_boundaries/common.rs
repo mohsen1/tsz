@@ -123,7 +123,9 @@ pub(crate) fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> b
 pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_keyof_type(db, type_id)
 }
-
+pub(crate) fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_keyof_type(db, type_id)
+}
 pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_index_access_type(db, type_id)
 }
