@@ -108,6 +108,14 @@ impl<'a> CheckerState<'a> {
             })
         {
             let source_modules = source_modules.clone();
+
+            // When multiple wildcard sources provide the same name, prefer a VALUE
+            // export over a pure TYPE declaration (TYPE_ALIAS/INTERFACE with no
+            // value flags). TypeScript resolves type and value namespaces
+            // independently; a value export from one `export *` source must not be
+            // shadowed by a type-only declaration from an earlier source in the list.
+            let mut type_only_fallback: Option<(tsz_binder::SymbolId, usize)> = None;
+
             for source_module in &source_modules {
                 if let Some(source_idx) = self
                     .ctx
@@ -119,8 +127,21 @@ impl<'a> CheckerState<'a> {
                         visited,
                     )
                 {
+                    let is_pure_type = self
+                        .ctx
+                        .get_binder_for_file(source_idx)
+                        .and_then(|b| b.get_symbol(result.0))
+                        .is_some_and(|s| s.is_pure_type());
+                    if is_pure_type && type_only_fallback.is_none() {
+                        type_only_fallback = Some(result);
+                        continue;
+                    }
                     return Some(result);
                 }
+            }
+
+            if let Some(fallback) = type_only_fallback {
+                return Some(fallback);
             }
         }
 
