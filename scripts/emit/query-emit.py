@@ -269,6 +269,32 @@ def emit_freshness_status_line(data):
     return f"Emit detail freshness: {state}."
 
 
+def emit_remaining_failures(summary, surface):
+    prefix = "js" if surface == "js" else "dts"
+    passed = summary.get(f"{prefix}Pass")
+    total = summary.get(f"{prefix}Total")
+    if passed is None or total is None:
+        return None
+    return total - passed
+
+
+def failure_family_surface_heading(surface, title, detail_total, detail_summary, public_summary):
+    status = emit_freshness_status(detail_summary, public_summary)
+    if status["state"] != "stale":
+        return f"{title}: {detail_total} failures/timeouts"
+
+    public_remaining = emit_remaining_failures(public_summary, surface)
+    detail_remaining = emit_remaining_failures(detail_summary, surface)
+    if public_remaining is None or detail_remaining is None:
+        return f"{title} checked-detail: {detail_total} failures/timeouts"
+
+    return (
+        f"{title} checked-detail: {detail_total} failures/timeouts "
+        f"(public aggregate remaining: {public_remaining:,}; "
+        f"detail aggregate remaining: {detail_remaining:,})"
+    )
+
+
 def print_emit_freshness_status(data):
     print(emit_freshness_status_line(data))
 
@@ -424,6 +450,8 @@ def show_failure_families(data, top=20):
     print("Emit failure families")
     print()
     print_emit_freshness_note(data)
+    detail_summary = emit_summary(data)
+    public_summary = emit_summary_from_readme()
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(
@@ -431,7 +459,11 @@ def show_failure_families(data, top=20):
             key=lambda item: (-len(item[1]), item[0]),
         )
         total = sum(len(results) for _, results in rows)
-        print(f"{title}: {total} failures/timeouts")
+        print(
+            failure_family_surface_heading(
+                surface, title, total, detail_summary, public_summary
+            )
+        )
         for family, results in rows[:top]:
             examples = ", ".join(
                 r["name"] for r in sorted(results, key=lambda r: r["name"])[:3]
