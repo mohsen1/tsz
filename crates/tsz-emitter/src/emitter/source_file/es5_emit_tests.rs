@@ -1183,6 +1183,58 @@ fn es2015_constructor_private_destructuring_keeps_prologue_order() {
 }
 
 #[test]
+fn es2015_synthesized_constructor_preserves_public_private_field_order() {
+    let source = "class C {\n    foo = 1;\n    #bar = 2;\n    baz = 3;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(
+            "constructor() {\n        this.foo = 1;\n        _C_bar.set(this, 2);\n        this.baz = 3;\n    }"
+        ),
+        "Synthesized constructors must preserve source order across public fields and private WeakMap initializers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_undeclared_private_recovery_does_not_request_helpers() {
+    let source = "class C {\n    #real = 1;\n    m(other: object) {\n        this.#missing = 2;\n        #ghost in other;\n    }\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__classPrivateFieldSet") && !output.contains("__classPrivateFieldIn"),
+        "Undeclared private-name recovery must not request private helper declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_real = new WeakMap()"),
+        "Declared private fields should still lower to WeakMap storage.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
     let source = "// order comment\n\
 class C {\n\

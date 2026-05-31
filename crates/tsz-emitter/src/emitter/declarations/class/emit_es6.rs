@@ -1039,7 +1039,15 @@ impl<'a> Printer<'a> {
             self.pending_private_field_constructor_inits = private_fields
                 .iter()
                 .filter(|f| !f.is_static)
-                .map(|f| (f.weakmap_name.clone(), f.has_initializer, f.initializer))
+                .map(|f| {
+                    let source_order = self.arena.get(f.member_idx).map_or(u32::MAX, |n| n.pos);
+                    (
+                        f.weakmap_name.clone(),
+                        f.has_initializer,
+                        f.initializer,
+                        source_order,
+                    )
+                })
                 .collect();
 
             // Prepare WeakSet instances.add(this) for constructor
@@ -1847,6 +1855,7 @@ impl<'a> Printer<'a> {
                             init_end,
                             leading_comments,
                             trailing_comments,
+                            member_node.pos,
                         ));
                     }
                 }
@@ -1913,135 +1922,15 @@ impl<'a> Printer<'a> {
             // scope and capture the insertion anchor for the `var` line.
             self.push_temp_scope();
             let synth_ctor_hoist_anchor = self.capture_hoist_anchor();
-            // Emit _X_instances.add(this) for private methods/accessors
-            if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
-                self.write(ws_name);
-                self.write(".add(this);");
-                self.write_line();
-            }
-            // Private field WeakMap.set inits first (before non-private field inits)
-            for field in &private_fields {
-                if !field.is_static {
-                    self.write(&field.weakmap_name);
-                    self.write(".set(this, ");
-                    if field.has_initializer {
-                        self.emit_expression(field.initializer);
-                    } else {
-                        self.write("void 0");
-                    }
-                    self.write(");");
-                    self.write_line();
-                }
-            }
-            if lower_auto_accessors_to_weakmap {
-                for (storage_name, init_idx) in &constructor_auto_accessor_instance_inits {
-                    self.write(storage_name);
-                    self.write(".set(this, ");
-                    match init_idx {
-                        Some(init) => {
-                            self.with_scoped_static_initializer_context_cleared(|this| {
-                                this.emit_expression(*init);
-                            });
-                        }
-                        None => self.write("void 0"),
-                    }
-                    self.write(");");
-                    self.write_line();
-                }
-            }
-            // Non-private field inits after WeakMap.set calls
-            for (name, init_idx, init_end, leading, trailing) in &field_inits {
-                // Emit leading comments from the original property declaration
-                for comment in leading {
-                    self.write_comment(comment);
-                    self.write_line();
-                }
-                if self.ctx.options.use_define_for_class_fields {
-                    self.write("Object.defineProperty(this, ");
-                    if name.starts_with('[') && name.ends_with(']') {
-                        self.write(&name[1..name.len() - 1]);
-                    } else {
-                        self.emit_string_literal_text(name);
-                    }
-                    self.write(", {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("enumerable: true,");
-                    self.write_line();
-                    self.write("configurable: true,");
-                    self.write_line();
-                    self.write("writable: true,");
-                    self.write_line();
-                    self.write("value: ");
-                    if init_idx.is_none() {
-                        self.write("void 0");
-                    } else {
-                        if let Some(init_node) = self.arena.get(*init_idx) {
-                            while self.comment_emit_idx < self.all_comments.len()
-                                && self.all_comments[self.comment_emit_idx].end <= init_node.pos
-                            {
-                                self.comment_emit_idx += 1;
-                            }
-                        }
-                        self.with_scoped_static_initializer_context_cleared(|this| {
-                            this.emit_expression(*init_idx);
-                        });
-                    }
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("});");
+            self.emit_constructor_prologue(
+                &[],
+                &field_inits,
+                if lower_auto_accessors_to_weakmap {
+                    &constructor_auto_accessor_instance_inits
                 } else {
-                    if name.starts_with('[') {
-                        self.write("this");
-                        self.write(name);
-                    } else {
-                        self.write("this.");
-                        self.write(name);
-                    }
-                    self.write(" = ");
-                    if init_idx.is_none() {
-                        self.write("void 0");
-                    } else {
-                        if let Some(init_node) = self.arena.get(*init_idx) {
-                            while self.comment_emit_idx < self.all_comments.len()
-                                && self.all_comments[self.comment_emit_idx].end <= init_node.pos
-                            {
-                                self.comment_emit_idx += 1;
-                            }
-                        }
-                        let arrow_comment_scan_end =
-                            self.source_text.map_or(*init_end, |text| text.len() as u32);
-                        let arrow_comment_range = self
-                            .rightmost_concise_arrow_deferred_comment_range(
-                                *init_idx,
-                                arrow_comment_scan_end,
-                            );
-                        self.with_scoped_static_initializer_context_cleared(|this| {
-                            if let Some((comment_start, comment_end)) = arrow_comment_range {
-                                this.with_arrow_concise_body_trailing_comments_deferred(
-                                    comment_start,
-                                    comment_end,
-                                    |this| {
-                                        this.emit_expression(*init_idx);
-                                    },
-                                );
-                            } else {
-                                this.emit_expression(*init_idx);
-                            }
-                        });
-                    }
-                    self.write(";");
-                    if !trailing.is_empty() {
-                        for comment in trailing {
-                            self.write_space();
-                            self.write_comment(comment);
-                        }
-                    } else {
-                        self.emit_trailing_comments(*init_end);
-                    }
-                }
-                self.write_line();
-            }
+                    &[]
+                },
+            );
             // Insert any temps hoisted while emitting field initializers (e.g.
             // `_a` for a class expression lowered inside a private-field init, or
             // a `??=` read-cache temp) at the top of this synthesized constructor

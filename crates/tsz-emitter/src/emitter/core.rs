@@ -13,8 +13,10 @@ use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
-pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
+/// A class field initializer entry:
+/// (`field_name`, `initializer_node`, `init_end`, `leading_comments`,
+/// `trailing_comments`, `source_order`).
+pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>, u32);
 
 /// A const enum entry scoped to a specific region of the source.
 /// File-level const enums use `(0, u32::MAX)` so they match any position.
@@ -864,9 +866,10 @@ pub struct Printer<'a> {
     /// Emitted as `_a = ClassName;` after the class body.
     pub(crate) pending_private_class_alias: Option<(String, String)>,
 
-    /// Private field constructor inits: (`weakmap_name`, `has_initializer`, `initializer_idx`).
+    /// Private field constructor inits:
+    /// (`weakmap_name`, `has_initializer`, `initializer_idx`, `source_order`).
     /// Emitted as `_C_field.set(this, <init>)` at the start of the constructor.
-    pub(crate) pending_private_field_constructor_inits: Vec<(String, bool, NodeIndex)>,
+    pub(crate) pending_private_field_constructor_inits: Vec<(String, bool, NodeIndex, u32)>,
 
     /// `WeakSet` instance name for `_X_instances.add(this)` in the constructor.
     /// Set when the class has private instance methods or accessors.
