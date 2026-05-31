@@ -83,7 +83,11 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
         );
     }
 
-    for literal_union_alias in ["DocumentReadyState", "XMLHttpRequestResponseType"] {
+    for literal_union_alias in [
+        "DocumentReadyState",
+        "MutationRecordType",
+        "XMLHttpRequestResponseType",
+    ] {
         let sym_id = state
             .ctx
             .binder
