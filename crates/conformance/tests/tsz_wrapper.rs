@@ -1646,148 +1646,14 @@ fn test_normalize_file_not_found_message_key_both_sides_converge() {
 }
 
 // ---------------------------------------------------------------------------
-// Parity fingerprint catalog tests (#8286)
+// Hardcoded fingerprint suppressor guard (#8286)
 //
-// Each catalog entry must:
-//   - match the diagnostic shape it was created for,
-//   - link to a real parity issue,
-//   - have a one-sentence structural reason,
-//   - drive the documented `parse_tsz_output` behavior end-to-end.
-//
-// The tests below pin each of those properties so a careless edit to
-// `crates/conformance/src/parity/fingerprints.rs` fails CI before it can hide
-// new divergences.
+// The wrapper should parse diagnostics as emitted. New ad-hoc `is_extra_*`
+// predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
 // ---------------------------------------------------------------------------
-
-use crate::parity::fingerprints::{
-    classify_parity, MatchScope, ParityAction, ParityFingerprintRule, KNOWN_PARITY_FINGERPRINTS,
-};
-
-fn classify_normalized(code: u32, message: &str) -> Option<&'static ParityFingerprintRule> {
-    classify_parity(code, message, MatchScope::NormalizedMessage)
-}
-
-fn classify_raw(code: u32, line: &str) -> Option<&'static ParityFingerprintRule> {
-    classify_parity(code, line, MatchScope::RawLine)
-}
-
-#[test]
-fn parity_fingerprint_catalog_entries_all_link_to_parity_issues() {
-    assert!(
-        !KNOWN_PARITY_FINGERPRINTS.is_empty(),
-        "catalog must not be empty while the wrapper still drops or remaps diagnostics"
-    );
-    for rule in KNOWN_PARITY_FINGERPRINTS {
-        assert!(
-            rule.parity_issue.number() > 0,
-            "parity_issue for TS{} must be a non-zero tsz issue number",
-            rule.code,
-        );
-        assert!(
-            !rule.reason.is_empty(),
-            "parity rule for TS{} (message {:?}) is missing a structural reason",
-            rule.code,
-            rule.message
-        );
-    }
-}
-
-#[test]
-fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
-    // (code, scope, text, expected parity issue number).
-    // `NormalizedMessage` cases pass the bare normalized diagnostic message.
-    let cases: &[(u32, MatchScope, &str, u32)] = &[
-        (
-            2322,
-            MatchScope::NormalizedMessage,
-            "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'.",
-            8423,
-        ),
-    ];
-
-    for (code, scope, text, expected_issue) in cases {
-        let rule = classify_parity(*code, text, *scope).unwrap_or_else(|| {
-            panic!("no parity rule found for TS{code} ({scope:?}); text={text:?}")
-        });
-        assert!(
-            matches!(rule.action, ParityAction::Drop),
-            "TS{code} entry must be a Drop action, got {:?}",
-            rule.action
-        );
-        assert_eq!(
-            rule.parity_issue.number(),
-            *expected_issue,
-            "TS{code} entry must link to parity issue {expected_issue}",
-        );
-    }
-}
-
-#[test]
-fn parity_fingerprint_catalog_passes_unrelated_diagnostics() {
-    // A totally unrelated TS2322 must not be classified by the catalog.
-    let unrelated = classify_normalized(2322, "Type 'string' is not assignable to type 'number'.");
-    assert!(unrelated.is_none());
-
-    // The classifier must be code-sensitive: matching the message text under
-    // a different code is not a catalog hit.
-    let wrong_code = classify_normalized(
-        2345,
-        "Type 'number | undefined' is not assignable to type 'number'.",
-    );
-    assert!(wrong_code.is_none());
-}
-
-#[test]
-fn parity_fingerprint_catalog_line_classifier_is_code_sensitive() {
-    // Exact catalog entries are normalized-message entries; raw diagnostic
-    // lines must not classify even if they contain a catalog message.
-    let line = "/tmp/test.ts(9,7): error TS2322: Type \
-        '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' \
-        is not assignable to type 'ValueOrArray<number>'.";
-    assert!(classify_raw(2322, line).is_none());
-}
-
-#[test]
-fn parity_fingerprint_catalog_drops_recursive_alias_fingerprint_end_to_end() {
-    // Exact entries drop only from the fingerprint comparison surface. The raw
-    // error-code list sees position-prefixed lines and remains unfiltered.
-    let raw = "/tmp/test.ts(23,7): error TS2322: Type '(number | \
-        (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' \
-        is not assignable to type 'ValueOrArray<number>'.\n\
-        /tmp/test.ts(99,1): error TS2322: Type 'string' is not assignable \
-        to type 'number'.\n";
-    let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
-
-    assert_eq!(
-        result.error_codes,
-        vec![2322, 2322],
-        "exact catalog entries do not filter raw error_codes",
-    );
-
-    let codes: Vec<u32> = result
-        .diagnostic_fingerprints
-        .iter()
-        .map(|fp| fp.code)
-        .collect();
-    assert_eq!(
-        codes,
-        vec![2322],
-        "recursive alias fingerprint was not dropped",
-    );
-    assert!(
-        result.diagnostic_fingerprints[0]
-            .message_key
-            .contains("'string'"),
-        "the unrelated TS2322 must survive parsing",
-    );
-}
 
 #[test]
 fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
-    // Architecture guard: the catalog in `parity/fingerprints.rs` is the only
-    // sanctioned place to hardcode fingerprint shapes. New ad-hoc
-    // `is_extra_*` predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
-    //
     // Match the function name regardless of visibility (`fn`, `pub fn`,
     // `pub(crate) fn`, `pub(super) fn`, ...). The pattern is intentionally
     // permissive so visibility renames or attribute-prefixed forms still
@@ -1815,8 +1681,7 @@ fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
     assert!(
         ad_hoc.is_empty(),
         "ad-hoc parity suppressor helpers found in crates/conformance/src/tsz_wrapper.rs: {:?}\n\
-         Add a `ParityFingerprintRule` entry to crates/conformance/src/parity/fingerprints.rs \
-         instead and link the underlying parity issue.",
+         Fix the underlying structured diagnostic rule instead of filtering a rendered fingerprint.",
         ad_hoc,
     );
 }
