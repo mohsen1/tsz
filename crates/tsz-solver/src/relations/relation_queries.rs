@@ -238,7 +238,13 @@ impl RelationPolicy {
     /// `config` field of a [`crate::types::RelationCacheKey`]. Every
     /// behavior-affecting field on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
-        let mut bits = self.flags;
+        let field_owned_bits = RelationFlags::STRICT_SUBTYPE_CHECKING
+            .union(RelationFlags::STRICT_ANY_PROPAGATION)
+            .union(RelationFlags::SKIP_WEAK_TYPE_CHECKS)
+            .union(RelationFlags::ASSUME_RELATED_ON_CYCLE)
+            .union(RelationFlags::NO_ERASE_GENERICS);
+        let mut bits =
+            RelationFlags::from_bits_retain(self.flags.bits() & !field_owned_bits.bits());
         if self.strict_subtype_checking {
             bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
         }
