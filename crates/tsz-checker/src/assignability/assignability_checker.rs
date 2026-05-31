@@ -883,9 +883,6 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::assignability::has_deferred_conditional_member(
                     self.ctx.types,
                     candidate,
-                ) || crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types,
-                    candidate,
                 ) || crate::query_boundaries::common::is_conditional_type(self.ctx.types, candidate)
                     || crate::query_boundaries::common::is_string_intrinsic_type(
                         self.ctx.types,
@@ -928,13 +925,6 @@ impl<'a> CheckerState<'a> {
             if crate::query_boundaries::common::is_type_parameter(self.ctx.types, type_id)
                 || is_callable_or_function(type_id)
                 || is_structural_target_that_must_not_be_suppressed(type_id)
-            {
-                return false;
-            }
-            // Do not suppress for mapped types and indexed access types -
-            // they should still produce TS2322 when the source is not assignable.
-            if crate::query_boundaries::common::is_mapped_type(self.ctx.types, type_id)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id)
             {
                 return false;
             }
@@ -1097,8 +1087,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Pre-compute for two uses: the intersection-suppression guard and an early-exit
+        // before the more expensive should_suppress_for_complex_type call for structural targets.
+        let target_is_structural = is_structural_target_that_must_not_be_suppressed(target);
+        let target_is_template_literal_from_bare_type_param =
+            crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target)
+                && crate::query_boundaries::common::is_type_parameter(self.ctx.types, source);
+        let target_allows_complex_generic_suppression = !target_is_structural
+            && should_suppress_for_complex_type(target)
+            && contains_type_parameters(source)
+            && !is_callable_or_function(target)
+            && !target_contains_indexed_access()
+            && !target_is_template_literal_from_bare_type_param;
+
         matches!(source, TypeId::ERROR)
-            || source_is_intersection_with_indexed_access()
+            // Suppress for intersection-with-indexed-access sources only when the target is NOT
+            // a structural type requiring property-level checking (mapped, intersection,
+            // conditional, string intrinsic). For those targets the solver handles the check
+            // directly and this suppression would hide real property mismatches.
+            || (source_is_intersection_with_indexed_access() && !target_is_structural)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
             // any is assignable to everything except never — tsc reports TS2322 for any→never
@@ -1119,28 +1126,18 @@ impl<'a> CheckerState<'a> {
             // outer type parameter (for example Assign<T, U> receiving a concrete U).
             // EXCEPTION: Don't suppress when target contains indexed access types - these
             // may resolve to incompatible concrete types that should produce TS2322.
-            || (should_suppress_for_complex_type(target)
-                && contains_type_parameters(source)
-                && !is_callable_or_function(target)
-                && !target_contains_indexed_access()
-                // Don't suppress when target is a template-literal pattern and the
-                // source is a bare type parameter. The pattern `${T}` is *not*
-                // trivially assignable from a bare T: T's instantiation could be
-                // a literal subtype ("a") that does not structurally match the
-                // template's pattern. tsc emits TS2322 for these cases (see
-                // templateLiteralTypes5.ts:14:11 — `const test1: \`${T3}\` = x`).
-                // Restrict the carve-out to bare type-parameter sources so that
-                // template-vs-template generic comparisons (e.g.
-                // `\`...${Uppercase<T>}.4\`` vs `\`...${Uppercase<T>}.3\``) keep
-                // their existing suppression — tsc tolerates those under generic
-                // constraint relationships.
-                && !(crate::query_boundaries::common::is_template_literal_type(
-                    self.ctx.types,
-                    target,
-                ) && crate::query_boundaries::common::is_type_parameter(
-                    self.ctx.types,
-                    source,
-                )))
+            // Don't suppress when target is a template-literal pattern and the
+            // source is a bare type parameter. The pattern `${T}` is *not*
+            // trivially assignable from a bare T: T's instantiation could be
+            // a literal subtype ("a") that does not structurally match the
+            // template's pattern. tsc emits TS2322 for these cases (see
+            // templateLiteralTypes5.ts:14:11 — `const test1: \`${T3}\` = x`).
+            // Restrict the carve-out to bare type-parameter sources so that
+            // template-vs-template generic comparisons (e.g.
+            // `\`...${Uppercase<T>}.4\`` vs `\`...${Uppercase<T>}.3\``) keep
+            // their existing suppression — tsc tolerates those under generic
+            // constraint relationships.
+            || target_allows_complex_generic_suppression
             // Suppress TS2322 for callable types where the source contains generic type
             // parameters that may not have been fully inferred from context. When both
             // source and target contain type parameters that are COMPLETELY disjoint
