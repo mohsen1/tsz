@@ -533,11 +533,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2072,
     ),
     (
-        "Emitter boundary: transforms/ir_printer.rs size ratchet",
-        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "ir_printer.rs",
-        2008,
-    ),
-    (
         "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
         ROOT
         / "crates"

@@ -4,6 +4,7 @@
 //! parameters, multiline comment formatting, and arrow function ES5 emission.
 
 use super::*;
+use tsz_parser::syntax_kind_ext;
 
 impl<'a> IRPrinter<'a> {
     /// Check if a body source range represents a single-line block in the source text.
