@@ -1206,11 +1206,23 @@ impl<'a> Printer<'a> {
         // - For loop: _d (guard)
         // Catch: e_N_1 (error value, not pre-declared)
         let error_container_name = format!("e_{}", counter + 1);
-        let loop_done_name = self.get_temp_var_name();
-        let return_temp_name = self
-            .reserved_iterator_return_temps
-            .remove(&for_of_idx)
-            .unwrap_or_else(|| self.get_temp_var_name()); // _a, _b, ...
+        let system_temp_plan = if self.in_system_execute_body && self.temp_scope_stack.is_empty() {
+            self.system_for_await_temp_plans.remove(&for_of_idx)
+        } else {
+            None
+        };
+        let loop_done_name = system_temp_plan.as_ref().map_or_else(
+            || self.get_temp_var_name(),
+            |plan| plan.loop_done_name.clone(),
+        );
+        let return_temp_name = system_temp_plan.as_ref().map_or_else(
+            || {
+                self.reserved_iterator_return_temps
+                    .remove(&for_of_idx)
+                    .unwrap_or_else(|| self.get_temp_var_name())
+            },
+            |plan| plan.return_temp_name.clone(),
+        ); // _a, _b, ...
         let is_nested_iterator_for_of = self.iterator_for_of_depth > 0;
         self.iterator_for_of_depth += 1;
 
@@ -1218,8 +1230,15 @@ impl<'a> Printer<'a> {
         // allocating this loop's iterator/result vars.
         self.preallocate_nested_iterator_return_temps(for_in_of.statement);
 
-        let value_temp_name = self.get_temp_var_name();
-        let loop_guard_name = self.get_temp_var_name();
+        let value_temp_name = system_temp_plan.as_ref().map_or_else(
+            || self.get_temp_var_name(),
+            |plan| plan.value_temp_name.clone(),
+        );
+        let loop_guard_name = if system_temp_plan.is_some() {
+            loop_done_name.clone()
+        } else {
+            self.get_temp_var_name()
+        };
         let (loop_iterator_name, loop_result_name) = if let Some(expr_node) =
             self.arena.get(for_in_of.expression)
             && expr_node.is_identifier()

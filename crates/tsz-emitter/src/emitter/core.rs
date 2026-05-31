@@ -270,6 +270,12 @@ pub(crate) struct TempScopeState {
     pub(crate) hoisted_for_of_temps: Vec<String>,
 }
 
+pub(crate) struct SystemForAwaitTempPlan {
+    pub(crate) loop_done_name: String,
+    pub(crate) return_temp_name: String,
+    pub(crate) value_temp_name: String,
+}
+
 impl ParamTransformPlan {
     pub(crate) const fn has_transforms(&self) -> bool {
         !self.params.is_empty() || self.rest.is_some()
@@ -692,6 +698,10 @@ pub struct Printer<'a> {
     /// Legacy-decorated class self-reference aliases planned while collecting
     /// `SystemJS` wrapper hoists and consumed when emitting the matching class.
     pub(crate) preplanned_legacy_decorated_class_aliases: FxHashMap<NodeIndex, String>,
+
+    /// Top-level `for await...of` temps planned for a `System.register`
+    /// `execute` body before the wrapper's hoisted `var` list is printed.
+    pub(crate) system_for_await_temp_plans: FxHashMap<NodeIndex, SystemForAwaitTempPlan>,
 
     /// Byte offset where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_byte_offset: usize,

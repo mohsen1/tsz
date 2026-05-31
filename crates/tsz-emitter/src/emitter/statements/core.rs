@@ -1052,7 +1052,7 @@ impl<'a> Printer<'a> {
                 Vec::new()
             };
 
-            self.emit_system_variable_initializers(node);
+            self.emit_system_variable_initializers(node, node.pos);
 
             for (local_name, export_name) in deferred_exports {
                 self.write_line();
