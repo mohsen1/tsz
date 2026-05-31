@@ -5,6 +5,8 @@ mod emit;
 mod import_helpers_class_scan;
 #[cfg(test)]
 mod import_helpers_class_scan_tests;
+#[cfg(test)]
+mod invalid_numeric_declaration_recovery_tests;
 mod recovery;
 #[cfg(test)]
 mod tc39_decorator_tests;

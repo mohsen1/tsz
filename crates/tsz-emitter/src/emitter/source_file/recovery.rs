@@ -1,6 +1,7 @@
 use crate::emitter::Printer;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn recovered_yield_call_statement_text(
@@ -69,6 +70,91 @@ impl<'a> Printer<'a> {
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         let tail = text.get(start..)?;
         tail.starts_with("</>").then(|| " > ;".to_string())
+    }
+
+    pub(in crate::emitter) fn is_invalid_export_recovery_statement(&self, node: &Node) -> bool {
+        self.arena.get_export_decl(node).is_some_and(|export| {
+            export.export_clause.is_none() && export.module_specifier.is_none()
+        }) || self.is_recovered_invalid_numeric_export_declaration_name(node)
+    }
+
+    pub(in crate::emitter) fn emit_recovered_invalid_numeric_declaration_name_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(statements) = self.recovered_invalid_numeric_declaration_name_statements(node)
+        else {
+            return false;
+        };
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for statement in statements {
+            self.write(&statement);
+            self.write_line();
+        }
+        true
+    }
+
+    fn recovered_invalid_numeric_declaration_name_statements(
+        &self,
+        node: &Node,
+    ) -> Option<Vec<String>> {
+        let keywords: &[&str] = if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            &["namespace", "module"]
+        } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            &["interface"]
+        } else if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            &["type"]
+        } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            &["namespace", "module", "interface", "type"]
+        } else {
+            return None;
+        };
+
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = text.as_bytes();
+        let mut line_end = start;
+        while line_end < bytes.len() && !matches!(bytes[line_end], b'\n' | b'\r') {
+            line_end += 1;
+        }
+        let line = crate::safe_slice::slice(text, start, line_end)
+            .ok()?
+            .trim_start();
+        let line = strip_recovery_keyword(line, "export")
+            .map(str::trim_start)
+            .unwrap_or(line);
+
+        for keyword in keywords {
+            let Some(rest) = strip_recovery_keyword(line, keyword) else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            let (number, after_number) = take_numeric_literal_prefix(rest)?;
+            if !is_empty_recovered_block(after_number) {
+                return None;
+            }
+            return Some(vec![
+                format!("{keyword};"),
+                format!("{number};"),
+                "{ }".to_string(),
+            ]);
+        }
+
+        None
+    }
+
+    pub(in crate::emitter) fn is_recovered_invalid_numeric_export_declaration_name(
+        &self,
+        node: &Node,
+    ) -> bool {
+        if !self.invalid_numeric_declaration_has_export_modifier(node) {
+            return false;
+        }
+        self.recovered_invalid_numeric_declaration_name_statements(node)
+            .is_some()
     }
 
     pub(in crate::emitter) fn recovered_ambient_class_parenthesized_tail_text(
@@ -275,6 +361,37 @@ impl<'a> Printer<'a> {
         Some(format!("{} => ", parts.join(" => ")))
     }
 
+    fn invalid_numeric_declaration_has_export_modifier(&self, node: &Node) -> bool {
+        if let Some(text) = self.source_text {
+            let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+            if let Some(line) = text.get(start..) {
+                let line = line.trim_start();
+                if strip_recovery_keyword(line, "export").is_some() {
+                    return true;
+                }
+            }
+        }
+        if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            return self.arena.get_module(node).is_some_and(|module| {
+                self.arena
+                    .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+            });
+        }
+        if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            return self.arena.get_interface(node).is_some_and(|interface| {
+                self.arena
+                    .has_modifier(&interface.modifiers, SyntaxKind::ExportKeyword)
+            });
+        }
+        if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            return self.arena.get_type_alias(node).is_some_and(|alias| {
+                self.arena
+                    .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+            });
+        }
+        false
+    }
+
     pub(in crate::emitter) fn recovered_debugger_namespace_line(
         &self,
         node: &Node,
@@ -303,4 +420,37 @@ impl<'a> Printer<'a> {
 
 const fn is_identifier_continue(byte: &u8) -> bool {
     byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
+}
+
+fn strip_recovery_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = text.strip_prefix(keyword)?;
+    if rest.as_bytes().first().is_some_and(is_identifier_continue) {
+        return None;
+    }
+    Some(rest)
+}
+
+fn take_numeric_literal_prefix(text: &str) -> Option<(&str, &str)> {
+    let bytes = text.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut end = 1;
+    while end < bytes.len()
+        && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'.' | b'_' | b'+' | b'-'))
+    {
+        end += 1;
+    }
+    Some((&text[..end], &text[end..]))
+}
+
+fn is_empty_recovered_block(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    let Some(after_open) = trimmed.strip_prefix('{') else {
+        return false;
+    };
+    let Some(close_pos) = after_open.find('}') else {
+        return false;
+    };
+    after_open[..close_pos].trim().is_empty() && after_open[close_pos + 1..].trim().is_empty()
 }

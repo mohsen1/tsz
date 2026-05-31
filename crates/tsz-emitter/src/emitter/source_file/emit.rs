@@ -494,10 +494,7 @@ impl<'a> Printer<'a> {
         let has_invalid_export_recovery = source.statements.nodes.iter().any(|&idx| {
             self.arena
                 .get(idx)
-                .and_then(|node| self.arena.get_export_decl(node))
-                .is_some_and(|export| {
-                    export.export_clause.is_none() && export.module_specifier.is_none()
-                })
+                .is_some_and(|node| self.is_invalid_export_recovery_statement(node))
         });
         let needs_use_strict_invalid_export_recovery = has_invalid_export_recovery
             && (matches!(self.ctx.options.module, ModuleKind::None) || is_es_module_output)
@@ -1810,7 +1807,10 @@ impl<'a> Printer<'a> {
                 .nodes
                 .get(stmt_i + 1)
                 .and_then(|&next_idx| self.arena.get(next_idx));
-
+            if self.emit_recovered_invalid_numeric_declaration_name_statement(stmt_node) {
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
             if is_erased {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
