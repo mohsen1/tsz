@@ -220,6 +220,52 @@ after
         self.assertEqual(source, "checked detail")
         self.assertEqual(summary, detail_summary)
 
+    def test_stale_overview_labels_checked_detail_counters(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "jsPassRate": 96.8,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+                "dtsPassRate": 96.2,
+            },
+            "results": [
+                {
+                    "name": "jsOnlyFailure",
+                    "jsStatus": "fail",
+                    "dtsStatus": "pass",
+                    "jsError": "+1/-1 lines",
+                },
+                {
+                    "name": "dtsOnlyFailure",
+                    "jsStatus": "pass",
+                    "dtsStatus": "fail",
+                    "dtsError": "+1/-1 lines",
+                },
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_overview(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Source: README/public aggregate", text)
+        self.assertIn("JavaScript: 13459/13530 (99.5%)", text)
+        self.assertIn("Checked-detail JS failures: 1", text)
+        self.assertIn("Checked-detail DTS failures: 1", text)
+        self.assertIn("Checked-detail JS pass + DTS fail", text)
+
 
 class TestQueryFilters(unittest.TestCase):
     @classmethod
