@@ -1369,6 +1369,28 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
         }
+        let has_source_statement_semicolon = self.source_text.is_some_and(|text| {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            let mut depth: i32 = 0;
+            let mut i = start;
+            while i < end {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth < 0 {
+                            break;
+                        }
+                    }
+                    b';' if depth == 0 => return true,
+                    _ => {}
+                }
+                i += 1;
+            }
+            false
+        });
         self.map_trailing_semicolon(node);
         if !self.output_ends_with_semicolon() {
             self.write_semicolon();
@@ -1379,7 +1401,13 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.write_semicolon();
         }
-        self.emit_trailing_comment_after_semicolon(node);
+        if has_source_statement_semicolon {
+            self.emit_trailing_comment_after_semicolon(node);
+        } else if expression_trailing_comment_range.is_none()
+            && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+        {
+            self.emit_trailing_comments(expr_node.end);
+        }
         if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
             self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
         }

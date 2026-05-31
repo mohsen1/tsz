@@ -4,6 +4,7 @@ mod decorators;
 mod emit_declaration;
 mod emit_es6;
 mod helpers;
+mod private_comma_items;
 mod private_method_defs;
 mod static_block_self_alias;
 mod static_field_erasure;

@@ -24,6 +24,8 @@ mod class_expr_es5_interior_comment_tests;
 #[cfg(test)]
 mod class_expr_object_property_static_naming_tests;
 #[cfg(test)]
+mod class_expr_private_static_scheduling_tests;
+#[cfg(test)]
 mod class_expression_decorator_tests;
 #[cfg(test)]
 mod class_static_alias_tests;
