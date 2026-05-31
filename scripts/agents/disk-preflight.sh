@@ -343,10 +343,15 @@ function parseWorktreeSignals(text) {
 
 const guard = parseKeyValueLines(process.env.GUARD_OUTPUT ?? "");
 const bool = (value) => value === "true";
+const diskOk = guard.disk_status === "ok";
 const report = {
+  ok: diskOk,
   agent: process.env.AGENT,
   repo: process.env.ROOT,
-  disk_guard: guard,
+  disk_guard: {
+    ...guard,
+    ok: diskOk,
+  },
   typescript: {
     state: process.env.TYPESCRIPT_STATE,
     target: process.env.TYPESCRIPT_TARGET || null,

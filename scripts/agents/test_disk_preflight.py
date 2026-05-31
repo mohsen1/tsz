@@ -44,11 +44,12 @@ class DiskPreflightTests(unittest.TestCase):
 
         return fake_repo, fake_script
 
-    def run_preflight(self, fake_repo, fake_script, *extra_args):
+    def run_preflight(self, fake_repo, fake_script, *extra_args, env_overrides=None):
         env = {
             **os.environ,
             "TSZ_WORKTREE_INACTIVE_HOURS": "1",
             "TSZ_CARGO_CACHE_STUB_MAX_KB": "8",
+            **(env_overrides or {}),
         }
         return subprocess.run(
             ["bash", str(fake_script), "Studio-F", *extra_args],
@@ -110,6 +111,7 @@ class DiskPreflightTests(unittest.TestCase):
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertIn("agent=Studio-F", result.stdout)
+            self.assertTrue(report["ok"])
             self.assertEqual("Studio-F", report["agent"])
             self.assertEqual(str(fake_repo), report["repo"])
             self.assertEqual("populated-local-submodule", report["typescript"]["state"])
@@ -124,8 +126,28 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertGreater(report["cargo_cache"]["total_size_kb"], 8)
             self.assertFalse(report["cargo_cache"]["local"][".target"])
             self.assertIn("disk_status", report["disk_guard"])
+            self.assertTrue(report["disk_guard"]["ok"])
             self.assertNotIn("branch", report["disk_guard"])
             self.assertGreaterEqual(len(report["reusable_worktrees"]), 1)
+
+    def test_json_report_marks_low_disk_guard_not_ok(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            report_path = temp_root / "preflight.json"
+
+            self.run_preflight(
+                fake_repo,
+                fake_script,
+                "--json-report",
+                str(report_path),
+                env_overrides={"TSZ_DISK_MIN_FREE_GB": "9999999"},
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertFalse(report["ok"])
+            self.assertEqual("low", report["disk_guard"]["disk_status"])
+            self.assertFalse(report["disk_guard"]["ok"])
 
     def test_worktree_without_typescript_points_to_link_helper(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
