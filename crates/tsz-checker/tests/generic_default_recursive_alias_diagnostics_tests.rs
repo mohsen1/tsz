@@ -34,6 +34,38 @@ type A = Solve29<string>;
 }
 
 #[test]
+fn defaulted_recursive_alias_wrapper_declaration_reports_ts2589_without_use_site() {
+    let codes = semantic_codes(
+        r#"
+type Link28<T, D extends number = 4> = [D] extends [0] ? T : Link28<T[]>;
+type Solve28<T> = Link28<T> extends infer U ? U : never;
+"#,
+    );
+
+    assert_eq!(
+        codes,
+        vec![2589, 2589],
+        "tsc reports the recursive alias boundary and wrapper alias even without a concrete use; got {codes:?}"
+    );
+}
+
+#[test]
+fn renamed_defaulted_recursive_alias_wrapper_declaration_reports_ts2589_without_use_site() {
+    let codes = semantic_codes(
+        r#"
+type Path<X, N extends number = 4> = [N] extends [0] ? X : Path<X[]>;
+type Resolve<X> = Path<X> extends infer Y ? Y : never;
+"#,
+    );
+
+    assert_eq!(
+        codes,
+        vec![2589, 2589],
+        "renamed aliases and params should report declaration-time TS2589 without a use site; got {codes:?}"
+    );
+}
+
+#[test]
 fn renamed_defaulted_recursive_alias_does_not_cascade_ts2589_to_use_alias() {
     let codes = semantic_codes(
         r#"
