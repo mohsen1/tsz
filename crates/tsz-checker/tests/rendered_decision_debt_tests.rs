@@ -250,3 +250,20 @@ fn jsx_props_intersection_member_display_is_not_a_decision_gate() {
         "JSX props intersection display should rely on syntax member presence, not formatted text emptiness"
     );
 }
+
+#[test]
+fn preferred_constructor_display_uses_structural_identity() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/core/diagnostic_source.rs"
+    ))
+    .expect("diagnostic source should be readable");
+    assert!(
+        !source.contains("source_display == constructor_display"),
+        "preferred constructor display should compare type structure, not rendered text"
+    );
+    assert!(
+        source.contains("are_types_structurally_identical("),
+        "preferred constructor display should prove constructor equivalence structurally"
+    );
+}

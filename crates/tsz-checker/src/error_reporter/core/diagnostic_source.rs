@@ -812,11 +812,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let source_display =
-            self.format_type_for_assignability_message(self.widen_type_for_display(type_id));
-        let constructor_display = self
-            .format_type_for_assignability_message(self.widen_type_for_display(constructor_type));
-        (source_display == constructor_display).then_some(constructor_name)
+        let source_type = self.widen_type_for_display(type_id);
+        let constructor_type = self.widen_type_for_display(constructor_type);
+        crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            source_type,
+            constructor_type,
+        )
+        .then_some(constructor_name)
     }
 
     /// When a source expression is a property/element access whose value type
