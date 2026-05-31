@@ -258,9 +258,7 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| self.noinfer_call_parameter_mismatch_display(param_type, arg_type))
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
-        if target_display.contains("Array<") {
-            target_display = Self::normalize_array_generic_to_shorthand(&target_display);
-        }
+        target_display = Self::normalize_array_generic_to_shorthand(&target_display);
         if let Some((generic_actual_display, generic_target_display)) =
             self.generic_direct_primitive_mismatch_display(arg_type, param_type, arg_idx)
         {
