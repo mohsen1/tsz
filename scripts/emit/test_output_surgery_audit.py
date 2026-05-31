@@ -81,6 +81,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["output_surgery_status"], "failed")
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["allowlisted_calls"], 1)
@@ -148,6 +149,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["output_surgery_status"], "passed")
         self.assertEqual(report["failures"], [])
 
     def test_pass_summary_names_clean_guardrail_counters(self):
