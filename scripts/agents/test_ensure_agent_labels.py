@@ -283,6 +283,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertEqual("fail", report["status"])
+        self.assertEqual("fail", report["agent_label_audit_status"])
         self.assertFalse(report["ok"])
         self.assertEqual(2, report["metrics"]["agent_label_audit_findings"])
         self.assertEqual(1, report["metrics"]["open_prs_missing_agent_label"])
@@ -330,6 +331,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual("pass", report["status"])
+        self.assertEqual("pass", report["agent_label_audit_status"])
         self.assertEqual(0, report["metrics"]["agent_label_audit_findings"])
 
     def test_json_report_requires_audit_mode(self):

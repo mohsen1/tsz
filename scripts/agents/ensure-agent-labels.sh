@@ -230,6 +230,7 @@ if (process.env.JSON_REPORT) {
   const report = {
     ok,
     status: ok ? "pass" : "fail",
+    agent_label_audit_status: ok ? "pass" : "fail",
     metrics,
     missing_canonical_labels: missingCanonicalLabels,
     noncanonical_agent_labels: noncanonicalLabels,
