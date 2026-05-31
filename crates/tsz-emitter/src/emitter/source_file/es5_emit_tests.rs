@@ -1235,6 +1235,43 @@ fn es2015_undeclared_private_recovery_does_not_request_helpers() {
 }
 
 #[test]
+fn es5_commonjs_exported_class_private_storage_hoists_before_es_module_marker() {
+    let source = "export class Box {\n    #value: unknown;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let storage_pos = output
+        .find("var _Box_value;")
+        .expect("private storage var should be emitted");
+    let marker_pos = output
+        .find("Object.defineProperty(exports, \"__esModule\", { value: true });")
+        .expect("CommonJS ES module marker should be emitted");
+    let export_init_pos = output
+        .find("exports.Box = void 0;")
+        .expect("CommonJS export initializer should be emitted");
+    let class_pos = output
+        .find("var Box = /** @class */")
+        .expect("ES5 class IIFE should be emitted");
+
+    assert!(
+        storage_pos < marker_pos && marker_pos < export_init_pos && export_init_pos < class_pos,
+        "Private storage declarations for exported ES5 classes should be hoisted before the CommonJS preamble.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
     let source = "// order comment\n\
 class C {\n\

@@ -2,6 +2,10 @@ use super::super::super::{Printer, ScriptTarget};
 use super::class_has_self_references;
 use super::replace_identifier;
 use crate::emitter::core::PropertyNameEmit;
+use crate::transforms::private_fields_es5::{
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved,
+};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::ClassData;
@@ -1016,6 +1020,29 @@ impl<'a> Printer<'a> {
         }
 
         let mut decls = Vec::new();
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        for field in collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            class_name,
+            &mut used_private_names,
+        ) {
+            decls.push(field.weakmap_name);
+        }
+        for accessor in collect_private_accessors_with_reserved(
+            self.arena,
+            class_idx,
+            class_name,
+            &mut used_private_names,
+        ) {
+            if let Some(name) = accessor.get_var_name {
+                decls.push(name);
+            }
+            if let Some(name) = accessor.set_var_name {
+                decls.push(name);
+            }
+        }
+
         let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
         let mut auto_accessor_storage_reserved = false;
         for &member_idx in &class_data.members.nodes {
