@@ -377,7 +377,7 @@ impl<'a> DeclarationEmitter<'a> {
         let nullish_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(nullish_idx);
-        if self.get_identifier_text(nullish_idx).as_deref() == Some("undefined") {
+        if self.is_unbound_undefined_value_reference(nullish_idx) {
             return Some("undefined");
         }
         let nullish_node = self.arena.get(nullish_idx)?;
@@ -386,6 +386,21 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
             _ => None,
         }
+    }
+
+    fn is_unbound_undefined_value_reference(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::UndefinedKeyword as u16 {
+            return true;
+        }
+        if self.get_identifier_text(expr_idx).as_deref() != Some("undefined") {
+            return false;
+        }
+
+        self.binder
+            .is_none_or(|_| self.value_reference_symbol(expr_idx).is_none())
     }
 
     fn nullish_guarded_return_type_text(

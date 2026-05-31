@@ -193,6 +193,29 @@ function ensurePresent<Thing>(thing: Thing) {
 }
 
 #[test]
+fn generic_return_parameter_shadowed_undefined_does_not_narrow() {
+    let output = emit_dts_with_binding(
+        r#"
+function keepShadowed<Value>(value: Value, undefined: unknown) {
+    if (value === undefined) throw Error();
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function keepShadowed<Value>(value: Value, undefined: unknown): Value;"
+        ),
+        "Expected shadowed undefined identifier to fall back to the declared generic surface: {output}"
+    );
+    assert!(
+        !output.contains("keepShadowed<Value>(value: Value, undefined: unknown): Value &"),
+        "Expected local undefined binding not to be treated as a nullish guard: {output}"
+    );
+}
+
+#[test]
 fn generic_return_parameter_after_nested_nullish_helpers_composes_flow_surface() {
     let output = emit_dts(
         r#"
