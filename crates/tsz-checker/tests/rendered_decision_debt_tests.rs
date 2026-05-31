@@ -294,3 +294,29 @@ fn ts2820_target_display_uses_structural_surface_predicates() {
         "TS2820 target display should preserve named surfaces through structural predicates"
     );
 }
+
+#[test]
+fn index_access_type_parameter_ts2719_uses_declared_param_names() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/render_failure.rs"
+    ))
+    .expect("render failure source should be readable");
+    let start = source
+        .find("fn render_index_access_type_parameter_mismatch")
+        .expect("indexed-access parameter mismatch renderer should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n    /// Render the TS2322 + TS2517")
+        .expect("indexed-access parameter mismatch renderer should end before TS2517 renderer");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("source_param_str == target_param_str"),
+        "indexed-access TS2719 elaboration should not compare rendered type-parameter text"
+    );
+    assert!(
+        helper_body.contains("distinct_type_parameters_share_declared_name("),
+        "indexed-access TS2719 elaboration should compare type-parameter identity and declared names"
+    );
+}

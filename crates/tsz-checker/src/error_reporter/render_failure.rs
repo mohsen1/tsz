@@ -1151,13 +1151,8 @@ impl<'a> CheckerState<'a> {
         );
         let source_param_str = self.format_type_diagnostic(source_param);
         let target_param_str = self.format_type_diagnostic(target_param);
-        let (inner, inner_code) = if source_param_str == target_param_str
-            && !crate::error_reporter::assignability::is_primitive_type_name(&source_param_str)
-            && !crate::error_reporter::assignability::display_is_literal_value(&source_param_str)
-            // unique symbols stringify identically but are distinct identities;
-            // tsc uses TS2322, not TS2719. Detect structurally. See #9752.
-            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, source_param)
-            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, target_param)
+        let (inner, inner_code) = if self
+            .distinct_type_parameters_share_declared_name(source_param, target_param)
         {
             (
                 format_message(
@@ -1201,6 +1196,27 @@ impl<'a> CheckerState<'a> {
             });
         }
         diag
+    }
+
+    fn distinct_type_parameters_share_declared_name(
+        &self,
+        source_param: TypeId,
+        target_param: TypeId,
+    ) -> bool {
+        if source_param == target_param {
+            return false;
+        }
+        let Some(source_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source_param)
+        else {
+            return false;
+        };
+        let Some(target_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, target_param)
+        else {
+            return false;
+        };
+        source_info.name == target_info.name
     }
 
     /// Render the TS2322 + TS2517 elaboration chain emitted when an abstract
