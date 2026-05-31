@@ -200,18 +200,8 @@ def emit_summary_from_readme(path=README_FILE):
 
 
 def emit_freshness_note(detail_summary, public_summary):
-    if not detail_summary or not public_summary:
-        return None
-
-    same_domain = (
-        detail_summary.get("jsTotal") == public_summary.get("jsTotal")
-        and detail_summary.get("dtsTotal") == public_summary.get("dtsTotal")
-    )
-    public_ahead = (
-        public_summary.get("jsPass", 0) > detail_summary.get("jsPass", 0)
-        or public_summary.get("dtsPass", 0) > detail_summary.get("dtsPass", 0)
-    )
-    if not same_domain or not public_ahead:
+    status = emit_freshness_status(detail_summary, public_summary)
+    if status["state"] != "stale":
         return None
 
     return (
@@ -221,8 +211,66 @@ def emit_freshness_note(detail_summary, public_summary):
         f"{detail_summary['jsPass']:,}/{detail_summary['jsTotal']:,}; "
         f"DTS {public_summary['dtsPass']:,}/{public_summary['dtsTotal']:,} vs "
         f"{detail_summary['dtsPass']:,}/{detail_summary['dtsTotal']:,}). "
+        f"Pass delta: JS +{status['jsPassDelta']:,}, DTS +{status['dtsPassDelta']:,}. "
         "Failure-family rows below still use checked-in per-test detail."
     )
+
+
+def emit_freshness_status(detail_summary, public_summary):
+    if not detail_summary:
+        return {"state": "missing-detail"}
+    if not public_summary:
+        return {"state": "unknown-public"}
+
+    same_domain = (
+        detail_summary.get("jsTotal") == public_summary.get("jsTotal")
+        and detail_summary.get("dtsTotal") == public_summary.get("dtsTotal")
+    )
+    status = {
+        "jsPassDelta": public_summary.get("jsPass", 0) - detail_summary.get("jsPass", 0),
+        "dtsPassDelta": public_summary.get("dtsPass", 0) - detail_summary.get("dtsPass", 0),
+        "jsTotalDelta": public_summary.get("jsTotal", 0) - detail_summary.get("jsTotal", 0),
+        "dtsTotalDelta": public_summary.get("dtsTotal", 0) - detail_summary.get("dtsTotal", 0),
+    }
+    if not same_domain:
+        return {"state": "different-domain", **status}
+    if status["jsPassDelta"] > 0 or status["dtsPassDelta"] > 0:
+        return {"state": "stale", **status}
+    if status["jsPassDelta"] < 0 or status["dtsPassDelta"] < 0:
+        return {"state": "detail-ahead", **status}
+    return {"state": "current", **status}
+
+
+def emit_freshness_status_line(data):
+    detail_summary = emit_summary(data)
+    public_summary = emit_summary_from_readme()
+    status = emit_freshness_status(detail_summary, public_summary)
+    state = status["state"]
+    if state == "stale":
+        return (
+            "Emit detail freshness: stale "
+            f"(README/public ahead by JS +{status['jsPassDelta']:,} pass, "
+            f"DTS +{status['dtsPassDelta']:,} pass over matching totals)."
+        )
+    if state == "current":
+        return "Emit detail freshness: current (README/public aggregate matches checked detail)."
+    if state == "detail-ahead":
+        return (
+            "Emit detail freshness: detail-ahead "
+            f"(checked detail exceeds README/public by JS {-status['jsPassDelta']:,} pass, "
+            f"DTS {-status['dtsPassDelta']:,} pass over matching totals)."
+        )
+    if state == "different-domain":
+        return (
+            "Emit detail freshness: incomparable "
+            f"(README/public totals differ by JS {status['jsTotalDelta']:+,}, "
+            f"DTS {status['dtsTotalDelta']:+,})."
+        )
+    return f"Emit detail freshness: {state}."
+
+
+def print_emit_freshness_status(data):
+    print(emit_freshness_status_line(data))
 
 
 def print_emit_freshness_note(data):
@@ -452,12 +500,25 @@ def main():
     parser.add_argument("--status", type=str, help="Filter by status (pass/fail/skip/timeout)")
     parser.add_argument("--paths-only", action="store_true", help="Output only test names (for piping)")
     parser.add_argument("--top", type=int, default=40, help="Limit rows shown")
+    parser.add_argument("--freshness", action="store_true", help="Report whether emit-detail.json is current")
+    parser.add_argument(
+        "--require-current-detail",
+        action="store_true",
+        help="Exit non-zero when README/public aggregate is ahead of emit-detail.json",
+    )
     args = parser.parse_args()
 
     data = load_detail()
     filtered_data = filter_data_by_name(data, args.filter)
+    freshness_status = emit_freshness_status(emit_summary(data), emit_summary_from_readme())
 
-    if args.js_failures:
+    if args.require_current_detail and freshness_status["state"] == "stale":
+        print(emit_freshness_status_line(data), file=sys.stderr)
+        return 1
+
+    if args.freshness:
+        print_emit_freshness_status(data)
+    elif args.js_failures:
         show_js_failures(filtered_data, args.top, args.paths_only)
     elif args.dts_failures:
         show_dts_failures(filtered_data, args.top, args.paths_only)
@@ -474,6 +535,8 @@ def main():
     else:
         show_overview(data)
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
