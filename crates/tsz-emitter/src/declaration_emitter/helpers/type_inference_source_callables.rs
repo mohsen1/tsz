@@ -731,6 +731,17 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return Some(type_text);
             }
+            if let Some(type_text) = self
+                .direct_returned_function_expression_type_text(func)
+                .filter(|text| !text.is_empty() && text != "any")
+            {
+                return Some(type_text);
+            }
+            if let Some(type_text) =
+                self.function_body_spread_array_return_type_text(func, func.body)
+            {
+                return Some(type_text);
+            }
             if let Some(return_expr) = self.single_return_expression(func.body)
                 && let Some(type_text) = self
                     .declaration_summary_primitive_expression_type_text(return_expr, 0)

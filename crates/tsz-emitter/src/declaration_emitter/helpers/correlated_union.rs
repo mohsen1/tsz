@@ -17,8 +17,9 @@ struct CorrelatedAliasShape {
     member_indices: Vec<NodeIndex>,
 }
 
-enum MappedArgumentInference {
+pub(in crate::declaration_emitter) enum MappedArgumentInference {
     PartialRequired,
+    IsomorphicArray,
     IsomorphicWrapper(String),
 }
 
@@ -583,6 +584,31 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            self.infer_tuple_spread_argument_substitutions(
+                &param_type_text,
+                arg_idx,
+                type_param_names,
+                type_param_constraints,
+                &mut substitutions,
+            );
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
             let param_type_text = param_type_text.trim();
             if !type_param_names
                 .iter()
@@ -687,6 +713,9 @@ impl<'a> DeclarationEmitter<'a> {
                 MappedArgumentInference::PartialRequired => {
                     Self::infer_required_from_partial_argument_text(&arg_type_text)
                 }
+                MappedArgumentInference::IsomorphicArray => {
+                    Self::infer_unwrapped_array_mapped_argument_text(&arg_type_text)
+                }
                 MappedArgumentInference::IsomorphicWrapper(wrapper) => {
                     Self::infer_unwrapped_isomorphic_mapped_argument_text(&arg_type_text, &wrapper)
                 }
@@ -697,6 +726,32 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::parenthesize_generic_function_type_argument(&value_text),
                 ));
             }
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some((param_name, value_text)) = self
+                .infer_mapped_tuple_spread_argument_substitution(
+                    source_arena,
+                    param.type_annotation,
+                    arg_idx,
+                    type_param_names,
+                )
+            else {
+                continue;
+            };
+            if substitutions
+                .iter()
+                .any(|(name, _)| name.as_str() == param_name.as_str())
+            {
+                continue;
+            }
+            substitutions.push((param_name, value_text));
         }
 
         for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
@@ -768,6 +823,13 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            Self::infer_variadic_function_type_substitutions(
+                &source_function_type,
+                &argument_function_type,
+                type_param_names,
+                &substitutions.clone(),
+                &mut substitutions,
+            );
             let blocked_return_type_params = self
                 .no_infer_blocked_return_type_params_from_function_type(
                     source_arena,
@@ -934,6 +996,17 @@ impl<'a> DeclarationEmitter<'a> {
         source_arena: &NodeArena,
         param_type_idx: NodeIndex,
     ) -> Option<(String, MappedArgumentInference)> {
+        let (type_arg_idx, inference) = self
+            .mapped_argument_type_arg_and_inference_from_param_type(source_arena, param_type_idx)?;
+        let param_inner = self.simple_type_node_name_from_arena(source_arena, type_arg_idx)?;
+        Some((param_inner, inference))
+    }
+
+    pub(in crate::declaration_emitter) fn mapped_argument_type_arg_and_inference_from_param_type(
+        &self,
+        source_arena: &NodeArena,
+        param_type_idx: NodeIndex,
+    ) -> Option<(NodeIndex, MappedArgumentInference)> {
         let param_type_idx = source_arena.skip_parenthesized(param_type_idx);
         let param_type_node = source_arena.get(param_type_idx)?;
         if param_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
@@ -944,7 +1017,6 @@ impl<'a> DeclarationEmitter<'a> {
         let [type_arg_idx] = type_args.nodes.as_slice() else {
             return None;
         };
-        let param_inner = self.simple_type_node_name_from_arena(source_arena, *type_arg_idx)?;
         let mut saw_declared_symbol = false;
         let inference = if let Some(sym_id) =
             self.declaration_type_symbol_from_type_node(source_arena, param_type_idx)
@@ -975,7 +1047,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.mapped_argument_inference_from_alias(alias_arena, alias)
             })?
         };
-        Some((param_inner, inference))
+        Some((*type_arg_idx, inference))
     }
 
     fn mapped_argument_inference_from_alias(
@@ -1011,6 +1083,14 @@ impl<'a> DeclarationEmitter<'a> {
             )
         {
             return Some(MappedArgumentInference::PartialRequired);
+        }
+        if self.mapped_value_is_array_of_indexed_access(
+            alias_arena,
+            mapped.type_node,
+            &type_param_name,
+            &mapped_param_name,
+        ) {
+            return Some(MappedArgumentInference::IsomorphicArray);
         }
         self.mapped_value_isomorphic_wrapper(
             alias_arena,
@@ -1071,6 +1151,26 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         self.indexed_access_names(arena, value_idx)
             .is_some_and(|(object, index)| object == object_name && index == index_name)
+    }
+
+    fn mapped_value_is_array_of_indexed_access(
+        &self,
+        arena: &NodeArena,
+        value_idx: NodeIndex,
+        object_name: &str,
+        index_name: &str,
+    ) -> bool {
+        let value_idx = arena.skip_parenthesized(value_idx);
+        let Some(value_node) = arena.get(value_idx) else {
+            return false;
+        };
+        if value_node.kind != syntax_kind_ext::ARRAY_TYPE {
+            return false;
+        }
+        let Some(array) = arena.get_array_type(value_node) else {
+            return false;
+        };
+        self.mapped_value_is_indexed_access(arena, array.element_type, object_name, index_name)
     }
 
     fn mapped_value_isomorphic_wrapper(
@@ -1145,6 +1245,34 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn infer_unwrapped_array_mapped_argument_text(
+        arg_type_text: &str,
+    ) -> Option<String> {
+        let trimmed = arg_type_text.trim();
+        if let Some(elements) = Self::tuple_type_text_elements_preserving_rest(trimmed) {
+            let mut inferred = Vec::new();
+            for element in elements {
+                inferred.push(Self::unwrap_mapped_array_tuple_element(&element)?);
+            }
+            return Some(format!("[{}]", inferred.join(", ")));
+        }
+
+        if let Some(inner) = Self::strip_array_suffix(trimmed) {
+            return Some(inner.to_string());
+        }
+
+        Self::object_type_members(trimmed).and_then(|members| {
+            let mut lines = Vec::new();
+            for member in members {
+                let (name, optional, type_text) = Self::object_member_parts(&member)?;
+                let unwrapped = Self::strip_array_suffix(type_text)?;
+                let optional = if optional { "?" } else { "" };
+                lines.push(format!("    {name}{optional}: {unwrapped};"));
+            }
+            (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
+        })
+    }
+
     pub(in crate::declaration_emitter) fn infer_required_from_partial_argument_text(
         arg_type_text: &str,
     ) -> Option<String> {
@@ -1173,7 +1301,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn tuple_type_text_elements_preserving_rest(type_text: &str) -> Option<Vec<String>> {
+    pub(super) fn tuple_type_text_elements_preserving_rest(type_text: &str) -> Option<Vec<String>> {
         let mut text = type_text.trim();
         if let Some(rest) = text.strip_prefix("readonly ") {
             text = rest.trim();
@@ -1216,7 +1344,7 @@ impl<'a> DeclarationEmitter<'a> {
         Self::remove_undefined_union_member(trimmed.trim_end_matches('?').trim())
     }
 
-    fn strip_array_suffix(type_text: &str) -> Option<&str> {
+    pub(in crate::declaration_emitter) fn strip_array_suffix(type_text: &str) -> Option<&str> {
         let trimmed = type_text.trim();
         let inner = trimmed.strip_suffix("[]")?.trim();
         Some(
@@ -1391,7 +1519,7 @@ impl<'a> DeclarationEmitter<'a> {
         (depth == 0).then_some((wrapper, inner.trim()))
     }
 
-    fn type_param_constraint_text<'b>(
+    pub(super) fn type_param_constraint_text<'b>(
         type_param_constraints: &'b [(String, String)],
         type_param_name: &str,
     ) -> Option<&'b str> {
@@ -1508,7 +1636,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
     }
 
-    fn lexical_parameter_declared_type_annotation_text(
+    pub(super) fn lexical_parameter_declared_type_annotation_text(
         &self,
         arg_idx: NodeIndex,
     ) -> Option<String> {

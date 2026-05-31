@@ -62,19 +62,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn function_body_parameter_return_type_text(
-        &self,
-        func: &tsz_parser::parser::node::FunctionData,
-        body_idx: NodeIndex,
-    ) -> Option<String> {
-        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
-        let type_annotation = self.function_parameter_type_annotation(func, returned_identifier)?;
-        let type_text = self
-            .single_line_mapped_type_annotation_text(type_annotation)
-            .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
-        (!type_text.trim().is_empty()).then_some(type_text)
-    }
-
     pub(in crate::declaration_emitter) fn function_body_local_function_expando_return_type_text(
         &self,
         body_idx: NodeIndex,
@@ -84,7 +71,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter(|text| !text.is_empty())
     }
 
-    fn function_parameter_type_annotation(
+    pub(in crate::declaration_emitter) fn function_parameter_type_annotation(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
         identifier_idx: NodeIndex,
@@ -101,7 +88,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn single_line_mapped_type_annotation_text(
+    pub(in crate::declaration_emitter) fn single_line_mapped_type_annotation_text(
         &self,
         type_annotation: NodeIndex,
     ) -> Option<String> {

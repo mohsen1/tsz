@@ -366,11 +366,19 @@ impl<'a> DeclarationEmitter<'a> {
             if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                 let spread = self.arena.get_spread(element_node)?;
                 let spread_type = self
-                    .get_node_type_or_names(&[spread.expression])
-                    .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                    .lexical_parameter_declared_type_annotation_text(spread.expression)
+                    .or_else(|| {
+                        self.get_node_type_or_names(&[spread.expression])
+                            .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                    })
                     .or_else(|| self.infer_fallback_type_text_at(spread.expression, depth + 1))
                     .unwrap_or_else(|| "any[]".to_string());
-                parts.push(format!("...{spread_type}"));
+                if let Some(elements) = Self::tuple_type_text_elements_preserving_rest(&spread_type)
+                {
+                    parts.extend(elements);
+                } else {
+                    parts.push(format!("...{spread_type}"));
+                }
                 continue;
             }
 

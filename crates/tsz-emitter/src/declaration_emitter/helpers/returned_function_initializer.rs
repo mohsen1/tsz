@@ -737,6 +737,10 @@ impl<'a> DeclarationEmitter<'a> {
         let return_text = direct_function_return
             .or_else(|| self.function_body_nullish_guard_return_type_text(func, func_body))
             .or_else(|| self.function_body_parameter_return_type_text(func, func_body))
+            .or_else(|| {
+                self.function_body_returned_parameter_call_return_type_text(self.arena, func)
+            })
+            .or_else(|| self.function_body_spread_array_return_type_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)
@@ -907,8 +911,12 @@ impl<'a> DeclarationEmitter<'a> {
                 Self::rename_type_text_identifiers(&raw_type_text, type_param_renames)
             });
         if param.dot_dot_dot_token
-            && let Some(params) =
-                self.expand_rest_tuple_parameter_text(param_idx, &type_text, used_param_names)
+            && let Some(params) = self.expand_rest_tuple_parameter_text(
+                param_idx,
+                &type_text,
+                Some(&name),
+                used_param_names,
+            )
         {
             return Some(params);
         }
@@ -951,15 +959,29 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         from_idx: NodeIndex,
         type_text: &str,
+        preferred_single_rest_name: Option<&str>,
         used_param_names: &mut Vec<String>,
     ) -> Option<String> {
         let elements = self.expand_tuple_type_elements(from_idx, type_text, 0)?;
+        let single_rest = elements.len() == 1 && elements[0].0.starts_with("...");
 
         Some(
             elements
                 .into_iter()
                 .map(|(name, ty, optional)| {
-                    let unique = Self::unique_parameter_name(&name, used_param_names);
+                    let (rest, name) = name
+                        .strip_prefix("...")
+                        .map(|name| (true, name))
+                        .unwrap_or((false, name.as_str()));
+                    let name = if rest && single_rest {
+                        preferred_single_rest_name.unwrap_or(name)
+                    } else {
+                        name
+                    };
+                    let unique = Self::unique_parameter_name(name, used_param_names);
+                    if rest {
+                        return format!("...{unique}: {ty}");
+                    }
                     if optional {
                         let ty = if Self::contains_whole_word_in_text(&ty, "undefined") {
                             ty
@@ -999,10 +1021,12 @@ impl<'a> DeclarationEmitter<'a> {
                     return Some(param_text.to_string());
                 };
                 let colon_idx = Self::find_top_level_byte(rest_text, b':')?;
+                let name_text = rest_text.get(..colon_idx)?.trim().trim_end_matches('?');
                 let type_text = rest_text.get(colon_idx + 1..)?.trim();
                 let expanded = self.expand_rest_tuple_parameter_text(
                     scope_idx,
                     type_text,
+                    Some(name_text),
                     &mut used_param_names,
                 )?;
                 changed = true;
@@ -1092,7 +1116,9 @@ impl<'a> DeclarationEmitter<'a> {
             if part.is_empty() {
                 continue;
             }
-            if let Some(alias_name) = part.strip_prefix("...").map(str::trim) {
+            if let Some(alias_name) = part.strip_prefix("...").map(str::trim)
+                && Self::find_top_level_byte(alias_name, b':').is_none()
+            {
                 let alias_text = self.local_type_alias_annotation_text(from_idx, alias_name)?;
                 elements.extend(self.expand_tuple_type_elements(
                     from_idx,
@@ -1102,6 +1128,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if let Some((name, ty)) = part.split_once(':') {
+                let rest = part.trim_start().starts_with("...");
                 let name = name.trim().trim_start_matches("...");
                 let optional = name.ends_with('?');
                 let name = name.strip_suffix('?').unwrap_or(name).trim();
@@ -1109,7 +1136,12 @@ impl<'a> DeclarationEmitter<'a> {
                 if name.is_empty() || ty.is_empty() {
                     return None;
                 }
-                elements.push((name.to_string(), ty.to_string(), optional));
+                let name = if rest {
+                    format!("...{name}")
+                } else {
+                    name.to_string()
+                };
+                elements.push((name, ty.to_string(), optional));
                 continue;
             }
 
