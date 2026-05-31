@@ -94,6 +94,16 @@ fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
 }
 
 #[test]
+fn relation_cache_config_does_not_expose_raw_flags_constructor() {
+    let source = include_str!("../src/types.rs");
+
+    assert!(
+        !source.contains("pub const fn from_flags(flags: RelationFlags) -> Self"),
+        "RelationCacheConfig must not expose a raw flags constructor; use RelationPolicy::from_relation_flags(...).cache_config() so typed policy defaults and overrides stay canonical",
+    );
+}
+
+#[test]
 fn legacy_flag_constructor_stores_typed_relation_flags() {
     let policy = RelationPolicy::from_flags(
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS

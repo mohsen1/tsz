@@ -473,7 +473,7 @@ fn relation_cache_key_different_flags_different_key() {
     let key_strict = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        RelationCacheConfig::from_flags(RelationFlags::STRICT_NULL_CHECKS),
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS).cache_config(),
     );
 
     assert_ne!(
