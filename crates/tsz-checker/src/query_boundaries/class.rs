@@ -331,8 +331,12 @@ fn source_this_parameter_is_acceptable_for_target_without_this(
         let mut stripped = (*source_shape).clone();
         stripped.this_type = None;
         let stripped_source = checker.ctx.types.factory().function(stripped);
-        return checker.is_assignable_to_no_erase_generics(stripped_source, target)
-            || checker.is_assignable_to_no_erase_generics(target, stripped_source)
+        return checker
+            .no_erase_generics_relation_outcome(stripped_source, target)
+            .related
+            || checker
+                .no_erase_generics_relation_outcome(target, stripped_source)
+                .related
             || signatures_have_matching_generic_shape(checker, &source_shape, &target_shape);
     }
 
@@ -360,8 +364,12 @@ fn source_this_parameter_is_acceptable_for_target_without_this(
         sig.this_type = None;
     }
     let stripped_source = checker.ctx.types.factory().callable(stripped);
-    checker.is_assignable_to_no_erase_generics(stripped_source, target)
-        || checker.is_assignable_to_no_erase_generics(target, stripped_source)
+    checker
+        .no_erase_generics_relation_outcome(stripped_source, target)
+        .related
+        || checker
+            .no_erase_generics_relation_outcome(target, stripped_source)
+            .related
         || source_shape.call_signatures.iter().any(|source_sig| {
             target_shape.call_signatures.iter().any(|target_sig| {
                 let source_fn = tsz_solver::FunctionShape {
@@ -410,7 +418,10 @@ pub(crate) fn should_report_member_type_mismatch(
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
     }
-    if checker.is_assignable_to_no_erase_generics(source, target) {
+    if checker
+        .no_erase_generics_relation_outcome(source, target)
+        .related
+    {
         return false;
     }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
@@ -448,7 +459,9 @@ pub(crate) fn interface_overload_trailing_signature_assignable(
     target: TypeId,
     allow_fresh_generic_retry: bool,
 ) -> bool {
-    checker.is_assignable_to_no_erase_generics(source, target)
+    checker
+        .no_erase_generics_relation_outcome(source, target)
+        .related
         || (allow_fresh_generic_retry && checker.assign_relation_outcome(source, target).related)
 }
 
@@ -555,7 +568,10 @@ pub(crate) fn should_report_own_member_type_mismatch(
     if implementation_signature_covers_interface_overloads(checker, source, target) {
         return false;
     }
-    if checker.is_assignable_to_no_erase_generics(source, target) {
+    if checker
+        .no_erase_generics_relation_outcome(source, target)
+        .related
+    {
         return false;
     }
     // Fallback for any-propagation cases (e.g. `IteratorResult<T, any>` vs
@@ -720,7 +736,9 @@ pub(crate) fn should_report_property_type_mismatch(
         if needs_strict_generic_target_callable_recheck(checker, relation_source, relation_target) {
             let strict_source = unwrap_single_property_value_type(checker, relation_source);
             let strict_target = unwrap_single_property_value_type(checker, relation_target);
-            return !checker.is_assignable_to_no_erase_generics(strict_source, strict_target);
+            return !checker
+                .no_erase_generics_relation_outcome(strict_source, strict_target)
+                .related;
         }
         return false;
     }

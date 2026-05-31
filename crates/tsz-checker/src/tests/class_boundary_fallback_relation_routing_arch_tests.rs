@@ -21,8 +21,17 @@ fn class_member_fallback_relations_use_relation_outcome_boundary() {
         "interface overload fallback should route standard relation truth through assign_relation_outcome"
     );
     assert!(
+        overload_helper.contains("no_erase_generics_relation_outcome(source, target)")
+            && overload_helper.contains(".related"),
+        "interface overload strict generic compatibility should route through an outcome-shaped no-erase boundary"
+    );
+    assert!(
         !overload_helper.contains("diagnostic_relation_boolean_guard(source, target)"),
         "interface overload fallback should not use the raw diagnostic boolean guard"
+    );
+    assert!(
+        !overload_helper.contains("checker.is_assignable_to_no_erase_generics(source, target)"),
+        "interface overload strict generic compatibility should not regress to raw no-erase assignability"
     );
 
     let own_member_helper = source
@@ -35,8 +44,34 @@ fn class_member_fallback_relations_use_relation_outcome_boundary() {
         "own member mismatch fallback should route standard relation truth through assign_relation_outcome"
     );
     assert!(
+        own_member_helper.contains("no_erase_generics_relation_outcome(source, target)")
+            && own_member_helper.contains(".related"),
+        "own member mismatch strict generic compatibility should route through an outcome-shaped no-erase boundary"
+    );
+    assert!(
         !own_member_helper.contains("diagnostic_relation_boolean_guard(source, target)"),
         "own member mismatch fallback should not use the raw diagnostic boolean guard"
+    );
+    assert!(
+        !own_member_helper.contains("checker.is_assignable_to_no_erase_generics(source, target)"),
+        "own member mismatch strict generic compatibility should not regress to raw no-erase assignability"
+    );
+}
+
+#[test]
+fn class_boundary_no_erase_generic_probes_use_relation_outcome_boundary() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/query_boundaries/class.rs"),
+    )
+    .expect("failed to read class.rs");
+
+    assert!(
+        source.contains("no_erase_generics_relation_outcome(") && source.contains(".related"),
+        "class member compatibility no-erase generic probes should route through RelationOutcome"
+    );
+    assert!(
+        !source.contains("checker.is_assignable_to_no_erase_generics("),
+        "class boundary should not call raw no-erase generic assignability directly"
     );
 }
 
