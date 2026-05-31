@@ -10,14 +10,13 @@ use super::call_evaluator::{
     UnionCallSignatureCompatibility,
 };
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::TypeSubstitution;
 use crate::operations::GenericCallResult;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
-    TypeId, TypeListId, TypeParamInfo,
+    TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
-use tsz_common::Atom;
 
 /// Returns the declared `this` type only when it constrains the receiver. Per
 /// tsc's `checkApplicableSignature` gate (`thisType !== voidType`, source of
@@ -28,117 +27,6 @@ pub(crate) fn receiver_constraining_this_type(this_type: Option<TypeId>) -> Opti
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn generic_function_shape_for_inference(
-        &mut self,
-        func: &FunctionShape,
-        arg_types: &[TypeId],
-    ) -> Option<FunctionShape> {
-        if func.type_params.is_empty() {
-            return None;
-        }
-
-        // Collect the TypeParam TypeIds that belong to this function's own signature.
-        // A TypeParam appearing in an arg type is only a genuine collision if it is
-        // FOREIGN (comes from an outer scope) — not if it is the func's own TypeParam
-        // used in an arg that was contextually typed from this function's parameter
-        // types (e.g., a lambda `y => y.toString()` whose param `y: T` was assigned
-        // the contextual type `T` from `f: (x: T) => R`).
-        //
-        // The same pattern is used by `overload_signature_for_inference` in the checker.
-        let own_tp_names: FxHashSet<Atom> = func.type_params.iter().map(|tp| tp.name).collect();
-        let own_type_param_ids: FxHashSet<TypeId> = func
-            .params
-            .iter()
-            .map(|p| p.type_id)
-            .chain(std::iter::once(func.return_type))
-            .chain(func.this_type)
-            .flat_map(|ty| {
-                crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
-            })
-            .filter(|&ref_ty| {
-                crate::type_param_info(self.interner.as_type_database(), ref_ty)
-                    .is_some_and(|info| own_tp_names.contains(&info.name))
-            })
-            .collect();
-
-        let collides = func.type_params.iter().any(|tp| {
-            arg_types
-                .iter()
-                .copied()
-                .flat_map(|ty| {
-                    crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
-                })
-                .any(|referenced| {
-                    if own_type_param_ids.contains(&referenced) {
-                        return false;
-                    }
-                    crate::type_param_info(self.interner.as_type_database(), referenced)
-                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
-                })
-        });
-        if !collides {
-            return None;
-        }
-
-        let mut substitution = TypeSubstitution::new();
-        let mut fresh_params = Vec::with_capacity(func.type_params.len());
-        let mut name_buf = String::with_capacity(32);
-        for tp in &func.type_params {
-            crate::operations::generic_call::unique_placeholder_name(&mut name_buf);
-            let fresh_name = self.interner.intern_string(&name_buf);
-            let fresh_type = self.interner.type_param(TypeParamInfo {
-                name: fresh_name,
-                constraint: None,
-                default: None,
-                is_const: tp.is_const,
-            });
-            substitution.insert(tp.name, fresh_type);
-            fresh_params.push((tp, fresh_name));
-        }
-
-        Some(FunctionShape {
-            params: func
-                .params
-                .iter()
-                .map(|param| ParamInfo {
-                    name: param.name,
-                    type_id: instantiate_type(self.interner, param.type_id, &substitution),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            return_type: instantiate_type(self.interner, func.return_type, &substitution),
-            this_type: func
-                .this_type
-                .map(|this_type| instantiate_type(self.interner, this_type, &substitution)),
-            type_params: fresh_params
-                .into_iter()
-                .map(|(tp, fresh_name)| TypeParamInfo {
-                    name: fresh_name,
-                    constraint: tp.constraint.map(|constraint| {
-                        instantiate_type(self.interner, constraint, &substitution)
-                    }),
-                    default: tp
-                        .default
-                        .map(|default| instantiate_type(self.interner, default, &substitution)),
-                    is_const: tp.is_const,
-                })
-                .collect(),
-            type_predicate: func.type_predicate.as_ref().map(|predicate| {
-                crate::types::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate
-                        .type_id
-                        .map(|ty| instantiate_type(self.interner, ty, &substitution)),
-                    parameter_index: predicate.parameter_index,
-                }
-            }),
-            is_constructor: func.is_constructor,
-            is_method: func.is_method,
-        })
-    }
-
     fn intersect_union_call_param_types(&self, param_types: &[TypeId]) -> TypeId {
         let mut non_any = param_types
             .iter()

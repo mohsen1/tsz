@@ -1,5 +1,6 @@
 //! Core generic call resolution (`resolve_generic_call_inner`).
 
+use super::visited::with_resolve_visited;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
@@ -9,36 +10,7 @@ use crate::types::{
     TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
 use tracing::{debug, trace};
-
-// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
-// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
-// #4805 / #4807 / #4810 / #4816.
-thread_local! {
-    static RESOLVE_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
-        const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_resolve_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
-    let mut visited = RESOLVE_VISITED_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_default();
-    visited.clear();
-    let r = f(&mut visited);
-    RESOLVE_VISITED_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some(existing) => visited.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(visited);
-        }
-    });
-    r
-}
 
 fn is_bare_foreign_type_param(
     interner: &dyn crate::construction::TypeDatabase,

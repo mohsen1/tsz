@@ -7,6 +7,7 @@
 //!   resolution, and free-function entry points.
 
 pub(crate) mod call_evaluator;
+mod call_inference_shape;
 mod call_resolution;
 
 pub(crate) use call_evaluator::MAX_CONSTRAINT_STEPS;
