@@ -121,6 +121,64 @@ pub fn compute_actual_type_param_variances_with_resolver(
     computer.compute_def_variances(def_id)
 }
 
+/// Session-cached form of [`compute_type_param_variances_with_resolver`].
+///
+/// Variance of a generic `DefId` is a pure function of that definition's
+/// resolved body, so for a fixed checking session the declared-variance mask is
+/// stable across every reference to the generic. Without memoization, each type
+/// reference that validates its type arguments rebuilds a fresh
+/// [`VarianceComputer`] and re-walks the entire (possibly deep, lazy-ref-heavy)
+/// type graph from scratch — the dominant cost when checking large
+/// generic-alias-heavy projects.
+///
+/// This helper answers the query from the session-level variance cache exposed
+/// by [`QueryDatabase`] when present, and otherwise computes the mask **using
+/// the supplied resolver** (never the query database's own resolver, which may
+/// not see local alias bodies) and stores it for reuse. The cache key is the
+/// `DefId` alone: the result is the declared-variance mask, identical to what
+/// the uncached call would return, so consulting/populating the cache cannot
+/// change any diagnostic.
+///
+/// Only fully-resolved (`Some`) results are memoized. A `None` (unresolved or
+/// non-generic) result is not cached, so a later reference made after the
+/// definition's body becomes resolvable still recomputes.
+///
+/// Caching is at the **top-level `DefId` only**. The masks computed for nested
+/// generics reached while walking this def's body are intentionally not
+/// promoted to the session cache here: a nested def's variance can be influenced
+/// by the enclosing traversal context (mapped-type / indexed-access structural
+/// fallback flags), so only a def queried as the top of its own walk is known to
+/// be context-free and safe to replay project-wide.
+pub fn compute_type_param_variances_with_resolver_cached(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    query_db: Option<&dyn QueryDatabase>,
+    def_id: DefId,
+) -> Option<Arc<[Variance]>> {
+    let Some(qdb) = query_db.filter(|_| variance_cache_enabled()) else {
+        return compute_type_param_variances_with_resolver(db, resolver, def_id);
+    };
+    if let Some(cached) = qdb.get_cached_type_param_variance(def_id) {
+        return Some(cached);
+    }
+    let computed = compute_type_param_variances_with_resolver(db, resolver, def_id);
+    if let Some(variances) = computed.as_ref() {
+        qdb.insert_type_param_variance(def_id, variances.clone());
+    }
+    computed
+}
+
+/// Debug kill-switch for the session-level computed-variance cache.
+///
+/// Set `TSZ_DISABLE_VARIANCE_CACHE=1` to bypass both reads and writes so the
+/// resolver-aware variance walk runs uncached on every reference. Used to
+/// bisect regressions and prove byte-identical diagnostics; defaults to enabled.
+fn variance_cache_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_VARIANCE_CACHE").is_err())
+}
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,

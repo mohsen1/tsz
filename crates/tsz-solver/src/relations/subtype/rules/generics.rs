@@ -646,26 +646,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (s_app.args.clone(), t_app.args.clone())
         };
 
-        use crate::caches::db::QueryDatabase;
-        let variances = self
-            .resolver
-            .get_type_param_variance(def_id)
-            .or_else(|| {
-                self.query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-            })
-            .or_else(|| {
-                let computed =
-                    crate::relations::variance::compute_type_param_variances_with_resolver(
-                        self.interner,
-                        self.resolver,
-                        def_id,
-                    );
-                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
-                    db.insert_type_param_variance(def_id, variances.clone());
-                }
-                computed
-            });
+        let variances = self.resolver.get_type_param_variance(def_id).or_else(|| {
+            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
+                self.interner,
+                self.resolver,
+                self.query_db,
+                def_id,
+            )
+        });
         // T<X> <: T<any> and T<any> <: T<X> are always true when
         // any-propagation is enabled; skip variance computation entirely rather
         // than risking structural expansion.

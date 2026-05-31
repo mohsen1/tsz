@@ -807,11 +807,13 @@ impl<'a> CheckerState<'a> {
         if self.type_alias_projects_static_member(source_base) {
             return true;
         }
-        let variances = tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
-            self.ctx.types.as_type_database(),
-            &self.ctx,
-            def_id,
-        );
+        let variances =
+            crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(
+                self.ctx.types.as_type_database(),
+                &self.ctx,
+                self.ctx.types,
+                def_id,
+            );
         source_args.iter().zip(target_args.iter()).enumerate().any(
             |(i, (&source_arg, &target_arg))| {
                 if target_arg.is_any() {
@@ -839,9 +841,10 @@ impl<'a> CheckerState<'a> {
         def_id: tsz_solver::def::DefId,
         arg_len: usize,
     ) -> bool {
-        tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+        crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(
             self.ctx.types.as_type_database(),
             &self.ctx,
+            self.ctx.types,
             def_id,
         )
         .as_ref()
