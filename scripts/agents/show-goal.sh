@@ -11,12 +11,13 @@ set -euo pipefail
 usage() {
   local stream="${1:-1}"
   cat >&"$stream" <<'USAGE'
-usage: scripts/agents/show-goal.sh <AgentName> [--no-fetch|--local]
+usage: scripts/agents/show-goal.sh [--json-report PATH] <AgentName> [--no-fetch|--local]
 
 Examples:
   scripts/agents/show-goal.sh M1-A
   scripts/agents/show-goal.sh Studio-F --no-fetch
   scripts/agents/show-goal.sh Studio-F --local
+  scripts/agents/show-goal.sh Studio-F --json-report /tmp/tsz-agent-goal.json
 USAGE
 }
 
@@ -25,26 +26,57 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
-  usage 2
-  exit 1
-fi
-
-AGENT="$1"
-if [[ "$AGENT" == --* ]]; then
-  echo "unknown argument: $AGENT" >&2
-  usage 2
-  exit 1
-fi
-
 NO_FETCH=false
 LOCAL_ONLY=false
-if [[ $# -eq 2 ]]; then
-  case "$2" in
-    --no-fetch) NO_FETCH=true ;;
-    --local) LOCAL_ONLY=true ;;
-    *) echo "unknown argument: $2" >&2; usage 2; exit 1 ;;
+JSON_REPORT=""
+AGENT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-fetch)
+      NO_FETCH=true
+      shift
+      ;;
+    --local)
+      LOCAL_ONLY=true
+      shift
+      ;;
+    --json-report)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      JSON_REPORT="$1"
+      shift
+      ;;
+    --json-report=*)
+      JSON_REPORT="${1#--json-report=}"
+      if [[ -z "$JSON_REPORT" ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --*)
+      echo "unknown argument: $1" >&2
+      usage 2
+      exit 1
+      ;;
+    *)
+      if [[ -n "$AGENT" ]]; then
+        echo "unknown argument: $1" >&2
+        usage 2
+        exit 1
+      fi
+      AGENT="$1"
+      shift
+      ;;
   esac
+done
+
+if [[ -z "$AGENT" ]]; then
+  usage 2
+  exit 1
 fi
 
 case "$AGENT" in
@@ -56,22 +88,64 @@ ROOT="$(git rev-parse --show-toplevel)"
 GOAL_PATH="docs/plan/agents/${AGENT}.md"
 REMOTE_GOAL="$(mktemp "${TMPDIR:-/tmp}/tsz-agent-goal.XXXXXX")"
 trap 'rm -f "$REMOTE_GOAL"' EXIT
+FETCH_ATTEMPTED=false
+PRINTED_SOURCE=""
+BRANCH_LOCAL_DIFFERS=false
+
+write_json_report() {
+  [[ -n "$JSON_REPORT" ]] || return 0
+  AGENT="$AGENT" \
+  ROOT="$ROOT" \
+  GOAL_PATH="$GOAL_PATH" \
+  PRINTED_SOURCE="$PRINTED_SOURCE" \
+  FETCH_ATTEMPTED="$FETCH_ATTEMPTED" \
+  LOCAL_ONLY="$LOCAL_ONLY" \
+  NO_FETCH="$NO_FETCH" \
+  BRANCH_LOCAL_DIFFERS="$BRANCH_LOCAL_DIFFERS" \
+  JSON_REPORT="$JSON_REPORT" \
+  node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const bool = (value) => value === "true";
+const report = {
+  generated_by: "scripts/agents/show-goal.sh",
+  agent: process.env.AGENT,
+  repo: process.env.ROOT,
+  goal_path: process.env.GOAL_PATH,
+  printed_source: process.env.PRINTED_SOURCE,
+  fetch_attempted: bool(process.env.FETCH_ATTEMPTED),
+  local_only: bool(process.env.LOCAL_ONLY),
+  no_fetch: bool(process.env.NO_FETCH),
+  branch_local_differs: bool(process.env.BRANCH_LOCAL_DIFFERS),
+};
+
+fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
+fs.writeFileSync(process.env.JSON_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+NODE
+}
 
 if [[ "$LOCAL_ONLY" == false && "$NO_FETCH" == false ]]; then
+  FETCH_ATTEMPTED=true
   git -C "$ROOT" fetch -q origin main || true
 fi
 
 if [[ "$LOCAL_ONLY" == false ]] \
   && git -C "$ROOT" show "origin/main:${GOAL_PATH}" >"$REMOTE_GOAL" 2>/dev/null; then
   if [[ -f "$ROOT/$GOAL_PATH" ]] && ! cmp -s "$REMOTE_GOAL" "$ROOT/$GOAL_PATH"; then
+    BRANCH_LOCAL_DIFFERS=true
     echo "warning: printed origin/main:${GOAL_PATH}; branch-local ${GOAL_PATH} differs. Use --local to inspect it." >&2
   fi
+  PRINTED_SOURCE="origin/main"
   cat "$REMOTE_GOAL"
+  write_json_report
   exit 0
 fi
 
 if [[ -f "$ROOT/$GOAL_PATH" ]]; then
+  PRINTED_SOURCE="local"
   cat "$ROOT/$GOAL_PATH"
+  write_json_report
   exit 0
 fi
 
