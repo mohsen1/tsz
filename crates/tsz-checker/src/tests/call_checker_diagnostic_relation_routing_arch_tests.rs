@@ -18,14 +18,21 @@ fn call_checker_generator_recovery_uses_relation_outcome_boundary() {
     for relation in [
         "assign_relation_outcome(actual_yield,expected_yield)",
         "assign_relation_outcome(expected_yield,actual_yield)",
-        "assign_relation_outcome(actual_gen_return,expected_gen_return,)",
-        "assign_relation_outcome(expected_gen_return,actual_gen_return,)",
         "assign_relation_outcome(expected_next,actual_next)",
-        "assign_relation_outcome(actual_return,expected_return)",
     ] {
         assert!(
             compact_recovery_block.contains(relation),
-            "generator recovery diagnostics should route {relation} through assign_relation_outcome"
+            "generator recovery diagnostics should route non-return component {relation} through assign_relation_outcome"
+        );
+    }
+    for relation in [
+        "return_relation_outcome(actual_gen_return,expected_gen_return,)",
+        "return_relation_outcome(expected_gen_return,actual_gen_return,)",
+        "return_relation_outcome(actual_return,expected_return)",
+    ] {
+        assert!(
+            compact_recovery_block.contains(relation),
+            "generator recovery diagnostics should route callback return component {relation} through return_relation_outcome"
         );
     }
     assert!(

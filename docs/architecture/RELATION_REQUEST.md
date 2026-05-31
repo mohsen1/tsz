@@ -67,8 +67,9 @@ assignment diagnostics.
 `expr satisfies T` diagnostics.
 
 Return diagnostics in `types/type_checking`, JSX component return checks,
-decorator checks, contextual return utilities, and function-type helpers build
-`RelationRequest::return_stmt` through `return_relation_outcome`.
+decorator checks, contextual return utilities, function-type helpers, and call
+checker callback-return recovery build `RelationRequest::return_stmt` through
+`return_relation_outcome`.
 
 JSX props and attribute validation paths build `RelationRequest::jsx_props`
 through `jsx_props_relation_outcome` in the JSX props resolution, validation,

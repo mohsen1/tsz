@@ -600,13 +600,13 @@ impl<'a> CheckerState<'a> {
                                 .zip(self.get_generator_return_type_argument(expected_return))
                                 .is_some_and(|(actual_gen_return, expected_gen_return)| {
                                     !self
-                                        .assign_relation_outcome(
+                                        .return_relation_outcome(
                                             actual_gen_return,
                                             expected_gen_return,
                                         )
                                         .related
                                         && !self
-                                            .assign_relation_outcome(
+                                            .return_relation_outcome(
                                                 expected_gen_return,
                                                 actual_gen_return,
                                             )
@@ -659,7 +659,7 @@ impl<'a> CheckerState<'a> {
                                 generator_component_mismatch
                                     || (expected_return != TypeId::VOID
                                         && !self
-                                            .assign_relation_outcome(actual_return, expected_return)
+                                            .return_relation_outcome(actual_return, expected_return)
                                             .related)
                             };
                         (return_type_mismatch, generator_component_mismatch)
