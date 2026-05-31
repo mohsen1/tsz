@@ -1010,3 +1010,171 @@ export type AutoPath<O extends any, P extends string, D extends string = '.'> =
          tsz output:\n{tsz_output}"
     );
 }
+
+#[test]
+fn imported_recursive_iteration_map_satisfies_iteration_constraint() {
+    let temp = TempDir::new("imported_recursive_iteration_map").expect("temp dir");
+    write_file(
+        &temp.path.join("Iteration/Iteration.ts"),
+        r#"
+export type Iteration = [
+  value: number,
+  sign: '-' | '0' | '+',
+  prev: keyof IterationMap,
+  next: keyof IterationMap,
+  oppo: keyof IterationMap,
+];
+export type IterationMap = {
+  '__': [number, '-' | '0' | '+', '__', '__', '__'],
+  '-1': [-1, '-', '__', '0', '1'],
+  '0': [0, '0', '-1', '1', '0'],
+  '1': [1, '+', '0', '__', '-1'],
+};
+"#,
+    );
+    write_file(
+        &temp.path.join("Iteration/IterationOf.ts"),
+        r#"
+import {IterationMap} from './Iteration'
+export type IterationOf<N extends number> =
+  `${N}` extends keyof IterationMap ? IterationMap[`${N}`] : IterationMap['__']
+"#,
+    );
+    write_file(
+        &temp.path.join("Iteration/Prev.ts"),
+        r#"
+import {Iteration, IterationMap} from './Iteration'
+export type Prev<I extends Iteration> = IterationMap[I[2]]
+"#,
+    );
+    write_file(
+        &temp.path.join("Iteration/Next.ts"),
+        r#"
+import {Iteration, IterationMap} from './Iteration'
+export type Next<I extends Iteration> = IterationMap[I[3]]
+"#,
+    );
+    write_file(
+        &temp.path.join("Iteration/Pos.ts"),
+        r#"
+import {Iteration} from './Iteration'
+export type Pos<I extends Iteration> = I[0]
+"#,
+    );
+    write_file(
+        &temp.path.join("Any/Cast.ts"),
+        r#"
+export type Cast<A1 extends any, A2 extends any> =
+  A1 extends A2 ? A1 : A2
+"#,
+    );
+    write_file(
+        &temp.path.join("Number/IsNegative.ts"),
+        r#"
+import {IterationOf} from '../Iteration/IterationOf'
+import {Iteration} from '../Iteration/Iteration'
+
+export type _IsNegative<N extends Iteration> = {
+  '-': 1
+  '+': 0
+  '0': 0
+}[N[1]]
+export type IsNegative<N extends number> = _IsNegative<IterationOf<N>>
+"#,
+    );
+    write_file(
+        &temp.path.join("Number/IsPositive.ts"),
+        r#"
+import {_IsNegative} from './IsNegative'
+import {IterationOf} from '../Iteration/IterationOf'
+import {Iteration} from '../Iteration/Iteration'
+
+export type _IsPositive<N extends Iteration> = {
+  '-': 0
+  '+': 1
+  '0': 0
+}[N[1]]
+export type IsPositive<N extends number> = _IsPositive<IterationOf<N>>
+"#,
+    );
+    write_file(
+        &temp.path.join("Number/Sub.ts"),
+        r#"
+import {Iteration} from '../Iteration/Iteration'
+import {Pos} from '../Iteration/Pos'
+import {Prev} from '../Iteration/Prev'
+import {Next} from '../Iteration/Next'
+import {_IsNegative} from './IsNegative'
+import {Cast} from '../Any/Cast'
+
+type SubPositive<N1 extends Iteration, N2 extends Iteration> = {
+  0: SubPositive<Prev<N1>, Prev<N2>>
+  1: N1
+  2: number
+}[Pos<N2> extends 0 ? 1 : number extends Pos<N2> ? 2 : 0] extends infer X
+  ? Cast<X, Iteration>
+  : never
+
+type SubNegative<N1 extends Iteration, N2 extends Iteration> = {
+  0: SubNegative<Next<N1>, Next<N2>>
+  1: N1
+  2: number
+}[Pos<N2> extends 0 ? 1 : number extends Pos<N2> ? 2 : 0] extends infer X
+  ? Cast<X, Iteration>
+  : never
+
+export type _Sub<N1 extends Iteration, N2 extends Iteration> = {
+  0: SubPositive<N1, N2>
+  1: SubNegative<N1, N2>
+}[_IsNegative<N2>]
+"#,
+    );
+    write_file(
+        &temp.path.join("Number/Greater.ts"),
+        r#"
+import {_Sub} from './Sub'
+import {_IsPositive} from './IsPositive'
+import {IterationOf} from '../Iteration/IterationOf'
+import {Iteration} from '../Iteration/Iteration'
+
+export type _Greater<N1 extends Iteration, N2 extends Iteration> =
+  _IsPositive<_Sub<N1, N2>>
+export type Greater<N1 extends number, N2 extends number> =
+  N1 extends unknown
+    ? N2 extends unknown
+      ? _Greater<IterationOf<N1>, IterationOf<N2>>
+      : never
+    : never
+"#,
+    );
+
+    let (tsc_code, tsc_output) = run_tsc_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es2022",
+            "Number/Greater.ts",
+        ],
+    )
+    .expect("tsc should run");
+    assert_eq!(tsc_code, 0, "tsc accepted the imported iteration map: {tsc_output}");
+
+    let (tsz_code, tsz_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es2022",
+            "Number/Greater.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        tsz_code, 0,
+        "Imported recursive object-map aliases should satisfy the Iteration constraint like tsc.\n\
+         tsz output:\n{tsz_output}"
+    );
+}
