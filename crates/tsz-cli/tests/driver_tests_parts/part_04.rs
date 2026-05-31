@@ -1290,7 +1290,14 @@ fn compile_resolves_node_modules_types_versions_best_match() {
 }
 
 #[test]
-fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
+fn compile_resolves_node_modules_types_versions_uses_first_matching_range_in_declaration_order() {
+    // tsc's `getPackageJsonTypesVersionsPaths` returns the **first** key whose
+    // semver range matches the active compiler version. With three matching
+    // keys declared in this order — `">=6.0"`, `">=5.0 <7.0"`, `"*"` — the
+    // current compiler version (defaults to the pinned target, currently
+    // 6.0.3) hits `">=6.0"` first and tsc never visits the later, tighter
+    // ranges. tsz used to score keys by `(constraints, min_version)` and pick
+    // the "best" — which diverged from tsc by preferring `">=5.0 <7.0"`.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1300,6 +1307,7 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
           "compilerOptions": {
             "outDir": "dist",
             "moduleResolution": "node",
+            "ignoreDeprecations": "6.0",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1325,6 +1333,9 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
           }
         }"#,
     );
+    // The first-matching `">=6.0"` branch points at a clean .d.ts; the
+    // later branches would surface a syntax error if tsz were to fall
+    // through. tsc-parity behavior leaves the bad file unreached.
     write_file(
         &base.join("node_modules/pkg/types/loose/feature/widget.d.ts"),
         "export const widget = 1;",
@@ -1343,12 +1354,18 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(!result.diagnostics.is_empty());
-    assert!(result.diagnostics.iter().any(|diag| {
+    assert!(
+        result.diagnostics.is_empty(),
+        "first-match `>=6.0` branch should resolve cleanly, but got: {:?}",
+        result.diagnostics,
+    );
+    // tsc's first-matching key was `>=6.0` so we must not have probed the
+    // intentionally-broken `>=5.0 <7.0` (ranged) branch.
+    assert!(!result.diagnostics.iter().any(|diag| {
         diag.file
             .contains("node_modules/pkg/types/ranged/feature/widget.d.ts")
     }));
-    assert!(!base.join("dist/src/index.js").is_file());
+    assert!(base.join("dist/src/index.js").is_file());
 }
 
 #[test]

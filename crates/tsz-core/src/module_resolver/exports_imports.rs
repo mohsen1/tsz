@@ -323,7 +323,7 @@ impl ModuleResolver {
 
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
-        match_types_versions_range(version_range, compiler_version).is_some()
+        types_versions_range_matches(version_range, compiler_version)
     }
 
     /// Resolve package exports with explicit conditions.
@@ -503,7 +503,27 @@ impl ModuleResolver {
         }
     }
 
-    /// Resolve typesVersions field
+    /// Resolve a `typesVersions` paths object against a subpath, mirroring
+    /// tsc's `matchPatternOrExact` + `findBestPatternMatch` (`utilities.ts`)
+    /// chain inside `tryLoadModuleUsingPaths`:
+    ///
+    /// 1. If a no-`*` key equals `subpath` exactly, it wins — wildcards do not
+    ///    get to compete. This is the `matchableStringSet.has(candidate)`
+    ///    short-circuit.
+    /// 2. Otherwise, among the single-`*` wildcard keys, pick the one with the
+    ///    longest **prefix** (text before `*`), breaking ties by first
+    ///    occurrence in declaration order. tsc's `findBestPatternMatch` uses
+    ///    `pattern.prefix.length > longestMatchPrefixLength` (strict `>`), so
+    ///    later equal-prefix matches do not replace earlier ones.
+    /// 3. Two-or-more-`*` keys are skipped entirely; tsc's `tryParsePattern`
+    ///    returns undefined for them and they never enter the candidate set.
+    ///
+    /// Once a matching key is selected, tsc iterates the value array and
+    /// returns the first target whose substituted path exists on disk; we do
+    /// the same with `try_file_or_directory`. Importantly, we do NOT fall
+    /// through to wildcard matching when an exact key matched but no target
+    /// file exists — that mirrors tsc's `if (matchedPattern) { ... return; }`
+    /// early return.
     pub(super) fn resolve_types_versions(
         &self,
         package_dir: &Path,
@@ -513,65 +533,77 @@ impl ModuleResolver {
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
         let paths = select_types_versions_paths(types_versions, compiler_version)?;
-        let mut best_pattern: Option<&String> = None;
-        let mut best_value: Option<&serde_json::Value> = None;
-        let mut best_wildcard = String::new();
-        let mut best_specificity = 0usize;
-        let mut best_len = 0usize;
 
-        for (pattern, value) in paths {
-            let Some(wildcard) = match_types_versions_pattern(pattern, subpath) else {
+        // 1) Exact (no-`*`) key matches the subpath verbatim → tsc returns it
+        //    immediately, ignoring any wildcard that would also match. We
+        //    iterate to find the matching exact key rather than `.get()` so the
+        //    iteration order is consistent with the wildcard pass below.
+        for (key, value) in paths {
+            if !key.contains('*') && key == subpath {
+                return self.apply_types_versions_targets(package_dir, value, "");
+            }
+        }
+
+        // 2) Wildcards: longest prefix wins, ties → first in declaration
+        //    order. `best` stores `(prefix_len, value, captured wildcard)`;
+        //    keeping `prefix_len` inside the tuple removes the separate
+        //    `best_prefix_len` shadow that the previous shape required.
+        let mut best: Option<(usize, &serde_json::Value, String)> = None;
+        for (key, value) in paths {
+            let Some((prefix, suffix)) = parse_types_versions_pattern(key) else {
                 continue;
             };
-            let specificity = types_versions_specificity(pattern);
-            let pattern_len = pattern.len();
-            let is_better = match best_pattern {
-                None => true,
-                Some(current) => {
-                    specificity > best_specificity
-                        || (specificity == best_specificity && pattern_len > best_len)
-                        || (specificity == best_specificity
-                            && pattern_len == best_len
-                            && pattern < current)
-                }
-            };
-
-            if is_better {
-                best_specificity = specificity;
-                best_len = pattern_len;
-                best_pattern = Some(pattern);
-                best_value = Some(value);
-                best_wildcard = wildcard;
+            if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
+                continue;
             }
+            let start = prefix.len();
+            let end = subpath.len() - suffix.len();
+            if end < start {
+                continue;
+            }
+            // Strict `>` so equal-prefix ties keep the earlier entry (tsc's
+            // `findBestPatternMatch`).
+            if best
+                .as_ref()
+                .is_some_and(|(best_len, ..)| prefix.len() <= *best_len)
+            {
+                continue;
+            }
+            best = Some((prefix.len(), value, subpath[start..end].to_string()));
         }
 
-        let value = best_value?;
+        let (_, value, wildcard) = best?;
+        self.apply_types_versions_targets(package_dir, value, &wildcard)
+    }
 
-        let mut targets = Vec::new();
-        match value {
-            serde_json::Value::String(value) => targets.push(value.as_str()),
-            serde_json::Value::Array(list) => {
-                for entry in list {
-                    if let Some(value) = entry.as_str() {
-                        targets.push(value);
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        let is_directory_match = best_pattern
-            .map(|p| p.ends_with('/') && !p.contains('*'))
-            .unwrap_or(false);
-        for target in targets {
-            let substituted =
-                apply_wildcard_substitution(target, &best_wildcard, is_directory_match);
+    /// Iterate the `value` of a `typesVersions` paths entry (a single string or
+    /// an array of strings), substitute `*` with `wildcard`, and return the
+    /// first target that resolves on disk. Mirrors tsc's `forEach(paths[...])`
+    /// in `tryLoadModuleUsingPaths`.
+    fn apply_types_versions_targets(
+        &self,
+        package_dir: &Path,
+        value: &serde_json::Value,
+        wildcard: &str,
+    ) -> Option<PathBuf> {
+        // tsc's `replaceFirstStar` substitutes only the first `*` in the
+        // target string. `apply_wildcard_substitution` does the same when
+        // called with `is_directory_match=false`; we pass `false` because the
+        // matched key is either a single-`*` wildcard or an exact (no-`*`)
+        // key — neither is the legacy trailing-slash "directory" form that
+        // the flag handles.
+        let try_target = |target: &str| {
+            let substituted = apply_wildcard_substitution(target, wildcard, false);
             let resolved = package_dir.join(substituted.trim_start_matches("./"));
-            if let Some(resolved) = self.try_file_or_directory(&resolved) {
-                return Some(resolved);
-            }
+            self.try_file_or_directory(&resolved)
+        };
+        match value {
+            serde_json::Value::String(target) => try_target(target.as_str()),
+            serde_json::Value::Array(list) => list
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .find_map(try_target),
+            _ => None,
         }
-
-        None
     }
 }

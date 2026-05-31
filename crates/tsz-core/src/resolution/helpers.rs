@@ -198,28 +198,17 @@ pub(crate) fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<St
     Some(specifier[start..end].to_string())
 }
 
-/// Match a typesVersions pattern against a subpath
-pub(crate) fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
-    if !pattern.contains('*') {
-        return (pattern == subpath).then(String::new);
-    }
-
+/// Split a `prefix*suffix` typesVersions pattern, mirroring tsc's
+/// `tryParsePattern`. Returns `None` for no-`*` patterns (which the caller must
+/// handle as exact-match strings) and for multi-`*` patterns (which tsc skips
+/// from pattern matching entirely).
+pub(crate) fn parse_types_versions_pattern(pattern: &str) -> Option<(&str, &str)> {
     let star_pos = pattern.find('*')?;
-    let (prefix, suffix) = pattern.split_at(star_pos);
-    let suffix = &suffix[1..]; // Skip the '*'
-
-    if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
+    let suffix_start = star_pos + 1;
+    if pattern[suffix_start..].contains('*') {
         return None;
     }
-
-    let start = prefix.len();
-    let end = subpath.len().saturating_sub(suffix.len());
-
-    if end < start {
-        return None;
-    }
-
-    Some(subpath[start..end].to_string())
+    Some((&pattern[..star_pos], &pattern[suffix_start..]))
 }
 
 pub(crate) fn types_versions_compiler_version(value: Option<&str>) -> SemVer {
@@ -232,129 +221,70 @@ pub(crate) const fn default_types_versions_compiler_version() -> SemVer {
     TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
 }
 
+/// Pick the inner paths object for a `typesVersions` field, matching tsc's
+/// `getPackageJsonTypesVersionsPaths`:
+///
+/// > Iterate keys in JSON declaration order and return the **first** entry
+/// > whose semver range matches the active compiler version.
+///
+/// `serde_json` is built with the `preserve_order` feature, so the underlying
+/// `Map` preserves JSON insertion order — first-match here means
+/// first-in-source order, exactly like tsc's `for (const key in typesVersions)`
+/// loop. Earlier revisions of this function picked a "best" key by score
+/// (constraint count + min version), but that diverges from tsc whenever two
+/// keys both match the compiler version (e.g. `"*"` declared before `">=5.4"`,
+/// or `">=4.0"` declared before `">=4.4"`).
 pub(crate) fn select_types_versions_paths(
     types_versions: &serde_json::Value,
     compiler_version: SemVer,
 ) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    select_types_versions_paths_for_version(types_versions, compiler_version)
-}
-
-pub(crate) fn select_types_versions_paths_for_version(
-    types_versions: &serde_json::Value,
-    compiler_version: SemVer,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
     let map = types_versions.as_object()?;
-    let mut best_score: Option<RangeScore> = None;
-    let mut best_key: Option<&str> = None;
-    let mut best_value: Option<&serde_json::Map<String, serde_json::Value>> = None;
-
     for (key, value) in map {
         let Some(value_map) = value.as_object() else {
             continue;
         };
-        let Some(score) = match_types_versions_range(key, compiler_version) else {
-            continue;
-        };
-        let is_better = match best_score {
-            None => true,
-            Some(best) => {
-                score > best
-                    || (score == best && best_key.is_none_or(|best_key| key.as_str() < best_key))
-            }
-        };
-
-        if is_better {
-            best_score = Some(score);
-            best_key = Some(key);
-            best_value = Some(value_map);
+        if types_versions_range_matches(key, compiler_version) {
+            return Some(value_map);
         }
     }
-
-    best_value
+    None
 }
 
-pub(crate) fn types_versions_specificity(pattern: &str) -> usize {
-    if let Some(star) = pattern.find('*') {
-        star + (pattern.len() - star - 1)
-    } else {
-        pattern.len()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct RangeScore {
-    constraints: usize,
-    min_version: SemVer,
-    key_len: usize,
-}
-
-pub(crate) fn match_types_versions_range(
-    range: &str,
-    compiler_version: SemVer,
-) -> Option<RangeScore> {
+/// Returns `true` when `range` is a valid semver range (per tsc's
+/// `VersionRange.tryParse`) that the supplied compiler version satisfies.
+pub(crate) fn types_versions_range_matches(range: &str, compiler_version: SemVer) -> bool {
     let range = range.trim();
     if range.is_empty() || range == "*" {
-        return Some(RangeScore {
-            constraints: 0,
-            min_version: SemVer::ZERO,
-            key_len: range.len(),
-        });
+        return true;
     }
-
-    let mut best: Option<RangeScore> = None;
     for segment in range.split("||") {
-        let segment = segment.trim();
-        let Some(score) =
-            match_types_versions_range_segment(segment, compiler_version, range.len())
-        else {
-            continue;
-        };
-        if best.is_none_or(|current| score > current) {
-            best = Some(score);
+        if types_versions_range_segment_matches(segment.trim(), compiler_version) {
+            return true;
         }
     }
-
-    best
+    false
 }
 
-pub(crate) fn match_types_versions_range_segment(
-    segment: &str,
-    compiler_version: SemVer,
-    key_len: usize,
-) -> Option<RangeScore> {
+fn types_versions_range_segment_matches(segment: &str, compiler_version: SemVer) -> bool {
+    // An empty segment comes from a malformed disjunction like `">=4 || "` —
+    // a vacuous empty-token loop would return `true`, so we reject explicitly.
+    // The lone `"*"` token is handled by the `continue` below; no early
+    // return needed.
     if segment.is_empty() {
-        return None;
+        return false;
     }
-    if segment == "*" {
-        return Some(RangeScore {
-            constraints: 0,
-            min_version: SemVer::ZERO,
-            key_len,
-        });
-    }
-
-    let mut min_version = SemVer::ZERO;
-    let mut constraints = 0usize;
-
     for token in segment.split_whitespace() {
         if token.is_empty() || token == "*" {
             continue;
         }
-        let (op, version) = parse_range_token(token)?;
+        let Some((op, version)) = parse_range_token(token) else {
+            return false;
+        };
         if !compare_range(compiler_version, op, version) {
-            return None;
-        }
-        constraints += 1;
-        if matches!(op, RangeOp::Gt | RangeOp::Gte | RangeOp::Eq) && version > min_version {
-            min_version = version;
+            return false;
         }
     }
-
-    Some(RangeScore {
-        constraints,
-        min_version,
-        key_len,
-    })
+    true
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -401,14 +331,6 @@ pub(crate) struct SemVer {
     major: u32,
     minor: u32,
     patch: u32,
-}
-
-impl SemVer {
-    const ZERO: Self = Self {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
 }
 
 // NOTE: Keep this in sync with the TypeScript version this compiler targets.
@@ -819,14 +741,18 @@ mod tests {
     }
 
     #[test]
-    fn select_types_versions_paths_prefers_highest_matching_minimum() {
+    fn select_types_versions_paths_returns_first_matching_key_in_declaration_order() {
+        // tsc's `getPackageJsonTypesVersionsPaths` is a `for...in` loop that
+        // returns the first key whose range satisfies the compiler version.
+        // With `"*"` declared first, every later key is unreachable — even a
+        // tighter `">=5.4"` range. This pins parity with that behavior.
         let types_versions = json!({
             "*": { "*": ["fallback/index.d.ts"] },
             ">=5.4": { "*": ["modern/index.d.ts"] },
             ">=5.2 <5.4": { "*": ["mid/index.d.ts"] }
         });
 
-        let selected = select_types_versions_paths_for_version(
+        let selected = select_types_versions_paths(
             &types_versions,
             SemVer {
                 major: 5,
@@ -836,18 +762,42 @@ mod tests {
         )
         .expect("expected a matching typesVersions entry");
 
-        assert_eq!(selected.get("*"), Some(&json!(["modern/index.d.ts"])),);
+        assert_eq!(selected.get("*"), Some(&json!(["fallback/index.d.ts"])));
+
+        // The natural ordering — fallback last — picks the tighter range.
+        let types_versions_natural = json!({
+            ">=5.4": { "*": ["modern/index.d.ts"] },
+            ">=5.2 <5.4": { "*": ["mid/index.d.ts"] },
+            "*": { "*": ["fallback/index.d.ts"] }
+        });
+
+        let selected_natural = select_types_versions_paths(
+            &types_versions_natural,
+            SemVer {
+                major: 5,
+                minor: 4,
+                patch: 1,
+            },
+        )
+        .expect("expected a matching typesVersions entry");
+
+        assert_eq!(
+            selected_natural.get("*"),
+            Some(&json!(["modern/index.d.ts"]))
+        );
     }
 
     #[test]
-    fn select_types_versions_paths_breaks_equal_score_ties_lexicographically() {
-        let types_versions = json!({
+    fn select_types_versions_paths_ties_resolve_to_first_in_declaration_order() {
+        // Two equally-matching keys: tsc picks whichever was declared first,
+        // regardless of lex order or constraint count.
+        let first_wins = json!({
             "<=6.0": { "*": ["first/index.d.ts"] },
             "<=5.0": { "*": ["second/index.d.ts"] }
         });
 
-        let selected = select_types_versions_paths_for_version(
-            &types_versions,
+        let selected = select_types_versions_paths(
+            &first_wins,
             SemVer {
                 major: 4,
                 minor: 9,
@@ -856,7 +806,80 @@ mod tests {
         )
         .expect("expected a matching typesVersions entry");
 
-        assert_eq!(selected.get("*"), Some(&json!(["second/index.d.ts"])),);
+        assert_eq!(selected.get("*"), Some(&json!(["first/index.d.ts"])));
+
+        // Same content, reversed declaration order — the (now-first) `<=5.0`
+        // key wins instead.
+        let reversed = json!({
+            "<=5.0": { "*": ["second/index.d.ts"] },
+            "<=6.0": { "*": ["first/index.d.ts"] }
+        });
+
+        let selected_reversed = select_types_versions_paths(
+            &reversed,
+            SemVer {
+                major: 4,
+                minor: 9,
+                patch: 0,
+            },
+        )
+        .expect("expected a matching typesVersions entry");
+
+        assert_eq!(
+            selected_reversed.get("*"),
+            Some(&json!(["second/index.d.ts"]))
+        );
+    }
+
+    #[test]
+    fn select_types_versions_paths_skips_unparseable_keys() {
+        // An invalid range key parses as `None` and is skipped; iteration
+        // continues to the next valid key.
+        let types_versions = json!({
+            "not-a-range": { "*": ["skipped/index.d.ts"] },
+            ">=5.4": { "*": ["modern/index.d.ts"] }
+        });
+
+        let selected = select_types_versions_paths(
+            &types_versions,
+            SemVer {
+                major: 5,
+                minor: 4,
+                patch: 1,
+            },
+        )
+        .expect("expected a matching typesVersions entry");
+
+        assert_eq!(selected.get("*"), Some(&json!(["modern/index.d.ts"])));
+    }
+
+    #[test]
+    fn types_versions_range_matches_bare_star_and_empty() {
+        let v = SemVer {
+            major: 6,
+            minor: 0,
+            patch: 0,
+        };
+        assert!(types_versions_range_matches("*", v));
+        assert!(types_versions_range_matches("", v));
+        assert!(types_versions_range_matches(">=4 <7", v));
+        assert!(!types_versions_range_matches(">=7", v));
+        // Disjunction: any segment may match.
+        assert!(types_versions_range_matches(">=7 || <=6", v));
+        // Invalid token in one segment fails just that segment.
+        assert!(types_versions_range_matches(">=garbage || >=4", v));
+    }
+
+    #[test]
+    fn parse_types_versions_pattern_rejects_multi_star_keys() {
+        // tsc's `tryParsePattern` returns undefined for multi-`*` keys, which
+        // causes them to be dropped from the wildcard candidate set and from
+        // the exact-match set. We mirror that by returning `None` here so
+        // callers skip the key entirely.
+        assert_eq!(parse_types_versions_pattern("lib/*"), Some(("lib/", "")));
+        assert_eq!(parse_types_versions_pattern("*.d.ts"), Some(("", ".d.ts")));
+        assert_eq!(parse_types_versions_pattern("a*b*c"), None);
+        assert_eq!(parse_types_versions_pattern("exact"), None);
     }
 
     #[test]
