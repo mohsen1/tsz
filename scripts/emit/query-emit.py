@@ -269,6 +269,21 @@ def emit_freshness_status_line(data):
     return f"Emit detail freshness: {state}."
 
 
+def emit_pass_rate(summary, prefix):
+    passed = summary.get(f"{prefix}Pass")
+    total = summary.get(f"{prefix}Total")
+    if passed is None or total is None or total <= 0:
+        return "N/A"
+    return f"{(passed / total) * 100:.1f}"
+
+
+def emit_headline_summary(detail_summary, public_summary):
+    status = emit_freshness_status(detail_summary, public_summary)
+    if status["state"] == "stale":
+        return public_summary, "README/public aggregate"
+    return detail_summary, "checked detail"
+
+
 def emit_remaining_failures(summary, surface):
     prefix = "js" if surface == "js" else "dts"
     passed = summary.get(f"{prefix}Pass")
@@ -308,10 +323,30 @@ def print_emit_freshness_note(data):
 
 def show_overview(data):
     s = data["summary"]
+    public_summary = emit_summary_from_readme()
+    headline_summary, headline_source = emit_headline_summary(emit_summary(data), public_summary)
     print(f"Emit Test Results")
     print_emit_freshness_note(data)
-    print(f"  JavaScript: {s['jsPass']}/{s['jsTotal']} ({s['jsPassRate']}%)")
-    print(f"  Declaration: {s['dtsPass']}/{s['dtsTotal']} ({s['dtsPassRate']}%)")
+    print(f"  Source: {headline_source}")
+    print(
+        "  JavaScript: "
+        f"{headline_summary['jsPass']}/{headline_summary['jsTotal']} "
+        f"({emit_pass_rate(headline_summary, 'js')}%)"
+    )
+    print(
+        "  Declaration: "
+        f"{headline_summary['dtsPass']}/{headline_summary['dtsTotal']} "
+        f"({emit_pass_rate(headline_summary, 'dts')}%)"
+    )
+    if headline_source != "checked detail":
+        print(
+            "  Checked-detail JavaScript: "
+            f"{s['jsPass']}/{s['jsTotal']} ({s['jsPassRate']}%)"
+        )
+        print(
+            "  Checked-detail Declaration: "
+            f"{s['dtsPass']}/{s['dtsTotal']} ({s['dtsPassRate']}%)"
+        )
     print()
 
     results = data["results"]

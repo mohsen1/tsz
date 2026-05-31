@@ -186,6 +186,40 @@ after
 
         self.assertEqual(heading, "Declaration: 25 failures/timeouts")
 
+    def test_stale_headline_summary_uses_public_aggregate(self):
+        detail_summary = {
+            "jsPass": 13094,
+            "jsTotal": 13530,
+            "dtsPass": 1606,
+            "dtsTotal": 1669,
+        }
+        public_summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+
+        summary, source = self.mod.emit_headline_summary(detail_summary, public_summary)
+
+        self.assertEqual(source, "README/public aggregate")
+        self.assertEqual(summary["jsPass"], 13459)
+        self.assertEqual(summary["dtsPass"], 1644)
+
+    def test_current_headline_summary_uses_checked_detail(self):
+        detail_summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        public_summary = dict(detail_summary)
+
+        summary, source = self.mod.emit_headline_summary(detail_summary, public_summary)
+
+        self.assertEqual(source, "checked detail")
+        self.assertEqual(summary, detail_summary)
+
 
 class TestQueryFilters(unittest.TestCase):
     @classmethod
