@@ -135,3 +135,40 @@ fn binary_relational_number_bigint_probes_use_relation_outcome_boundary() {
         "relational number/bigint probes should not use raw boolean assignability gates"
     );
 }
+
+#[test]
+fn bigint_exponentiation_target_probes_use_subtype_outcome_boundary() {
+    let binary_source =
+        fs::read_to_string("src/types/computation/binary.rs").expect("failed to read binary.rs");
+    let compound_source = fs::read_to_string("src/assignability/compound_assignment.rs")
+        .expect("failed to read compound_assignment.rs");
+    let subtype_source = fs::read_to_string("src/assignability/subtype_identity_checker.rs")
+        .expect("failed to read subtype_identity_checker.rs");
+    let binary_compact = compact(&binary_source);
+    let compound_compact = compact(&compound_source);
+
+    assert!(
+        subtype_source.contains("fn diagnostic_subtype_outcome("),
+        "checker subtype diagnostics should expose an outcome-shaped probe"
+    );
+    assert!(
+        binary_compact.contains("diagnostic_subtype_outcome(left_type,TypeId::BIGINT).related")
+            && binary_compact
+                .contains("diagnostic_subtype_outcome(right_type,TypeId::BIGINT).related"),
+        "binary exponentiation target probes should route through subtype outcomes"
+    );
+    assert!(
+        compound_compact
+            .contains("diagnostic_subtype_outcome(left_read_type,TypeId::BIGINT).related")
+            && compound_compact
+                .contains("diagnostic_subtype_outcome(right_type,TypeId::BIGINT).related"),
+        "compound exponentiation target probes should route through subtype outcomes"
+    );
+    assert!(
+        !binary_compact.contains("is_subtype_of(left_type,TypeId::BIGINT)")
+            && !binary_compact.contains("is_subtype_of(right_type,TypeId::BIGINT)")
+            && !compound_compact.contains("is_subtype_of(left_read_type,TypeId::BIGINT)")
+            && !compound_compact.contains("is_subtype_of(right_type,TypeId::BIGINT)"),
+        "TS2791 bigint target probes should not consume raw subtype booleans directly"
+    );
+}

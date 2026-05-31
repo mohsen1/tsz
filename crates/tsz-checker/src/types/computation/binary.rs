@@ -653,8 +653,12 @@ impl<'a> CheckerState<'a> {
                     && right_type != TypeId::ANY
                     && left_type != TypeId::UNKNOWN
                     && right_type != TypeId::UNKNOWN
-                    && self.is_subtype_of(left_type, TypeId::BIGINT)
-                    && self.is_subtype_of(right_type, TypeId::BIGINT)
+                    && self
+                        .diagnostic_subtype_outcome(left_type, TypeId::BIGINT)
+                        .related
+                    && self
+                        .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
+                        .related
                 {
                     self.error_at_node_msg(
                         node_idx,

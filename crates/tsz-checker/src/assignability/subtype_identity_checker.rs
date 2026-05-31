@@ -99,6 +99,23 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Outcome-shaped wrapper for diagnostic subtype probes that intentionally
+    /// need only the legacy subtype decision.
+    pub(crate) fn diagnostic_subtype_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_subtype_of(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Resolve a namespace `Lazy(DefId)` type to its structural Object form.
     ///
     /// Namespace symbols are cached as `Lazy(DefId)` which self-references through
