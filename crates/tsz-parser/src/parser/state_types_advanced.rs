@@ -1689,12 +1689,11 @@ impl ParserState {
                 );
             } else {
                 // Private identifiers are not currently valid as indexed-access
-                // type arguments (e.g. `C[#bar]`). Keep the malformed tail in the
-                // token stream so declaration-list recovery can emit the same
-                // follow-up diagnostics as tsc.
+                // type arguments (e.g. `C[#bar]`). Keep the malformed name in the
+                // token stream so declaration-list recovery can parse it as the
+                // next invalid declarator, matching tsc's emitted JS shape.
                 if self.is_token(SyntaxKind::PrivateIdentifier) {
                     self.parse_expected(SyntaxKind::CloseBracketToken);
-                    self.next_token(); // consume `#bar`, leave trailing `]` for caller recovery
                     break;
                 }
 

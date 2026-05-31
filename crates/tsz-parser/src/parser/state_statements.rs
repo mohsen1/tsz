@@ -1095,6 +1095,7 @@ impl ParserState {
             let can_start_decl = self.is_identifier_or_keyword()
                 || self.is_token(SyntaxKind::OpenBraceToken)
                 || self.is_token(SyntaxKind::OpenBracketToken)
+                || self.is_token(SyntaxKind::PrivateIdentifier)
                 || starts_recovered_invalid_unicode_identifier;
 
             if !can_start_decl {
@@ -1349,8 +1350,12 @@ impl ParserState {
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
                         || self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.is_token(SyntaxKind::PrivateIdentifier)
                         || self.current_unknown_starts_invalid_unicode_identifier_debris();
-                    if !(decl_only_literal_value_errors && next_starts_declarator) {
+                    if !(next_starts_declarator
+                        && (decl_only_literal_value_errors
+                            || self.is_token(SyntaxKind::PrivateIdentifier)))
+                    {
                         break;
                     }
                 }
@@ -1416,7 +1421,8 @@ impl ParserState {
                     let can_continue = (self.is_identifier_or_keyword()
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
-                        || self.is_token(SyntaxKind::OpenBracketToken);
+                        || self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.is_token(SyntaxKind::PrivateIdentifier);
                     if can_continue {
                         // Emit ',' expected directly, bypassing the distance-based
                         // suppression heuristic. tsc's parseDelimitedList always
@@ -1556,6 +1562,12 @@ impl ParserState {
                 // Example: `var a = q~;` → tsc emits `var a = q;\n~;`
                 if !self.is_statement_start() {
                     let unexpected_token = self.token();
+                    let decl_name_is_private_identifier = self
+                        .arena
+                        .get(decl)
+                        .and_then(|node| self.arena.get_variable_declaration(node))
+                        .and_then(|decl| self.arena.get(decl.name))
+                        .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16);
                     // When a `.` separates what looks like two declarations
                     // (e.g., `const x: "".typeof(...)`), tsc treats the `.` as
                     // a missing `,` and continues the declaration list. When the
@@ -1584,6 +1596,29 @@ impl ParserState {
                     } else if unexpected_token == SyntaxKind::CloseBracketToken
                         && self.is_token(SyntaxKind::EqualsToken)
                     {
+                        if decl_name_is_private_identifier {
+                            self.parse_error_at_current_token(
+                                "Variable declaration expected.",
+                                diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                            );
+                            let snapshot = self.scanner.save_state();
+                            let saved_token = self.current_token;
+                            self.next_token();
+                            if !matches!(
+                                self.token(),
+                                SyntaxKind::SemicolonToken
+                                    | SyntaxKind::CloseBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) {
+                                self.parse_error_at_current_token(
+                                    "Variable declaration expected.",
+                                    diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                );
+                            }
+                            self.scanner.restore_state(snapshot);
+                            self.current_token = saved_token;
+                            break;
+                        }
                         // `const x: C[#bar] = 3;` is recovered as a malformed
                         // declaration tail after `]`, producing TS1134 at `=`
                         // and at the initializer start (matching tsc).
@@ -1694,7 +1729,8 @@ impl ParserState {
             // so `var a, return;` should be a trailing comma error, not a new declaration.
             let can_start_next = (self.is_identifier_or_keyword() && !self.is_reserved_word())
                 || self.is_token(SyntaxKind::OpenBraceToken)
-                || self.is_token(SyntaxKind::OpenBracketToken);
+                || self.is_token(SyntaxKind::OpenBracketToken)
+                || self.is_token(SyntaxKind::PrivateIdentifier);
 
             if !can_start_next {
                 // Trailing comma in variable declaration list — emit TS1009.

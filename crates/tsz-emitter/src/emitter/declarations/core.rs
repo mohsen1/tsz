@@ -392,7 +392,14 @@ impl<'a> Printer<'a> {
         if let Some(name_node) = self.arena.get(decl.name) {
             self.emit_comments_before_pos(name_node.pos);
         }
-        self.emit_decl_name(decl.name);
+        if let Some(name_node) = self.arena.get(decl.name)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            && let Some(name) = self.arena.get_identifier(name_node)
+        {
+            self.write(&name.escaped_text);
+        } else {
+            self.emit_decl_name(decl.name);
+        }
 
         // Skip type annotation for JavaScript emit — consume any comments
         // inside the erased type annotation so they don't leak into output.

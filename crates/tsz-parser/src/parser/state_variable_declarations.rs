@@ -85,6 +85,8 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if self.is_token(SyntaxKind::PrivateIdentifier) {
+            self.parse_private_identifier()
         } else if self.current_unknown_starts_invalid_unicode_identifier_debris() {
             self.parse_recovered_invalid_unicode_escape_identifier()
         } else if self.is_reserved_word() {
