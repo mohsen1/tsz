@@ -118,6 +118,26 @@ impl SourceWriter {
         }
     }
 
+    /// Create a scratch writer for rendering text that will be spliced into the
+    /// current inline position.
+    pub(crate) fn inline_capture_from(&self, capacity: usize) -> Self {
+        Self {
+            output: String::with_capacity(capacity),
+            line: self.line,
+            column: self.column,
+            indent_level: self.indent_level,
+            at_line_start: false,
+            indent_str: self.indent_str.clone(),
+            new_line: self.new_line.clone(),
+            source_map: None,
+            current_source_index: self.current_source_index,
+            #[cfg(debug_assertions)]
+            delimiter_stack: Vec::new(),
+            #[cfg(debug_assertions)]
+            delimiter_mismatch_count: 0,
+        }
+    }
+
     /// Create a `SourceWriter` with source map generation enabled
     pub fn with_source_map(output_file: String) -> Self {
         let mut writer = Self::new();

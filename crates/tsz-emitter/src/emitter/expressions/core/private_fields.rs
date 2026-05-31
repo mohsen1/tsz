@@ -647,6 +647,18 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn capture_private_receiver_inline(
+        &mut self,
+        expression: NodeIndex,
+        clean_name: &str,
+    ) -> String {
+        let scratch = self.writer.inline_capture_from(128);
+        let main_writer = std::mem::replace(&mut self.writer, scratch);
+        self.emit_private_receiver(expression, clean_name);
+        let scratch = std::mem::replace(&mut self.writer, main_writer);
+        scratch.take_output()
+    }
+
     /// Emit the state variable (WeakMap/WeakSet) for a private field.
     fn emit_private_state_var(&mut self, weakmap_name: &str, clean_name: &str) {
         let info = self.private_member_info.get(clean_name).cloned();
@@ -894,6 +906,11 @@ impl<'a> Printer<'a> {
                 };
 
                 let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+                let captured_receiver = if needs_receiver_temp {
+                    Some(self.capture_private_receiver_inline(pfa.expression, &pfa.clean_name))
+                } else {
+                    None
+                };
                 let receiver_temp = if needs_receiver_temp {
                     Some(self.make_unique_name_hoisted())
                 } else {
@@ -905,7 +922,13 @@ impl<'a> Printer<'a> {
 
                 self.write_helper("__classPrivateFieldSet");
                 self.write("(");
-                self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                if let Some(receiver) = captured_receiver.as_deref() {
+                    self.write(receiver_temp.as_deref().expect("receiver temp"));
+                    self.write(" = ");
+                    self.write(receiver);
+                } else {
+                    self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                }
                 self.write(", ");
                 self.emit_private_state_var(&weakmap_name, &clean_name);
                 self.write(", ");
