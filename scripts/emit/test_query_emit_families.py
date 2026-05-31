@@ -150,6 +150,42 @@ after
         status = self.mod.emit_freshness_status(summary, dict(summary))
         self.assertEqual(status["state"], "current")
 
+    def test_stale_failure_family_heading_names_public_remaining_count(self):
+        detail_summary = {
+            "jsPass": 13094,
+            "jsTotal": 13530,
+            "dtsPass": 1606,
+            "dtsTotal": 1669,
+        }
+        public_summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+
+        heading = self.mod.failure_family_surface_heading(
+            "js", "JavaScript", 436, detail_summary, public_summary
+        )
+
+        self.assertIn("JavaScript checked-detail: 436 failures/timeouts", heading)
+        self.assertIn("public aggregate remaining: 71", heading)
+        self.assertIn("detail aggregate remaining: 436", heading)
+
+    def test_current_failure_family_heading_keeps_plain_count(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+
+        heading = self.mod.failure_family_surface_heading(
+            "dts", "Declaration", 25, summary, dict(summary)
+        )
+
+        self.assertEqual(heading, "Declaration: 25 failures/timeouts")
+
 
 class TestQueryFilters(unittest.TestCase):
     @classmethod
