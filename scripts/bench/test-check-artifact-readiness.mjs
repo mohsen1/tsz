@@ -158,12 +158,15 @@ withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
   writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
-  const result = run(file);
+  const result = run(file, ["--json", "--require-green"]);
   assert.equal(result.status, 0, `all-green artifact should exit 0, got:\n${result.stderr}`);
-  assert.match(result.stdout, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
-  assert.match(result.stdout, /Measurement profile.*release-pgo/, "should show measurement profile mode");
-  assert.match(result.stdout, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
-  assert.match(result.stdout, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.all_required_rows_green, true, "all-green JSON should mark release gate ready");
+  assert.deepEqual(parsed.non_green_required_rows, [], "all-green JSON should not report non-green rows");
+  assert.match(result.stderr, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
+  assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
+  assert.match(result.stderr, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
+  assert.match(result.stderr, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
 });
 console.log("✅ complete all-green artifact exits 0");
 
@@ -273,6 +276,29 @@ withTempDir((dir) => {
 console.log("✅ red row present in artifact exits 0 (not missing)");
 
 // ---------------------------------------------------------------------------
+// Test: --require-green fails when any present required row is red.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const redName = REQUIRED_PROJECT_ROWS[0];
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? makeRow(name, "red", { errorStatus: "tsz crashed" }) : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-green"]);
+  assert.equal(result.status, 1, "--require-green should fail when a required row is red");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.all_required_rows_green, false, "JSON should mark release gate not ready");
+  assert.deepEqual(
+    parsed.non_green_required_rows,
+    [{ name: redName, state: "red" }],
+    "JSON should name the red required row",
+  );
+  assert.match(result.stderr, new RegExp(`${redName} \\(red\\)`));
+});
+console.log("✅ --require-green fails on red required rows");
+
+// ---------------------------------------------------------------------------
 // Test: yellow row → exit 0
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
@@ -287,6 +313,38 @@ withTempDir((dir) => {
   assert.match(result.stdout, /some failure/, "should name the first failure class for yellow rows");
 });
 console.log("✅ yellow row present exits 0");
+
+// ---------------------------------------------------------------------------
+// Test: --require-green fails when required rows are yellow or gray.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const yellowName = REQUIRED_PROJECT_ROWS[0];
+  const grayName = REQUIRED_PROJECT_ROWS[1];
+  const partialGreen = makeRow(grayName, "green");
+  delete partialGreen.compatibility.phase;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) => {
+    if (i === 0) return makeRow(name, "yellow");
+    if (i === 1) return partialGreen;
+    return makeRow(name, "green");
+  });
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json", "--require-green"]);
+  assert.equal(result.status, 1, "--require-green should fail on yellow/gray rows");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.all_required_rows_green, false, "JSON should mark release gate not ready");
+  assert.deepEqual(
+    parsed.non_green_required_rows,
+    [
+      { name: yellowName, state: "yellow" },
+      { name: grayName, state: "gray" },
+    ],
+    "JSON should name yellow and gray required rows",
+  );
+  assert.match(result.stderr, new RegExp(`${yellowName} \\(yellow\\)`));
+  assert.match(result.stderr, new RegExp(`${grayName} \\(gray\\)`));
+});
+console.log("✅ --require-green fails on yellow or gray required rows");
 
 // ---------------------------------------------------------------------------
 // Test: partial compatibility metadata cannot be reported as green.
@@ -459,6 +517,8 @@ withTempDir((dir) => {
   }
   assert.equal(parsed.artifact_absent, true, "JSON should have artifact_absent: true");
   assert.equal(parsed.missing, REQUIRED_PROJECT_ROWS.length, "all rows should be missing");
+  assert.equal(parsed.all_required_rows_green, false, "absent artifact is not release-ready");
+  assert.equal(parsed.non_green_required_rows.length, REQUIRED_PROJECT_ROWS.length, "all missing rows are non-green");
 });
 console.log("✅ --json with absent artifact emits artifact_absent: true");
 

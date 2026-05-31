@@ -4,7 +4,8 @@
  *
  * Exit codes:
  *   0 — artifact present, all required rows included
- *   1 — artifact present, one or more required rows are missing
+ *   1 — artifact present, one or more required rows are missing or the
+ *       --require-green release gate found non-green required rows
  *   2 — artifact file absent or unparseable
  *
  * Without --json: writes a markdown report to stdout (and GITHUB_STEP_SUMMARY
@@ -15,7 +16,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -31,6 +32,7 @@ import {
 
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
+const requireGreen = args.includes("--require-green");
 const filePath = args.find((a) => !a.startsWith("-")) ?? null;
 
 function loadArtifact() {
@@ -206,8 +208,26 @@ function analyzeArtifact(artifact) {
   };
 }
 
+function uniqueRowsByName(rows) {
+  const byName = new Map();
+  for (const row of rows) {
+    if (!row?.name || byName.has(row.name)) continue;
+    byName.set(row.name, row);
+  }
+  return [...byName.values()];
+}
+
 function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
+  const nonGreenRows = rows
+    ? uniqueRowsByName([
+      ...(red ?? []),
+      ...(yellow ?? []),
+      ...(gray ?? []),
+      ...(missing ?? []),
+      ...(duplicates ?? []),
+    ])
+    : missingNames.map((name) => ({ name, state: "missing" }));
   return {
     artifact_absent: artifactAbsent,
     parse_error: parseError ?? null,
@@ -228,6 +248,13 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
     missing: missingNames.length,
     missing_rows: missingNames,
     duplicate_rows: duplicates?.map((r) => ({ name: r.name, count: r.duplicate_count })) ?? [],
+    all_required_rows_green: rows
+      ? nonGreenRows.length === 0 && green?.length === rows.length
+      : false,
+    non_green_required_rows: nonGreenRows.map((r) => ({
+      name: r.name,
+      state: r.state,
+    })),
     red_rows: red?.map((r) => r.name) ?? [],
     yellow_rows: yellow?.map((r) => r.name) ?? [],
     rows: rows?.map((r) => ({
@@ -471,6 +498,15 @@ if (missing.length > 0 || duplicates.length > 0) {
         missing.map((r) => r.name).join(", ") + "\n",
     );
   }
+  process.exit(1);
+}
+
+if (requireGreen && (red.length > 0 || yellow.length > 0 || gray.length > 0)) {
+  const nonGreen = [...red, ...yellow, ...gray];
+  process.stderr.write(
+    `bench-artifact-readiness: ${nonGreen.length} required row(s) are not green: ` +
+      nonGreen.map((r) => `${r.name} (${r.state})`).join(", ") + "\n",
+  );
   process.exit(1);
 }
 
