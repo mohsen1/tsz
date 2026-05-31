@@ -9,6 +9,8 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
             .expect("failed to read call predicate narrowing source");
     let type_guard_source = fs::read_to_string("src/flow/control_flow/type_guards.rs")
         .expect("failed to read type guard source");
+    let reachability_source = fs::read_to_string("src/flow/reachability_checker.rs")
+        .expect("failed to read reachability checker source");
     let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
         .expect("failed to read flow analysis query boundary");
     let compact_assignment: String = assignment_source
@@ -20,6 +22,10 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         .filter(|c| !c.is_whitespace())
         .collect();
     let compact_type_guard: String = type_guard_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_reachability: String = reachability_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -68,5 +74,15 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
     assert!(
         !compact_type_guard.contains("self.interner.is_assignable_to(arg_type,evaluated_pred)"),
         "generic predicate cache-skipping should not call raw interner assignability"
+    );
+    assert!(
+        compact_reachability.contains("flow_assignability_outcome(")
+            && compact_reachability.contains("normalized_switch,cases_union")
+            && compact_reachability.contains(").related"),
+        "switch reachability fallback should consume outcome-shaped relation truth"
+    );
+    assert!(
+        !compact_reachability.contains("is_assignable_with_env("),
+        "switch reachability fallback should not call the raw env relation helper"
     );
 }
