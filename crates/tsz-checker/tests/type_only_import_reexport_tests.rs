@@ -45,28 +45,23 @@ fn check_two_files_collect_export_specifiers(
     let arena_a = Arc::new(parser_a.get_arena().clone());
     let arena_b = Arc::new(parser_b.get_arena().clone());
 
-    let file_a_exports = binder_a.module_exports.get(mod_name).cloned();
-    if let Some(exports) = &file_a_exports {
+    // `import_binding_is_type_only` follows the module specifier into
+    // `binder_a`'s export table, so seed `binder_b.module_exports` for the
+    // re-export path. No `register_symbol_file_target` is needed: the
+    // assertion only inspects `ctx.type_only_nodes`, which is populated
+    // before any cross-file type construction.
+    if let Some(exports) = binder_a.module_exports.get(mod_name).cloned() {
         std::sync::Arc::make_mut(&mut binder_b.module_exports)
-            .insert(module_specifier.to_string(), exports.clone());
-    }
-
-    let mut cross_file_targets = FxHashMap::default();
-    if let Some(exports) = &file_a_exports {
-        for (_name, &sym_id) in exports.iter() {
-            cross_file_targets.insert(sym_id, 0usize);
-        }
+            .insert(module_specifier.to_string(), exports);
     }
 
     let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
-    let binder_a = Arc::new(binder_a);
-    let binder_b = Arc::new(binder_b);
-    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+    let all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
         arena_b.as_ref(),
-        binder_b.as_ref(),
+        all_binders[1].as_ref(),
         &types,
         entry_name.to_string(),
         CheckerOptions {
@@ -79,9 +74,6 @@ fn check_two_files_collect_export_specifiers(
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
     checker.ctx.set_current_file_idx(1);
-    for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
-    }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
     resolved_module_paths.insert((1, module_specifier.to_string()), 0);

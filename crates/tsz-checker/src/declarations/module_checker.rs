@@ -1050,42 +1050,32 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Mark local re-export specifiers for emit elision when the re-exported
-            // local binding has no runtime form. Three sources:
-            //
-            // 1. The local binding was introduced as a type-only import
-            //    (`import type { X }`, `import { type X }`, `import type X`,
-            //    `import type * as N`). The binder sets `sym.is_type_only`
-            //    regardless of whether the source-module export is a value:
-            //    the local form has no runtime slot. tsc emits no
-            //    `exports.X = void 0;` and no CommonJS re-export binding.
-            // 2. The local binding is an import alias and the source-module
-            //    export is itself type-only (interface, type alias,
-            //    uninstantiated namespace, or const enum without
-            //    `preserveConstEnums`). `import_binding_is_type_only` has the
-            //    full const-enum and `export =` awareness here.
-            // 3. The local binding is a non-alias declaration that is purely
-            //    a type entity (interface, type alias, uninstantiated
-            //    namespace). `is_local_symbol_type_only` handles that.
+            // Mark local re-export specifiers for emit elision when the local
+            // binding has no runtime form. `sym.is_type_only` catches type-only
+            // imports (`import type { X }` etc.) regardless of whether the
+            // source-module export is itself a runtime value. The alias branch
+            // handles `import { X } from "m"` where `X` is type-only in `m`;
+            // `import_binding_is_type_only` adds const-enum and `export =`
+            // awareness over the plain specifier-side query. The fallback
+            // covers non-alias declarations that are purely type entities.
             if is_local && !enclosing_export_is_type_only && !specifier.is_type_only {
                 use tsz_binder::symbol_flags;
-                let sym_lookup = self
+                let sym = self
                     .ctx
                     .binder
                     .file_locals
                     .get(&name_str)
-                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id).map(|sym| (sym_id, sym)));
-                let is_type_only = if let Some((_, sym)) = sym_lookup {
-                    if sym.is_type_only {
-                        true
-                    } else if sym.has_any_flags(symbol_flags::ALIAS)
-                        && let Some(ref module_spec) = sym.import_module
-                    {
-                        let import_name = sym.import_name.as_deref().unwrap_or(&name_str);
-                        self.import_binding_is_type_only(module_spec, import_name)
-                    } else {
-                        self.is_local_symbol_type_only(&name_str)
-                    }
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id));
+                let is_type_only = if let Some(sym) = sym
+                    && sym.is_type_only
+                {
+                    true
+                } else if let Some(sym) = sym
+                    && sym.has_any_flags(symbol_flags::ALIAS)
+                    && let Some(ref module_spec) = sym.import_module
+                {
+                    let import_name = sym.import_name.as_deref().unwrap_or(&name_str);
+                    self.import_binding_is_type_only(module_spec, import_name)
                 } else {
                     self.is_local_symbol_type_only(&name_str)
                 };
