@@ -135,6 +135,30 @@ class Impl implements Base {
     );
 }
 
+/// Negative: the erased-return fallback is only valid when the top-level
+/// generic application family matches. Sharing a nested generic application is
+/// not enough to ignore incompatible outer return families.
+#[test]
+fn overloaded_interface_method_nested_shared_return_application_still_ts2416() {
+    let source = r#"
+interface Box<T> { value: T; }
+interface SourceWrap<T> { source: T; }
+interface TargetWrap<T> { target: T; }
+interface Base {
+  make(x: "target"): TargetWrap<Box<string>>;
+}
+class Impl implements Base {
+  make(x: string): SourceWrap<Box<number>> {
+    return undefined as any;
+  }
+}
+"#;
+    assert!(
+        ts2416_count(source) >= 1,
+        "A nested shared return application base must not erase incompatible outer returns"
+    );
+}
+
 /// Negative for overloads specifically: with multiple overloads, tsc compares
 /// parameters *contravariantly* (not bivariantly), so an impl whose parameter
 /// is narrower than an overload's parameter is rejected.

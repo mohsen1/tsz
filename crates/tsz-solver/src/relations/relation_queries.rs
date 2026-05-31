@@ -502,6 +502,28 @@ pub fn query_relation_with_overrides<
     }
 }
 
+/// Query the overload implementation fallback that compares erased parameter
+/// lists only when return types share a generic application base.
+pub fn query_erased_overload_params_with_matching_return_base<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> RelationResult {
+    let mut checker = configured_subtype_checker(interner, resolver, policy, context);
+    let related = checker
+        .check_erased_function_type_params_with_matching_return_base(source, target)
+        .is_true();
+    RelationResult {
+        kind: RelationKind::Subtype,
+        related,
+        depth_exceeded: checker.depth_exceeded(),
+        iteration_exceeded: checker.iteration_exceeded(),
+    }
+}
+
 /// Bundled inputs for relation queries.
 pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProvider + ?Sized> {
     pub interner: &'a dyn TypeDatabase,
