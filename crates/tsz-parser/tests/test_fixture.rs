@@ -82,6 +82,32 @@ pub(crate) fn assert_span_on(
     );
 }
 
+/// Count nodes of the given `kind` in the parser's arena.
+pub(crate) fn count_nodes(parser: &ParserState, kind: u16) -> usize {
+    parser
+        .get_arena()
+        .nodes
+        .iter()
+        .filter(|n| n.kind == kind)
+        .count()
+}
+
+/// Return the source text of the last (outermost) arena node of `kind`.
+///
+/// In a chained assertion like `v as T as U`, the outer node is added last.
+pub(crate) fn last_node_text<'s>(
+    parser: &ParserState,
+    source: &'s str,
+    kind: u16,
+) -> Option<&'s str> {
+    parser
+        .get_arena()
+        .nodes
+        .iter()
+        .rfind(|n| n.kind == kind)
+        .map(|n| &source[n.pos as usize..n.end as usize])
+}
+
 /// Parse a source string under an explicit `ScriptTarget` language version,
 /// using the default `"test.ts"` file name. Used by tests that exercise
 /// target-version-sensitive scanner/parser behaviour (e.g. ES5 vs ES2015
