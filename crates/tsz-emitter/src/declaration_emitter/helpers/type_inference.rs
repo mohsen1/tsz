@@ -1516,19 +1516,6 @@ impl<'a> DeclarationEmitter<'a> {
         (!rescued.is_empty()).then_some(rescued)
     }
 
-    pub(in crate::declaration_emitter) fn undefined_identifier_type_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        // Only the `undefined` *identifier* form falls back to `any` here;
-        // the `UndefinedKeyword` token is handled by earlier passes and
-        // must not be reclassified as `any` (its type is `undefined`).
-        let node = self.arena.get(expr_idx)?;
-        (node.kind == SyntaxKind::Identifier as u16
-            && self.is_unbound_undefined_value_reference(expr_idx))
-        .then(|| "any".to_string())
-    }
-
     pub(in crate::declaration_emitter) fn reference_declared_type_annotation_text(
         &self,
         expr_idx: NodeIndex,
