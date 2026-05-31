@@ -347,6 +347,7 @@ def build_json_report(
     file_summaries = build_file_summaries(counts, allowlist)
     return {
         "ok": not failures,
+        "status": "failed" if failures else "passed",
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "failure_summary": dataclasses.asdict(summary),
