@@ -1,4 +1,5 @@
 mod emit;
+mod recovery;
 mod transform;
 
 use std::borrow::Cow;
@@ -719,6 +720,32 @@ x = <foo>x</foo>, x = <foo/>;
         assert!(
             !output.contains("</div>"),
             "Conflict-marker JSX recovery should not mirror the opener tag.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn recovered_jsx_child_that_consumes_parent_close_emits_empty_close() {
+        let output = emit_jsx_preserve_es2015("var x = <root><leaf></root>;");
+        assert!(
+            output.contains("<root><leaf></></root>"),
+            "Recovered child close should be emitted as an empty JSX close.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("<root><leaf></root></root>"),
+            "Recovered child should not duplicate the parent closing tag.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn mismatched_jsx_close_without_parent_recovery_keeps_written_close() {
+        let output = emit_jsx_preserve_es2015("var x = <alpha></beta>;");
+        assert!(
+            output.contains("<alpha></beta>"),
+            "Plain mismatched JSX close should preserve the written close.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("<alpha></>"),
+            "Plain mismatched JSX close should not be treated as parent recovery.\nOutput: {output}"
         );
     }
 

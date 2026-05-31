@@ -102,6 +102,14 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     fn emit_jsx_element_preserve(&mut self, node: &Node) {
+        self.emit_jsx_element_preserve_with_recovered_close(node, false);
+    }
+
+    fn emit_jsx_element_preserve_with_recovered_close(
+        &mut self,
+        node: &Node,
+        recovered_empty_close: bool,
+    ) {
         let Some(jsx) = self.arena.get_jsx_element(node) else {
             return;
         };
@@ -115,6 +123,11 @@ impl<'a> Printer<'a> {
             self.writer.set_indent_level(saved_indent);
         }
         self.emit(jsx.opening_element);
+        let opening_tag_name = self
+            .arena
+            .get(jsx.opening_element)
+            .and_then(|opening_node| self.arena.get_jsx_opening(opening_node))
+            .map(|opening| opening.tag_name);
         let has_synthesized_empty_close = self
             .arena
             .get(jsx.closing_element)
@@ -142,9 +155,20 @@ impl<'a> Printer<'a> {
             {
                 continue;
             }
-            self.emit(child);
+            if let Some(parent_tag_name) = opening_tag_name
+                && self.jsx_child_stole_parent_closer(child, parent_tag_name)
+                && let Some(child_node) = self.arena.get(child)
+            {
+                self.emit_jsx_element_preserve_with_recovered_close(child_node, true);
+            } else {
+                self.emit(child);
+            }
         }
-        self.emit(jsx.closing_element);
+        if recovered_empty_close {
+            self.write("</>");
+        } else {
+            self.emit(jsx.closing_element);
+        }
     }
 
     fn jsx_node_contains_recovered_missing_false_conditional(&self, node: &Node) -> bool {
