@@ -1775,7 +1775,13 @@ impl ParserState {
         // reserved word, string/numeric/bigint literal, or computed `[`)
         // before consuming it. This drives the shorthand-vs-assignment decision
         // below exactly as tsc does (`parser.ts`: `tokenIsIdentifier`).
-        let token_is_identifier = self.is_identifier();
+        //
+        // tsc's `isIdentifier()` also returns false for a contextually reserved
+        // keyword: `yield` in a generator and `await` in an async/static-block
+        // context. Such a token can never start a shorthand member, so it must
+        // fall into the property-assignment branch and report `':' expected`
+        // (e.g. `({ await })` inside a `static { }` block).
+        let token_is_identifier = self.is_identifier() && !self.is_contextually_reserved_label();
 
         let name = self.parse_property_name();
 
@@ -1889,10 +1895,23 @@ impl ParserState {
                     },
                 );
             }
-            // `parseExpected(ColonToken)` reports `':' expected.` when the colon
-            // is absent (without consuming the next token) and consumes it when
-            // present, exactly like tsc.
-            self.parse_expected(SyntaxKind::ColonToken);
+            // Replicate tsc's `parseExpected(ColonToken)`: consume the colon when
+            // present, otherwise report `':' expected.` at the current token
+            // *without consuming it*. tsc emits this through
+            // `parseErrorAtCurrentToken` → `parseErrorAtPosition`, which dedups
+            // only against an error at the exact same position. tsz's
+            // `parse_expected` instead routes the missing-token error through the
+            // distance-based `should_report_error()` gate, which wrongly
+            // *suppresses* the colon error when a `',' expected.` recovery error
+            // was emitted within three columns just before — e.g. `{ a[1], }`,
+            // where `a` recovers as shorthand (`',' expected.` at `[`) and the
+            // short `[1]` puts the trailing `,` within the suppression window.
+            // Use the exact-position-dedup path so this matches tsc for short and
+            // long computed/literal names alike (`a[1],` vs `a["ss"],`).
+            if !self.parse_optional(SyntaxKind::ColonToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+            }
             let expr = self.parse_assignment_expression();
             let mut end_pos = self.token_end();
             let initializer = if expr.is_none() {

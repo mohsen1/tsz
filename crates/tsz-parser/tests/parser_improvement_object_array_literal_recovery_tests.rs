@@ -468,6 +468,108 @@ fn optional_method_then_colon_value_skips_stray_colon_and_keeps_numeric_member()
     }
 }
 
+/// Structural rule: when an identifier shorthand member is immediately followed
+/// by a non-comma token (`{ a[1], }`), tsc recovers `a` as shorthand (`',' expected.`
+/// at the trailing token) and then parses the next computed/literal member; the
+/// missing `:` on that member is reported via `parseErrorAtCurrentToken`, whose
+/// dedup is *exact-position only*. tsz must not drop that `:' expected.` even
+/// when the prior `',' expected.` lands within its distance-suppression window
+/// (which only happens for *short* computed names like `[1]`). Exercised with a
+/// numeric and a string computed key, and a renamed leading binding, to prove the
+/// rule is keyed on the recovery shape, not the spelling/length of the key.
+#[test]
+fn short_computed_member_after_shorthand_still_reports_missing_colon() {
+    for (lead, key) in [("a", "1"), ("a", "\"s\""), ("zzz", "1"), ("zzz", "\"ss\"")] {
+        let source = format!("var x = {{ {lead}[{key}], }};\n");
+        let (parser, _root) = parse_source(&source);
+        let diagnostics = parser.get_diagnostics();
+
+        // `',' expected.` at the `[` immediately after the shorthand identifier.
+        let bracket_pos = source.find('[').expect("`[` in source") as u32;
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::EXPECTED
+                    && d.start == bracket_pos
+                    && d.message == "',' expected."),
+            "expected `',' expected.` at the `[` for `{lead}[{key}]`, got {diagnostics:?}"
+        );
+
+        // `':' expected.` at the trailing `,` that closes the computed member.
+        let comma_pos = source.find("],").expect("`],` in source") as u32 + 1;
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::EXPECTED
+                    && d.start == comma_pos
+                    && d.message == "':' expected."),
+            "expected `':' expected.` at the trailing `,` for `{lead}[{key}]`, got {diagnostics:?}"
+        );
+    }
+}
+
+/// Structural rule: tsc's `isIdentifier()` returns false for a contextually
+/// reserved keyword — `await` inside a `static { }` block (or async context) and
+/// `yield` inside a generator. Such a token can never start a shorthand member,
+/// so `({ await })` inside a static block is a property assignment missing its
+/// `:`, and tsc reports `':' expected.` at the `}`. Before the fix tsz treated
+/// `await` as an identifier and silently produced a shorthand, dropping the
+/// diagnostic.
+#[test]
+fn contextually_reserved_keyword_member_reports_missing_colon() {
+    let source = "class C {\n    static {\n        ({ await });\n    }\n}\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    // The `:' expected.` lands at the `}` that closes the object literal.
+    let close_brace_pos = source.find(" });").expect("` });` in source") as u32 + 1;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == close_brace_pos
+                && d.message == "':' expected."),
+        "expected `':' expected.` at the `}}` after `await` in a static block, got {diagnostics:?}"
+    );
+
+    let members = first_object_literal_members(&parser);
+    assert_eq!(members.len(), 1, "expected one member, got {members:?}");
+    let arena = parser.get_arena();
+    let member = arena.get(members[0]).expect("member node");
+    assert_eq!(
+        member.kind,
+        syntax_kind_ext::PROPERTY_ASSIGNMENT,
+        "`await` in a static block must be a property assignment, not a shorthand"
+    );
+}
+
+/// Negative case proving the contextual-reserved rule is context-sensitive:
+/// outside an async/generator/static-block context, `await` and `yield` are
+/// ordinary identifiers, so `({ await })` is a valid shorthand member with no
+/// `':' expected.` diagnostic.
+#[test]
+fn await_outside_reserved_context_stays_shorthand() {
+    let source = "function f() { ({ await }); }\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "':' expected."),
+        "`await` outside a reserved context is a shorthand, not a missing-colon member, got {diagnostics:?}"
+    );
+    let members = first_object_literal_members(&parser);
+    assert_eq!(members.len(), 1, "expected one member, got {members:?}");
+    let arena = parser.get_arena();
+    let member = arena.get(members[0]).expect("member node");
+    assert_eq!(
+        member.kind,
+        syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
+        "`await` outside a reserved context must stay a shorthand member"
+    );
+}
+
 /// A value-less object property with an explicit colon (`{ prop: }`) is a
 /// property assignment with a distinct missing-value node (so the emitter keeps
 /// the colon, matching tsc's `prop:`), not a shorthand that drops it.
