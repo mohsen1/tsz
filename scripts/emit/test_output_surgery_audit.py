@@ -39,6 +39,19 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             )
         )
 
+    def test_manual_debt_marker_is_tracked(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            src = base / "demo.rs"
+            src.write_text(
+                "// OUTPUT_SURGERY_DEBT: manual DTS line rebuild\n",
+                encoding="utf-8",
+            )
+            findings = self.audit.scan(base)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].call, "manual")
+
     def test_allowlist_ratchets_counts(self):
         findings = [
             self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
@@ -332,14 +345,16 @@ class OutputSurgeryAuditTests(unittest.TestCase):
                 "\n".join(
                     [
                         "let escaped = s.replace('\\\\', \"\\\\\\\\\");",
+                        "// OUTPUT_SURGERY_DEBT: manual DTS line rebuild",
                         "output = output.replacen(&from, &to, 1);",
                     ]
                 ),
                 encoding="utf-8",
             )
             findings = self.audit.scan(base)
-        self.assertEqual(len(findings), 1)
+        self.assertEqual(len(findings), 2)
         self.assertEqual(findings[0].line_no, 2)
+        self.assertEqual(findings[1].line_no, 3)
 
 
 if __name__ == "__main__":

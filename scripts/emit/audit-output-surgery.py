@@ -25,6 +25,7 @@ SOURCE_ROOT = ROOT / "crates" / "tsz-emitter" / "src"
 ALLOWLIST_PATH = ROOT / "scripts" / "emit" / "output-surgery-allowlist.txt"
 
 REPLACE_CALL_RE = re.compile(r"(?:\.\s*)?(replace|replacen|replace_range)\s*\(")
+MANUAL_DEBT_MARKER_RE = re.compile(r"OUTPUT_SURGERY_DEBT\b")
 UNALLOWLISTED_FAILURE_RE = re.compile(
     r": (?P<count>\d+) unallowlisted output-surgery call\(s\)"
 )
@@ -123,6 +124,15 @@ def scan(base: pathlib.Path = SOURCE_ROOT) -> list[Finding]:
     for path in iter_rust_files(base):
         rel = path.relative_to(ROOT).as_posix()
         for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if MANUAL_DEBT_MARKER_RE.search(line):
+                findings.append(
+                    Finding(
+                        path=rel,
+                        line_no=line_no,
+                        call="manual",
+                        text=line.strip(),
+                    )
+                )
             for match in REPLACE_CALL_RE.finditer(line):
                 if is_auto_allowed_data_cleanup(rel, line):
                     continue
