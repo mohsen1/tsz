@@ -83,10 +83,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let read_ok = if source_prop.is_method || target_prop.is_method {
-            self.diagnostic_relation_boolean_guard_bivariant(
-                source_prop.type_id,
-                target_prop.type_id,
-            )
+            self.bivariant_callbacks_relation_outcome(source_prop.type_id, target_prop.type_id)
+                .related
         } else {
             self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
                 .related

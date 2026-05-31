@@ -22,6 +22,12 @@ fn assignability_reporter_relation_probes_use_relation_outcome_boundary() {
         "missing-property read compatibility should route through assign_relation_outcome"
     );
     assert!(
+        missing_property_helper.contains(
+            "bivariant_callbacks_relation_outcome(source_prop.type_id, target_prop.type_id)"
+        ),
+        "missing-property method read compatibility should route through the bivariant RelationOutcome"
+    );
+    assert!(
         missing_property_helper
             .contains("assign_relation_outcome(target_prop.write_type, source_prop.write_type)"),
         "missing-property write compatibility should route through assign_relation_outcome"

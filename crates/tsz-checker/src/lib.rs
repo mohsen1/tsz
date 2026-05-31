@@ -105,6 +105,9 @@ mod assertion_overlap_template_literal_tests;
 #[path = "tests/assignability_display_relation_routing_arch_tests.rs"]
 mod assignability_display_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/assignability_reporter_relation_routing_arch_tests.rs"]
+mod assignability_reporter_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
 mod assignment_ops_relation_routing_arch_tests;
 #[cfg(test)]
