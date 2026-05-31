@@ -82,3 +82,20 @@ async function g<Stream extends AsyncIterableIterator<boolean>>(source: Stream) 
         "for-await element type must follow the constraint yield type, got {codes:?}",
     );
 }
+
+#[test]
+fn circular_type_parameter_constraint_does_not_recurse_forever() {
+    let codes = strict_codes(
+        r#"
+async function h<Outer extends Inner, Inner extends Outer>(source: Outer) {
+  for await (const item of source) {
+    const bad: string = item;
+  }
+}
+"#,
+    );
+    assert!(
+        !codes.is_empty(),
+        "circular constraints should still produce diagnostics or a safe fallback, got {codes:?}",
+    );
+}

@@ -467,6 +467,19 @@ impl<'a> CheckerState<'a> {
     /// When `is_async` is true (`for await...of`), the element type is awaited,
     /// so `Iterable<Promise<T>>` yields `T` instead of `Promise<T>`.
     pub fn for_of_element_type(&mut self, iterable_type: TypeId, is_async: bool) -> TypeId {
+        self.for_of_element_type_with_depth(iterable_type, is_async, 0)
+    }
+
+    fn for_of_element_type_with_depth(
+        &mut self,
+        iterable_type: TypeId,
+        is_async: bool,
+        depth: usize,
+    ) -> TypeId {
+        if depth > 100 {
+            return TypeId::ANY;
+        }
+
         if iterable_type == TypeId::ANY || iterable_type == TypeId::ERROR {
             return iterable_type;
         }
@@ -489,7 +502,9 @@ impl<'a> CheckerState<'a> {
             classify_for_of_element_type(self.ctx.types, iterable_type)
         {
             return constraint
-                .map(|constraint| self.for_of_element_type(constraint, is_async))
+                .map(|constraint| {
+                    self.for_of_element_type_with_depth(constraint, is_async, depth + 1)
+                })
                 .unwrap_or(TypeId::ANY);
         }
 
