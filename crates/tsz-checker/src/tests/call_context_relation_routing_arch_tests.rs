@@ -14,9 +14,13 @@ fn explicit_callback_param_conflict_uses_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome").count(),
+        helper.matches("call_arg_relation_outcome").count(),
         1,
-        "explicit callback parameter conflict should route through assign_relation_outcome"
+        "explicit callback parameter conflict should route through call_arg_relation_outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome"),
+        "explicit callback parameter conflict should not use generic assign relation outcomes"
     );
     assert!(
         helper.contains(".related"),
