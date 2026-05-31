@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_common::perf_counters::CrossArenaSymbolMissSource;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 #[test]
@@ -180,6 +181,95 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
             .contains_symbol_type(value_merged_sym_id),
         "declined value-merged dom interfaces should not populate lib delegation cache",
     );
+}
+
+#[test]
+fn direct_builtin_dom_member_batch_resolves_actual_lib_property_refs() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let dom = lib_files
+        .iter()
+        .find(|lib| {
+            lib.arena
+                .source_files
+                .first()
+                .is_some_and(|source_file| source_file.file_name.ends_with("dom.d.ts"))
+        })
+        .expect("dom lib should be loaded");
+    let sym_id = dom
+        .binder
+        .file_locals
+        .get("SVGURIReference")
+        .expect("SVGURIReference should resolve to a dom lib symbol");
+    let interface_idx = dom
+        .binder
+        .get_symbol(sym_id)
+        .expect("SVGURIReference symbol should exist")
+        .declarations[0];
+    let interface = dom
+        .arena
+        .get(interface_idx)
+        .and_then(|node| dom.arena.get_interface(node))
+        .expect("SVGURIReference should have an interface declaration");
+    let href_member = interface
+        .members
+        .nodes
+        .iter()
+        .copied()
+        .find(|&member_idx| {
+            dom.arena
+                .get(member_idx)
+                .and_then(|member| dom.arena.get_signature(member))
+                .and_then(|sig| dom.arena.get_identifier_text(sig.name))
+                == Some("href")
+        })
+        .expect("SVGURIReference.href should exist");
+
+    let results = state
+        .direct_cross_file_interface_member_simple_types(
+            interface_idx,
+            &[href_member],
+            dom.arena.as_ref(),
+            dom.binder.as_ref(),
+            None,
+            false,
+        )
+        .expect("DOM member batch should lower actual-lib property references");
+    let href_type = results
+        .get(&href_member)
+        .copied()
+        .expect("href member should lower directly");
+    let expected_def_id = state
+        .resolve_actual_lib_name_to_def_id_for_lowering("SVGAnimatedString")
+        .expect("SVGAnimatedString should have actual-lib identity");
+    let actual_def_id =
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types.as_type_database(), href_type);
+
+    assert_eq!(actual_def_id, Some(expected_def_id));
 }
 
 #[test]

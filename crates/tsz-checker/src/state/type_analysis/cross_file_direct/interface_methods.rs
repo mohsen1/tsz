@@ -139,7 +139,10 @@ impl<'a> CheckerState<'a> {
                         type_name,
                     );
                 }
-                self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                    .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
+                    .flatten()
+                    .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
             };
             let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
             let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
