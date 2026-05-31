@@ -13,7 +13,7 @@ AGENTS=(
 
 usage() {
   cat <<'USAGE'
-usage: scripts/agents/list-owned-work.sh [--pr-state] [AgentName|--all]
+usage: scripts/agents/list-owned-work.sh [--pr-state] [--json-report PATH] [AgentName|--all]
 
 Lists owned open PRs/issues and prints compact per-agent summary counters.
 
@@ -21,6 +21,7 @@ Examples:
   scripts/agents/list-owned-work.sh M1-A
   scripts/agents/list-owned-work.sh --all
   scripts/agents/list-owned-work.sh --pr-state Studio-F
+  scripts/agents/list-owned-work.sh Studio-F --json-report /tmp/tsz-owned-work.json
 USAGE
 }
 
@@ -30,11 +31,29 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 WITH_PR_STATE=false
+JSON_REPORT=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pr-state|--with-pr-state)
       WITH_PR_STATE=true
+      shift
+      ;;
+    --json-report)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      JSON_REPORT="$1"
+      shift
+      ;;
+    --json-report=*)
+      JSON_REPORT="${1#--json-report=}"
+      if [[ -z "$JSON_REPORT" ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
       shift
       ;;
     --all)
@@ -64,6 +83,7 @@ else
 fi
 
 REPOSITORY="${GITHUB_REPOSITORY:-mohsen1/tsz}"
+REPORT_ROWS=""
 
 list_owned_items_rest() {
   local label="$1"
@@ -106,6 +126,14 @@ count_rows() {
     return
   fi
   printf '%s\n' "$rows" | awk 'NF { count++ } END { print count + 0 }'
+}
+
+json_array_from_lines() {
+  local rows="$1"
+  ROWS="$rows" node <<'NODE'
+const rows = (process.env.ROWS ?? "").split(/\n/).filter(Boolean);
+process.stdout.write(JSON.stringify(rows));
+NODE
 }
 
 for agent in "${SELECTED[@]}"; do
@@ -180,4 +208,57 @@ for agent in "${SELECTED[@]}"; do
   echo "owned_issue_count=$issue_count"
   echo "owned_work_status=$owned_work_status"
   echo ""
+
+  if [[ -n "$JSON_REPORT" ]]; then
+    pr_json="$(json_array_from_lines "$prs")"
+    issue_json="$(json_array_from_lines "$issues")"
+    report_row="$(
+      ROW_AGENT="$agent" \
+      ROW_LABEL="$label" \
+      ROW_PR_COUNT="$pr_count" \
+      ROW_ISSUE_COUNT="$issue_count" \
+      ROW_STATUS="$owned_work_status" \
+      ROW_PRS="$pr_json" \
+      ROW_ISSUES="$issue_json" \
+      node <<'NODE'
+const row = {
+  agent: process.env.ROW_AGENT,
+  label: process.env.ROW_LABEL,
+  prs: JSON.parse(process.env.ROW_PRS ?? "[]"),
+  issues: JSON.parse(process.env.ROW_ISSUES ?? "[]"),
+  pr_count: Number(process.env.ROW_PR_COUNT ?? 0),
+  issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
+  owned_work_status: process.env.ROW_STATUS,
+};
+process.stdout.write(`${JSON.stringify(row)}\n`);
+NODE
+    )"
+    REPORT_ROWS+="$report_row"$'\n'
+  fi
 done
+
+if [[ -n "$JSON_REPORT" ]]; then
+  REPOSITORY="$REPOSITORY" \
+  WITH_PR_STATE="$WITH_PR_STATE" \
+  REPORT_ROWS="$REPORT_ROWS" \
+  JSON_REPORT="$JSON_REPORT" \
+  node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const agents = (process.env.REPORT_ROWS ?? "")
+  .split(/\n/)
+  .filter(Boolean)
+  .map((line) => JSON.parse(line));
+
+const report = {
+  generated_by: "scripts/agents/list-owned-work.sh",
+  repository: process.env.REPOSITORY,
+  with_pr_state: process.env.WITH_PR_STATE === "true",
+  agents,
+};
+
+fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
+fs.writeFileSync(process.env.JSON_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+NODE
+fi
