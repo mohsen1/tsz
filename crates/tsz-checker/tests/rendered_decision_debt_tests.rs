@@ -267,3 +267,30 @@ fn preferred_constructor_display_uses_structural_identity() {
         "preferred constructor display should prove constructor equivalence structurally"
     );
 }
+
+#[test]
+fn ts2820_target_display_uses_structural_surface_predicates() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/core_formatting.rs"
+    ))
+    .expect("core formatting source should be readable");
+    let start = source
+        .find("pub(in crate::error_reporter) fn format_ts2820_target_display")
+        .expect("TS2820 target display helper should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n    pub(super) fn first_nonpublic_constructor_param_property")
+        .expect("TS2820 target display helper should end before next helper");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("expanded_target_str == target_str"),
+        "TS2820 target display should not decide from equality of rendered target text"
+    );
+    assert!(
+        helper_body.contains("ts2820_target_contains_application_surface(target)")
+            && helper_body.contains("ts2820_target_contains_alias_surface(target)"),
+        "TS2820 target display should preserve named surfaces through structural predicates"
+    );
+}
