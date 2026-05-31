@@ -446,3 +446,133 @@ declare var React: any;
         "Expected JSX fragment recovery positions to match tsc for tsxFragmentErrors.tsx, got {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Adjacent JSX sibling recovery preserves every element as a synthetic comma
+// expression (so emit prints all siblings, not just the first).
+//
+// Rule: when two or more JSX root elements appear adjacently in an expression
+// context (`<a/><b/>`, or elements on consecutive lines), tsc recovers them by
+// wrapping them in a synthetic comma `BinaryExpression` and reports TS2657.
+// These tests verify the tree keeps the siblings; the spelling of the tag and
+// the inline-vs-multiline layout must not change the structure.
+// ---------------------------------------------------------------------------
+
+use crate::parser::syntax_kind_ext;
+
+/// Count JSX element/self-closing/fragment operands reachable through a chain of
+/// comma `BinaryExpression`s starting at `node`. Returns 0 if `node` is not a
+/// comma binary (i.e. recovery did not wrap siblings).
+fn count_jsx_comma_chain_operands(
+    parser: &crate::parser::ParserState,
+    node: crate::parser::NodeIndex,
+) -> usize {
+    let arena = parser.get_arena();
+    let Some(n) = arena.get(node) else {
+        return 0;
+    };
+    if matches!(
+        n.kind,
+        syntax_kind_ext::JSX_ELEMENT
+            | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            | syntax_kind_ext::JSX_FRAGMENT
+    ) {
+        return 1;
+    }
+    if n.kind != syntax_kind_ext::BINARY_EXPRESSION {
+        return 0;
+    }
+    let Some(bin) = arena.get_binary_expr(n) else {
+        return 0;
+    };
+    if bin.operator_token != tsz_scanner::SyntaxKind::CommaToken as u16 {
+        return 0;
+    }
+    count_jsx_comma_chain_operands(parser, bin.left)
+        + count_jsx_comma_chain_operands(parser, bin.right)
+}
+
+/// Find the first comma-binary chain in the arena and return how many JSX
+/// element operands it holds, plus the count of TS2657 diagnostics.
+fn jsx_sibling_recovery_summary(source: &str, file: &str) -> (usize, usize) {
+    let (parser, _root) = parse_source_named(file, source);
+    let arena = parser.get_arena();
+    let ts2657 = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT)
+        .count();
+    // The synthetic comma binary is the outermost comma node whose operands are
+    // all JSX. Scan every node and take the maximum operand count found.
+    let mut best = 0;
+    for (idx, node) in arena.nodes.iter().enumerate() {
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            continue;
+        }
+        let ni = crate::parser::NodeIndex(idx as u32);
+        let operands = count_jsx_comma_chain_operands(&parser, ni);
+        if operands > best {
+            best = operands;
+        }
+    }
+    (best, ts2657)
+}
+
+#[test]
+fn test_adjacent_jsx_siblings_multiline_wrapped_in_comma_expression() {
+    // Two elements on consecutive lines — the tsxErrorRecovery2/3 file1 shape.
+    let (operands, ts2657) = jsx_sibling_recovery_summary("<div></div>\n<div></div>\n", "f.tsx");
+    assert_eq!(
+        operands, 2,
+        "multiline adjacent JSX siblings should be preserved as a 2-operand comma chain"
+    );
+    assert_eq!(ts2657, 1, "exactly one TS2657 for the sibling run");
+}
+
+#[test]
+fn test_adjacent_jsx_siblings_inline_wrapped_in_comma_expression() {
+    // Two elements with no whitespace between them — the file2 shape. Different
+    // surface layout, same structural recovery.
+    let (operands, ts2657) =
+        jsx_sibling_recovery_summary("var x = <div></div><div></div>\n", "f.tsx");
+    assert_eq!(
+        operands, 2,
+        "inline adjacent JSX siblings should be preserved as a 2-operand comma chain"
+    );
+    assert_eq!(ts2657, 1, "exactly one TS2657 for the inline sibling run");
+}
+
+#[test]
+fn test_adjacent_jsx_siblings_renamed_tags_wrapped_in_comma_expression() {
+    // Tag spelling must not matter: `<span/>` then `<section/>` self-closing.
+    let (operands, ts2657) = jsx_sibling_recovery_summary("var x = <span /><section />\n", "f.tsx");
+    assert_eq!(
+        operands, 2,
+        "self-closing adjacent siblings with different tag names should be preserved"
+    );
+    assert_eq!(ts2657, 1, "exactly one TS2657 regardless of tag names");
+}
+
+#[test]
+fn test_three_adjacent_jsx_siblings_all_preserved() {
+    // More than two siblings still collapse into one comma chain holding all.
+    let (operands, ts2657) =
+        jsx_sibling_recovery_summary("var x = <a></a><b></b><c></c>\n", "f.tsx");
+    assert_eq!(
+        operands, 3,
+        "three adjacent JSX siblings should all be preserved in the comma chain"
+    );
+    assert_eq!(ts2657, 1, "exactly one TS2657 for the whole sibling run");
+}
+
+#[test]
+fn test_single_jsx_element_not_wrapped_in_comma() {
+    // Negative case: a lone JSX element must NOT be wrapped in a comma binary
+    // and must NOT emit TS2657.
+    let (operands, ts2657) = jsx_sibling_recovery_summary("var x = <div></div>;\n", "f.tsx");
+    assert_eq!(
+        operands, 0,
+        "a single JSX element must not form a comma chain"
+    );
+    assert_eq!(ts2657, 0, "no TS2657 for a single element");
+}

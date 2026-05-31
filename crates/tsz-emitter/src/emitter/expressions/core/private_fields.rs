@@ -1213,6 +1213,28 @@ impl<'a> Printer<'a> {
         // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
         if binary.operator_token == SyntaxKind::CommaToken as u16 {
             if has_newline_before_right {
+                // A synthetic comma has no comma token in the source between the
+                // operands (`op_start` stays `None` after trivia-skipping found no
+                // operator char). This is how the parser recovers adjacent JSX
+                // root elements (`<a/><b/>`, or two elements on separate lines)
+                // into one comma expression. tsc's printer lays the synthetic
+                // comma on its own line with the right operand further indented
+                // (`left\n    ,\n        right`), matching the operator-on-own-line
+                // form used by other binary operators. A real source comma
+                // (`op_start` is `Some`) keeps the comma attached to the left
+                // operand (`left,\n    right`).
+                if op_start.is_none() {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit(binary.right);
+                    self.decrease_indent();
+                    self.decrease_indent();
+                    self.ctx.flags.in_binary_operand = prev_in_binary;
+                    return;
+                }
                 self.write(",");
                 self.write_line();
                 self.increase_indent();

@@ -303,39 +303,39 @@ impl ParserState {
                 self.token(),
                 SyntaxKind::CommaToken | SyntaxKind::QuestionToken
             );
-        let expression = if started_with_binary_operator && !started_with_binary_operator_skip_path
-        {
-            self.error_expression_expected();
-            let start_pos = self.token_pos();
-            let missing_left = self.create_missing_expression();
-            self.parse_binary_expression_chain_seeded(2, start_pos, Some(missing_left))
-        } else if started_with_binary_operator {
-            self.error_expression_expected();
-            self.next_token();
-            let right = if self.is_expression_start() {
-                self.parse_binary_expression(2)
+        let mut expression =
+            if started_with_binary_operator && !started_with_binary_operator_skip_path {
+                self.error_expression_expected();
+                let start_pos = self.token_pos();
+                let missing_left = self.create_missing_expression();
+                self.parse_binary_expression_chain_seeded(2, start_pos, Some(missing_left))
+            } else if started_with_binary_operator {
+                self.error_expression_expected();
+                self.next_token();
+                let right = if self.is_expression_start() {
+                    self.parse_binary_expression(2)
+                } else {
+                    NodeIndex::NONE
+                };
+                if right.is_none() {
+                    self.create_missing_expression()
+                } else {
+                    right
+                }
             } else {
-                NodeIndex::NONE
-            };
-            if right.is_none() {
-                self.create_missing_expression()
-            } else {
-                right
-            }
-        } else {
-            // Early rejection: If the current token cannot start an expression, fail immediately
-            // This prevents TS1109 from being emitted for tokens that are obviously not expressions
-            // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
-            // parse_statement()'s wildcard match.
-            if !self.is_expression_start() {
-                // Don't emit error here - let the statement-level error handling deal with it
-                // Just return NONE to indicate failure
-                self.jsx_missing_brace_semicolon_window_start = None;
-                return NodeIndex::NONE;
-            }
+                // Early rejection: If the current token cannot start an expression, fail immediately
+                // This prevents TS1109 from being emitted for tokens that are obviously not expressions
+                // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
+                // parse_statement()'s wildcard match.
+                if !self.is_expression_start() {
+                    // Don't emit error here - let the statement-level error handling deal with it
+                    // Just return NONE to indicate failure
+                    self.jsx_missing_brace_semicolon_window_start = None;
+                    return NodeIndex::NONE;
+                }
 
-            self.parse_expression()
-        };
+                self.parse_expression()
+            };
 
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
@@ -387,8 +387,11 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
+        // Adjacent JSX sibling recovery may wrap the parsed expression into a
+        // synthetic comma `BinaryExpression` so emit preserves every element.
+        // Keep the (possibly wrapped) node as the statement's expression.
         if !self.suppress_next_jsx_head_missing_semicolon {
-            self.recover_adjacent_jsx_siblings(expression);
+            expression = self.recover_adjacent_jsx_siblings(expression);
         }
 
         // Use smart error reporting for missing semicolons (matches TypeScript's

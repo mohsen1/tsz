@@ -244,7 +244,17 @@ impl ParserState {
                 closing
             };
 
-            let end_pos = self.token_end();
+            // A JSX element ends at its closing tag, not at the next token. After
+            // `parse_jsx_closing_element` consumes `>` the scanner re-scans into the
+            // following token (e.g. a sibling element in malformed input), so
+            // `token_end()` here can over-extend the element past its own `</tag>`
+            // into the next node. Anchor the end to the closing element's end so
+            // sibling boundaries do not overlap (this matters for adjacent-JSX
+            // recovery where two elements become a synthetic comma expression).
+            let end_pos = self
+                .arena
+                .get(closing)
+                .map_or_else(|| self.token_end(), |node| node.end);
 
             self.arena.add_jsx_element(
                 syntax_kind_ext::JSX_ELEMENT,
@@ -355,7 +365,7 @@ impl ParserState {
         }
 
         if in_expression_context && !self.suppress_next_jsx_head_missing_semicolon {
-            self.recover_adjacent_jsx_siblings(jsx_node);
+            return self.recover_adjacent_jsx_siblings(jsx_node);
         }
 
         jsx_node
@@ -389,9 +399,21 @@ impl ParserState {
         line.contains("</") || line.contains("/>")
     }
 
-    pub(crate) fn recover_adjacent_jsx_siblings(&mut self, first_expr: NodeIndex) -> bool {
+    /// Recover from adjacent JSX root elements in an expression context, e.g.
+    /// `<div></div><div></div>` or two elements on consecutive lines.
+    ///
+    /// tsc's `parseJsxElementOrSelfClosingElementOrFragment` recovers this by
+    /// speculatively parsing the following element(s) and wrapping them with the
+    /// first into a synthetic comma `BinaryExpression`
+    /// (`first , (sibling1 , (sibling2 , ...))`), reporting TS2657. Keeping the
+    /// siblings in the tree (rather than discarding them) is what lets emit
+    /// preserve every element instead of dropping all but the first.
+    ///
+    /// Returns the (possibly wrapped) expression node. When no adjacent sibling
+    /// is present, the original `first_expr` is returned unchanged.
+    pub(crate) fn recover_adjacent_jsx_siblings(&mut self, first_expr: NodeIndex) -> NodeIndex {
         let Some(first_node) = self.arena.get(first_expr) else {
-            return false;
+            return first_expr;
         };
 
         if !matches!(
@@ -400,22 +422,32 @@ impl ParserState {
                 | syntax_kind_ext::JSX_FRAGMENT
                 | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
         ) {
-            return false;
+            return first_expr;
         }
 
         if !self.is_jsx_file() || !self.is_jsx_adjacent_sibling_candidate() {
-            return false;
+            return first_expr;
         }
 
         let start_pos = first_node.pos;
-        let mut end_pos = first_node.end;
 
+        // Collect every adjacent sibling element. The recursive parse uses
+        // `in_expression_context: false` so each sibling does not itself emit a
+        // nested TS2657; we report one TS2657 below spanning the whole run, which
+        // matches tsc's error range `[first.pos, last.end]`.
+        let mut siblings = Vec::new();
+        let mut end_pos = first_node.end;
         while self.is_jsx_adjacent_sibling_candidate() {
             let sibling = self.parse_jsx_element_or_self_closing_or_fragment(false);
             end_pos = self
                 .arena
                 .get(sibling)
                 .map_or(self.token_end(), |node| node.end);
+            siblings.push(sibling);
+        }
+
+        if siblings.is_empty() {
+            return first_expr;
         }
 
         // tsc's parser always emits TS2657 when adjacent JSX siblings
@@ -427,7 +459,39 @@ impl ParserState {
             tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
             tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
         );
-        true
+
+        // Build a right-leaning synthetic comma chain `first , (s1 , (s2 , ...))`
+        // matching tsc's recursive `createBinaryExpression`. The comma operator
+        // token is synthetic (zero-width) at the sibling's position, so emit
+        // prints `<first>, <s1>, ...` driven by the original source positions.
+        let comma = SyntaxKind::CommaToken as u16;
+        let mut acc = *siblings.last().expect("siblings is non-empty");
+        for &left in siblings[..siblings.len() - 1].iter().rev() {
+            acc = self.wrap_jsx_sibling_comma(left, comma, acc);
+        }
+        self.wrap_jsx_sibling_comma(first_expr, comma, acc)
+    }
+
+    /// Wrap `left COMMA right` as a `BinaryExpression`, spanning the source range
+    /// of both operands. Used only for adjacent-JSX-sibling recovery.
+    fn wrap_jsx_sibling_comma(
+        &mut self,
+        left: NodeIndex,
+        comma: u16,
+        right: NodeIndex,
+    ) -> NodeIndex {
+        let pos = self.arena.get(left).map_or(0, |n| n.pos);
+        let end = self.arena.get(right).map_or(pos, |n| n.end);
+        self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            pos,
+            end,
+            crate::parser::node::BinaryExprData {
+                left,
+                operator_token: comma,
+                right,
+            },
+        )
     }
 
     /// Parse JSX opening element, self-closing element, or opening fragment.
