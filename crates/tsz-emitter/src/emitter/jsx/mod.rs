@@ -1,6 +1,7 @@
 mod emit;
 mod transform;
 
+use std::borrow::Cow;
 use tsz_parser::parser::NodeIndex;
 
 // =============================================================================
@@ -199,17 +200,24 @@ pub(super) fn process_jsx_text(text: &str) -> String {
     parts.join(" ")
 }
 
-/// Escape a string for JS string literal context with entity decoding and Unicode escaping.
-/// `quote` is the surrounding quote char (' or ") so we know which to escape.
-pub(super) fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> String {
+/// Escape for JS string-literal context (CR/LF/TAB, backslash, matching quote,
+/// non-ASCII -> `\uXXXX`). Borrows on the no-escape fast path.
+pub(super) fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> Cow<'_, str> {
+    let quote_byte = quote as u8;
+    let needs_escape = s.bytes().any(|b| {
+        b == b'\\' || b == b'\r' || b == b'\n' || b == b'\t' || b == quote_byte || b > 0x7E
+    });
+    if !needs_escape {
+        return Cow::Borrowed(s);
+    }
+
+    use std::fmt::Write as _;
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
             '\\' => result.push_str("\\\\"),
-            // tsc rebuilds JSX string content as a fresh JS string literal with
-            // line terminators normalized to LF, so a raw `CRLF` or lone `CR` in
-            // a JSX attribute value (or text child) is emitted as `\n`, never `\r`.
+            // Normalize CRLF/CR -> \n per tsc's JSX string-rebuild behavior.
             '\r' => {
                 if chars.peek() == Some(&'\n') {
                     chars.next();
@@ -222,22 +230,20 @@ pub(super) fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> String 
                 result.push('\\');
                 result.push(c);
             }
-            // Non-ASCII chars get \uXXXX escaping (or surrogate pairs for > U+FFFF)
             c if c as u32 > 0x7E => {
                 let cp = c as u32;
                 if cp > 0xFFFF {
-                    // UTF-16 surrogate pair
                     let hi = 0xD800 + ((cp - 0x10000) >> 10);
                     let lo = 0xDC00 + ((cp - 0x10000) & 0x3FF);
-                    result.push_str(&format!("\\u{hi:04X}\\u{lo:04X}"));
+                    write!(result, "\\u{hi:04X}\\u{lo:04X}").unwrap();
                 } else {
-                    result.push_str(&format!("\\u{cp:04X}"));
+                    write!(result, "\\u{cp:04X}").unwrap();
                 }
             }
             _ => result.push(c),
         }
     }
-    result
+    Cow::Owned(result)
 }
 
 /// Decode HTML/XML entities in JSX text.
@@ -977,6 +983,108 @@ const f = <a-\u{0063}/>;"#;
             output.contains(r#"React.createElement(Comp\u{0061}, { x: 12 })"#),
             "Component tag identifier extended-escape spelling should be preserved in expression emit.\nOutput: {output}"
         );
+    }
+
+    #[test]
+    fn jsx_classic_intrinsic_tag_name_escapes_non_ascii_chars() {
+        let source = "const a = <a-\u{00E9}/>;\nconst b = <a-\u{00F1}/>;\nconst c = <a-\u{00FC}/>;";
+        let output = emit_jsx_react(source);
+        for (label, fragment) in [
+            (
+                "U+00E9 tail",
+                r#"const a = React.createElement("a-\u00E9", null)"#,
+            ),
+            (
+                "U+00F1 tail",
+                r#"const b = React.createElement("a-\u00F1", null)"#,
+            ),
+            (
+                "U+00FC tail",
+                r#"const c = React.createElement("a-\u00FC", null)"#,
+            ),
+        ] {
+            assert!(
+                output.contains(fragment),
+                "Intrinsic JSX tag with non-ASCII tail ({label}) should JS-escape the non-ASCII codepoint.\nOutput: {output}"
+            );
+        }
+        for raw in ["\"a-\u{00E9}\"", "\"a-\u{00F1}\"", "\"a-\u{00FC}\""] {
+            assert!(
+                !output.contains(raw),
+                "Raw non-ASCII codepoint {raw:?} should not appear inside an emitted JSX intrinsic tag string.\nOutput: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn jsx_classic_non_bmp_attribute_value_emits_surrogate_pair() {
+        let source = "const a = <input value=\"\u{1F600}\"/>;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"value: "\uD83D\uDE00""#),
+            "Non-BMP codepoint in a JSX attribute string value should emit as a UTF-16 surrogate pair.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("\u{1F600}"),
+            "Raw non-BMP codepoint should not appear inside an emitted JSX attribute string.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_namespaced_tag_name_escapes_non_ascii_chars() {
+        let source = "const a = <\u{00E9}:path/>;\nconst b = <svg:\u{00E9}/>;\nconst c = <\u{00E9}:\u{00F1}/>;";
+        let output = emit_jsx_react(source);
+        for (label, fragment) in [
+            (
+                "non-ASCII namespace",
+                r#"const a = React.createElement("\u00E9:path", null)"#,
+            ),
+            (
+                "non-ASCII local name",
+                r#"const b = React.createElement("svg:\u00E9", null)"#,
+            ),
+            (
+                "both halves non-ASCII",
+                r#"const c = React.createElement("\u00E9:\u00F1", null)"#,
+            ),
+        ] {
+            assert!(
+                output.contains(fragment),
+                "Namespaced JSX tag with non-ASCII parts ({label}) should JS-escape each half.\nOutput: {output}"
+            );
+        }
+        for raw in [
+            "\"\u{00E9}:path\"",
+            "\"svg:\u{00E9}\"",
+            "\"\u{00E9}:\u{00F1}\"",
+        ] {
+            assert!(
+                !output.contains(raw),
+                "Raw non-ASCII codepoint {raw:?} should not appear inside an emitted namespaced JSX tag string.\nOutput: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn jsx_classic_quoted_attribute_key_escapes_non_ascii_chars() {
+        let source = "const a = <div data-\u{00E9}=\"x\" data-\u{00F1}={1} ns:\u{00E9}=\"y\" />;";
+        let output = emit_jsx_react(source);
+        for (label, fragment) in [
+            ("hyphenated, string value", r#""data-\u00E9": "x""#),
+            ("hyphenated, expression value", r#""data-\u00F1": 1"#),
+            ("namespaced", r#""ns:\u00E9": "y""#),
+        ] {
+            assert!(
+                output.contains(fragment),
+                "Quoted JSX attribute key with non-ASCII ({label}) should JS-escape the non-ASCII codepoint.\nOutput: {output}"
+            );
+        }
+        for raw in ["\"data-\u{00E9}\"", "\"data-\u{00F1}\"", "\"ns:\u{00E9}\""] {
+            assert!(
+                !output.contains(raw),
+                "Raw non-ASCII codepoint {raw:?} should not appear inside an emitted JSX attribute key string.\nOutput: {output}"
+            );
+        }
     }
 
     #[test]
