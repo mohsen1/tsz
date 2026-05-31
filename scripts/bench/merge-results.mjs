@@ -414,6 +414,14 @@ function firstNonEmpty(...values) {
   return null;
 }
 
+function firstNonLocal(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized && normalized !== "local") return normalized;
+  }
+  return firstNonEmpty(...values);
+}
+
 function githubRunUrl(runId) {
   if (!runId || runId === "local") return null;
   const serverUrl = firstNonEmpty(process.env.GITHUB_SERVER_URL, "https://github.com");
@@ -424,20 +432,20 @@ function githubRunUrl(runId) {
 
 function mergedArtifactMetadata(payloads, generatedAt) {
   const payloadMetadata = payloads.find(({ payload }) => payload?.source_commit)?.payload;
-  const runId = firstNonEmpty(payloadMetadata?.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
+  const runId = firstNonLocal(payloadMetadata?.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
   return {
     generated_at: generatedAt,
-    source_commit: firstNonEmpty(
+    source_commit: firstNonLocal(
       payloadMetadata?.source_commit,
       process.env.BENCH_TARGET_SHA,
       process.env.GITHUB_SHA,
       "local",
     ),
-    workflow_name: firstNonEmpty(payloadMetadata?.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
+    workflow_name: firstNonLocal(payloadMetadata?.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
     workflow_run_id: runId,
-    workflow_run_url: firstNonEmpty(payloadMetadata?.workflow_run_url, githubRunUrl(runId)),
+    workflow_run_url: firstNonLocal(payloadMetadata?.workflow_run_url, githubRunUrl(runId)),
     workflow_run_attempt: firstNonEmpty(payloadMetadata?.workflow_run_attempt, process.env.GITHUB_RUN_ATTEMPT),
-    run_status: firstNonEmpty(
+    run_status: firstNonLocal(
       payloadMetadata?.run_status,
       process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
     ),

@@ -150,7 +150,7 @@ function writeInput(dir, name, results, extraPayload = {}) {
   return input;
 }
 
-function runMergeInputs(dir, inputs, mergeArgs = []) {
+function runMergeInputs(dir, inputs, mergeArgs = [], envOverrides = {}) {
   const output = path.join(dir, "merged.json");
   const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...mergeArgs, ...inputs], {
     cwd: ROOT,
@@ -164,6 +164,7 @@ function runMergeInputs(dir, inputs, mergeArgs = []) {
       GITHUB_SERVER_URL: "",
       GITHUB_SHA: "",
       GITHUB_WORKFLOW: "",
+      ...envOverrides,
     },
     encoding: "utf8",
   });
@@ -196,6 +197,34 @@ withTempDir((dir) => {
   assert.equal(merged.workflow_run_id, "local");
   assert.equal(merged.run_status, "local");
   assert.equal(merged.validation.project_compatibility_required_fields, true);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(dir, "bench-results-local-shard.json", [projectRow("standalone")], {
+    generated_at: "2026-05-19T01:02:03.000Z",
+    source_commit: "local",
+    workflow_name: "local",
+    workflow_run_id: "local",
+    workflow_run_url: null,
+    run_status: "local",
+  });
+  const result = runMergeInputs(dir, [input], [], {
+    BENCH_TARGET_SHA: "feedface1234567890",
+    GITHUB_ACTIONS: "true",
+    GITHUB_REPOSITORY: "mohsen1/tsz",
+    GITHUB_RUN_ATTEMPT: "2",
+    GITHUB_RUN_ID: "67890",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_SHA: "badcafe1234567890",
+    GITHUB_WORKFLOW: "Bench",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.source_commit, "feedface1234567890");
+  assert.equal(merged.workflow_name, "Bench");
+  assert.equal(merged.workflow_run_id, "67890");
+  assert.equal(merged.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/67890");
+  assert.equal(merged.run_status, "completed");
 });
 
 withTempDir((dir) => {
