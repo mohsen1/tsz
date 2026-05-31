@@ -613,11 +613,10 @@ fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
             let if_var_amp = format!("if {var} ");
             // Look ahead up to 30 lines for a decision use of the same name.
             let end = std::cmp::min(i + 30, lines.len());
-            for j in (i + 1)..end {
+            for (j, nl) in lines.iter().enumerate().take(end).skip(i + 1) {
                 if in_test(j) {
                     continue;
                 }
-                let nl = lines[j];
                 if nl.contains(&var_dot_contains)
                     || nl.contains(&var_dot_starts)
                     || nl.contains(&var_dot_ends)
