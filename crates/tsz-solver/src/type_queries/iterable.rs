@@ -161,7 +161,9 @@ pub fn classify_async_iterable_type(
                 constraint: info.constraint,
             }
         }
-        TypeData::ReadonlyType(inner) => AsyncIterableTypeKind::Readonly(inner),
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            AsyncIterableTypeKind::Readonly(inner)
+        }
         _ => AsyncIterableTypeKind::NotAsyncIterable,
     }
 }

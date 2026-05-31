@@ -531,6 +531,17 @@ fn async_iterable_readonly_returns_inner() {
 }
 
 #[test]
+fn async_iterable_no_infer_returns_inner() {
+    let interner = TypeInterner::new();
+    let inner = interner.lazy(DefId(21));
+    let no_infer = interner.intern(TypeData::NoInfer(inner));
+    match classify_async_iterable_type(&interner, no_infer) {
+        AsyncIterableTypeKind::Readonly(t) => assert_eq!(t, inner),
+        other => panic!("expected Readonly (NoInfer arm), got {other:?}"),
+    }
+}
+
+#[test]
 fn async_iterable_array_is_not_async_iterable() {
     // `Array<T>` is sync iterable, NOT async iterable. The classifier must
     // explicitly NOT short-circuit Array into Object.
