@@ -866,11 +866,13 @@ impl<'a> CheckerState<'a> {
 
         let stripped_display_type =
             self.strip_jsx_children_injection_for_display(display_source_type);
-        if stripped_display_type != display_source_type {
-            let stripped_display = self.format_type(stripped_display_type);
-            if !stripped_display.starts_with('{') && !stripped_display.is_empty() {
-                return stripped_display;
-            }
+        if stripped_display_type != display_source_type
+            && crate::query_boundaries::common::type_has_displayable_name(
+                self.ctx.types,
+                stripped_display_type,
+            )
+        {
+            return self.format_type(stripped_display_type);
         }
 
         if preferred_target_display.is_none()

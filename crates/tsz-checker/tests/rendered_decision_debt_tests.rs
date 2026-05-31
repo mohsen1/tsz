@@ -194,3 +194,20 @@ fn ts2411_type_query_constructor_display_uses_symbol_identity() {
         "TS2411 type-query constructor display should prove the queried value by symbol identity"
     );
 }
+
+#[test]
+fn jsx_children_strip_display_uses_type_surface_predicate() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/props/validation.rs"
+    ))
+    .expect("JSX props validation source should be readable");
+    assert!(
+        !source.contains("stripped_display.starts_with('{')"),
+        "JSX stripped-children display should use type surface facts, not rendered object-literal text"
+    );
+    assert!(
+        source.contains("type_has_displayable_name("),
+        "JSX stripped-children display should preserve named surfaces structurally"
+    );
+}
