@@ -533,11 +533,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2072,
     ),
     (
-        "Emitter boundary: transforms/enum_es5.rs size ratchet",
-        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "enum_es5.rs",
-        2014,
-    ),
-    (
         "Emitter boundary: transforms/ir_printer.rs size ratchet",
         ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "ir_printer.rs",
         2008,
