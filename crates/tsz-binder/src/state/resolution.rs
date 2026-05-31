@@ -13,6 +13,21 @@ use tsz_parser::parser::node::NodeArena;
 
 use super::{BinderState, MAX_SCOPE_WALK_ITERATIONS};
 
+/// Kill-switch for the type-only re-export resolution cache. When
+/// `TSZ_DISABLE_REEXPORT_TYPE_ONLY_CACHE` is set to a non-empty, non-`0`
+/// value, `resolve_import_with_reexports_type_only` bypasses its memo and
+/// re-walks the chain on every call. Used to verify the cache produces
+/// byte-identical diagnostics.
+fn reexport_type_only_cache_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_REEXPORT_TYPE_ONLY_CACHE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl BinderState {
     // =========================================================================
     // Identifier & Name Resolution
@@ -615,18 +630,53 @@ impl BinderState {
     ///
     /// Returns the resolved symbol and whether the path to it passed through a
     /// `export type * from ...` wildcard re-export.
+    ///
+    /// The result is memoized per binder in `resolved_export_type_only_cache`:
+    /// for a fixed binder the resolution is a pure function of
+    /// `(module_specifier, export_name)` over the immutable re-export tables, so
+    /// repeated type-position lookups answer in O(1) instead of re-walking the
+    /// named/wildcard re-export chain every time. This is the dominant cost when
+    /// checking large barrel-re-export-heavy projects. Set
+    /// `TSZ_DISABLE_REEXPORT_TYPE_ONLY_CACHE=1` to bypass the cache (used to
+    /// verify byte-identical diagnostics).
     pub fn resolve_import_with_reexports_type_only(
         &self,
         module_specifier: &str,
         export_name: &str,
     ) -> Option<(SymbolId, bool)> {
+        if reexport_type_only_cache_disabled() {
+            let mut visited = rustc_hash::FxHashSet::default();
+            return self.resolve_import_with_reexports_inner_type_only(
+                module_specifier,
+                export_name,
+                false,
+                &mut visited,
+            );
+        }
+
+        let cache_key = (module_specifier.to_string(), export_name.to_string());
+        if let Some(&cached) = self
+            .resolved_export_type_only_cache
+            .read()
+            .expect("resolved_export_type_only_cache RwLock poisoned")
+            .get(&cache_key)
+        {
+            return cached;
+        }
+
         let mut visited = rustc_hash::FxHashSet::default();
-        self.resolve_import_with_reexports_inner_type_only(
+        let result = self.resolve_import_with_reexports_inner_type_only(
             module_specifier,
             export_name,
             false,
             &mut visited,
-        )
+        );
+
+        self.resolved_export_type_only_cache
+            .write()
+            .expect("resolved_export_type_only_cache RwLock poisoned")
+            .insert(cache_key, result);
+        result
     }
 
     /// Inner implementation with cycle detection for module re-exports.

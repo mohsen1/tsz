@@ -1,8 +1,29 @@
 use crate::context::ResolutionModeOverride;
 use crate::state::CheckerState;
 use tsz_common::common::ModuleKind;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 impl<'a> CheckerState<'a> {
+    /// Whether the module resolved from `module_specifier` contains an
+    /// `export =` (export-assignment) declaration in its source file.
+    pub(super) fn module_has_export_assignment_declaration(&self, module_specifier: &str) -> bool {
+        self.ctx
+            .resolve_import_target(module_specifier)
+            .and_then(|file_idx| {
+                self.ctx
+                    .all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx))
+            })
+            .is_some_and(|arena| {
+                (0..arena.len()).any(|i| {
+                    arena
+                        .get(NodeIndex(i as u32))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
+                })
+            })
+    }
+
     /// Check if the target module is a pure ESM module (from a package with
     /// `"type": "module"` or using `.mjs`/`.mts` extension).
     pub(crate) fn module_is_esm(&self, module_specifier: &str) -> bool {
