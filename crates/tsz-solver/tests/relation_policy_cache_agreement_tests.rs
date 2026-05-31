@@ -21,3 +21,6 @@ mod kind_partitioning;
 
 #[path = "relation_policy_cache_agreement_tests/policy_config.rs"]
 mod policy_config;
+
+#[path = "relation_policy_cache_agreement_tests/subtype_policy_projection.rs"]
+mod subtype_policy_projection;
