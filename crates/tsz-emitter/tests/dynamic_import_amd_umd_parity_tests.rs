@@ -1,10 +1,10 @@
 //! Parity tests for downlevel dynamic `import()` emit under CommonJS / AMD / UMD / System.
 //!
 //! Structural rules matched to tsc:
-//! - **TemplateExpression** specifiers (`` `./s/${id}` ``) evaluate to a string
+//! - **`TemplateExpression`** specifiers (`` `./s/${id}` ``) evaluate to a string
 //!   and are emitted directly in `Promise.resolve(<template>).then(s => ...)` for
 //!   CJS/AMD/System — no extra `` `${…}` `` coercion wrapper is added.
-//! - **Identifier** specifiers are coerced via `` `${id}` `` in the CJS/UMD CJS branch.
+//! - **`Identifier`** specifiers are coerced via `` `${id}` `` in the CJS/UMD CJS branch.
 //! - **UMD** captures non-string, non-identifier specifiers (including template
 //!   expressions) into a temp so both branches share the evaluated value.
 //! - **AMD** and **System** always inline the specifier without a temp.
