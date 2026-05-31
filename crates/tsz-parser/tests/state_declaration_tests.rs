@@ -1563,3 +1563,63 @@ fn unicode_escape_unknown_variable_name_reports_only_invalid_character() {
         "invalid escaped identifier should not cascade to TS1134, got {fingerprints:?}"
     );
 }
+
+/// `interface <Name>.<Rest> { }` is a malformed dotted interface name. tsc
+/// parses `interface <Name>` with an empty body, reports TS1005 `'{' expected.`
+/// at the dot, and resumes statement parsing at `<Rest>` — recovering it as an
+/// expression statement (TS1434 "Unexpected keyword or identifier") followed by
+/// the trailing `{ }` block. The recovered statements must survive into the AST
+/// so they are emitted, instead of being silently swallowed by the interface.
+///
+/// This check varies the chosen identifier names (`Foo.I1`, `Bar.Baz`) so the
+/// rule is keyed on the dotted-name grammar shape, not on a particular spelling.
+fn assert_dotted_interface_recovery(source: &str, dot_offset: u32, rest_offset: u32) {
+    use syntax_kind_ext::{BLOCK, EXPRESSION_STATEMENT, INTERFACE_DECLARATION};
+
+    let (parser, root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1434: u32 = diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER;
+
+    // TS1005 `'{' expected.` reported at the dot that follows the interface name.
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.start == dot_offset && d.message.contains("'{'")),
+        "expected TS1005 `'{{' expected.` at the dot (offset {dot_offset}) for {source:?}, got {diags:?}"
+    );
+    // TS1434 reported at the segment after the dot, which re-enters statement
+    // recovery as an expression statement.
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1434 && d.start == rest_offset),
+        "expected TS1434 at the post-dot identifier (offset {rest_offset}) for {source:?}, got {diags:?}"
+    );
+
+    // The recovered statement list must contain an empty interface, the
+    // expression statement for the trailing identifier, and the block.
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let kinds: Vec<u16> = sf
+        .statements
+        .nodes
+        .iter()
+        .filter_map(|idx| parser.get_arena().get(*idx).map(|node| node.kind))
+        .collect();
+    assert!(
+        kinds.contains(&INTERFACE_DECLARATION)
+            && kinds.contains(&EXPRESSION_STATEMENT)
+            && kinds.contains(&BLOCK),
+        "dotted interface name should recover as interface + expression statement + block, got {kinds:?} for {source:?}"
+    );
+}
+
+#[test]
+fn parse_dotted_interface_name_recovers_trailing_statements() {
+    // `interface Foo.I1 { }`: dot at offset 13, `I1` at offset 14.
+    assert_dotted_interface_recovery("interface Foo.I1 { }\n", 13, 14);
+    // Renamed shape proves the rule is structural, not spelling-specific:
+    // `interface Bar.Baz { }`: dot at offset 13, `Baz` at offset 14.
+    assert_dotted_interface_recovery("interface Bar.Baz { }\n", 13, 14);
+}

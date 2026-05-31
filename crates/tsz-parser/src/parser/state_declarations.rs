@@ -124,23 +124,35 @@ impl ParserState {
             self.parse_identifier()
         };
 
-        // TS1434: Dotted names like `Foo.I1` are not valid interface names.
-        // tsc emits "Unexpected keyword or identifier" and "{  expected" at the dotted part.
+        // Dotted names like `Foo.I1` are not valid interface names. tsc parses
+        // `interface Foo`, then fails `parseExpected('{')` at the `.` (TS1005),
+        // terminates the interface with an empty body, and resumes statement
+        // parsing at the segment after the dot. The remaining `I1 { }` is then
+        // recovered as an expression statement (`I1;` with TS1434 "Unexpected
+        // keyword or identifier") followed by a block (`{ }`). Mirror that:
+        // emit TS1005 at the dot, consume only the dot, and return an
+        // empty-body interface so the trailing tokens re-enter statement
+        // recovery (matching tsc's emit and diagnostics).
         if self.is_token(SyntaxKind::DotToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             // Emit '{' expected at the dot position (tsc expects { after the name)
             self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-            // Skip over the dotted name segments (e.g., `.I1`)
-            while self.is_token(SyntaxKind::DotToken) {
-                self.next_token(); // skip '.'
-                if self.is_identifier_or_keyword() {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                    self.next_token(); // skip the identifier
-                }
-            }
+            // Consume only the dot; leave the following segment(s) for the
+            // statement loop so the recovered statement is preserved in emit.
+            self.next_token();
+            let end_pos = self.arena.get(name).map_or(start_pos, |node| node.end);
+            return self.arena.add_interface(
+                syntax_kind_ext::INTERFACE_DECLARATION,
+                start_pos,
+                end_pos,
+                crate::parser::node::InterfaceData {
+                    modifiers,
+                    name,
+                    type_parameters: None,
+                    heritage_clauses: None,
+                    members: self.make_node_list(vec![]),
+                },
+            );
         }
 
         // Parse type parameters: interface IList<T> {}
