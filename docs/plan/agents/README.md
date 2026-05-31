@@ -113,7 +113,7 @@ blocked.
 Useful live checks:
 
 ```bash
-scripts/agents/ensure-agent-labels.sh --audit
+scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json
 scripts/agents/list-owned-work.sh --all
 scripts/agents/list-owned-work.sh --pr-state Studio-F
 node scripts/ci/pr-ownership-report.mjs
@@ -215,7 +215,7 @@ smaller:
 
 | Debt Category | Owner | Gate Supported | Counter Or Command |
 | --- | --- | --- | --- |
-| Ownership and duplicate-work hygiene | `M1-A` | all gates | `node scripts/ci/pr-ownership-report.mjs`; `scripts/agents/ensure-agent-labels.sh --audit` |
+| Ownership and duplicate-work hygiene | `M1-A` | all gates | `node scripts/ci/pr-ownership-report.mjs`; `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` |
 | Checker relation gateway debt | `M1-B` | bug closure, conformance strictness | `scripts/arch/check-checker-boundaries.sh`; `python3 scripts/arch/arch_guard.py` |
 | Accepted-regression and diagnostic hardcoding debt | `M1-C` | conformance strictness | `python3 scripts/conformance/query-conformance.py --dashboard`; accepted-regression entry count |
 | Flow/narrowing boundary debt | `M1-D` | bug closure, project rows | focused checker/solver tests plus `python3 scripts/arch/arch_guard.py` |
@@ -236,7 +236,7 @@ smaller:
 1. Merge this coordination update or tell sessions to read this branch.
 2. Confirm live PR runway state, draft parking risks, and queue candidates with
    `node scripts/ci/pr-ownership-report.mjs`.
-3. Confirm labels with `scripts/agents/ensure-agent-labels.sh --audit`.
+3. Confirm labels with `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json`.
 4. Confirm cheap release metrics with the owning lane commands:
    conformance dashboard, emit families, project row summary, and architecture
    guard.

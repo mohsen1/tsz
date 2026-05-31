@@ -18,7 +18,7 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 scripts/agents/disk-preflight.sh M1-A
 scripts/agents/list-owned-work.sh M1-A
-scripts/agents/ensure-agent-labels.sh --audit
+scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json
 node scripts/ci/pr-ownership-report.mjs
 ```
 
@@ -42,7 +42,7 @@ node scripts/ci/pr-ownership-report.mjs
 
 - `scripts/agents/list-owned-work.sh --all`.
 - `node scripts/ci/pr-ownership-report.mjs`.
-- `scripts/agents/ensure-agent-labels.sh --audit`.
+- `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json`.
 - Recent merged PRs touching `docs/plan/agents`, `scripts/ci/pr-ownership-report.mjs`,
   and label/WIP tooling.
 - Open issues with `bug`, `false-positive`, `false-negative`,
@@ -60,6 +60,6 @@ node scripts/ci/pr-ownership-report.mjs
 ## Verification
 
 - Use `scripts/ci/pr-ownership-report.mjs` for PR topology.
-- Use `scripts/agents/ensure-agent-labels.sh --audit` for label hygiene.
+- Use `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` for label hygiene.
 - Use `scripts/ci/check-wip-state-comments.mjs` when changing WIP state.
 - No compiler suite is needed for metadata-only cleanup.
