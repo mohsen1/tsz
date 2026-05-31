@@ -1285,7 +1285,8 @@ mod tests {
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::test_utils::check_source_codes;
+    use crate::CheckerOptions;
+    use crate::test_utils::{check_multi_file_with_libs, check_source_codes, load_lib_files};
 
     #[test]
     fn promise_type_annotation_no_error() {
@@ -1533,6 +1534,33 @@ mod integration_tests {
     #[test]
     fn readonly_utility_type_no_crash() {
         let _codes = check_source_codes("type R = Readonly<{ a: number; b: string }>;");
+    }
+
+    #[test]
+    fn value_only_local_does_not_shadow_global_readonly_type() {
+        let diagnostics = check_multi_file_with_libs(
+            &[(
+                "test.ts",
+                "export declare const Readonly: 1;\ntype R = Readonly<{ a: number }>;",
+            )],
+            "test.ts",
+            CheckerOptions::default(),
+            &load_lib_files(&["es5.d.ts"]),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+        assert!(
+            !codes.contains(&2749),
+            "value-only locals must not shadow global type-space aliases: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn value_only_local_without_type_binding_still_reports_ts2749() {
+        let codes = check_source_codes("declare const OnlyValue: 1;\ntype T = OnlyValue<string>;");
+        assert!(
+            codes.contains(&2749),
+            "pure value-only references should still report TS2749: {codes:?}"
+        );
     }
 
     #[test]
