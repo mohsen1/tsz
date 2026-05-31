@@ -369,6 +369,27 @@ impl<'a> ES5ClassTransformer<'a> {
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(name_node) {
+                // A computed property name in a class nested inside an enclosing
+                // *instance* member body evaluates its expression in that member.
+                // A `super` reference there binds to the outer class's prototype
+                // home, so it must lower in instance super context
+                // (`<super>.prototype.m.call(this)`) rather than the default
+                // class-definition static context (`<super>.m`). Only divert
+                // when the name actually references `super`; all other computed
+                // names keep the established static-like behavior.
+                if let Some(outer_super) = self.inherited_computed_name_super.as_ref()
+                    && tsz_parser::syntax::transform_utils::contains_super_reference(
+                        self.arena,
+                        computed.expression,
+                    )
+                {
+                    return IRMethodName::Computed(Box::new(
+                        self.convert_computed_name_expression_instance_super(
+                            computed.expression,
+                            outer_super,
+                        ),
+                    ));
+                }
                 return IRMethodName::Computed(Box::new(
                     self.convert_computed_property_expression(computed.expression, true),
                 ));

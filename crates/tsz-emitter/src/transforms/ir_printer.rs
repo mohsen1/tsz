@@ -35,6 +35,7 @@ use ir_printer_namespace::NamespaceIifeContext;
 
 use crate::context::transform::TransformContext;
 use crate::emitter::{Printer as AstPrinter, PrinterOptions};
+use crate::transforms::ClassES5Emitter;
 use crate::transforms::ir::{
     EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
@@ -1704,6 +1705,43 @@ impl<'a> IRPrinter<'a> {
                     printer.emit_expression(*idx);
                     self.merge_ast_printer_block_scope_reserved_names(&printer);
                     let output = printer.get_output();
+                    if !output.trim().is_empty() {
+                        self.write_embedded_output(output.trim());
+                        return;
+                    }
+                }
+                self.write("undefined");
+            }
+
+            IRNode::ASTRefWithInheritedComputedNameSuper { node, super_name } => {
+                if let Some(arena) = self.arena {
+                    let mut es5_emitter = ClassES5Emitter::new(arena);
+                    es5_emitter.set_indent_level(0);
+                    es5_emitter.set_remove_comments(self.remove_comments);
+                    es5_emitter.set_tslib_prefix(self.tslib_prefix);
+                    es5_emitter.set_tslib_import_binding(self.tslib_import_binding.clone());
+                    es5_emitter.set_inherited_computed_name_super(super_name.to_string());
+                    es5_emitter.set_printer_options(self.make_ast_printer_options());
+                    if let Some(source_text) = self.source_text {
+                        es5_emitter.set_source_text(source_text);
+                    }
+                    if let Some(transforms) = self.transforms.clone() {
+                        es5_emitter.set_transforms(transforms);
+                    }
+                    let class_name = arena
+                        .get(*node)
+                        .and_then(|class_node| arena.get_class(class_node))
+                        .and_then(|class_data| {
+                            arena
+                                .get(class_data.name)
+                                .and_then(|name_node| arena.get_identifier(name_node))
+                                .map(|name| name.escaped_text.clone())
+                        });
+                    let output = if let Some(class_name) = class_name {
+                        es5_emitter.emit_class_as_iife_expr(*node, &class_name).0
+                    } else {
+                        es5_emitter.emit_class_as_iife_expr(*node, "class_1").0
+                    };
                     if !output.trim().is_empty() {
                         self.write_embedded_output(output.trim());
                         return;
