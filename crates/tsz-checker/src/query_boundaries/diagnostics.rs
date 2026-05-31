@@ -98,6 +98,40 @@ pub(crate) fn is_global_object_interface_for_diagnostic(
         })
 }
 
+pub(crate) fn simple_intersection_head_for_this_assignment_display(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let members = super::common::intersection_members(db, type_id)?;
+    let head = members.first().copied()?;
+    if super::common::type_application(db, head).is_some() {
+        return None;
+    }
+    if super::common::object_shape_for_type(db, head).is_some()
+        && !super::common::type_has_displayable_name(db, head)
+    {
+        return None;
+    }
+    Some(head)
+}
+
+pub(crate) fn distinct_type_parameters_share_declared_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    source_param: TypeId,
+    target_param: TypeId,
+) -> bool {
+    if source_param == target_param {
+        return false;
+    }
+    let Some(source_info) = super::common::type_param_info(db, source_param) else {
+        return false;
+    };
+    let Some(target_info) = super::common::type_param_info(db, target_param) else {
+        return false;
+    };
+    source_info.name == target_info.name
+}
+
 pub(crate) fn number_literal_bits(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,

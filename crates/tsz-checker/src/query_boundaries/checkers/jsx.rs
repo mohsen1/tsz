@@ -120,6 +120,10 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     crate::query_boundaries::common::contains_type_parameters(db, type_id)
 }
 
+pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::type_has_displayable_name(db, type_id)
+}
+
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
 }

@@ -105,8 +105,20 @@ fn polymorphic_this_intersection_display_is_structural() {
         "polymorphic this source display must not branch on rendered intersection text"
     );
     assert!(
-        helper_body.contains("simple_intersection_head_display_for_this_assignment"),
-        "polymorphic this source display should use the structural intersection helper"
+        helper_body.contains(
+            "query_boundaries::diagnostics::simple_intersection_head_for_this_assignment_display"
+        ),
+        "polymorphic this source display should route through the structural diagnostic query"
+    );
+
+    let diagnostics = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/query_boundaries/diagnostics.rs"
+    ))
+    .expect("diagnostic query boundaries source should be readable");
+    assert!(
+        diagnostics.contains("pub(crate) fn simple_intersection_head_for_this_assignment_display"),
+        "polymorphic this structural display helper should live in the diagnostic query boundary"
     );
 }
 

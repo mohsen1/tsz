@@ -11,7 +11,7 @@ use crate::state::CheckerState;
 
 use super::relation_policy;
 
-pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
+pub(crate) use super::common::{contains_type_parameters, is_callable_type, object_shape_for_type};
 
 pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     db: &dyn TypeDatabase,

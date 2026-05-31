@@ -411,20 +411,20 @@ impl<'a> CheckerState<'a> {
                     | SubtypeFailureReason::OptionalPropertyRequired { .. }
                     | SubtypeFailureReason::NoCommonProperties { .. }
             );
-            if is_property_failure {
-                if crate::query_boundaries::diagnostics::is_global_object_interface_for_diagnostic(
+            if is_property_failure
+                && crate::query_boundaries::diagnostics::is_global_object_interface_for_diagnostic(
                     self.ctx.types,
                     source,
-                ) {
-                    return Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
-                            .to_string(),
-                        diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
-                    );
-                }
+                )
+            {
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
+                        .to_string(),
+                    diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
+                );
             }
         }
         let rctx = RenderContext {
@@ -1151,9 +1151,13 @@ impl<'a> CheckerState<'a> {
         );
         let source_param_str = self.format_type_diagnostic(source_param);
         let target_param_str = self.format_type_diagnostic(target_param);
-        let (inner, inner_code) = if self
-            .distinct_type_parameters_share_declared_name(source_param, target_param)
-        {
+        let share_declared_param_name =
+            crate::query_boundaries::diagnostics::distinct_type_parameters_share_declared_name(
+                self.ctx.types,
+                source_param,
+                target_param,
+            );
+        let (inner, inner_code) = if share_declared_param_name {
             (
                 format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
@@ -1196,27 +1200,6 @@ impl<'a> CheckerState<'a> {
             });
         }
         diag
-    }
-
-    fn distinct_type_parameters_share_declared_name(
-        &self,
-        source_param: TypeId,
-        target_param: TypeId,
-    ) -> bool {
-        if source_param == target_param {
-            return false;
-        }
-        let Some(source_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, source_param)
-        else {
-            return false;
-        };
-        let Some(target_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, target_param)
-        else {
-            return false;
-        };
-        source_info.name == target_info.name
     }
 
     /// Render the TS2322 + TS2517 elaboration chain emitted when an abstract

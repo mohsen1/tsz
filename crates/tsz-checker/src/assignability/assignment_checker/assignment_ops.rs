@@ -1231,8 +1231,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // The RHS is not this-typed — emit TS2322
-        let source_display = self
-            .simple_intersection_head_display_for_this_assignment(right_type)
+        let source_display =
+            crate::query_boundaries::diagnostics::simple_intersection_head_for_this_assignment_display(
+                self.ctx.types,
+                right_type,
+            )
+            .map(|head| self.format_type_for_assignability_message(head))
             .unwrap_or_else(|| self.format_type_for_assignability_message(right_type));
         self.error_at_node_msg(
             left_idx,
@@ -1240,24 +1244,6 @@ impl<'a> CheckerState<'a> {
             &[&source_display, "this"],
         );
         Some(true)
-    }
-
-    fn simple_intersection_head_display_for_this_assignment(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<String> {
-        let members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)?;
-        let head = members.first().copied()?;
-        if crate::query_boundaries::common::type_application(self.ctx.types, head).is_some() {
-            return None;
-        }
-        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, head).is_some()
-            && !crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, head)
-        {
-            return None;
-        }
-        Some(self.format_type_for_assignability_message(head))
     }
 
     /// Check if an expression produces a `this`-typed value.

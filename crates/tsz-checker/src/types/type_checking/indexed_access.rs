@@ -1390,11 +1390,11 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 object_type,
                             )
-                            || crate::query_boundaries::common::contains_index_access_type(
+                            || crate::query_boundaries::diagnostics::contains_index_access_type(
                                 self.ctx.types,
                                 object_type_for_check,
                             )
-                            || crate::query_boundaries::common::contains_index_access_type(
+                            || crate::query_boundaries::diagnostics::contains_index_access_type(
                                 self.ctx.types,
                                 object_type,
                             );
@@ -1867,7 +1867,7 @@ impl<'a> CheckerState<'a> {
                     concrete_object_type,
                 ) || concrete_object_type == TypeId::UNKNOWN
                     || concrete_object_type == TypeId::ERROR
-                    || crate::query_boundaries::common::contains_index_access_type(
+                    || crate::query_boundaries::diagnostics::contains_index_access_type(
                         self.ctx.types,
                         concrete_object_type,
                     );

@@ -12,6 +12,7 @@ use crate::error_reporter::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
     ResolvedDiagnosticAnchor,
 };
+use crate::query_boundaries::checkers::jsx as jsx_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -867,10 +868,7 @@ impl<'a> CheckerState<'a> {
         let stripped_display_type =
             self.strip_jsx_children_injection_for_display(display_source_type);
         if stripped_display_type != display_source_type
-            && crate::query_boundaries::common::type_has_displayable_name(
-                self.ctx.types,
-                stripped_display_type,
-            )
+            && jsx_queries::type_has_displayable_name(self.ctx.types, stripped_display_type)
         {
             return self.format_type(stripped_display_type);
         }
@@ -1061,8 +1059,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
     ) -> TypeId {
         let alias_hint = self.ctx.types.get_display_alias(props_type).or_else(|| {
-            crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_type)
-                .then_some(props_type)
+            jsx_queries::type_has_displayable_name(self.ctx.types, props_type).then_some(props_type)
         });
         let normalized = self.evaluate_application_type(props_type);
         let normalized = self.evaluate_type_with_env(normalized);
@@ -1873,8 +1870,7 @@ impl<'a> CheckerState<'a> {
             ) => intrinsic,
             _ => props_type,
         };
-        if crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_lookup)
-        {
+        if jsx_queries::type_has_displayable_name(self.ctx.types, props_lookup) {
             return false;
         }
         crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_lookup)
