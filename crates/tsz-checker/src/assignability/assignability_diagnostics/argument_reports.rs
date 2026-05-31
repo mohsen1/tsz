@@ -319,7 +319,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
+        if !crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, target)
             || !self.type_contains_generic_mapped_constraint(target, &mut Default::default())
         {
             return false;
@@ -327,13 +327,13 @@ impl<'a> CheckerState<'a> {
 
         let mut substitution = TypeSubstitution::new();
         for referenced in
-            crate::query_boundaries::common::collect_referenced_types(self.ctx.types, target)
+            crate::query_boundaries::diagnostics::collect_referenced_types(self.ctx.types, target)
         {
             let Some(info) = type_param_info(self.ctx.types, referenced) else {
                 continue;
             };
             let Some(constraint) = info.constraint else {
-                if crate::query_boundaries::common::contains_type_parameter_named(
+                if crate::query_boundaries::diagnostics::contains_type_parameter_named(
                     self.ctx.types,
                     target,
                     info.name,
@@ -342,11 +342,11 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             };
-            if crate::query_boundaries::common::contains_type_parameter_named(
+            if crate::query_boundaries::diagnostics::contains_type_parameter_named(
                 self.ctx.types,
                 constraint,
                 info.name,
-            ) || crate::query_boundaries::common::contains_type_parameter_named(
+            ) || crate::query_boundaries::diagnostics::contains_type_parameter_named(
                 self.ctx.types,
                 target,
                 info.name,
@@ -397,7 +397,7 @@ impl<'a> CheckerState<'a> {
 
             let member = self.evaluate_type_with_env(member);
             let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
+                crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, member)
             else {
                 if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
                     return false;
