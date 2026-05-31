@@ -274,6 +274,26 @@ pub(crate) struct CompilationCache {
     export_hashes: FxHashMap<PathBuf, u64>,
     import_symbol_ids: FxHashMap<PathBuf, FxHashMap<PathBuf, Vec<SymbolId>>>,
     star_export_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    /// Cached `MergedProgram` from the last successful unchanged-graph build.
+    ///
+    /// When all bind results come from `bind_cache` (`dirty_paths` is empty) and the
+    /// file count is the same as when the cache was last filled, the merge phase is
+    /// `O(total_symbols)` work that produces identical output. Storing the
+    /// result as `Arc<MergedProgram>` lets `build_program_with_cache` return it
+    /// immediately via an O(1) `Arc::clone` instead of re-running the merge.
+    ///
+    /// Invariants:
+    /// - `None` until the first successful build with a full `bind_cache`.
+    /// - Cleared by `clear()` when the user explicitly invalidates all state.
+    /// - Replaced whenever `dirty_paths` is non-empty or the file count changes
+    ///   (files added / removed), ensuring the cache is always coherent with the
+    ///   current `bind_cache` contents.
+    cached_merged_program: Option<Arc<MergedProgram>>,
+    /// File count that `cached_merged_program` was built from.
+    ///
+    /// Used to detect file addition/removal even when individual file hashes are
+    /// unchanged (i.e., `dirty_paths` is empty but the project has changed size).
+    cached_file_count: usize,
 }
 
 struct BindCacheEntry {
@@ -409,6 +429,8 @@ impl CompilationCache {
         self.export_hashes.clear();
         self.import_symbol_ids.clear();
         self.star_export_dependencies.clear();
+        self.cached_merged_program = None;
+        self.cached_file_count = 0;
     }
 
     pub(crate) fn update_dependencies(
@@ -1740,7 +1762,7 @@ fn compile_inner(
             &lib_files,
             resolved.checker.target,
         );
-        (parallel::merge_bind_results(bind_results), None)
+        (Arc::new(parallel::merge_bind_results(bind_results)), None)
     };
     let parse_bind_duration = build_program_start.elapsed();
     perf_log_phase("build_program", build_program_start);
@@ -2841,8 +2863,13 @@ struct SourceMeta {
 }
 
 struct BuildProgramResult {
-    program: MergedProgram,
+    program: Arc<MergedProgram>,
     dirty_paths: FxHashSet<PathBuf>,
+    /// Number of times `merge_bind_results_ref` was called for this result.
+    /// 0 means the fast path fired (merge skipped); 1 means a full merge ran.
+    /// Only consumed by tests; production call sites only use `program`/`dirty_paths`.
+    #[allow(dead_code)]
+    merge_calls: u32,
 }
 
 fn build_program_with_cache(
@@ -2886,7 +2913,8 @@ fn build_program_with_cache(
         });
     }
 
-    let parsed_results = if to_parse.is_empty() {
+    let nothing_to_parse = to_parse.is_empty();
+    let parsed_results = if nothing_to_parse {
         Vec::new()
     } else {
         // Use parse_and_bind_parallel_with_libs to load prebound lib symbols
@@ -2972,6 +3000,22 @@ fn build_program_with_cache(
         .bind_cache
         .retain(|path, _| current_paths.contains(path));
 
+    // Fast path: when nothing changed (no re-parses needed) and the project
+    // file set is the same size as when we last built the merged program, the
+    // merge output is identical — return the cached Arc<MergedProgram> directly.
+    // This skips O(total_symbols) symbol-remapping work on every
+    // no-op pass (e.g. repeated benchmark row sweeps over an unchanged graph).
+    if nothing_to_parse
+        && meta.len() == cache.cached_file_count
+        && let Some(ref cached) = cache.cached_merged_program
+    {
+        return BuildProgramResult {
+            program: Arc::clone(cached),
+            dirty_paths: FxHashSet::default(),
+            merge_calls: 0,
+        };
+    }
+
     let mut ordered = Vec::with_capacity(meta.len());
     for entry in &meta {
         let Some(cached) = cache.bind_cache.get(&entry.path) else {
@@ -2980,9 +3024,13 @@ fn build_program_with_cache(
         ordered.push(&cached.bind_result);
     }
 
+    let program = Arc::new(parallel::merge_bind_results_ref(&ordered));
+    cache.cached_merged_program = Some(Arc::clone(&program));
+    cache.cached_file_count = ordered.len();
     BuildProgramResult {
-        program: parallel::merge_bind_results_ref(&ordered),
+        program,
         dirty_paths,
+        merge_calls: 1,
     }
 }
 
@@ -3130,62 +3178,9 @@ mod tests;
 mod cross_file_circular_alias_tests;
 
 #[cfg(test)]
-mod explain_files_reason_tests {
-    use super::*;
+#[path = "explain_files_reason_tests.rs"]
+mod explain_files_reason_tests;
 
-    /// Issue #3901: tsc surfaces tsconfig `files` entries with a distinct
-    /// reason from `include` matches.
-    #[test]
-    fn files_list_entry_renders_tsc_phrasing() {
-        assert_eq!(
-            FileInclusionReason::FilesListEntry.to_string(),
-            "Part of 'files' list in tsconfig.json"
-        );
-    }
-
-    /// Default-lib reasons must mention the configured target so users
-    /// can attribute the lib pull. tsc renders the lowercase ECMAScript
-    /// revision name.
-    #[test]
-    fn default_library_reason_includes_target() {
-        assert_eq!(
-            FileInclusionReason::DefaultLibrary("es2018".to_string()).to_string(),
-            "Default library for target 'es2018'"
-        );
-    }
-
-    /// `is_default_lib_for_target` matches both the `lib.<target>.full.d.ts`
-    /// and `lib.<target>.d.ts` shapes that the lib resolver produces.
-    #[test]
-    fn default_lib_matches_full_and_bare_for_target() {
-        let full = PathBuf::from("/usr/typescript/lib.es2018.full.d.ts");
-        let bare = PathBuf::from("/usr/typescript/lib.es2018.d.ts");
-        let other_target = PathBuf::from("/usr/typescript/lib.es2020.full.d.ts");
-        let unrelated = PathBuf::from("/usr/typescript/lib.dom.d.ts");
-
-        assert!(is_default_lib_for_target(&full, ScriptTarget::ES2018));
-        assert!(is_default_lib_for_target(&bare, ScriptTarget::ES2018));
-        assert!(!is_default_lib_for_target(
-            &other_target,
-            ScriptTarget::ES2018
-        ));
-        assert!(!is_default_lib_for_target(&unrelated, ScriptTarget::ES2018));
-    }
-
-    /// Locks the lowercase target spelling for the explainFiles surface.
-    #[test]
-    fn target_display_for_explain_files_lowercase() {
-        assert_eq!(
-            script_target_display_for_explain_files(ScriptTarget::ES5),
-            "es5"
-        );
-        assert_eq!(
-            script_target_display_for_explain_files(ScriptTarget::ES2018),
-            "es2018"
-        );
-        assert_eq!(
-            script_target_display_for_explain_files(ScriptTarget::ESNext),
-            "esnext"
-        );
-    }
-}
+#[cfg(test)]
+#[path = "core_merge_cache_tests.rs"]
+mod merge_cache_tests;
