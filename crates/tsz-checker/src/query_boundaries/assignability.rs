@@ -599,8 +599,7 @@ pub(crate) enum RelationKind {
     Destructuring,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
-    /// Bivariant callback assignment: method-override or bivariant-callback
-    /// scenarios where function parameter types are checked bivariantly.
+    /// Bivariant callback assignment where function parameter types are checked bivariantly.
     BivariantCallbacks,
 }
 
@@ -640,19 +639,15 @@ pub(crate) enum MissingPropertyMode {
 ///   diagnostics still have caller-side checks.
 #[derive(Debug, Clone)]
 pub(crate) struct RelationRequest {
-    /// Prepared source type for the relation. This feeds the solver query,
-    /// failure analysis, weak-union detection, and property classification.
+    /// Prepared source type for the relation.
     pub source: TypeId,
-    /// Prepared target type for the relation. This feeds the same semantic and
-    /// diagnostic paths as `source`.
+    /// Prepared target type for the relation.
     pub target: TypeId,
     /// Relation context for diagnostics and tracing. Currently advisory only.
     pub kind: RelationKind,
-    /// Requested excess-property policy. Currently advisory; object-literal EPC
-    /// emission still happens in caller-side diagnostic paths.
+    /// Requested excess-property policy. Currently advisory.
     pub excess_property_mode: ExcessPropertyMode,
-    /// Requested missing-property policy. Currently advisory; failure rendering
-    /// still decides how to present missing-property diagnostics.
+    /// Requested missing-property policy. Currently advisory.
     pub missing_property_mode: MissingPropertyMode,
     /// Whether the source is a fresh object literal. Currently advisory.
     pub source_is_fresh: bool,
@@ -685,6 +680,10 @@ impl RelationRequest {
 
     pub(crate) const fn return_stmt(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Return)
+    }
+
+    pub(crate) const fn jsx_props(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::JsxProps)
     }
 
     pub(crate) const fn satisfies(source: TypeId, target: TypeId) -> Self {

@@ -17,9 +17,9 @@ fn jsx_spread_whole_type_assignability_uses_relation_outcome_boundary() {
     let prefix = &source[function_start..shape_branch_end];
 
     assert_eq!(
-        prefix.matches("assign_relation_outcome").count(),
+        prefix.matches("jsx_props_relation_outcome").count(),
         2,
-        "early JSX spread whole-type compatibility decisions should route through relation outcomes"
+        "early JSX spread whole-type compatibility decisions should route through JSX props relation outcomes"
     );
     assert!(
         !prefix.contains("diagnostic_relation_boolean_guard"),
@@ -43,9 +43,9 @@ fn jsx_spread_property_mismatch_uses_relation_outcome_boundary() {
     let branch = &source[start..end];
 
     assert_eq!(
-        branch.matches("assign_relation_outcome").count(),
+        branch.matches("jsx_props_relation_outcome").count(),
         3,
-        "JSX spread property and generic whole-type mismatch probes should route through relation outcomes"
+        "JSX spread property and generic whole-type mismatch probes should route through JSX props relation outcomes"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard"),

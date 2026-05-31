@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `call_arg`, `return_stmt`, `satisfies`, `destructuring` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `call_arg`, `return_stmt`, `jsx_props`, `satisfies`, `destructuring` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -64,6 +64,10 @@ assignment diagnostics.
 Return diagnostics in `types/type_checking`, decorator checks, contextual return
 utilities, and function-type helpers build `RelationRequest::return_stmt` through
 `return_relation_outcome`.
+
+JSX props and attribute validation paths build `RelationRequest::jsx_props`
+through `jsx_props_relation_outcome` in the JSX props resolution, validation,
+spread, overload, generic-spread, and union-props checkers.
 
 `query_boundaries/class.rs` builds `RelationRequest::assign` with
 `with_erased_generic_signature_retry` for class/interface member compatibility
