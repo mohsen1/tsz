@@ -720,7 +720,12 @@ impl<'a> CheckerState<'a> {
                         Some(sym_id)
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
-                        if let Some(target_sym_id) = self
+                        let local_value_allows_global_type_fallback = has_libs
+                            && self.ctx.actual_lib_context_has_bare_name(name)
+                            && !self.ctx.file_local_type_shadow_for_lib_name(name);
+                        if local_value_allows_global_type_fallback {
+                            None
+                        } else if let Some(target_sym_id) = self
                             .resolve_type_symbol_for_lowering(type_name_idx)
                             .map(tsz_binder::SymbolId)
                             .or_else(|| self.resolve_type_only_import_alias_target_symbol(name))
