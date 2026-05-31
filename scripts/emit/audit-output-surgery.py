@@ -314,6 +314,19 @@ def format_budget_metrics(budget: BudgetSummary) -> str:
     )
 
 
+def format_category_budget_metrics(file_summaries: list[dict[str, object]]) -> str:
+    parts: list[str] = []
+    for summary in build_category_summaries(file_summaries):
+        category = str(summary["category"])
+        count = int(summary["count"])
+        max_count = summary["max_count"]
+        if max_count is None:
+            parts.append(f"{category}=unallowlisted:{count}")
+        else:
+            parts.append(f"{category}={count}/{int(max_count)}")
+    return "category_budgets=" + ",".join(parts)
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -372,12 +385,14 @@ def format_pass_summary(
     allowlist: dict[str, AllowEntry],
 ) -> str:
     summary = summarize_failures(failures)
-    budget = summarize_budget(build_file_summaries(grouped_counts(findings), allowlist))
+    file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
+    budget = summarize_budget(file_summaries)
     return (
         "Output-surgery audit passed: "
         f"total_findings={len(findings)}, "
         f"files_with_findings={len(grouped_counts(findings))}, "
         f"{format_budget_metrics(budget)}, "
+        f"{format_category_budget_metrics(file_summaries)}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
         f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
@@ -407,10 +422,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if failures:
         summary = summarize_failures(failures)
-        budget = summarize_budget(build_file_summaries(grouped_counts(findings), allowlist))
+        file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
+        budget = summarize_budget(file_summaries)
         print(
             "\nOutput-surgery audit summary: "
             f"{format_budget_metrics(budget)}, "
+            f"{format_category_budget_metrics(file_summaries)}, "
             f"unallowlisted_calls={summary.unallowlisted}, "
             f"unallowlisted_files={summary.unallowlisted_files}, "
             f"over_allowlist_files={summary.over_allowlist_files}, "

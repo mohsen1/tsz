@@ -144,10 +144,46 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "allowlist_cap=2, "
             "remaining_allowlist_capacity=0, "
             "allowlist_budget_status=exhausted, "
+            "category_budgets=semantic-output-surgery=2/2, "
             "unallowlisted_calls=0, "
             "over_allowlist_files=0, "
             "over_allowlist_excess_calls=0, "
             "stale_allowlist_files=0.",
+        )
+
+    def test_category_budget_metrics_names_each_category(self):
+        file_summaries = [
+            {
+                "path": "a.rs",
+                "count": 2,
+                "category": "dts-output-surgery",
+                "max_count": 3,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            },
+            {
+                "path": "b.rs",
+                "count": 1,
+                "category": "ir-output-surgery",
+                "max_count": 1,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            },
+            {
+                "path": "c.rs",
+                "count": 4,
+                "category": "UNALLOWLISTED",
+                "max_count": None,
+                "reason": None,
+                "status": "unallowlisted",
+            },
+        ]
+
+        self.assertEqual(
+            self.audit.format_category_budget_metrics(file_summaries),
+            "category_budgets=UNALLOWLISTED=unallowlisted:4,"
+            "dts-output-surgery=2/3,"
+            "ir-output-surgery=1/1",
         )
 
     def test_budget_status_classifies_budget_edges(self):
