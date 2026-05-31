@@ -1929,4 +1929,6 @@ fn remap_compacted_bind_state(binder: &mut BinderState, id_remap: &FxHashMap<Sym
     );
 
     binder.expando_properties = remap_expando_properties(&binder.expando_properties, id_remap);
+    // All SymbolIds were remapped; any cached (name → old_id) results are now stale.
+    binder.clear_resolution_caches();
 }
