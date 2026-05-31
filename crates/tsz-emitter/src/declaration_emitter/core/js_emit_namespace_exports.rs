@@ -936,18 +936,18 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let init_node = self.arena.get(initializer)?;
         match init_node.kind {
-            k if k == SyntaxKind::Identifier as u16
-                && self.get_identifier_text(initializer).as_deref() == Some("undefined") =>
-            {
-                Some("undefined".to_string())
-            }
             k if k == SyntaxKind::StringLiteral as u16 => Some("string".to_string()),
             k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
             k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
             k if k == SyntaxKind::TrueKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if (k == SyntaxKind::UndefinedKeyword as u16
+                || k == SyntaxKind::Identifier as u16)
+                && self.is_unbound_undefined_value_reference(initializer) =>
+            {
+                Some("undefined".to_string())
+            }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 && self.js_empty_object_literal_initializer(initializer) =>
             {
@@ -1030,8 +1030,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let init_node = self.arena.get(initializer)?;
-        if init_node.kind == SyntaxKind::UndefinedKeyword as u16
-            || self.is_void_expression(init_node)
+        let kind = init_node.kind;
+        if self.is_void_expression(init_node)
+            || ((kind == SyntaxKind::UndefinedKeyword as u16
+                || kind == SyntaxKind::Identifier as u16)
+                && self.is_unbound_undefined_value_reference(initializer))
         {
             return None;
         }

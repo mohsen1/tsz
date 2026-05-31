@@ -216,6 +216,117 @@ function keepShadowed<Value>(value: Value, undefined: unknown) {
 }
 
 #[test]
+fn conditional_boolean_undefined_default_param_with_shadowed_undefined_does_not_widen() {
+    // When `undefined` is shadowed by a local parameter, the default
+    // `cond ? true : undefined` references the shadow, not the builtin
+    // undefined value, so the DTS parameter type must not be widened to
+    // `boolean | undefined`. See #11861.
+    let output = emit_dts_with_binding(
+        r#"
+declare const cond: boolean;
+function withShadow(undefined: string, value = cond ? true : undefined) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("value?: boolean | undefined"),
+        "Expected shadowed undefined to NOT widen the conditional default to `boolean | undefined`: {output}"
+    );
+}
+
+#[test]
+fn conditional_boolean_undefined_default_param_without_binding_still_widens() {
+    // Sanity baseline: without a shadow (and with builtin undefined), the
+    // emitter still widens the conditional default to `boolean | undefined`.
+    let output = emit_dts_with_binding(
+        r#"
+declare const cond: boolean;
+function noShadow(value = cond ? true : undefined) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value?: boolean | undefined"),
+        "Expected builtin undefined in conditional default to widen to `boolean | undefined`: {output}"
+    );
+}
+
+#[test]
+fn undefined_identifier_fallback_respects_shadowed_binding() {
+    // The DTS-emit fallback chain treats a bare `undefined` identifier as
+    // `any` when no other type is available. When `undefined` is shadowed by
+    // a typed local binding, the fallback must defer to the declared type
+    // instead of returning `any` (which would erase the shadow's surface).
+    let shadowed = emit_dts_with_binding(
+        r#"
+declare function makeShadow<T>(): T;
+export function pick<T>() {
+    const undefined: T = makeShadow();
+    return undefined;
+}
+"#,
+    );
+
+    assert!(
+        !shadowed.contains("pick<T>(): any"),
+        "Expected shadowed undefined binding to be classified by its declared surface, not `any`: {shadowed}"
+    );
+    assert!(
+        shadowed.contains("export declare function pick<T>()"),
+        "Expected pick<T> signature to be emitted (proves the fallback path was reached): {shadowed}"
+    );
+}
+
+#[test]
+fn jsdoc_const_initialized_to_shadowed_undefined_does_not_widen() {
+    // In a `.js` file with a JSDoc-typed const initialized to a local
+    // identifier named `undefined`, the emitter must not append `| undefined`
+    // to the declared type — that widening only applies when the initializer
+    // references the builtin undefined value.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function shadowScope(undefined) {
+    /** @type {string} */
+    const text = undefined;
+    return text;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains(": string | undefined"),
+        "Expected shadowed undefined initializer to NOT widen the JSDoc-declared const type: {output}"
+    );
+}
+
+#[test]
+fn js_namespace_export_undefined_initializer_respects_shadow() {
+    // `module.exports.x = undefined` widens to `undefined` only when
+    // `undefined` resolves to the builtin. If a local function parameter
+    // named `undefined` shadows the builtin, the assignment must not be
+    // classified as a builtin-undefined value.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function shadowEnv(undefined) {
+    module.exports.alias = undefined;
+}
+"#,
+    );
+
+    // When the parameter `undefined` shadows the builtin, the CJS export
+    // alias classifier should NOT emit a synthetic `undefined`-typed export
+    // for `module.exports.alias`.
+    assert!(
+        !output.contains("alias: undefined"),
+        "Expected shadowed undefined assignment to NOT classify as builtin undefined export: {output}"
+    );
+}
+
+#[test]
 fn generic_return_parameter_after_nested_nullish_helpers_composes_flow_surface() {
     let output = emit_dts(
         r#"

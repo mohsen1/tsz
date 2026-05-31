@@ -424,11 +424,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
                 if keyword == "const"
                     && has_initializer
-                    && (self.get_identifier_text(initializer).as_deref() == Some("undefined")
-                        || self
-                            .arena
-                            .get(initializer)
-                            .is_some_and(|node| node.kind == SyntaxKind::UndefinedKeyword as u16))
+                    && self.is_unbound_undefined_value_reference(initializer)
                     && !matches!(type_text.as_str(), "void" | "undefined" | "null")
                     && !Self::type_text_has_undefined_branch(&type_text)
                 {

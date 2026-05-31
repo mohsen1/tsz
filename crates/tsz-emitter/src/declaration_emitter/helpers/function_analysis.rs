@@ -63,10 +63,8 @@ impl<'a> DeclarationEmitter<'a> {
             || true_node.kind == SyntaxKind::FalseKeyword as u16
             || false_node.kind == SyntaxKind::TrueKeyword as u16
             || false_node.kind == SyntaxKind::FalseKeyword as u16;
-        let has_undefined = true_node.kind == SyntaxKind::UndefinedKeyword as u16
-            || false_node.kind == SyntaxKind::UndefinedKeyword as u16
-            || self.get_identifier_text(true_branch).as_deref() == Some("undefined")
-            || self.get_identifier_text(false_branch).as_deref() == Some("undefined");
+        let has_undefined = self.is_unbound_undefined_value_reference(true_branch)
+            || self.is_unbound_undefined_value_reference(false_branch);
 
         (has_boolean_literal && has_undefined).then_some("boolean | undefined")
     }
