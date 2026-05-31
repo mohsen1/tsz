@@ -582,12 +582,47 @@ impl<'a> DeclarationEmitter<'a> {
         if !type_text.contains("=> {\n        ") {
             return type_text.to_string();
         }
-        let mut normalized = type_text.replace("\n        ", "\n    ");
+        let mut normalized = String::with_capacity(type_text.len());
+        for (idx, line) in type_text.split('\n').enumerate() {
+            if idx > 0 {
+                normalized.push('\n');
+            }
+            if let Some(rest) = line.strip_prefix("        ") {
+                normalized.push_str("    ");
+                normalized.push_str(rest);
+            } else {
+                normalized.push_str(line);
+            }
+        }
         if normalized.ends_with("\n    }") {
             let new_len = normalized.len() - "\n    }".len();
             normalized.truncate(new_len);
             normalized.push_str("\n}");
         }
         normalized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn nested_arrow_object_type_text_normalizes_inner_indent() {
+        let normalized = DeclarationEmitter::normalize_nested_arrow_object_type_text(
+            "() => {\n        value: string;\n    }",
+        );
+
+        assert_eq!(normalized, "() => {\n    value: string;\n}");
+    }
+
+    #[test]
+    fn nested_arrow_object_type_text_keeps_unmatched_text_unchanged() {
+        let source = "() => { value: string; }";
+
+        assert_eq!(
+            DeclarationEmitter::normalize_nested_arrow_object_type_text(source),
+            source
+        );
     }
 }
