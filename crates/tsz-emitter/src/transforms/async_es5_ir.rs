@@ -54,7 +54,7 @@ use std::cell::{Cell, RefCell};
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{IRCatchClause, IRGeneratorCase, IRNode, IRParam};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -65,6 +65,8 @@ use tsz_parser::parser::syntax_kind_ext;
 mod bindings;
 #[path = "async_es5_ir_calls.rs"]
 mod calls;
+#[path = "async_es5_ir_cases.rs"]
+mod cases;
 #[path = "async_es5_ir_condition_await.rs"]
 mod condition_await;
 #[path = "async_es5_ir_discovery.rs"]
@@ -170,6 +172,10 @@ pub struct AsyncES5Transformer<'a> {
     /// the first `catch (e)` in the file becomes `e_1`, the second becomes
     /// `e_2`, and so on, regardless of function boundaries.
     pub(super) catch_binding_ordinals: RefCell<rustc_hash::FxHashMap<String, u32>>,
+    /// Catch-binding temps reserved for the async function body currently being
+    /// lowered. Reserving them before body conversion lets nested async function
+    /// expressions continue after the outer body's catch names.
+    pub(super) planned_catch_binding_temps: RefCell<FxHashMap<u32, String>>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -201,6 +207,7 @@ impl<'a> AsyncES5Transformer<'a> {
             labeled_break_targets: Vec::new(),
             catch_binding_renames: Vec::new(),
             catch_binding_ordinals: RefCell::new(rustc_hash::FxHashMap::default()),
+            planned_catch_binding_temps: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -410,6 +417,24 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
+    pub fn transform_async_function_expression(&mut self, func_idx: NodeIndex) -> IRNode {
+        match self.transform_async_function(func_idx) {
+            IRNode::FunctionDecl {
+                name,
+                parameters,
+                body,
+                ..
+            } => IRNode::FunctionExpr {
+                name: Some(name),
+                parameters,
+                body,
+                is_expression_body: false,
+                body_source_range: None,
+            },
+            node => node,
+        }
+    }
+
     pub fn transform_async_generator_inner_function(
         &mut self,
         name: Option<String>,
@@ -579,73 +604,6 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.in_async_body = false;
 
         IRNode::GeneratorBody { has_await, cases }
-    }
-
-    /// Build generator cases for the state machine
-    fn build_generator_cases(
-        &mut self,
-        body_idx: NodeIndex,
-        _has_await: bool,
-        skipped_statements: &[NodeIndex],
-    ) -> Vec<IRGeneratorCase> {
-        self.reset_temp_name_reservations(body_idx);
-        let mut cases = Vec::new();
-        let mut current_statements = Vec::new();
-        let mut current_label = self.state.next_label();
-
-        // Process the function body
-        self.process_async_body(
-            body_idx,
-            &mut cases,
-            &mut current_statements,
-            &mut current_label,
-            skipped_statements,
-        );
-
-        // Add final case if there are remaining statements
-        if !current_statements.is_empty() {
-            // Only add implicit return if the last statement isn't already a return
-            let needs_implicit_return =
-                !matches!(current_statements.last(), Some(IRNode::ReturnStatement(_)));
-            if needs_implicit_return {
-                current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                    IRNode::GeneratorOp {
-                        opcode: opcodes::RETURN,
-                        value: None,
-                        comment: Some("return".to_string().into()),
-                    },
-                ))));
-            }
-            cases.push(IRGeneratorCase {
-                label: current_label,
-                statements: current_statements,
-            });
-        } else if !cases.is_empty() {
-            cases.push(IRGeneratorCase {
-                label: current_label,
-                statements: vec![IRNode::ReturnStatement(Some(Box::new(
-                    IRNode::GeneratorOp {
-                        opcode: opcodes::RETURN,
-                        value: None,
-                        comment: Some("return".to_string().into()),
-                    },
-                )))],
-            });
-        } else if cases.is_empty() {
-            // Empty async body - still need a return case
-            cases.push(IRGeneratorCase {
-                label: 0,
-                statements: vec![IRNode::ReturnStatement(Some(Box::new(
-                    IRNode::GeneratorOp {
-                        opcode: opcodes::RETURN,
-                        value: None,
-                        comment: Some("return".to_string().into()),
-                    },
-                )))],
-            });
-        }
-
-        cases
     }
 
     fn process_async_body(
@@ -2364,6 +2322,21 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+                    if self.is_suspension_expression(expr_stmt.expression) {
+                        let trailing_comment = self.extract_trailing_line_comment_in_node(idx);
+                        self.process_await_expression(
+                            expr_stmt.expression,
+                            cases,
+                            current_statements,
+                            current_label,
+                        );
+                        current_statements
+                            .push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+                        if let Some(comment) = trailing_comment {
+                            current_statements.push(IRNode::TrailingComment(comment.into()));
+                        }
+                        return;
+                    }
                     self.process_expression_in_async(
                         expr_stmt.expression,
                         cases,
@@ -4822,8 +4795,20 @@ impl<'a> AsyncES5Transformer<'a> {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
-                        let catch_temp =
-                            self.fresh_catch_binding_temp(&catch_var_name, try_data.catch_clause);
+                        let catch_temp = self
+                            .planned_catch_binding_temps
+                            .borrow()
+                            .get(&try_data.catch_clause.0)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.fresh_catch_binding_temp(
+                                    &catch_var_name,
+                                    try_data.catch_clause,
+                                )
+                            });
+                        self.blocked_temp_names
+                            .borrow_mut()
+                            .insert(catch_temp.clone());
                         current_statements.push(IRNode::VarDecl {
                             name: catch_temp.clone().into(),
                             initializer: None,

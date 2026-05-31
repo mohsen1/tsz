@@ -15,6 +15,7 @@ mod for_of_destructure_prealloc;
 mod helpers;
 mod helpers_async;
 mod helpers_async_generator;
+mod helpers_async_promise;
 mod helpers_async_shadowing;
 mod helpers_class_expression_comments;
 mod helpers_class_expression_names;
