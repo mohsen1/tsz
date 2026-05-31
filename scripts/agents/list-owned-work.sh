@@ -260,6 +260,7 @@ const totalOwnedCount = totalPrCount + totalIssueCount;
 const ownedWorkClear = totalOwnedCount === 0;
 
 const report = {
+  ok: ownedWorkClear,
   generated_by: "scripts/agents/list-owned-work.sh",
   repository: process.env.REPOSITORY,
   with_pr_state: process.env.WITH_PR_STATE === "true",
