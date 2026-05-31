@@ -23,22 +23,17 @@ impl ParserState {
             return false;
         }
 
-        // Lookahead invokes real `parse_*` routines (`parse_string_literal`
-        // or `parse_identifier_name`) which push arena nodes. Use the full
-        // speculation checkpoint so those nodes (and any diagnostics, flag
-        // toggles) are reverted; a scanner-only restore would leak them.
-        let checkpoint = self.speculation_checkpoint();
-
-        if self.is_token(SyntaxKind::StringLiteral) {
-            self.parse_string_literal();
-        } else {
-            self.parse_identifier_name();
-        }
-
-        let result = self.is_token(SyntaxKind::ColonToken);
-
-        self.restore_speculation_checkpoint(checkpoint);
-        result
+        // Lookahead invokes real `parse_*` routines that push arena nodes;
+        // `speculate` rolls back every parser-state field, not just the
+        // scanner cursor.
+        self.speculate(|p| {
+            if p.is_token(SyntaxKind::StringLiteral) {
+                p.parse_string_literal();
+            } else {
+                p.parse_identifier_name();
+            }
+            p.is_token(SyntaxKind::ColonToken)
+        })
     }
 
     fn import_property_name_matches(&self, name: NodeIndex, expected: &str) -> bool {

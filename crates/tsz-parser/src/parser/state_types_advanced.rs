@@ -733,11 +733,8 @@ impl ParserState {
                 & crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES)
                 != 0;
 
-            // Full speculation checkpoint: the inner `parse_type` may toggle
-            // recovery flags (e.g. `abort_intersection_continuation`,
-            // `abort_object_literal_recovery_once`) that would survive a
-            // hand-rolled scanner+token+arena restore and corrupt the outer
-            // parse.
+            // Full checkpoint — `parse_type` can toggle flags/recovery
+            // state. See `speculation.rs`.
             let checkpoint = self.speculation_checkpoint();
 
             self.next_token(); // consume `extends`
@@ -812,15 +809,8 @@ impl ParserState {
         let head = self.parse_template_literal_head();
         let mut spans = Vec::new();
 
-        // Each `${...}` substitution is a complete-type-expression scope: it
-        // must not inherit an outer `IN_TUPLE_ELEMENT` or
-        // `DISALLOW_CONDITIONAL_TYPES` flag from a surrounding tuple element
-        // / `infer T extends X` position. Without this reset, a postfix `?`
-        // inside `${...}` would be reserved for the outer tuple-optional
-        // marker instead of the inner type's nullable marker, and nested
-        // conditional types would be refused. The outer flags are identical
-        // on every iteration, so save and clear them once before the loop
-        // and restore once after.
+        // Each `${...}` is a complete-type-expression scope: clear the
+        // scope-barrier flags once before the loop and restore once after.
         let saved_flags = self.context_flags;
         self.context_flags &= !(crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT
             | crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES);
@@ -1030,20 +1020,17 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        // Re-enable conditional types inside mapped type bracket.
-        // The outer `T extends { [P in ...] }` may have disabled them,
-        // but inside the mapped type we need them again.
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // The mapped-type constraint and `as` clause are complete-type-
+        // expression scopes: re-enable conditional types even if the outer
+        // context (e.g. an `infer T extends X` ancestor) disabled them.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         // Parse optional 'as' clause for key remapping: [K in T as NewKey]
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1079,13 +1066,9 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional : and type (type can be omitted for implicit any).
-        //
-        // The mapped-type value position is a complete-type-expression scope.
-        // Matches tsc's `parseMappedType` which wraps the value parse in
-        // `allowConditionalTypesAnd(parseType)` so nested conditional types
-        // (`{ [K in keyof T]: V extends X ? 1 : 0 }`) parse even when the
-        // surrounding context disabled them.
+        // Parse optional : and value type (type can be omitted for implicit
+        // any). Complete-type-expression scope —
+        // see `allow_conditional_types_and_parse_type`.
         let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
             self.allow_conditional_types_and_parse_type()
         } else {
@@ -1153,16 +1136,14 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // Complete-type-expression scopes — see `parse_mapped_type_rest`.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1235,16 +1216,14 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // Complete-type-expression scopes — see `parse_mapped_type_rest`.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1521,12 +1500,8 @@ impl ParserState {
     /// Returns Some(NodeList) if successful, None if this is not type arguments.
     /// Uses look-ahead to distinguish from comparison operators.
     pub(crate) fn try_parse_type_arguments_for_call(&mut self) -> Option<NodeList> {
-        // Speculative parse: invokes `parse_type_argument_in_type_arguments`,
-        // which can mutate parser context flags (e.g. `IN_TUPLE_ELEMENT`,
-        // `DISALLOW_CONDITIONAL_TYPES`) and recovery flags. Roll back through
-        // the full `ParserCheckpoint`, not a hand-rolled subset — otherwise
-        // a failed type-argument attempt leaves flags set and the next
-        // expression / JSX-detection / type parse uses corrupted state.
+        // Full checkpoint — `parse_type_argument_in_type_arguments` can
+        // toggle flags/recovery state. See `speculation.rs`.
         let checkpoint = self.speculation_checkpoint();
 
         // Save the `<` position before consuming it so TS1099 points at `<`, not `>`

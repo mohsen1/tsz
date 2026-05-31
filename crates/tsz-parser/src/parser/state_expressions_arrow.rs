@@ -485,10 +485,8 @@ impl ParserState {
                 self.current_token = current;
                 return false;
             }
-            // Speculative parse of the return type: `parse_return_type`
-            // may toggle context flags and push diagnostics. Use the full
-            // checkpoint so a hand-rolled arena+diagnostics truncate does
-            // not leave flags or recovery state set after the lookahead.
+            // Full checkpoint — `parse_return_type` can toggle flags.
+            // See `speculation.rs`.
             let return_type_checkpoint = self.speculation_checkpoint();
             let type_start = self.token_pos();
             let type_node = self.parse_return_type();
@@ -517,10 +515,7 @@ impl ParserState {
             // leaves a `:` token. This matches TypeScript's disambiguation.
             if (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0 {
                 if result && self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-                    // Speculative: `parse_assignment_expression` mutates
-                    // context flags and recovery flags. A hand-rolled
-                    // scanner+token+arena restore leaves the rest corrupted,
-                    // so use the full speculation checkpoint.
+                    // Full checkpoint — see `speculation.rs`.
                     let body_checkpoint = self.speculation_checkpoint();
 
                     self.next_token();

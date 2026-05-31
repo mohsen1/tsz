@@ -344,12 +344,8 @@ impl ParserState {
         // Expect ?
         self.parse_expected(SyntaxKind::QuestionToken);
 
-        // Parse the true and false branches with conditional types re-enabled.
-        // Matches tsc's `allowConditionalTypesAnd(parseType)` for both branches:
-        // even when the outer context disabled conditional types (e.g. this
-        // conditional appeared inside an `infer T extends X` constraint), the
-        // branch positions of a conditional type are complete type expressions
-        // and must accept nested conditional types without parentheses.
+        // Parse the true and false branches as complete-type-expression
+        // scopes — see `allow_conditional_types_and_parse_type`.
         let true_type = self.allow_conditional_types_and_parse_type();
 
         // Expect :
