@@ -2,6 +2,8 @@ use std::fs;
 
 #[test]
 fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
+    let core_source = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read flow analyzer core source");
     let assignment_source = fs::read_to_string("src/flow/control_flow/assignment.rs")
         .expect("failed to read flow assignment source");
     let call_predicate_source =
@@ -13,6 +15,7 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         .expect("failed to read reachability checker source");
     let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
         .expect("failed to read flow analysis query boundary");
+    let compact_core: String = core_source.chars().filter(|c| !c.is_whitespace()).collect();
     let compact_assignment: String = assignment_source
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -38,6 +41,17 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         compact_boundary.contains("fnflow_assignability_outcome(")
             && compact_boundary.contains("RelationOutcome{related,"),
         "flow assignability truth should be exposed through an outcome-shaped query boundary"
+    );
+    assert!(
+        compact_core.matches("flow_assignability_outcome(").count() >= 2
+            && compact_core.contains("source,target,false")
+            && compact_core.contains("source,target,true"),
+        "FlowAnalyzer assignability helpers should consume outcome-shaped relation truth"
+    );
+    assert!(
+        !compact_core.contains("query::is_assignable_with_env(")
+            && !compact_core.contains("query::is_assignable_strict_null("),
+        "FlowAnalyzer assignability helpers should not call raw boolean relation boundaries"
     );
     assert!(
         compact_assignment.contains("assignment_relation_outcome(assigned_type,read_type,true)")

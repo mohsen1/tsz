@@ -835,8 +835,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     let control_flow_assignment_src = fs::read_to_string("src/flow/control_flow/assignment.rs")
         .expect("failed to read src/flow/control_flow/assignment.rs for architecture guard");
     assert!(
-        control_flow_assignment_src.contains("is_assignable_to_strict_null("),
-        "control-flow assignment nullish compatibility checks should route through checker assignability gateway helpers"
+        control_flow_assignment_src
+            .contains("assignment_relation_outcome(nullish_type, annotation_type, true)"),
+        "control-flow assignment nullish compatibility checks should route through outcome-shaped relation helpers"
     );
     assert!(
         !control_flow_assignment_src.contains("self.interner.is_assignable_to("),
@@ -851,9 +852,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "control-flow assignment subtype checks should route through query boundaries, not direct solver helpers"
     );
     assert!(
-        control_flow_assignment_src.contains("is_assignable(")
-            || control_flow_assignment_src.contains("is_assignable_with_env("),
-        "control-flow assignment compatibility checks should route through flow_analysis boundary helpers (is_assignable or is_assignable_with_env)"
+        control_flow_assignment_src.contains("assignment_relation_outcome("),
+        "control-flow assignment compatibility checks should route through outcome-shaped flow_analysis boundary helpers"
     );
     assert!(
         control_flow_assignment_src.contains("widen_literal_to_primitive("),
@@ -870,12 +870,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     let control_flow_src = fs::read_to_string("src/flow/control_flow/core.rs")
         .expect("failed to read src/flow/control_flow/core.rs for architecture guard");
     assert!(
-        control_flow_src.contains("query::is_assignable_with_env("),
-        "FlowAnalyzer assignability should route through flow_analysis boundary helpers"
+        control_flow_src.contains("query::flow_assignability_outcome("),
+        "FlowAnalyzer assignability should route through the outcome-shaped flow_analysis boundary"
     );
     assert!(
-        control_flow_src.contains("query::is_assignable_strict_null("),
-        "FlowAnalyzer strict-null assignability should route through flow_analysis boundary helpers"
+        !control_flow_src.contains("query::is_assignable_with_env(")
+            && !control_flow_src.contains("query::is_assignable_strict_null("),
+        "FlowAnalyzer assignability helpers should not call raw boolean relation boundaries"
     );
     let flow_analysis_definite_src = fs::read_to_string("src/flow/flow_analysis/definite.rs")
         .expect("failed to read src/flow/flow_analysis/definite.rs for architecture guard");
@@ -926,12 +927,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
-            || state_checking_src.contains("check_assignable_or_report_at("),
+            || state_checking_src.contains("check_assignable_or_report_at(")
+            || state_checking_src.contains("assign_relation_outcome("),
         "state_checking assignment-style checks should route through centralized assignability gateways"
     );
     assert!(
-        state_checking_src.contains("check_assignable_or_report_generic_at("),
-        "state_checking destructuring generic mismatch checks should route through check_assignable_or_report_generic_at"
+        state_checking_src.contains("check_assignable_or_report_generic_at(")
+            || state_checking_src.contains("assign_relation_outcome(init_type, element_type)"),
+        "state_checking destructuring generic mismatch checks should route through centralized relation gateways"
     );
     assert!(
         state_checking_src.contains("ensure_relation_input_ready("),
@@ -977,7 +980,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_variable_checking array element checks should route through query_boundaries::state::checking"
     );
     assert!(
-        state_variable_checking_src.contains("flow_boundary::widen_null_undefined_to_any("),
+        state_variable_checking_src.contains("flow_boundary::widen_null_undefined_to_any(")
+            || state_variable_checking_destructuring_src
+                .contains("flow_boundary::widen_null_undefined_to_any("),
         "state_variable_checking null/undefined widening should route through flow observation boundary"
     );
     assert!(
@@ -1091,8 +1096,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             .expect("failed to read src/types/computation/binary.rs for architecture guard"),
     );
     assert!(
-        type_computation_src.contains("check_assignable_or_report("),
-        "computation mismatch checks should route through check_assignable_or_report"
+        type_computation_src.contains("check_assignable_or_report(")
+            || type_computation_src.contains("check_assignable_or_report_at_exact_anchor("),
+        "computation mismatch checks should route through check_assignable_or_report gateway helpers"
     );
 
     let type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
@@ -1133,10 +1139,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "computation/access should not call is_valid_spread_type directly; use type_computation_access query boundaries"
     );
 
-    let dispatch_src =
-        fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
-    let dispatch_yield_src = fs::read_to_string("src/dispatch_yield.rs")
-        .expect("failed to read src/dispatch_yield.rs for guard");
+    let dispatch_src = fs::read_to_string("src/dispatch/mod.rs")
+        .expect("failed to read src/dispatch/mod.rs for guard");
+    let dispatch_yield_src = fs::read_to_string("src/dispatch/yield_.rs")
+        .expect("failed to read src/dispatch/yield_.rs for guard");
     let dispatch_combined = format!("{dispatch_src}\n{dispatch_yield_src}");
     assert!(
         dispatch_combined.contains("check_assignable_or_report("),
