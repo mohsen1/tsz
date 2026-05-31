@@ -118,6 +118,29 @@ impl SourceWriter {
         }
     }
 
+    /// Create a scratch writer for rendering text that will be spliced into the
+    /// current inline position.
+    pub(crate) fn inline_capture_from(&self, capacity: usize) -> Self {
+        Self {
+            output: String::with_capacity(capacity),
+            line: 0,
+            column: 0,
+            indent_level: self.indent_level,
+            at_line_start: false,
+            indent_str: self.indent_str.clone(),
+            new_line: self.new_line.clone(),
+            source_map: self
+                .source_map
+                .as_ref()
+                .map(SourceMapGenerator::clone_for_inline_capture),
+            current_source_index: self.current_source_index,
+            #[cfg(debug_assertions)]
+            delimiter_stack: Vec::new(),
+            #[cfg(debug_assertions)]
+            delimiter_mismatch_count: 0,
+        }
+    }
+
     /// Create a `SourceWriter` with source map generation enabled
     pub fn with_source_map(output_file: String) -> Self {
         let mut writer = Self::new();
@@ -504,6 +527,16 @@ impl SourceWriter {
         self.output
     }
 
+    /// Take captured text and its relative source-map state.
+    pub(crate) fn take_output_and_source_map(self) -> (String, Option<SourceMapGenerator>) {
+        let unclosed_delimiter_count = self.unclosed_delimiter_count();
+        debug_assert!(
+            self.delimiters_balanced(),
+            "structured delimiter helpers left {unclosed_delimiter_count} unclosed delimiter(s)"
+        );
+        (self.output, self.source_map)
+    }
+
     /// Get the output length in bytes
     pub const fn len(&self) -> usize {
         self.output.len()
@@ -592,6 +625,39 @@ impl SourceWriter {
         };
 
         for mapping in mappings {
+            let line = base_line + mapping.generated_line;
+            let column = if mapping.generated_line == 0 {
+                base_column + mapping.generated_column
+            } else {
+                mapping.generated_column
+            };
+            sm.add_mapping(
+                line,
+                column,
+                mapping.source_index,
+                mapping.original_line,
+                mapping.original_column,
+                mapping.name_index,
+            );
+        }
+    }
+
+    /// Add mappings produced by an inline capture at the current splice point.
+    pub(crate) fn add_inline_capture_mappings(
+        &mut self,
+        base_line: u32,
+        base_column: u32,
+        capture_map: Option<&SourceMapGenerator>,
+    ) {
+        let Some(ref mut sm) = self.source_map else {
+            return;
+        };
+        let Some(capture_map) = capture_map else {
+            return;
+        };
+
+        sm.sync_names_from_inline_capture(capture_map);
+        for mapping in capture_map.mappings() {
             let line = base_line + mapping.generated_line;
             let column = if mapping.generated_line == 0 {
                 base_column + mapping.generated_column

@@ -647,6 +647,18 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn capture_private_receiver_inline(
+        &mut self,
+        expression: NodeIndex,
+        clean_name: &str,
+    ) -> (String, Option<tsz_common::source_map::SourceMapGenerator>) {
+        let scratch = self.writer.inline_capture_from(128);
+        let main_writer = std::mem::replace(&mut self.writer, scratch);
+        self.emit_private_receiver(expression, clean_name);
+        let scratch = std::mem::replace(&mut self.writer, main_writer);
+        scratch.take_output_and_source_map()
+    }
+
     /// Emit the state variable (WeakMap/WeakSet) for a private field.
     fn emit_private_state_var(&mut self, weakmap_name: &str, clean_name: &str) {
         let info = self.private_member_info.get(clean_name).cloned();
@@ -894,6 +906,11 @@ impl<'a> Printer<'a> {
                 };
 
                 let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+                let captured_receiver = if needs_receiver_temp {
+                    Some(self.capture_private_receiver_inline(pfa.expression, &pfa.clean_name))
+                } else {
+                    None
+                };
                 let receiver_temp = if needs_receiver_temp {
                     Some(self.make_unique_name_hoisted())
                 } else {
@@ -905,7 +922,20 @@ impl<'a> Printer<'a> {
 
                 self.write_helper("__classPrivateFieldSet");
                 self.write("(");
-                self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                if let Some(receiver) = captured_receiver.as_ref() {
+                    self.write(receiver_temp.as_deref().expect("receiver temp"));
+                    self.write(" = ");
+                    let receiver_line = self.writer.current_line();
+                    let receiver_column = self.writer.current_column();
+                    self.write(&receiver.0);
+                    self.writer.add_inline_capture_mappings(
+                        receiver_line,
+                        receiver_column,
+                        receiver.1.as_ref(),
+                    );
+                } else {
+                    self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                }
                 self.write(", ");
                 self.emit_private_state_var(&weakmap_name, &clean_name);
                 self.write(", ");

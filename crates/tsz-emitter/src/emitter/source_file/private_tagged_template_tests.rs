@@ -221,6 +221,33 @@ class A3 {
 }
 
 #[test]
+fn private_compound_assignment_allocates_nested_receiver_temps_first() {
+    let source = r#"
+class Test {
+    #y = 123;
+    static something(obj) {
+        obj[(new class { #x = 1; s = "prop"; }).s].#y = 1;
+        obj[(new class { #x = 1; s = "prop"; }).s].#y += 1;
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("static something(obj) {\n        var _x, _a, _x_1, _b, _c;"),
+        "Nested receiver temps should be declared before the compound assignment receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldSet(_c = obj[(new (_b = class {"),
+        "Compound private-field assignment should allocate the receiver temp after rendering nested receiver temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(_c, _Test_y, \"f\") + 1"),
+        "Compound private-field assignment should reuse the delayed receiver temp for the GET helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_method_receiver_respects_local_class_name_shadow() {
     let source = r#"
 class X {
