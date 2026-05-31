@@ -30,7 +30,29 @@ pub(crate) fn resolve_module_specifier(
     }
     let specifier = specifier.replace('\\', "/");
     let resolution = options.effective_module_resolution();
+    let from_dir = from_file.parent().unwrap_or(base_dir);
+    let package_type = match resolution {
+        ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
+            resolution_cache.package_type_for_dir(from_dir, base_dir)
+        }
+        _ => None,
+    };
     if specifier.starts_with('#') {
+        // TypeScript consults tsconfig `paths` before falling back to
+        // package.json `imports` for `#`-prefixed specifiers. tsz used to
+        // short-circuit straight to `imports`, breaking any project that
+        // aliases `#/...` through `paths` (a common convention in
+        // Next.js / Vite / modern TypeScript codebases).
+        if let Some(resolved) = try_resolve_via_paths(
+            &specifier,
+            options,
+            base_dir,
+            resolution_cache,
+            known_files,
+            package_type,
+        ) {
+            return Some(resolved);
+        }
         if is_invalid_package_import_specifier(&specifier, resolution) {
             return None;
         }
@@ -46,14 +68,6 @@ pub(crate) fn resolve_module_specifier(
         return None;
     }
     let mut candidates = Vec::new();
-
-    let from_dir = from_file.parent().unwrap_or(base_dir);
-    let package_type = match resolution {
-        ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
-            resolution_cache.package_type_for_dir(from_dir, base_dir)
-        }
-        _ => None,
-    };
 
     let mut allow_node_modules = false;
     let mut path_mapping_attempted = false;
@@ -79,22 +93,15 @@ pub(crate) fn resolve_module_specifier(
             ));
         }
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
-        if let Some(paths) = options.paths.as_ref()
-            && let Some((mapping, wildcard)) =
-                resolution_cache.select_path_mapping(paths, &specifier)
-        {
-            path_mapping_attempted = true;
-            let base = options.base_url.as_deref().unwrap_or(base_dir);
-            for target in &mapping.targets {
-                let substituted = substitute_path_target(target, &wildcard);
-                let path = if Path::new(&substituted).is_absolute() {
-                    PathBuf::from(substituted)
-                } else {
-                    base.join(substituted)
-                };
-                candidates.extend(expand_module_path_candidates(&path, options, package_type));
-            }
-        }
+        extend_path_mapping_candidates(
+            &mut candidates,
+            &mut path_mapping_attempted,
+            &specifier,
+            options,
+            base_dir,
+            resolution_cache,
+            package_type,
+        );
 
         // Classic resolution always walks up the directory tree from the containing
         // file's directory, probing for <specifier>.ts/.tsx/.d.ts and related candidates.
@@ -119,22 +126,15 @@ pub(crate) fn resolve_module_specifier(
         }
     } else {
         allow_node_modules = true;
-        if let Some(paths) = options.paths.as_ref()
-            && let Some((mapping, wildcard)) =
-                resolution_cache.select_path_mapping(paths, &specifier)
-        {
-            path_mapping_attempted = true;
-            let base = options.base_url.as_deref().unwrap_or(base_dir);
-            for target in &mapping.targets {
-                let substituted = substitute_path_target(target, &wildcard);
-                let path = if Path::new(&substituted).is_absolute() {
-                    PathBuf::from(substituted)
-                } else {
-                    base.join(substituted)
-                };
-                candidates.extend(expand_module_path_candidates(&path, options, package_type));
-            }
-        }
+        extend_path_mapping_candidates(
+            &mut candidates,
+            &mut path_mapping_attempted,
+            &specifier,
+            options,
+            base_dir,
+            resolution_cache,
+            package_type,
+        );
 
         if candidates.is_empty()
             && let Some(base_url) = options.base_url.as_ref()
@@ -148,14 +148,10 @@ pub(crate) fn resolve_module_specifier(
     }
 
     for candidate in candidates {
-        // Check if candidate exists in known files (for virtual test files) or on filesystem
-        let exists = known_files.contains(&candidate)
-            || (resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate));
-        if debug {
-            tracing::debug!("candidate={candidate:?} exists={exists}");
-        }
-
-        if exists {
+        if candidate_exists(&candidate, resolution_cache, known_files) {
+            if debug {
+                tracing::debug!("candidate={candidate:?} exists=true");
+            }
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -169,13 +165,10 @@ pub(crate) fn resolve_module_specifier(
             for candidate in
                 expand_module_path_candidates(&current.join(&specifier), options, package_type)
             {
-                let exists = known_files.contains(&candidate)
-                    || (resolution_cache.file_exists(&candidate)
-                        && is_valid_module_or_js_file(&candidate));
-                if debug {
-                    tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
-                }
-                if exists {
+                if candidate_exists(&candidate, resolution_cache, known_files) {
+                    if debug {
+                        tracing::debug!("classic-fallback candidate={candidate:?} exists=true");
+                    }
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -233,6 +226,105 @@ pub(crate) fn root_dirs_relative_candidates(
     }
 
     candidates
+}
+
+/// Expand a tsconfig `paths` mapping into candidate paths for `specifier`,
+/// without performing an existence check. Returns an empty `Vec` when `paths`
+/// is unset, when no mapping matches, or when the mapping has no targets.
+///
+/// One definition of "what `paths` produces" shared by the classic branch,
+/// the node branch, and the `#`-prefix early-out in `resolve_module_specifier`.
+fn paths_mapping_candidates(
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+    package_type: Option<PackageType>,
+) -> Vec<PathBuf> {
+    let Some(paths) = options.paths.as_ref() else {
+        return Vec::new();
+    };
+    let Some((mapping, wildcard)) = resolution_cache.select_path_mapping(paths, specifier) else {
+        return Vec::new();
+    };
+    let base = options.base_url.as_deref().unwrap_or(base_dir);
+    let mut candidates = Vec::new();
+    for target in &mapping.targets {
+        let substituted = substitute_path_target(target, &wildcard);
+        let path = if Path::new(&substituted).is_absolute() {
+            PathBuf::from(substituted)
+        } else {
+            base.join(substituted)
+        };
+        candidates.extend(expand_module_path_candidates(&path, options, package_type));
+    }
+    candidates
+}
+
+/// Append tsconfig-`paths`-derived candidates onto `candidates` and flip
+/// `attempted` to `true` if any mapping matched. Shared by the classic and
+/// node branches of `resolve_module_specifier`; both used to inline this
+/// `let mapped = ...; if !mapped.is_empty() { attempted = true; candidates.extend(mapped); }`
+/// block verbatim.
+fn extend_path_mapping_candidates(
+    candidates: &mut Vec<PathBuf>,
+    attempted: &mut bool,
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+    package_type: Option<PackageType>,
+) {
+    let mapped =
+        paths_mapping_candidates(specifier, options, base_dir, resolution_cache, package_type);
+    if !mapped.is_empty() {
+        *attempted = true;
+        candidates.extend(mapped);
+    }
+}
+
+/// Resolve `specifier` through tsconfig `paths` and return the first existing
+/// candidate. The `#`-prefix branch of `resolve_module_specifier` calls this
+/// before falling back to package.json `imports`.
+fn try_resolve_via_paths(
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+    known_files: &FxHashSet<PathBuf>,
+    package_type: Option<PackageType>,
+) -> Option<PathBuf> {
+    for candidate in
+        paths_mapping_candidates(specifier, options, base_dir, resolution_cache, package_type)
+    {
+        if candidate_exists(&candidate, resolution_cache, known_files) {
+            return Some(normalize_resolved_path(&candidate, options));
+        }
+    }
+    None
+}
+
+/// Existence predicate for resolver candidates: a path counts as resolvable
+/// when it appears in the virtual `known_files` set or is an actual module
+/// file on disk. Used by every existence loop in `resolve_module_specifier`.
+#[inline]
+fn candidate_exists(
+    candidate: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+    known_files: &FxHashSet<PathBuf>,
+) -> bool {
+    known_files.contains(candidate) || disk_candidate_exists(candidate, resolution_cache)
+}
+
+/// Disk-only existence predicate: the file exists and has a valid module
+/// extension. Shared with `package_resolution.rs` sites that don't carry a
+/// `known_files` virtual set.
+#[inline]
+pub(super) fn disk_candidate_exists(
+    candidate: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> bool {
+    resolution_cache.file_exists(candidate) && is_valid_module_or_js_file(candidate)
 }
 
 pub(crate) fn select_path_mapping(
@@ -666,3 +758,7 @@ pub(crate) const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
 pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
     ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
+
+#[cfg(test)]
+#[path = "paths_imports_tests.rs"]
+mod paths_imports_tests;

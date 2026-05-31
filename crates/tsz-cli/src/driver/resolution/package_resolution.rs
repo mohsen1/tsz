@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ModuleResolutionKind, ResolvedCompilerOptions};
-use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
+use crate::fs::is_valid_module_file;
 use tsz::emitter::ModuleKind;
 use tsz::module_resolver::PackageType;
 
@@ -278,9 +278,7 @@ pub(crate) fn resolve_node_module_specifier(
             {
                 let candidates = expand_module_path_candidates(&package_root, options, None);
                 for candidate in candidates {
-                    if resolution_cache.file_exists(&candidate)
-                        && is_valid_module_or_js_file(&candidate)
-                    {
+                    if disk_candidate_exists(&candidate, resolution_cache) {
                         return Some(normalize_resolved_path(&candidate, options));
                     }
                 }
@@ -606,7 +604,7 @@ pub(crate) fn resolve_package_index_fallback(
 
     for ext in extensions {
         for candidate in candidates_with_suffixes_and_extension(&index, ext, suffixes) {
-            if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
+            if disk_candidate_exists(&candidate, resolution_cache) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
@@ -701,7 +699,7 @@ pub(crate) fn resolve_package_entry(
         {
             continue;
         }
-        if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
+        if disk_candidate_exists(&candidate, resolution_cache) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -727,9 +725,7 @@ pub(crate) fn resolve_package_entry(
         if let Some(main) = &pj.main {
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                if resolution_cache.file_exists(&candidate)
-                    && is_valid_module_or_js_file(&candidate)
-                {
+                if disk_candidate_exists(&candidate, resolution_cache) {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
