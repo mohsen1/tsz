@@ -215,6 +215,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// vs lax, with/without weak-type suppression, etc.) cannot
     /// contaminate each other.
     pub(crate) fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+        RelationCacheKey::for_subtype(
+            source,
+            target,
+            self.cache_policy()
+                .cache_config_with_cached_any_mode(self.effective_cached_any_mode()),
+        )
+    }
+
+    /// Project this checker's behavior-affecting relation modes to a policy.
+    fn cache_policy(&self) -> RelationPolicy {
         let mut flags = RelationFlags::empty();
         if self.strict_null_checks {
             flags |= RelationFlags::STRICT_NULL_CHECKS;
@@ -256,28 +266,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
         }
 
-        // CRITICAL: Calculate effective `any_mode` based on depth.
+        RelationPolicy::from_relation_flags(flags)
+            .with_any_propagation_mode(self.any_propagation)
+            .with_assume_related_on_cycle(self.assume_related_on_cycle)
+    }
+
+    /// Resolve depth-sensitive `any` propagation to the cache-key mode.
+    const fn effective_cached_any_mode(&self) -> CachedAnyMode {
         // If `any_propagation` is `TopLevelOnly` but `depth > 0`, the
-        // effective mode is nested (any suppression disabled). This ensures
-        // that top-level checks don't incorrectly hit cached results from
-        // nested checks.
-        let any_mode = match self.any_propagation {
+        // effective mode is nested so top-level checks cannot hit cached
+        // nested answers.
+        match self.any_propagation {
             AnyPropagationMode::All => CachedAnyMode::All,
             AnyPropagationMode::TopLevelOnly if self.guard.depth() == 0 => {
                 CachedAnyMode::TopLevelOnlyAtTop
             }
             AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyNested,
-        };
-
-        let policy = RelationPolicy::from_relation_flags(flags)
-            .with_any_propagation_mode(self.any_propagation)
-            .with_assume_related_on_cycle(self.assume_related_on_cycle);
-
-        RelationCacheKey::for_subtype(
-            source,
-            target,
-            policy.cache_config_with_cached_any_mode(any_mode),
-        )
+        }
     }
 
     /// Test-only accessor that exposes the cache key this checker would use
