@@ -1134,8 +1134,8 @@ impl<'a> Printer<'a> {
         } else if type_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             let name = emit_utils::identifier_text_or_empty(self.arena, type_ref.type_name);
             if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
-                && name != "Promise"
-                && name != "PromiseLike"
+                && !matches!(name.as_str(), "Promise" | "PromiseLike")
+                && !self.is_namespace_import_binding_name(&name)
                 && !self.is_type_only_declaration_name(&name)
             {
                 self.commonjs_named_import_substitutions

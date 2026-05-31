@@ -519,3 +519,34 @@ fn generator_switch_with_yield_lowers_like_async() {
         "Generator-mode dispatch must compare the resumed value identically to async mode.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn nested_async_function_expression_lowers_own_awaiter_body() {
+    let output = transform_and_print(
+        "async function f() { try { var b = async function b() { try { await g(); // keep\n} catch (error) {} }; await b(); // done\n} catch (error) {} }",
+    );
+
+    assert!(
+        output.contains("b = function b()"),
+        "A nested async function expression should stay an expression with its original name.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .matches("return __awaiter(this, void 0, void 0, function ()")
+            .count()
+            >= 2,
+        "The outer and nested async functions should each lower to their own awaiter wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await g()"),
+        "The nested async function body must not leak raw await into ES5 output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var b, error_1;") && output.contains("var error_2;"),
+        "Outer catch temps should be reserved before nested async function expression temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.sent(); // keep") && output.contains("_a.sent(); // done"),
+        "Trailing comments after direct await expression statements should stay on the resumed sent expression.\nOutput:\n{output}"
+    );
+}

@@ -620,6 +620,25 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         if func.is_async
+            && !crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena.get(func.body).map_or(node.end, |body| body.pos),
+            )
+        {
+            let mut transformer = AsyncES5Transformer::new(self.arena);
+            if let Some(text) = self.source_text {
+                transformer.set_source_text(text);
+            }
+            transformer.downlevel_iteration = self.downlevel_iteration;
+            transformer.module_kind = self.module_kind;
+            transformer.set_catch_binding_ordinals(self.catch_binding_ordinals.borrow().clone());
+            let ir = transformer.transform_async_function_expression(idx);
+            self.set_catch_binding_ordinals(transformer.take_catch_binding_ordinals());
+            return ir;
+        }
+
+        if func.is_async
             && crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
                 self.source_text,
                 node.pos,

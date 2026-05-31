@@ -23,6 +23,24 @@ fn async_arrow_import_meta_hoisted_locals_share_var_statement() {
 }
 
 #[test]
+fn async_namespace_import_return_type_does_not_become_promise_constructor() {
+    let output = emit_es5_with_module(
+        "import * as Bluebird from \"bluebird\";\n\
+         async function a(): Bluebird<void> { await Bluebird.resolve(); }\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function ()"),
+        "A namespace import object should not be passed as the awaiter Promise constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return __awaiter(this, void 0, Bluebird, function ()"),
+        "Namespace imports are module objects, not Promise constructors for `__awaiter`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_import_meta_file_is_wrapped_as_module() {
     let output = emit_es5_with_module(
         "(async () => {\n\
