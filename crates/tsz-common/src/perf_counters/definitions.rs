@@ -799,6 +799,51 @@ impl ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
     }
 }
 
+/// Fine-grained outcome buckets for
+/// `try_lower_simple_actual_lib_type_reference`.
+///
+/// The broader `type_reference` reject counters say whether a reference was
+/// syntactically resolvable. These buckets say why the actual-lib lazy-ref
+/// lowering helper did or did not accept it.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome {
+    Success = 0,
+    Disabled = 1,
+    NotTypeReference = 2,
+    HasTypeArguments = 3,
+    NonIdentifierName = 4,
+    CompilerManagedType = 5,
+    FileLocalShadow = 6,
+    SymbolNotType = 7,
+    NotActualLibSymbol = 8,
+    GenericSymbol = 9,
+}
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT:
+    usize = 10;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_NAMES:
+    [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_ACTUAL_LIB_TYPE_REFERENCE_OUTCOME_COUNT] = [
+    "success",
+    "disabled",
+    "not_type_reference",
+    "has_type_arguments",
+    "non_identifier_name",
+    "compiler_managed_type",
+    "file_local_shadow",
+    "symbol_not_type",
+    "not_actual_lib_symbol",
+    "generic_symbol",
+];
+
+impl ComputeTypeOfSymbolInterfaceSimpleObjectActualLibTypeReferenceOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `crates/tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
