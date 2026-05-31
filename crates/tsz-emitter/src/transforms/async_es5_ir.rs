@@ -2255,8 +2255,18 @@ impl<'a> AsyncES5Transformer<'a> {
         {
             let name = super::emit_utils::identifier_text_or_empty(self.arena, expression);
             if !name.is_empty() {
-                let iterator_name = format!("{name}_{env_id}");
-                return (iterator_name.clone(), format!("{iterator_name}_1"));
+                let mut ordinal = env_id;
+                loop {
+                    let iterator_name = format!("{name}_{ordinal}");
+                    let result_name = format!("{iterator_name}_1");
+                    let mut blocked = self.blocked_temp_names.borrow_mut();
+                    if !blocked.contains(&iterator_name) && !blocked.contains(&result_name) {
+                        blocked.insert(iterator_name.clone());
+                        blocked.insert(result_name.clone());
+                        return (iterator_name, result_name);
+                    }
+                    ordinal += 1;
+                }
             }
         }
         (self.generate_hoisted_temp(), self.generate_hoisted_temp())

@@ -10,6 +10,7 @@
 
 use super::AsyncES5Transformer;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -39,6 +40,58 @@ impl AsyncES5Transformer<'_> {
     /// Check if a function body contains any await expressions
     pub fn body_contains_await(&self, body_idx: NodeIndex) -> bool {
         self.contains_await_recursive(body_idx)
+    }
+
+    pub(super) fn contains_for_await_recursive(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && let Some(for_data) = self.arena.get_for_in_of(node)
+            && for_data.await_modifier
+        {
+            return true;
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| self.contains_for_await_recursive(child))
+    }
+
+    pub(super) fn contains_array_spread_recursive(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && let Some(array) = self.arena.get_literal_expr(node)
+            && self.args_contain_spread(&array.elements.nodes)
+        {
+            return true;
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| self.contains_array_spread_recursive(child))
     }
 
     /// Walk the sub-tree at `idx` looking for any node the current

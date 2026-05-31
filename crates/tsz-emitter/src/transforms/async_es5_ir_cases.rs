@@ -16,6 +16,7 @@ impl AsyncES5Transformer<'_> {
             std::mem::take(&mut *self.planned_catch_binding_temps.borrow_mut());
         self.reset_temp_name_reservations(body_idx);
         self.plan_catch_binding_temps(body_idx);
+        self.plan_body_level_helpers(body_idx);
         let mut cases = Vec::new();
         let mut current_statements = Vec::new();
         let mut current_label = self.state.next_label();
@@ -60,6 +61,15 @@ impl AsyncES5Transformer<'_> {
             value: None,
             comment: Some("return".to_string().into()),
         })))
+    }
+
+    fn plan_body_level_helpers(&mut self, body_idx: NodeIndex) {
+        if self.contains_for_await_recursive(body_idx) {
+            self.helpers_needed.mark_async_values();
+        }
+        if self.contains_array_spread_recursive(body_idx) {
+            self.helpers_needed.mark_spread_array();
+        }
     }
 
     fn plan_catch_binding_temps(&self, idx: NodeIndex) {

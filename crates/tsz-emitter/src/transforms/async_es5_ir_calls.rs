@@ -1187,7 +1187,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    fn args_contain_spread(&self, args: &[NodeIndex]) -> bool {
+    pub(in crate::transforms) fn args_contain_spread(&self, args: &[NodeIndex]) -> bool {
         args.iter().any(|&arg| self.is_spread_arg(arg))
     }
 
@@ -1233,7 +1233,7 @@ impl<'a> AsyncES5Transformer<'a> {
         })
     }
 
-    fn is_spread_arg(&self, arg: NodeIndex) -> bool {
+    pub(in crate::transforms) fn is_spread_arg(&self, arg: NodeIndex) -> bool {
         self.arena
             .get(arg)
             .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ELEMENT)
