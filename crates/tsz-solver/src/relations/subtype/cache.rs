@@ -325,12 +325,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // type whose method signatures carry `ThisType` return types.
         let has_this_type =
             contains_this_type(self.interner, source) || contains_this_type(self.interner, target);
+        // Class-symbol classification is also context-dependent: the callback
+        // can make the same object shape behave as a named class/interface in
+        // one checker and as a plain structural object in another. Since the
+        // relation cache key cannot encode an arbitrary predicate, avoid
+        // sharing those answers across checker instances.
+        let has_class_check_context = self.is_class_symbol.is_some();
+        let can_use_shared_relation_cache = !has_this_type && !has_class_check_context;
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
         // non-callback-mode results and cannot poison each other.
         if !self.identity_cycle_check
-            && !has_this_type
+            && can_use_shared_relation_cache
             && let Some(db) = self.query_db
         {
             let key = self.make_cache_key(source, target);
@@ -777,7 +784,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
-                if !has_this_type && let Some(db) = self.query_db {
+                if can_use_shared_relation_cache && let Some(db) = self.query_db {
                     let key = self.make_cache_key(source, target);
                     cache_definitive!(db, key, result);
                 }
@@ -836,7 +843,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.def_guard.leave(dp);
             }
             self.guard.leave(pair);
-            if !has_this_type && let Some(db) = self.query_db {
+            if can_use_shared_relation_cache && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
                 cache_definitive!(db, key, result);
             }
@@ -857,7 +864,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.def_guard.leave(dp);
             }
             self.guard.leave(pair);
-            if !has_this_type && let Some(db) = self.query_db {
+            if can_use_shared_relation_cache && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
                 cache_definitive!(db, key, result);
             }
@@ -936,8 +943,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.leave(pair);
 
         // Cache definitive results for cross-checker memoization.
-        // Skip ThisType: results are context-dependent (see lookup guard above).
-        if !has_this_type && let Some(db) = self.query_db {
+        // Skip context-dependent results (see lookup guard above).
+        if can_use_shared_relation_cache && let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
             cache_definitive!(db, key, result);
         }
