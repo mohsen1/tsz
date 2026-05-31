@@ -199,8 +199,12 @@ impl<'a> CheckerState<'a> {
         evaluated != target
             && evaluated != TypeId::UNKNOWN
             && evaluated != TypeId::ERROR
-            && (self.diagnostic_relation_boolean_guard_with_env(source, evaluated)
-                || self.diagnostic_relation_boolean_guard_with_env(source, contextual)
+            && (self
+                .assign_relation_outcome_with_env(source, evaluated)
+                .related
+                || self
+                    .assign_relation_outcome_with_env(source, contextual)
+                    .related
                 || self.self_referential_mapped_intersection_accepts_object_literal(
                     source, evaluated, arg_idx,
                 ))
@@ -228,7 +232,10 @@ impl<'a> CheckerState<'a> {
 
             let member = self.evaluate_type_with_env(member);
             let Some(shape) = common::object_shape_for_type(self.ctx.types, member) else {
-                if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
+                if !self
+                    .assign_relation_outcome_with_env(source, member)
+                    .related
+                {
                     return false;
                 }
                 continue;
@@ -236,9 +243,14 @@ impl<'a> CheckerState<'a> {
 
             allowed_keys.extend(shape.properties.iter().map(|prop| prop.name));
             if shape.string_index.is_some() || shape.number_index.is_some() {
-                return self.diagnostic_relation_boolean_guard_with_env(source, member);
+                return self
+                    .assign_relation_outcome_with_env(source, member)
+                    .related;
             }
-            if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
+            if !self
+                .assign_relation_outcome_with_env(source, member)
+                .related
+            {
                 return false;
             }
         }

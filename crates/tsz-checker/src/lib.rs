@@ -663,6 +663,9 @@ mod fresh_const_array_mutable_assignment_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
 #[cfg(test)]
+#[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
+mod generic_argument_suppression_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
