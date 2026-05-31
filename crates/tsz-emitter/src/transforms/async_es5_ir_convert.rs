@@ -270,6 +270,9 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(arr) = self.arena.get_literal_expr(node) {
+                    if self.args_contain_spread(&arr.elements.nodes) {
+                        return self.array_spread_literal_to_ir(&arr.elements.nodes);
+                    }
                     let elements: Vec<IRNode> = arr
                         .elements
                         .nodes
@@ -462,6 +465,55 @@ impl<'a> AsyncES5Transformer<'a> {
 
             _ => IRNode::ASTRef(idx),
         }
+    }
+
+    fn array_spread_literal_to_ir(&self, elements: &[NodeIndex]) -> IRNode {
+        let mut current = IRNode::ArrayLiteral(Vec::new());
+        let mut segment = Vec::new();
+
+        for &element in elements {
+            if self.is_spread_arg(element) {
+                if !segment.is_empty() {
+                    current = Self::spread_array_call_ir(
+                        current,
+                        IRNode::ArrayLiteral(std::mem::take(&mut segment)),
+                        false,
+                    );
+                }
+                current = Self::spread_array_call_ir(
+                    current,
+                    self.spread_expression_operand_to_ir(element),
+                    true,
+                );
+            } else {
+                segment.push(self.expression_to_ir(element));
+            }
+        }
+
+        if !segment.is_empty() {
+            current = Self::spread_array_call_ir(current, IRNode::ArrayLiteral(segment), false);
+        }
+
+        current
+    }
+
+    fn spread_array_call_ir(to: IRNode, from: IRNode, pack: bool) -> IRNode {
+        IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__spreadArray".into())),
+            arguments: vec![to, from, IRNode::BooleanLiteral(pack)],
+        }
+    }
+
+    fn spread_expression_operand_to_ir(&self, element: NodeIndex) -> IRNode {
+        if let Some(node) = self.arena.get(element) {
+            if let Some(spread) = self.arena.get_spread(node) {
+                return self.expression_to_ir(spread.expression);
+            }
+            if let Some(spread) = self.arena.get_unary_expr_ex(node) {
+                return self.expression_to_ir(spread.expression);
+            }
+        }
+        self.expression_to_ir(element)
     }
 
     fn is_type_erasure_expression(&self, idx: NodeIndex) -> bool {

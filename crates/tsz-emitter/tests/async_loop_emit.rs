@@ -312,3 +312,57 @@ fn for_await_captured_iteration_binding_uses_plain_loop_helper() {
         "The async iterator state machine should call the helper for each awaited result.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_es5_array_spread_before_for_await_uses_spread_array_helper() {
+    let output = emit_es5(
+        "async function f(c: any[]) {
+            [...c];
+            for await (const s of c) {
+                s;
+            }
+        }",
+    );
+
+    let async_values = output.find("var __asyncValues").unwrap_or(usize::MAX);
+    let spread_array = output.find("var __spreadArray").unwrap_or(usize::MAX);
+    assert!(
+        async_values < spread_array,
+        "`__asyncValues` should be declared before `__spreadArray` when both helpers are planned for one async ES5 body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__spreadArray([], c, true);"),
+        "Array spread inside an async ES5 state machine should lower through `__spreadArray`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("[...c]"),
+        "Raw array spread syntax must not survive async ES5 lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_for_await_iterator_names_skip_sync_for_of_temps() {
+    let output = emit_es5(
+        "async function f(c: any[]) {
+            for (const s of c) {
+                s;
+            }
+            for await (const t of c) {
+                t;
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("for (_i = 0, c_1 = c;"),
+        "The preceding sync for-of should reserve the identifier-derived `c_1` temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("c_2 = __asyncValues(c)") && output.contains("c_2_1"),
+        "The following for-await loop should skip to `c_2`/`c_2_1` instead of colliding with `c_1`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("c_1 = __asyncValues(c)"),
+        "For-await iterator setup must not reuse the sync for-of temp name.\nOutput:\n{output}"
+    );
+}

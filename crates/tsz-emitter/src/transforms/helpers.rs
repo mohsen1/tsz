@@ -490,7 +490,22 @@ impl HelpersNeeded {
 
     pub fn mark_async_values(&mut self) {
         self.async_values = true;
-        self.remember_unprioritized(HelperEmitOrder::AsyncValues);
+        if self
+            .unprioritized_order
+            .contains(&HelperEmitOrder::AsyncValues)
+        {
+            return;
+        }
+        if let Some(spread_pos) = self
+            .unprioritized_order
+            .iter()
+            .position(|helper| *helper == HelperEmitOrder::SpreadArray)
+        {
+            self.unprioritized_order
+                .insert(spread_pos, HelperEmitOrder::AsyncValues);
+        } else {
+            self.unprioritized_order.push(HelperEmitOrder::AsyncValues);
+        }
     }
 
     pub fn mark_class_private_field_get(&mut self) {
@@ -1427,6 +1442,22 @@ mod tests {
         let i_spread = find_helper(&output, "__spreadArray");
         assert!(i_read < i_spread);
         assert_eq!(helpers.needed_names(), vec!["__read", "__spreadArray"]);
+    }
+
+    #[test]
+    fn emit_helpers_async_values_precedes_spread_array_when_requested_after_spread() {
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_spread_array();
+        helpers.mark_async_values();
+
+        let output = emit_helpers(&helpers);
+        let i_async_values = find_helper(&output, "__asyncValues");
+        let i_spread = find_helper(&output, "__spreadArray");
+        assert!(i_async_values < i_spread);
+        assert_eq!(
+            helpers.needed_names(),
+            vec!["__asyncValues", "__spreadArray"]
+        );
     }
 
     #[test]
