@@ -71,6 +71,7 @@ fn binary_instanceof_symbol_hasinstance_relations_use_relation_outcomes() {
         "pub(super) fn check_instanceof_operator(",
         "\n    /// Validate that the left operand of `in`",
     );
+    let compact_body = compact(body);
 
     assert_eq!(
         body.matches("assign_relation_outcome(").count(),
@@ -89,6 +90,14 @@ fn binary_instanceof_symbol_hasinstance_relations_use_relation_outcomes() {
         !body.contains("is_assignable_to(ret, TypeId::BOOLEAN)")
             && !body.contains("is_assignable_to(lhs_type, param_type)"),
         "`instanceof` Symbol.hasInstance checks should not use raw boolean assignability gates"
+    );
+    assert!(
+        compact_body.contains("diagnostic_relation_outcome(src,tgt).related"),
+        "`instanceof` RHS Function compatibility callback should route through a relation outcome"
+    );
+    assert!(
+        !compact_body.contains("|src,tgt|self.is_assignable_to(src,tgt)"),
+        "`instanceof` RHS Function compatibility callback should not call raw boolean assignability"
     );
 }
 

@@ -1344,7 +1344,7 @@ impl<'a> CheckerState<'a> {
                 is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
                     eval_right,
                     func_ty,
-                    &mut |src, tgt| self.is_assignable_to(src, tgt),
+                    &mut |src, tgt| self.diagnostic_relation_outcome(src, tgt).related,
                 );
             } else if self.ctx.compiler_options.no_lib {
                 // Under `--noLib`, the global `Function` type is deliberately
