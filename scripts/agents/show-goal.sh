@@ -109,6 +109,7 @@ const path = require("path");
 
 const bool = (value) => value === "true";
 const report = {
+  ok: true,
   generated_by: "scripts/agents/show-goal.sh",
   agent: process.env.AGENT,
   repo: process.env.ROOT,
