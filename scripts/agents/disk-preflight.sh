@@ -59,9 +59,28 @@ case "$AGENT" in
 esac
 
 ROOT="$(git rev-parse --show-toplevel)"
+GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+GIT_HEAD_SHORT="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+GIT_BRANCH="$(git -C "$ROOT" branch --show-current)"
+GIT_DETACHED=false
+if [[ -z "$GIT_BRANCH" ]]; then
+  GIT_BRANCH="detached:$GIT_HEAD_SHORT"
+  GIT_DETACHED=true
+fi
+GIT_UPSTREAM="$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
 
 echo "agent=$AGENT"
 echo "repo=$ROOT"
+echo ""
+echo "== current git state =="
+echo "git_head=$GIT_HEAD"
+echo "git_branch=$GIT_BRANCH"
+echo "git_detached=$GIT_DETACHED"
+if [[ -n "$GIT_UPSTREAM" ]]; then
+  echo "git_upstream=$GIT_UPSTREAM"
+else
+  echo "git_upstream=none"
+fi
 echo ""
 echo "== disk guard =="
 GUARD_OUTPUT="$("$ROOT/scripts/setup/disk-worktree-guard.sh")"
@@ -278,6 +297,10 @@ fi
 if [[ -n "$JSON_REPORT" ]]; then
   AGENT="$AGENT" \
   ROOT="$ROOT" \
+  GIT_HEAD="$GIT_HEAD" \
+  GIT_BRANCH="$GIT_BRANCH" \
+  GIT_DETACHED="$GIT_DETACHED" \
+  GIT_UPSTREAM="$GIT_UPSTREAM" \
   GUARD_OUTPUT="$GUARD_OUTPUT" \
   TYPESCRIPT_STATE="$TYPESCRIPT_STATE" \
   TYPESCRIPT_TARGET="$TYPESCRIPT_TARGET" \
@@ -364,6 +387,12 @@ const report = {
   disk_preflight_status: diskOk ? "pass" : "fail",
   agent: process.env.AGENT,
   repo: process.env.ROOT,
+  git_context: {
+    head: process.env.GIT_HEAD,
+    branch: process.env.GIT_BRANCH,
+    detached: bool(process.env.GIT_DETACHED),
+    upstream: process.env.GIT_UPSTREAM || null,
+  },
   disk_guard: {
     ...guard,
     ok: diskOk,

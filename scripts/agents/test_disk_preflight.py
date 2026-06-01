@@ -76,6 +76,7 @@ class DiskPreflightTests(unittest.TestCase):
             result = self.run_preflight(fake_repo, fake_script)
 
             self.assertIn("agent=Studio-F", result.stdout)
+            self.assertIn("git_detached=false", result.stdout)
             self.assertIn("typescript=populated-local-submodule", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
             self.assertRegex(result.stdout, r"target=present size_kb=\d+")
@@ -117,6 +118,13 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertEqual("pass", report["disk_preflight_status"])
             self.assertEqual("Studio-F", report["agent"])
             self.assertEqual(str(fake_repo), report["repo"])
+            self.assertEqual(
+                self.run_git(["rev-parse", "HEAD"], fake_repo).stdout.strip(),
+                report["git_context"]["head"],
+            )
+            self.assertFalse(report["git_context"]["detached"])
+            self.assertTrue(report["git_context"]["branch"])
+            self.assertIsNone(report["git_context"]["upstream"])
             self.assertEqual("populated-local-submodule", report["typescript"]["state"])
             self.assertEqual(
                 {"path": str(fake_repo), "state": "ts-populated"},
@@ -187,6 +195,8 @@ class DiskPreflightTests(unittest.TestCase):
 
             result = self.run_preflight(linked_worktree, linked_script)
 
+            self.assertIn("git_detached=true", result.stdout)
+            self.assertRegex(result.stdout, r"git_branch=detached:[0-9a-f]+")
             self.assertIn("typescript=missing", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
             self.assertIn("hint=run scripts/setup/link-ts-submodule.sh", result.stdout)
