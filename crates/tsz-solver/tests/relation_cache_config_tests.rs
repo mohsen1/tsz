@@ -307,14 +307,14 @@ fn any_propagation_mode_differences_produce_distinct_keys() {
             let ka = RelationCacheKey::for_subtype(
                 TypeId::STRING,
                 TypeId::NUMBER,
-                RelationPolicy::from_relation_flags(RelationFlags::empty())
+                RelationPolicy::unflagged_compatibility()
                     .cache_config()
                     .with_any_mode(a),
             );
             let kb = RelationCacheKey::for_subtype(
                 TypeId::STRING,
                 TypeId::NUMBER,
-                RelationPolicy::from_relation_flags(RelationFlags::empty())
+                RelationPolicy::unflagged_compatibility()
                     .cache_config()
                     .with_any_mode(b),
             );
@@ -902,7 +902,7 @@ fn in_callback_param_check_partitions_cache_entries() {
     assert_subtype_partitions(
         "in_callback_param_check",
         RelationPolicy::from_relation_flags(RelationFlags::IN_CALLBACK_PARAM_CHECK),
-        RelationPolicy::from_relation_flags(RelationFlags::empty()),
+        RelationPolicy::unflagged_compatibility(),
     );
 }
 
@@ -913,7 +913,7 @@ fn strict_readonly_identity_partitions_cache_entries() {
     assert_subtype_partitions(
         "strict_readonly_identity",
         RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY),
-        RelationPolicy::from_relation_flags(RelationFlags::empty()),
+        RelationPolicy::unflagged_compatibility(),
     );
 }
 
@@ -925,7 +925,7 @@ fn subtype_cache_strict_readonly_identity_policy_matches_uncached_relation_query
     let source = interner.object(vec![PropertyInfo::readonly(prop, TypeId::NUMBER)]);
     let target = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
 
-    let ordinary = RelationPolicy::from_relation_flags(RelationFlags::empty());
+    let ordinary = RelationPolicy::unflagged_compatibility();
     let strict_readonly =
         RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY);
     let ordinary_key = RelationCacheKey::for_subtype(source, target, ordinary.cache_config());

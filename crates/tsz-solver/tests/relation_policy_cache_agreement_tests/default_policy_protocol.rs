@@ -22,3 +22,13 @@ fn default_relation_policy_paths_do_not_spell_packed_zero_flags() {
         );
     }
 }
+
+#[test]
+fn default_relation_cache_config_tests_do_not_spell_empty_relation_flags() {
+    let source = include_str!("../relation_cache_config_tests.rs");
+
+    assert!(
+        !source.contains("RelationPolicy::from_relation_flags(RelationFlags::empty())"),
+        "relation_cache_config_tests.rs must use RelationPolicy::unflagged_compatibility() for no-flags compatibility policies",
+    );
+}
