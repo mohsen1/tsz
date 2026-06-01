@@ -732,13 +732,9 @@ impl<'a> CheckerState<'a> {
             opts.special_attr_component_type.or(opts.component_type);
         let empty_attrs_with_children_injected_props = outcome.provided_attrs.is_empty()
             && self.strip_jsx_children_injection_for_display(ctx.props_type) != ctx.props_type;
-        let intrinsic_empty_attrs_iterator_artifacts = opts.component_type.is_none()
-            && opts.special_attr_component_type.is_none()
-            && outcome.provided_attrs.is_empty()
-            && self.jsx_required_props_are_only_iterator_protocol_artifacts(ctx.props_type);
 
-        let class_has_missing_required_props = !intrinsic_empty_attrs_iterator_artifacts
-            && self.jsx_has_missing_required_props(ctx.props_type, &outcome.provided_attrs);
+        let class_has_missing_required_props =
+            self.jsx_has_missing_required_props(ctx.props_type, &outcome.provided_attrs);
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !outcome.has_excess_property_error
@@ -923,7 +919,6 @@ impl<'a> CheckerState<'a> {
             && !outcome.spread_covers_all
             && !ctx.skip_prop_checks
             && !outcome.has_prop_type_error
-            && !intrinsic_empty_attrs_iterator_artifacts
         {
             self.check_missing_required_jsx_props(
                 ctx.props_type,
