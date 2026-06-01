@@ -509,9 +509,19 @@ impl<'a> DeclarationEmitter<'a> {
                 });
 
             if is_empty_body {
-                // tsc uses single-line `{ }` for empty namespaces nested inside
-                // another declare namespace, but multi-line `{\n}` for top-level.
-                if self.inside_declare_namespace && !use_module_keyword {
+                // tsc uses single-line `{ }` for empty identifier-namespaces that are
+                // directly nested inside a `declare namespace X` body.
+                // In all other positions — top-level, inside `declare module "..."`, and
+                // non-ambient source namespaces — tsc uses the multi-line `{\n}` form.
+                //
+                // `current_ambient_module_specifier` being `Some(_)` indicates we are
+                // inside a string-literal ambient module; that context requires multiline.
+                // `inside_declare_namespace && !use_module_keyword` identifies the
+                // ambient-identifier-namespace nesting case that requires single-line.
+                let in_ambient_identifier_namespace = self.inside_declare_namespace
+                    && !use_module_keyword
+                    && self.current_ambient_module_specifier.is_none();
+                if in_ambient_identifier_namespace {
                     self.write(" { }");
                     self.write_line();
                 } else {
