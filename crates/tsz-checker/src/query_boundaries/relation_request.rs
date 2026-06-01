@@ -43,6 +43,8 @@ pub(crate) enum RelationKind {
     ExplicitAliasConstraint,
     /// Array-like generic constraint element compatibility probes.
     ArrayLikeConstraintElement,
+    /// Merged-interface sibling constraint compatibility probes.
+    MergedInterfaceConstraint,
     /// Generic constraint diagnostic property compatibility probes.
     GenericConstraintProperty,
     /// Source property-name literal compatibility against an index key type.
@@ -256,6 +258,10 @@ impl RelationRequest {
 
     pub(crate) const fn array_like_constraint_element(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ArrayLikeConstraintElement)
+    }
+
+    pub(crate) const fn merged_interface_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::MergedInterfaceConstraint)
     }
 
     pub(crate) const fn generic_constraint_property(source: TypeId, target: TypeId) -> Self {
