@@ -1,6 +1,7 @@
 //! Tests for overload modifier agreement: TS2383, TS2385, TS2386, TS2394.
 
 use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
+use tsz_checker::test_utils::check_source_diagnostics;
 
 fn has_error(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
@@ -535,4 +536,81 @@ a = b;
 b = a;
 "#;
     assert!(has_error(source, 2322));
+}
+
+// TS2394: error must be anchored at the incompatible overload, not the implementation.
+//
+// tsc always places TS2394 on the overload signature's name, never on the implementation.
+// tsz had a fallback that would anchor the error at impl_node_idx when the cross-file
+// span for an overload could not be determined; that fallback is now suppressed.
+
+#[test]
+fn ts2394_error_anchors_at_overload_name_not_implementation() {
+    // "function f(x: string): void;" — overload name "f" is at byte 9
+    // "function f(x: number): void {}" — impl name "f" is at byte 39 (after newline at 29)
+    let source = "function f(x: string): void;\nfunction f(x: number): void {}\n";
+    let diags = check_source_diagnostics(source);
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2394).collect();
+    assert!(
+        !errors.is_empty(),
+        "Expected TS2394 for incompatible overload/impl pair"
+    );
+    for e in &errors {
+        assert!(
+            e.start < 30,
+            "TS2394 at start={}: should be anchored at the overload (line 1, before byte 30), not the implementation",
+            e.start
+        );
+    }
+}
+
+#[test]
+fn ts2394_error_anchors_at_overload_varied_param_names() {
+    // Varied param names prove the fix is not tied to a specific spelling.
+    // "function process(input: string): void;" — overload name at byte 9, line ends at byte 38
+    // "function process(input: number): void {}" — impl starts at byte 39
+    let source =
+        "function process(input: string): void;\nfunction process(input: number): void {}\n";
+    let diags = check_source_diagnostics(source);
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2394).collect();
+    assert!(
+        !errors.is_empty(),
+        "Expected TS2394 for incompatible overload/impl pair"
+    );
+    for e in &errors {
+        assert!(
+            e.start < 39,
+            "TS2394 at start={}: should be anchored at the overload (line 1, before byte 39), not the implementation",
+            e.start
+        );
+    }
+}
+
+#[test]
+fn ts2394_method_overload_error_anchors_at_overload_not_impl() {
+    // Class method overload: same invariant — error at the overload name, not the impl.
+    let source = r#"class C {
+    m(x: string): void;
+    m(x: number): void {}
+}"#;
+    // "m" overload is on line 2; impl is on line 3. Overload "m" position < impl "m" position.
+    let diags = check_source_diagnostics(source);
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2394).collect();
+    assert!(
+        !errors.is_empty(),
+        "Expected TS2394 for incompatible class method overload/impl pair"
+    );
+    // Overload "m" is at "    m(x: string): void;\n" — starts around byte 14.
+    // Impl "m" is after that. Just verify the error isn't past the overload's line.
+    // Source: "class C {\n    m(x: string): void;\n    m(x: number): void {}\n}"
+    //   Line 1 ends at: 10 + 24 = 34 chars (with newline).
+    //   Line 2 starts at: 35. Impl "m" is near byte 39.
+    // Check that error is on the overload line (< 35).
+    for e in &errors {
+        assert!(
+            e.start < 35,
+            "TS2394 at start={}: should be anchored at the class method overload, not the impl",
+            e.start
+        );
+    }
 }

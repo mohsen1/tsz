@@ -746,13 +746,11 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                             diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                         );
-                    } else {
-                        self.error_at_node(
-                            impl_node_idx,
-                            diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                            diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                        );
                     }
+                    // If cross_file_span is None, the overload's source position could not be
+                    // determined (e.g. the arena has no source file, or this is a synthesized
+                    // declaration). TS2394 must be anchored at the overload, not the
+                    // implementation — so we suppress the diagnostic rather than misanchor it.
                 }
                 // TSC only reports the first incompatible overload per function.
                 break;
