@@ -87,3 +87,72 @@ fn relation_policy_cache_relation_kind_partitions_assignability_and_subtype() {
         "assignability slot must remain intact after the subtype lookup",
     );
 }
+
+#[test]
+fn redeclaration_identity_relation_does_not_reuse_assignability_cache_slot() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::default();
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+    let source = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+    let target = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let assignability_key =
+        RelationCacheKey::for_assignability(source, target, policy.cache_config());
+    let identical_key = RelationCacheKey::for_identical(source, target, policy.cache_config());
+
+    assert_ne!(
+        assignability_key, identical_key,
+        "redeclaration identity and assignability must occupy distinct relation cache keys",
+    );
+
+    let assignability_cached = db.is_assignable_to_with_policy(source, target, policy);
+    assert!(
+        assignability_cached,
+        "ordinary structural assignability should allow extra source properties",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        Some(assignability_cached),
+        "ordinary assignability should populate the assignability cache slot",
+    );
+
+    let redeclaration_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let redeclaration_with_cache_context = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext {
+            query_db: Some(&db),
+            ..RelationContext::default()
+        },
+    )
+    .is_related();
+
+    assert!(
+        !redeclaration_uncached,
+        "redeclaration identity must reject structurally assignable but non-identical object types",
+    );
+    assert_eq!(
+        redeclaration_with_cache_context, redeclaration_uncached,
+        "redeclaration identity with a query cache context must match uncached identity semantics",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        Some(assignability_cached),
+        "redeclaration identity must not overwrite or consume the ordinary assignability slot",
+    );
+}
