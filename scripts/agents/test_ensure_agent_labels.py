@@ -140,7 +140,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "fix: missing label",
                     "isDraft": False,
                     "labels": [],
-                    "body": "AgentName: Studio-F",
+                    "body": "AgentName: `Studio-F`",
                     "url": "https://github.com/mohsen1/tsz/pull/3",
                 }
             ]
@@ -155,6 +155,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
             output,
         )
+        self.assertIn("AgentName=Studio-F", output)
 
     def test_strict_audit_fails_on_actionable_findings(self):
         result = self.run_audit_result(
@@ -343,7 +344,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "title": "fix: missing owner",
                         "isDraft": False,
                         "labels": [],
-                        "body": "AgentName: Studio-F",
+                        "body": "AgentName: `Studio-F`",
                         "url": "https://github.com/mohsen1/tsz/pull/30",
                     },
                     {
@@ -381,6 +382,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "number": 30,
                     "title": "fix: missing owner",
                     "url": "https://github.com/mohsen1/tsz/pull/30",
+                    "agent_name": "Studio-F",
                 }
             ],
             report["open_prs_missing_agent_label"],

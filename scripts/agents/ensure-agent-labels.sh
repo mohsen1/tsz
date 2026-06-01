@@ -267,6 +267,14 @@ const summarizeWorkItem = (item) => ({
   title: item.title,
   url: item.url ?? null,
 });
+const prAgentName = (pr) => {
+  const match = /^AgentName:[^\S\r\n]*(\S+)?/m.exec(pr.body ?? "");
+  return match?.[1]?.replace(/^`+|`+$/g, "") ?? null;
+};
+const summarizeMissingPrWorkItem = (item) => ({
+  ...summarizeWorkItem(item),
+  agent_name: prAgentName(item),
+});
 const summarizePrWorkItem = (item) => ({
   ...summarizeWorkItem(item),
   is_draft: item.isDraft === true,
@@ -291,7 +299,7 @@ if (process.env.JSON_REPORT) {
     metrics,
     missing_canonical_labels: missingCanonicalLabels,
     noncanonical_agent_labels: noncanonicalLabels,
-    open_prs_missing_agent_label: missingPrs.map(summarizeWorkItem),
+    open_prs_missing_agent_label: missingPrs.map(summarizeMissingPrWorkItem),
     open_prs_intentionally_unassigned: intentionallyUnassignedPrs.map(summarizePrWorkItem),
     open_ready_prs_intentionally_unassigned: readyIntentionallyUnassignedPrs.map(
       summarizePrWorkItem,
@@ -312,8 +320,12 @@ if (process.env.JSON_REPORT) {
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
 const prRow = (pr) => `- #${pr.number} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`;
+const missingPrRow = (pr) => {
+  const agentName = prAgentName(pr);
+  return `${prRow(pr)}${agentName ? ` AgentName=${agentName}` : ""}`;
+};
 
-printRows("Open PRs Missing Agent Label", missingPrs, prRow);
+printRows("Open PRs Missing Agent Label", missingPrs, missingPrRow);
 printRows(
   "Open PRs Intentionally Unassigned",
   intentionallyUnassignedPrs,
