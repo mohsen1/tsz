@@ -713,6 +713,17 @@ impl<'a> Printer<'a> {
 
         while i < bytes.len() {
             if bytes[i] == b'\\' {
+                if i + 1 < bytes.len() && matches!(bytes[i + 1], b'\r' | b'\n') {
+                    out.push('\\');
+                    out.push('\n');
+                    i += if bytes[i + 1] == b'\r' && bytes.get(i + 2) == Some(&b'\n') {
+                        3
+                    } else {
+                        2
+                    };
+                    continue;
+                }
+
                 if i + 2 < bytes.len() && bytes[i + 1] == b'u' && bytes[i + 2] == b'{' {
                     let mut j = i + 3;
                     while j < bytes.len() && bytes[j] != b'}' {
@@ -1518,6 +1529,34 @@ const separatedHex = 0x0_ABCDEFn;
             output.contains("line 1"),
             "Output should contain the string literal.\nGot: {output}"
         );
+    }
+
+    /// ES5 string-literal downleveling still preserves source line
+    /// continuations as continuations. Normalize the source line ending to LF,
+    /// matching `tsc`, instead of escaping the CR/LF bytes into the string.
+    #[test]
+    fn es5_string_literal_line_continuations_stay_continuations() {
+        use tsz_common::ScriptTarget;
+        let cases = [
+            ("var x = \"a\\\r\nb\";", "\"a\\\nb\""),
+            ("var x = 'a\\\nb';", "'a\\\nb'"),
+            ("var x = \"a\\\rb\";", "\"a\\\nb\""),
+        ];
+        for (source, expected) in cases {
+            let (parser, root) = parse_test_source(source);
+            let opts = PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected),
+                "ES5 line continuation should stay a normalized line continuation.\nSource: {source:?}\nExpected fragment: {expected:?}\nGot: {output:?}"
+            );
+        }
     }
 
     /// When a null codepoint (`\u{0}`) is downleveled to ES5, and the
