@@ -10,18 +10,34 @@ fn call_display_overlap_uses_relation_outcome_boundary() {
         .expect("missing display overlap helper");
     let helper = &source[start..];
 
-    assert_eq!(
-        helper.matches("assign_relation_outcome(").count(),
-        2,
-        "display overlap helper should route both relation directions through assign_relation_outcome"
+    assert!(
+        helper.contains("call_display_overlap_relation_outcome(left, right)")
+            && helper.contains("call_display_overlap_relation_outcome(right, left)"),
+        "display overlap helper should route both relation directions through dedicated relation outcomes"
     );
     assert!(
         helper.matches(".related").count() >= 2,
         "display overlap helper should use relation outcome decisions"
     );
     assert!(
+        !helper.contains("assign_relation_outcome("),
+        "display overlap helper should not use generic assign relation outcomes"
+    );
+    assert!(
         !helper.contains("diagnostic_relation_boolean_guard("),
         "display overlap helper should not regress to raw boolean relation guards"
+    );
+}
+
+#[test]
+fn call_display_overlap_relation_outcome_uses_dedicated_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn call_display_overlap_relation_outcome(")
+            && source.contains("RelationRequest::call_display_overlap("),
+        "call display overlap probes should have a dedicated RelationRequest helper"
     );
 }
 

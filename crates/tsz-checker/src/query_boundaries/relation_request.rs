@@ -67,6 +67,8 @@ pub(crate) enum RelationKind {
     ElementAccessMethodSuggestion,
     /// Call diagnostic elaboration mutual compatibility display probe.
     CallElaborationMutual,
+    /// Call diagnostic display overlap probe.
+    CallDisplayOverlap,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -252,6 +254,10 @@ impl RelationRequest {
 
     pub(crate) const fn call_elaboration_mutual(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallElaborationMutual)
+    }
+
+    pub(crate) const fn call_display_overlap(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::CallDisplayOverlap)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

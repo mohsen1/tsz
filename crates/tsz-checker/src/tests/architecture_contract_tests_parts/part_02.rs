@@ -176,6 +176,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn call_elaboration_mutual",
             "RelationKind::CallElaborationMutual",
         ),
+        (
+            "fn call_display_overlap",
+            "RelationKind::CallDisplayOverlap",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
