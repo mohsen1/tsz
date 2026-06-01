@@ -638,6 +638,47 @@ fn instantiate_generic_cached_is_invariant_to_type_param_renaming() {
 }
 
 #[test]
+fn evaluator_recursive_utility_application_populates_cache() {
+    // End-to-end wiring evidence for issue #10851: route an alias body that
+    // contains the type parameter twice through the actual `TypeEvaluator`
+    // with a `QueryCache` attached. The known-params instantiation path goes
+    // through `instantiate_generic_cached`, which must populate the cross-
+    // call `InstantiationCache`. Guards the wiring at the callsite, not just
+    // the helper in isolation.
+    use crate::def::{DefId, DefKind};
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = object_with_pair(&interner, t_id, t_id);
+
+    let mut env = TypeEnvironment::new();
+    let def_id = DefId(908_510);
+    env.insert_def_with_params(def_id, body, vec![param_info(t_atom)]);
+    env.insert_def_kind(def_id, DefKind::TypeAlias);
+
+    let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+    let qc = QueryCache::new(&interner);
+
+    let stats0 = qc.statistics();
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+    let _ = evaluator.evaluate(app);
+    let stats1 = qc.statistics();
+
+    assert!(
+        stats1.instantiation_cache_entries > stats0.instantiation_cache_entries
+            || stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "evaluator must reach instantiation cache through instantiate_generic_cached \
+         (entries: {} -> {}, misses: {} -> {})",
+        stats0.instantiation_cache_entries,
+        stats1.instantiation_cache_entries,
+        stats0.instantiation_cache_misses,
+        stats1.instantiation_cache_misses,
+    );
+}
+
+#[test]
 fn cache_clear_drops_all_instantiation_entries() {
     // QueryCache::clear() must drop the instantiation cache too.
     let interner = TypeInterner::new();
