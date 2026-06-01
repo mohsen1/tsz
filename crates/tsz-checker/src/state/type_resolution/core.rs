@@ -836,6 +836,36 @@ impl<'a> CheckerState<'a> {
                     self.error_namespace_used_as_type_at(name, type_name_idx);
                     return TypeId::ERROR;
                 }
+                if has_type_args
+                    && let Some(target_sym_id) =
+                        self.resolve_type_only_import_alias_target_symbol(name)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let target_name = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
+                        .map(|symbol| symbol.escaped_name.clone())
+                        .unwrap_or_else(|| name.to_string());
+                    self.ensure_def_ready_for_lowering(target_sym_id, &target_name);
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                    if !self.is_inside_type_parameter_declaration(idx)
+                        && self.validate_type_reference_type_arguments(target_sym_id, args, idx)
+                    {
+                        return TypeId::ERROR;
+                    }
+                    let type_args = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect::<Vec<_>>();
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);
+                    let base = self.ctx.types.factory().lazy(def_id);
+                    return self.ctx.types.factory().application(base, type_args);
+                }
                 // TS2318: Array<T> with noLib should emit "Cannot find global type 'Array'"
                 if is_builtin_array && !has_libs && sym_id.is_none() {
                     self.error_cannot_find_global_type(name, type_name_idx);

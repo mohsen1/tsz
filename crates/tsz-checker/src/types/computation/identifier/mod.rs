@@ -6,6 +6,7 @@
 
 mod constraint_position;
 mod core;
+mod explicit_annotation;
 mod resolution;
 
 #[cfg(test)]
