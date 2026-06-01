@@ -297,6 +297,66 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing property receiver element-display relation
+    /// for raw checker types, preserving the canonical receiver-display request shape.
+    pub(crate) fn property_receiver_element_display_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::property_receiver_element_display(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing property receiver index-value relation for
+    /// raw checker types, preserving the canonical receiver-display request shape.
+    pub(crate) fn property_receiver_index_value_display_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::property_receiver_index_value_display(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing element-access numeric-index relation for
+    /// raw checker types, preserving the canonical TS7015 request shape.
+    pub(crate) fn element_access_number_index_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::element_access_number_index(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing element-access method-suggestion relation
+    /// for raw checker types, preserving the canonical suggestion request shape.
+    pub(crate) fn element_access_method_suggestion_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::element_access_method_suggestion(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

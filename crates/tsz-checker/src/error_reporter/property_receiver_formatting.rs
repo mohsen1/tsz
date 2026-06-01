@@ -70,10 +70,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if !self
-            .assign_relation_outcome(type_id, declared_element_type)
+            .property_receiver_element_display_relation_outcome(type_id, declared_element_type)
             .related
             && !self
-                .assign_relation_outcome(declared_element_type, type_id)
+                .property_receiver_element_display_relation_outcome(declared_element_type, type_id)
                 .related
         {
             return None;
@@ -129,10 +129,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if !self
-            .assign_relation_outcome(actual_type, index_value_type)
+            .property_receiver_index_value_display_relation_outcome(actual_type, index_value_type)
             .related
             && !self
-                .assign_relation_outcome(index_value_type, actual_type)
+                .property_receiver_index_value_display_relation_outcome(
+                    index_value_type,
+                    actual_type,
+                )
                 .related
         {
             return None;

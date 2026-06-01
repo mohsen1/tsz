@@ -156,6 +156,22 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn generic_element_write",
             "RelationKind::GenericElementWrite",
         ),
+        (
+            "fn property_receiver_element_display",
+            "RelationKind::PropertyReceiverElementDisplay",
+        ),
+        (
+            "fn property_receiver_index_value_display",
+            "RelationKind::PropertyReceiverIndexValueDisplay",
+        ),
+        (
+            "fn element_access_number_index",
+            "RelationKind::ElementAccessNumberIndex",
+        ),
+        (
+            "fn element_access_method_suggestion",
+            "RelationKind::ElementAccessMethodSuggestion",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

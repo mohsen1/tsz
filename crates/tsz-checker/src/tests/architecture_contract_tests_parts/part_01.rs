@@ -1815,7 +1815,7 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
         "ComputedEnumMember",
         "TypeParameterDefault",
         "IndexSignature",
-        "DecoratorCallee", "JsdocTypeConstraint", "PropertyIndexKey", "NullishErrorTarget", "DuplicateIdentifier", "VariableInitializer", "ObjectLiteralComputedKey", "ContextualSymbolIndexValue", "InOperatorKey", "InOperatorPrimitiveConstraint", "CompoundAssignment", "GenericElementWrite",
+        "DecoratorCallee", "JsdocTypeConstraint", "PropertyIndexKey", "NullishErrorTarget", "DuplicateIdentifier", "VariableInitializer", "ObjectLiteralComputedKey", "ContextualSymbolIndexValue", "InOperatorKey", "InOperatorPrimitiveConstraint", "CompoundAssignment", "GenericElementWrite", "PropertyReceiverElementDisplay", "PropertyReceiverIndexValueDisplay", "ElementAccessNumberIndex", "ElementAccessMethodSuggestion",
         "Satisfies",
     ] {
         assert!(

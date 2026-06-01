@@ -57,6 +57,14 @@ pub(crate) enum RelationKind {
     CompoundAssignment,
     /// Deferred generic element-write compatibility against the write target.
     GenericElementWrite,
+    /// Element-access receiver display compatibility against declared element type.
+    PropertyReceiverElementDisplay,
+    /// Element-access receiver display compatibility against declared index value type.
+    PropertyReceiverIndexValueDisplay,
+    /// Element-access numeric index compatibility for TS7015.
+    ElementAccessNumberIndex,
+    /// Element-access method suggestion index compatibility.
+    ElementAccessMethodSuggestion,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -215,6 +223,29 @@ impl RelationRequest {
 
     pub(crate) const fn generic_element_write(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::GenericElementWrite)
+    }
+
+    pub(crate) const fn property_receiver_element_display(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::PropertyReceiverElementDisplay)
+    }
+
+    pub(crate) const fn property_receiver_index_value_display(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::PropertyReceiverIndexValueDisplay,
+        )
+    }
+
+    pub(crate) const fn element_access_number_index(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ElementAccessNumberIndex)
+    }
+
+    pub(crate) const fn element_access_method_suggestion(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ElementAccessMethodSuggestion)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
