@@ -12,6 +12,10 @@ fn call_error_object_and_array_elaboration_use_request_shaped_relations() {
         .split("/// Elaborate array literal element mismatches for variable declarations.")
         .next()
         .expect("missing call argument elaboration prefix");
+    let variable_initializer_elaboration = object_source
+        .split("/// Elaborate array literal element mismatches for variable declarations.")
+        .nth(1)
+        .expect("missing variable initializer elaboration suffix");
 
     assert!(
         call_arg_elaboration
@@ -27,6 +31,15 @@ fn call_error_object_and_array_elaboration_use_request_shaped_relations() {
     assert!(
         !call_arg_elaboration.contains("assign_relation_outcome("),
         "call argument elaboration should not regress to generic assign relation outcomes"
+    );
+    assert!(
+        variable_initializer_elaboration
+            .contains("variable_initializer_relation_outcome(init_type, declared_type)"),
+        "variable initializer array elaboration should route the whole-initializer gate through variable_initializer_relation_outcome"
+    );
+    assert!(
+        !variable_initializer_elaboration.contains("assign_relation_outcome("),
+        "variable initializer array elaboration should not regress to generic assign relation outcomes"
     );
 
     let array_source = fs::read_to_string(

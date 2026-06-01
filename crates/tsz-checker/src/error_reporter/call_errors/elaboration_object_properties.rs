@@ -1744,7 +1744,7 @@ impl<'a> CheckerState<'a> {
 
         // Only elaborate when the overall assignment fails.
         if self
-            .assign_relation_outcome(init_type, declared_type)
+            .variable_initializer_relation_outcome(init_type, declared_type)
             .related
         {
             return false;
