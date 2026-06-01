@@ -45,6 +45,8 @@ pub(crate) enum RelationKind {
     DuplicateIdentifier,
     /// Variable initializer compatibility probes for TS2322 elaboration paths.
     VariableInitializer,
+    /// Diagnostic-source narrowing display probes.
+    DiagnosticSourceNarrowing,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
@@ -209,6 +211,10 @@ impl RelationRequest {
 
     pub(crate) const fn variable_initializer(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::VariableInitializer)
+    }
+
+    pub(crate) const fn diagnostic_source_narrowing(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::DiagnosticSourceNarrowing)
     }
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {

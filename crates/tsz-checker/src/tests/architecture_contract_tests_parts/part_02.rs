@@ -139,6 +139,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "RelationKind::VariableInitializer",
         ),
         (
+            "fn diagnostic_source_narrowing",
+            "RelationKind::DiagnosticSourceNarrowing",
+        ),
+        (
             "fn object_literal_computed_key",
             "RelationKind::ObjectLiteralComputedKey",
         ),
