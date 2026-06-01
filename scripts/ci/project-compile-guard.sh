@@ -14,6 +14,7 @@ PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-required}"
 ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
 PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE_ROOT/project-compatibility.jsonl}"
 PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
+RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_RESULT_CACHE_DIR:-$FIXTURE_ROOT/.result-cache}"
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
 TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=0
@@ -77,7 +78,17 @@ if [[ ! -x "$TSZ_BIN" ]]; then
   exit 1
 fi
 
+# Stable sha256 hash of a file (Linux sha256sum / macOS shasum).
+sha256_of_file() {
+  sha256sum "$1" 2>/dev/null | awk '{print $1}' \
+    || shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || true
+}
+
+# Compute tsz binary hash once at startup for all per-project fingerprints.
+_TSZ_BINARY_HASH="$(sha256_of_file "$TSZ_BIN")"
+
 mkdir -p "$FIXTURE_ROOT"
+mkdir -p "$RESULT_CACHE_DIR"
 validate_project_compatibility_artifact_paths
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
@@ -474,18 +485,106 @@ check_type_challenges_solutions_tsc_oracle() {
   return 0
 }
 
+# Atomically writes a compile result to the result cache (tmp-then-rename).
+# The fingerprint is stored inside the file so stale entries self-prune on the
+# next read rather than accumulating one file per fingerprint per project.
+# write_compile_cache <fp> <rc> <file_count> <exit_class> <diagnostic_delta> <cache_file>
+write_compile_cache() {
+  local _fp="$1" _rc="$2" _files="$3" _class="$4" _delta="$5" _cf="$6"
+  { printf 'FINGERPRINT=%s\nRC=%s\nFILES=%s\nCLASS=%s\nDELTA_START\n' \
+      "$_fp" "$_rc" "$_files" "$_class"
+    printf '%s' "$_delta"; } \
+    > "${_cf}.tmp" 2>/dev/null \
+    && mv "${_cf}.tmp" "$_cf" 2>/dev/null || true
+}
+
+# Fingerprint for a check_project invocation.
+# Key: tsz binary hash (computed once at startup) + tsconfig content + fixture git HEAD.
+# Returns empty on failure — callers treat empty as "caching unavailable".
+compute_compile_fingerprint() {
+  local name="$1" tsconfig="$2"
+  # The key is composed of fixed-length hashes — no need to hash it again.
+  # Return empty if critical components are missing so callers disable caching.
+  [[ -z "$_TSZ_BINARY_HASH" ]] && return
+  local tsconfig_hash=""
+  [[ -f "$tsconfig" ]] && tsconfig_hash="$(sha256_of_file "$tsconfig")"
+  [[ -f "$tsconfig" && -z "$tsconfig_hash" ]] && return
+  # git -C already performs the upward .git search, handles worktrees (.git files),
+  # and returns empty (non-zero exit suppressed) when outside any repo.
+  local git_ref=""
+  git_ref="$(git -C "$(dirname "$tsconfig")" rev-parse HEAD 2>/dev/null || true)"
+  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${tsconfig_hash}|${git_ref}"
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
   local src_dir="${3:-$(dirname "$tsconfig")}"
   local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
+
+  # Result cache: skip recompilation when tsz binary, tsconfig content, and
+  # fixture git HEAD are all unchanged from a prior run. The cache file is named
+  # per-project; the stored fingerprint is validated on read so stale entries are
+  # overwritten rather than accumulated. Disable with TSZ_PROJECT_COMPILE_RESULT_CACHE=0.
+  local _fp="" _cache_file=""
+  if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-1}" == "1" ]]; then
+    _fp="$(compute_compile_fingerprint "$name" "$tsconfig" 2>/dev/null || true)"
+    [[ -n "$_fp" ]] && _cache_file="$RESULT_CACHE_DIR/${name}"
+  fi
+
+  if [[ -n "$_cache_file" && -f "$_cache_file" ]]; then
+    local _cached_fp="" _cached_rc="" _cached_files="" _cached_class="" _cached_delta="" _in_delta=0
+    local _line
+    while IFS= read -r _line; do
+      if [[ "$_in_delta" == "1" ]]; then
+        _cached_delta="${_cached_delta}${_line}"$'\n'
+      else
+        case "$_line" in
+          FINGERPRINT=*)
+            _cached_fp="${_line#FINGERPRINT=}"
+            # Bail early on mismatch — avoids reading the full delta body.
+            [[ "$_cached_fp" != "$_fp" ]] && break
+            ;;
+          RC=*)          _cached_rc="${_line#RC=}" ;;
+          FILES=*)       _cached_files="${_line#FILES=}" ;;
+          CLASS=*)       _cached_class="${_line#CLASS=}" ;;
+          DELTA_START)   _in_delta=1 ;;
+        esac
+      fi
+    done < "$_cache_file"
+    if [[ "$_cached_fp" == "$_fp" ]]; then
+      echo "::group::${name}"
+      echo "(result cache hit: ${_fp:0:12})"
+      if [[ "${_cached_rc:-1}" -ne 0 ]]; then
+        FAILURES=$((FAILURES + 1))
+        record_project_compatibility \
+          "$name" "${_cached_class:-nonzero exit}" "check" \
+          "$(project_failure_status "${_cached_class:-nonzero exit}")" \
+          "${_cached_delta:-}" "${_cached_files:-0}" "" \
+          "${_cached_rc:-1}" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+        echo "error: ${name} failed (cached result)" >&2
+        echo "::endgroup::"
+        if [[ "$ALLOW_FAILURES" == "1" ]]; then
+          echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+        fi
+      else
+        record_project_compatibility "$name" "exit success" "check" "none" "" \
+          "${_cached_files:-0}" "" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+        echo "${name} compiled successfully."
+        echo "::endgroup::"
+      fi
+      return 0
+    fi
+  fi
+
+  # Only reached on cache miss — avoid running find on cache hits.
   local file_count
   file_count="$(count_ts_files "$src_dir")"
 
   echo "::group::${name}"
   echo "Running: $TSZ_BIN --noEmit -p $tsconfig"
-  local rc=0
+  local rc=0 exit_class="" diagnostic_delta=""
   run_with_timeout "$PROJECT_TIMEOUT" \
     env \
       TSZ_USE_EMBEDDED_LIBS=1 \
@@ -494,8 +593,6 @@ check_project() {
 
   if [[ "$rc" -ne 0 ]]; then
     FAILURES=$((FAILURES + 1))
-    local exit_class
-    local diagnostic_delta
     exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
     diagnostic_delta="$(diagnostic_lines_from_file "tsz" "$log")"
     record_project_compatibility \
@@ -520,12 +617,14 @@ check_project() {
     if [[ "$ALLOW_FAILURES" == "1" ]]; then
       echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
     fi
-    return 0
+  else
+    record_project_compatibility "$name" "exit success" "check" "none" "" \
+      "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+    echo "${name} compiled successfully."
+    echo "::endgroup::"
   fi
-
-  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
-  echo "${name} compiled successfully."
-  echo "::endgroup::"
+  [[ -n "$_cache_file" ]] && \
+    write_compile_cache "$_fp" "$rc" "$file_count" "$exit_class" "$diagnostic_delta" "$_cache_file"
 }
 
 should_check_project() {
