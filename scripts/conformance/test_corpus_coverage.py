@@ -36,7 +36,7 @@ def has_skip_directive(path: Path) -> bool:
         key, value = directive[1:].split(":", 1)
         options[key.strip().lower()] = value.strip()
 
-    return "skip" in options or options.get("nocheck") == "true"
+    return "skip" in options
 
 
 def discover_expected_cache_keys():
@@ -66,6 +66,10 @@ class ConformanceCorpusCoverageTests(unittest.TestCase):
             "appledouble",
             skipped_conformance_cache_reason("compiler/._stray.ts"),
         )
+
+    def test_no_check_directive_does_not_skip_conformance_cache_entries(self):
+        with self.subTest("noCheck is a compiler option, not a harness skip"):
+            self.assertFalse(has_skip_directive(TEST_CASES_PATH / "compiler/noCheckNoEmit.ts"))
 
     def test_checked_in_tsc_cache_has_no_known_unrunnable_entries(self):
         cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))

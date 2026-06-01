@@ -62,6 +62,7 @@ from lib.conformance_query import (
 )
 
 DEFAULT_TSC_CACHE_PATH = Path(__file__).with_name("tsc-cache-full.json")
+DEFAULT_BASELINE_PATH = Path(__file__).with_name("conformance-baseline.txt")
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
@@ -368,7 +369,7 @@ def build_campaign_result(data, name):
 # =============================================================================
 
 
-def load_tsc_cache_test_total(path=DEFAULT_TSC_CACHE_PATH):
+def load_tsc_cache(path=DEFAULT_TSC_CACHE_PATH):
     cache_path = Path(path)
     if not cache_path.exists():
         return None
@@ -376,10 +377,51 @@ def load_tsc_cache_test_total(path=DEFAULT_TSC_CACHE_PATH):
         cache = json.load(f)
     if not isinstance(cache, dict):
         return None
+    return cache
+
+
+def load_tsc_cache_test_total(path=DEFAULT_TSC_CACHE_PATH):
+    cache = load_tsc_cache(path)
+    if cache is None:
+        return None
     return len(cache)
 
 
-def show_snapshot_freshness(data, tsc_cache_path=DEFAULT_TSC_CACHE_PATH):
+def normalize_tsc_cache_path(path):
+    return f"TypeScript/tests/cases/{path}"
+
+
+def load_baseline_test_paths(path=DEFAULT_BASELINE_PATH):
+    baseline_path = Path(path)
+    if not baseline_path.exists():
+        return None
+
+    paths = set()
+    for line in baseline_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[0] in {"PASS", "FAIL", "XFAIL", "CRASH", "TIMEOUT"}:
+            paths.add(parts[1])
+    return paths
+
+
+def missing_tsc_cache_test_paths(
+    tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+    baseline_path=DEFAULT_BASELINE_PATH,
+):
+    cache = load_tsc_cache(tsc_cache_path)
+    baseline_paths = load_baseline_test_paths(baseline_path)
+    if cache is None or baseline_paths is None:
+        return []
+
+    cache_paths = {normalize_tsc_cache_path(path) for path in cache}
+    return sorted(cache_paths - baseline_paths)
+
+
+def show_snapshot_freshness(
+    data,
+    tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+    baseline_path=DEFAULT_BASELINE_PATH,
+):
     snapshot_total = int(data["summary"].get("total", 0))
     current_total = load_tsc_cache_test_total(tsc_cache_path)
     if current_total is None or current_total == snapshot_total:
@@ -391,6 +433,13 @@ def show_snapshot_freshness(data, tsc_cache_path=DEFAULT_TSC_CACHE_PATH):
         f"covers {snapshot_total} tests, but the pinned TypeScript cache has "
         f"{current_total} tests (delta {delta:+d})."
     )
+    missing_paths = missing_tsc_cache_test_paths(tsc_cache_path, baseline_path)
+    if missing_paths:
+        print("  Missing checked-detail tests from pinned cache:")
+        for path in missing_paths[:10]:
+            print(f"    - {path}")
+        if len(missing_paths) > 10:
+            print(f"    ... and {len(missing_paths) - 10} more")
     print("  Refresh conformance-detail.json before citing this dashboard as current public truth.")
 
 
@@ -398,6 +447,7 @@ def show_dashboard(
     data,
     accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_PATH,
     tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+    baseline_path=DEFAULT_BASELINE_PATH,
 ):
     """Show the KPI dashboard that replaces overall conformance % as the daily signal."""
     s = data["summary"]
@@ -412,7 +462,7 @@ def show_dashboard(
     accepted_count = len(accepted["entries"])
     accepted_state = "missing" if not accepted["exists"] else f"{accepted_count} listed tests"
     print(f"  Accepted-regression gate: {accepted_state}")
-    show_snapshot_freshness(data, tsc_cache_path=tsc_cache_path)
+    show_snapshot_freshness(data, tsc_cache_path=tsc_cache_path, baseline_path=baseline_path)
     print()
 
     # KPI 1: Wrong-code count for big3

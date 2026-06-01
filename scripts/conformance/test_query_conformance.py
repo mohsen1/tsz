@@ -31,19 +31,29 @@ def dashboard_data(failures):
 
 
 class QueryConformanceDashboardTests(unittest.TestCase):
-    def render_dashboard(self, data, accepted_text="", tsc_cache_text=None):
+    def render_dashboard(
+        self,
+        data,
+        accepted_text="",
+        tsc_cache_text=None,
+        baseline_text=None,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             accepted_path = Path(tmp) / "accepted.txt"
             accepted_path.write_text(accepted_text, encoding="utf-8")
             tsc_cache_path = Path(tmp) / "tsc-cache-full.json"
             if tsc_cache_text is not None:
                 tsc_cache_path.write_text(tsc_cache_text, encoding="utf-8")
+            baseline_path = Path(tmp) / "conformance-baseline.txt"
+            if baseline_text is not None:
+                baseline_path.write_text(baseline_text, encoding="utf-8")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 query_conformance.show_dashboard(
                     data,
                     accepted_regressions_path=str(accepted_path),
                     tsc_cache_path=tsc_cache_path,
+                    baseline_path=baseline_path,
                 )
             return output.getvalue()
 
@@ -92,6 +102,43 @@ class QueryConformanceDashboardTests(unittest.TestCase):
         self.assertIn("Snapshot freshness: STALE checked detail covers 10 tests", output)
         self.assertIn("pinned TypeScript cache has 11 tests (delta +1)", output)
         self.assertIn("Refresh conformance-detail.json before citing this dashboard", output)
+
+    def test_dashboard_names_missing_checked_detail_tests_when_available(self):
+        output = self.render_dashboard(
+            dashboard_data({}),
+            tsc_cache_text=json.dumps(
+                {
+                    "compiler/a.ts": {},
+                    "compiler/b.ts": {},
+                    "compiler/c.ts": {},
+                    "compiler/d.ts": {},
+                    "compiler/e.ts": {},
+                    "compiler/f.ts": {},
+                    "compiler/g.ts": {},
+                    "compiler/h.ts": {},
+                    "compiler/i.ts": {},
+                    "compiler/j.ts": {},
+                    "compiler/k.ts": {},
+                }
+            ),
+            baseline_text="\n".join(
+                [
+                    "PASS TypeScript/tests/cases/compiler/a.ts",
+                    "PASS TypeScript/tests/cases/compiler/b.ts",
+                    "PASS TypeScript/tests/cases/compiler/c.ts",
+                    "PASS TypeScript/tests/cases/compiler/d.ts",
+                    "PASS TypeScript/tests/cases/compiler/e.ts",
+                    "PASS TypeScript/tests/cases/compiler/f.ts",
+                    "PASS TypeScript/tests/cases/compiler/g.ts",
+                    "PASS TypeScript/tests/cases/compiler/h.ts",
+                    "PASS TypeScript/tests/cases/compiler/i.ts",
+                    "PASS TypeScript/tests/cases/compiler/j.ts",
+                ]
+            ),
+        )
+
+        self.assertIn("Missing checked-detail tests from pinned cache:", output)
+        self.assertIn("TypeScript/tests/cases/compiler/k.ts", output)
 
     def test_dashboard_freshness_stays_quiet_when_totals_match(self):
         output = self.render_dashboard(
