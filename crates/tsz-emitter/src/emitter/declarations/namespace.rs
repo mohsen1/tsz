@@ -55,8 +55,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Skip non-instantiated modules (type-only: interfaces, type aliases, empty)
-        if !self.is_instantiated_module(module.body) {
+        // Skip non-instantiated modules (type-only: interfaces, type aliases, empty).
+        // A bodyless `global` module can only appear from parser recovery
+        // (`class C { global x }`); tsc still instantiates that recovered
+        // namespace object before emitting the following recovered expression.
+        let is_recovered_bodyless_global = node.is_global_augmentation() && module.body.is_none();
+        if !is_recovered_bodyless_global && !self.is_instantiated_module(module.body) {
             self.skip_comments_for_erased_node(node);
             return;
         }

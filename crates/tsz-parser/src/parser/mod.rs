@@ -46,6 +46,7 @@ mod state_statements;
 mod state_statements_class;
 mod state_statements_class_declarations;
 mod state_statements_class_members;
+mod state_statements_class_recovery;
 mod state_statements_keywords;
 mod state_statements_recovery;
 mod state_switch_recovery;

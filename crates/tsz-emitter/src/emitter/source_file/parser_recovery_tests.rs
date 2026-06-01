@@ -37,3 +37,22 @@ const badForNow, #bar;
 ";
     assert_eq!(output, expected);
 }
+
+#[test]
+fn bodyless_global_class_member_recovery_instantiates_namespace() {
+    let source = "\
+class C {
+    global x
+}
+";
+    let output = emit_es2015(source);
+    let expected = "\
+class C {
+}
+var global;
+(function (global) {
+})(global || (global = {}));
+x;
+";
+    assert_eq!(output, expected);
+}
