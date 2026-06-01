@@ -10,7 +10,7 @@ use crate::query_boundaries::assignability::{
 use crate::query_boundaries::common::{
     intersection_members, object_shape_id, object_with_index_shape_id, union_members,
 };
-use crate::query_boundaries::state::type_resolution::get_lazy_def_id;
+use crate::query_boundaries::state::type_resolution::{get_application_info, get_lazy_def_id};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -794,9 +794,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        let Some(def_id) =
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)
-        else {
+        let Some(def_id) = get_lazy_def_id(self.ctx.types, source_base) else {
             return false;
         };
         let Some(def) = self.ctx.definition_store.get(def_id) else {
@@ -869,12 +867,12 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: TypeId,
     ) -> Option<(TypeId, Vec<TypeId>)> {
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        let def_id = get_lazy_def_id(self.ctx.types, type_id)?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
             return None;
         }
-        crate::query_boundaries::common::application_info(self.ctx.types, def.body?)
+        get_application_info(self.ctx.types, def.body?)
     }
 
     fn type_alias_args_are_unwitnessed(

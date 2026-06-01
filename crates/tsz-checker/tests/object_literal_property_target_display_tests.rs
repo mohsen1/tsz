@@ -95,6 +95,37 @@ let needsProp: { required: string } = value;
 }
 
 #[test]
+fn prototype_shaped_user_type_does_not_use_uppercase_object_special_diagnostic() {
+    let messages = diagnostic_messages_with_es5(
+        r#"
+interface PrototypeShaped {
+    constructor: Function;
+    toString(): string;
+    toLocaleString(): string;
+    valueOf(): object;
+    hasOwnProperty(v: PropertyKey): boolean;
+    isPrototypeOf(v: object): boolean;
+    propertyIsEnumerable(v: PropertyKey): boolean;
+}
+declare let value: PrototypeShaped;
+let needsProp: { required: string } = value;
+"#,
+    );
+
+    assert!(
+        messages.iter().any(|message| message.contains("required")),
+        "prototype-shaped user type should still report the missing property, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message
+                .contains("The 'Object' type is assignable to very few other types")),
+        "prototype-shaped user type must not be classified as global Object, got: {messages:#?}"
+    );
+}
+
+#[test]
 fn object_literal_property_target_display_is_not_tied_to_specific_names() {
     let messages = ts2322_messages(
         r#"

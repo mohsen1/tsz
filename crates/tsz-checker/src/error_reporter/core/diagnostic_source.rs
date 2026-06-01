@@ -1674,7 +1674,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 declared_type,
             )
-            && !crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, target)
+            && !diagnostic_query::type_has_displayable_name(self.ctx.types, target)
         {
             return Some(self.format_type_diagnostic(declared_type));
         }

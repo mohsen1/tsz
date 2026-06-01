@@ -1270,8 +1270,10 @@ impl<'a> CheckerState<'a> {
         if !self.target_is_bare_type_parameter(target) {
             return None;
         }
-        let constraint =
-            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, target)?;
+        let constraint = crate::query_boundaries::diagnostics::type_parameter_constraint(
+            self.ctx.types,
+            target,
+        )?;
         if constraint == TypeId::ANY
             || constraint == TypeId::UNKNOWN
             || self.diagnostic_relation_boolean_guard(source, constraint)

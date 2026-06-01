@@ -2,11 +2,14 @@ use super::state::checking as state_checking;
 use tsz_solver::{TypeId, construction::TypeDatabase};
 
 pub(crate) use super::common::{
-    application_info, array_element_type, callable_shape_for_type, collect_referenced_types,
-    contains_type_parameter_named, contains_type_parameters, enum_def_id, intersection_list_id,
-    intersection_members, is_symbol_or_unique_symbol, is_template_literal_type, lazy_def_id,
-    literal_value, no_infer_inner_type, object_shape_for_type, union_list_id, union_members,
-    widen_literal_to_primitive, widen_type_deep,
+    PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
+    collect_referenced_types, contains_free_type_parameters, contains_type_parameter_named,
+    contains_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
+    intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
+    is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type,
+    object_shape_for_type, string_literal_value, type_has_displayable_name,
+    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
+    widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
@@ -68,34 +71,15 @@ pub(crate) fn is_global_object_interface_for_diagnostic(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    if db
-        .get_boxed_type(tsz_solver::IntrinsicKind::Object)
-        .is_some_and(|object_type| object_type == type_id)
+    if type_id == TypeId::OBJECT
+        || db
+            .get_boxed_type(tsz_solver::IntrinsicKind::Object)
+            .is_some_and(|object_type| object_type == type_id)
     {
         return true;
     }
-    let Some(shape) = super::common::object_shape_for_type(db, type_id) else {
-        return false;
-    };
-    if shape.string_index.is_some() || shape.number_index.is_some() {
-        return false;
-    }
-    const OBJECT_PROTO: &[&str] = &[
-        "constructor",
-        "toString",
-        "toLocaleString",
-        "valueOf",
-        "hasOwnProperty",
-        "isPrototypeOf",
-        "propertyIsEnumerable",
-    ];
-    shape.properties.len() == OBJECT_PROTO.len()
-        && OBJECT_PROTO.iter().all(|expected| {
-            shape
-                .properties
-                .iter()
-                .any(|prop| db.resolve_atom_ref(prop.name).as_ref() == *expected)
-        })
+    lazy_def_id(db, type_id)
+        .is_some_and(|def_id| db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Object))
 }
 
 pub(crate) fn simple_intersection_head_for_this_assignment_display(
