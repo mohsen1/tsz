@@ -241,16 +241,28 @@ impl<'a> CheckerState<'a> {
                         }
                         if extends_type == constraint
                             || (self
-                                .assign_relation_outcome(extends_type, constraint)
+                                .conditional_true_branch_constraint_relation_outcome(
+                                    extends_type,
+                                    constraint,
+                                )
                                 .related
                                 && self
-                                    .assign_relation_outcome(constraint, extends_type)
+                                    .conditional_true_branch_constraint_relation_outcome(
+                                        constraint,
+                                        extends_type,
+                                    )
                                     .related)
                             || self
-                                .assign_relation_outcome(extends_resolved, constraint)
+                                .conditional_true_branch_constraint_relation_outcome(
+                                    extends_resolved,
+                                    constraint,
+                                )
                                 .related
                             || self
-                                .assign_relation_outcome(extends_evaluated, constraint)
+                                .conditional_true_branch_constraint_relation_outcome(
+                                    extends_evaluated,
+                                    constraint,
+                                )
                                 .related
                         {
                             return true;
@@ -292,7 +304,7 @@ impl<'a> CheckerState<'a> {
         if accumulated_extends.len() >= 2 {
             let intersection = self.ctx.types.intersection(accumulated_extends);
             if self
-                .assign_relation_outcome(intersection, constraint)
+                .conditional_true_branch_constraint_relation_outcome(intersection, constraint)
                 .related
             {
                 return true;

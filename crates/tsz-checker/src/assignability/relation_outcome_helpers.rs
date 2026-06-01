@@ -289,6 +289,22 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing conditional true-branch constraint relation
+    /// for raw checker types, preserving the canonical true-branch request
+    /// shape.
+    pub(crate) fn conditional_true_branch_constraint_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::conditional_true_branch_constraint(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing required mapped constraint relation for
     /// raw checker types, preserving the canonical required-mapped request
     /// shape.

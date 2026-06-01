@@ -55,6 +55,8 @@ pub(crate) enum RelationKind {
     ConditionalConstraintComponent,
     /// Conditional true-branch type-parameter base constraint probes.
     ConditionalTrueBaseConstraint,
+    /// Conditional true-branch generic constraint compatibility probes.
+    ConditionalTrueBranchConstraint,
     /// Required mapped generic constraint compatibility probes.
     RequiredMappedConstraint,
     /// Infer-result generic constraint compatibility probes.
@@ -296,6 +298,14 @@ impl RelationRequest {
 
     pub(crate) const fn conditional_true_base_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ConditionalTrueBaseConstraint)
+    }
+
+    pub(crate) const fn conditional_true_branch_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::ConditionalTrueBranchConstraint,
+        )
     }
 
     pub(crate) const fn required_mapped_constraint(source: TypeId, target: TypeId) -> Self {

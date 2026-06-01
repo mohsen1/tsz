@@ -19,11 +19,15 @@ fn generic_checker_constraint_paths_use_relation_outcome_boundary() {
         "conditional true-branch constraint checks should not use raw boolean relation guards"
     );
     assert!(
+        !conditional_helper.contains("assign_relation_outcome("),
+        "conditional true-branch constraint checks should route relation probes through named RelationRequests"
+    );
+    assert_eq!(
         conditional_helper
-            .matches("assign_relation_outcome(")
-            .count()
-            >= 5,
-        "conditional true-branch constraint checks should route relation probes through RelationOutcome"
+            .matches("conditional_true_branch_constraint_relation_outcome(")
+            .count(),
+        5,
+        "conditional true-branch constraint checks should route extends and accumulated-intersection probes through the true-branch constraint request helper"
     );
 
     let args_start = source
