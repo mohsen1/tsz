@@ -1,0 +1,210 @@
+//! Tests for declaration-merging in type position when a single name binds a
+//! `class`, an `interface`, and one or more `namespace` blocks (in any order).
+//!
+//! The structural rule under test:
+//!
+//! > When a symbol is merged from a class declaration AND an interface
+//! > declaration (regardless of any additional namespace blocks), tsc resolves
+//! > the symbol in type position to the class instance type, which already
+//! > incorporates both the class's own members and the interface's members.
+//! > tsz must do the same — independent of identifier spelling, declaration
+//! > order, and the presence of namespace blocks.
+//!
+//! Previously, `class+interface+namespace` merging routed type-position
+//! resolution through `compute_interface_type_from_declarations`, which filters
+//! to interface declarations and silently drops class instance members. The
+//! resulting type was missing the class's fields/methods, producing spurious
+//! TS2353 ("does not exist in type") on assignments to object literals.
+
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
+
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
+        .iter()
+        .filter(|d| d.code != 2318) // Filter missing global type errors
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn no_ts2353(source: &str) {
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Expected no TS2353 for class+interface[+namespace] merge in type position, got: {diags:?}",
+    );
+}
+
+#[test]
+fn class_interface_namespace_object_literal_sees_class_member() {
+    // Original repro from #10931 (rule-witness: literal `Bar`).
+    let source = r#"
+class Bar { field: number = 1; }
+interface Bar { extra: string; }
+namespace Bar { export const helper = "x"; }
+const c: Bar = { field: 2, extra: "y" };
+"#;
+    no_ts2353(source);
+}
+
+#[test]
+fn class_interface_namespace_renamed_identifier_sees_class_member() {
+    // Rule witness with a different identifier spelling — proves the fix is
+    // not keyed on the literal name `Bar`.
+    let source = r#"
+class Quux { field: number = 1; }
+interface Quux { extra: string; }
+namespace Quux { export const helper = "h"; }
+const q: Quux = { field: 9, extra: "z" };
+"#;
+    no_ts2353(source);
+}
+
+#[test]
+fn interface_class_namespace_declaration_order_sees_class_member() {
+    // Declaration order swapped: interface first, then class, then namespace.
+    // (tsc reports TS2434 for namespace-before-class — that's expected and
+    // not what we're testing — but the merged Bar type must still include
+    // class members for the object-literal assignment.)
+    let source = r#"
+interface Bar { extra: string; }
+class Bar { field: number = 1; }
+namespace Bar { export const helper = "h"; }
+const c: Bar = { field: 1, extra: "x" };
+"#;
+    no_ts2353(source);
+}
+
+#[test]
+fn class_interface_multiple_namespace_blocks_sees_class_member() {
+    // Multiple namespace blocks merging into the same symbol.
+    let source = r#"
+class Bar { field: number = 1; }
+interface Bar { extra: string; }
+namespace Bar { export const a = 1; }
+namespace Bar { export const b = 2; }
+const v: Bar = { field: 0, extra: "y" };
+"#;
+    no_ts2353(source);
+}
+
+#[test]
+fn class_interface_namespace_class_methods_and_properties_visible() {
+    // Both methods and properties from the class declaration must be visible
+    // in the merged type's structural shape.
+    let source = r#"
+class Bar {
+  field: number = 1;
+  method(): void {}
+}
+interface Bar { extra: string; }
+namespace Bar { export const helper = "x"; }
+const c: Bar = { field: 2, extra: "y", method() {} };
+"#;
+    no_ts2353(source);
+}
+
+#[test]
+fn class_interface_namespace_property_access_preserves_class_members() {
+    // Property-access path: class members and interface members must both be
+    // resolvable through the merged symbol.
+    let source = r#"
+class Bar {
+  field: number = 1;
+  method(): string { return "m"; }
+}
+interface Bar { extra?: boolean; }
+namespace Bar { export const helper = 1; }
+
+declare const b: Bar;
+const a: number = b.field;
+const s: string = b.method();
+const e: boolean | undefined = b.extra;
+"#;
+    let diags = get_diagnostics(source);
+    let blockers: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339 || d.0 == 2353 || d.0 == 2322)
+        .collect();
+    assert!(
+        blockers.is_empty(),
+        "Property access on class+interface+namespace merge should not report TS2339/TS2353/TS2322; got: {diags:?}",
+    );
+}
+
+#[test]
+fn class_interface_namespace_generic_class_preserves_type_params() {
+    // Generic class merged with interface and namespace — type-position
+    // resolution must still produce the class instance type with type
+    // parameters preserved.
+    let source = r#"
+class Box<T> {
+  value: T;
+  constructor(v: T) { this.value = v; }
+}
+interface Box<T> { id: string; }
+namespace Box { export const empty = 0; }
+
+declare const b: Box<number>;
+const v: number = b.value;
+const id: string = b.id;
+"#;
+    let diags = get_diagnostics(source);
+    let blockers: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339 || d.0 == 2353 || d.0 == 2322)
+        .collect();
+    assert!(
+        blockers.is_empty(),
+        "Generic class+interface+namespace property access should not report TS2339/TS2353/TS2322; got: {diags:?}",
+    );
+}
+
+#[test]
+fn class_only_namespace_excess_property_still_flagged() {
+    // Negative case: class+namespace (no interface) must still reject an
+    // object literal property that exists on neither the class nor the
+    // namespace. This proves the fix does not silently widen the merged
+    // type to accept any property.
+    let source = r#"
+class Bar { field: number = 1; }
+namespace Bar { export const helper = "x"; }
+const c: Bar = { field: 1, bogus: 1 };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 for unknown property 'bogus', got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'bogus'"),
+        "Expected TS2353 to mention excess key bogus, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn class_interface_namespace_excess_property_still_flagged() {
+    // Negative case: class+interface+namespace must still reject excess
+    // properties that exist on neither the class nor the interface.
+    let source = r#"
+class Bar { field: number = 1; }
+interface Bar { extra: string; }
+namespace Bar { export const helper = "x"; }
+const c: Bar = { field: 1, extra: "x", bogus: 1 };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 for unknown property 'bogus', got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'bogus'"),
+        "Expected TS2353 to mention excess key bogus, got: {ts2353:?}",
+    );
+}
