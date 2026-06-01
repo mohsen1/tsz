@@ -446,7 +446,7 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("{param_type_text} & {narrowed}"))
     }
 
-    fn type_text_is_simple_reference(type_text: &str) -> bool {
+    pub(in crate::declaration_emitter) fn type_text_is_simple_reference(type_text: &str) -> bool {
         let trimmed = type_text.trim();
         !trimmed.is_empty()
             && trimmed
