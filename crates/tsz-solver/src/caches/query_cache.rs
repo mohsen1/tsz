@@ -223,60 +223,34 @@ impl QueryCacheStatistics {
 impl QueryCacheStatistics {
     /// Estimate total in-memory size of all caches in bytes.
     ///
-    /// Uses per-entry cost estimates based on `FxHashMap` bucket overhead (~64 bytes)
-    /// plus the key and value sizes. This is intentionally conservative — it does not
-    /// account for heap allocations inside values like `Vec<PropertyInfo>` or
-    /// `Arc<[Variance]>`, but captures the dominant cost (hash table metadata).
-    ///
-    /// For the `object_spread_cache`, we assume an average of 4 properties per entry
-    /// since the actual `Vec` contents are not tracked in the statistics snapshot.
+    /// Uses conservative per-entry estimates for `FxHashMap` bucket metadata plus
+    /// key/value sizes. Heap allocations inside values are intentionally excluded.
     #[must_use]
     pub const fn estimated_size_bytes(&self) -> usize {
-        // FxHashMap overhead per bucket: hash (8) + key + value + padding.
-        // We use 64 bytes as a conservative per-bucket overhead constant.
         const BUCKET_OVERHEAD: usize = 64;
 
-        // eval_cache: EvaluationCacheKey -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
 
-        // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
-        // SmallVec<[TypeId;4]> inline = 4*4 + len + cap = ~24 bytes; DefId=8, bool=1, TypeId=4
         let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
 
-        // element_access_cache: (TypeId, TypeId, Option<u32>, bool) -> TypeId  ≈ 4+4+8+1+4 = 21
         let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
 
-        // object_spread_cache: TypeId -> Vec<PropertyInfo>
-        // Vec header = 24 bytes; average ~4 PropertyInfo entries at ~64 bytes each = 256
         let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);
 
-        // property_cache: (TypeId, Atom, bool) -> PropertyAccessResult  ≈ 4+4+1 + 16 = 25
         let prop = self.property_cache_entries * (BUCKET_OVERHEAD + 25);
 
-        // variance_cache: DefId -> Arc<[Variance]>  ≈ 8 + 8(Arc ptr) = 16
         let variance = self.variance_cache_entries * (BUCKET_OVERHEAD + 16);
 
-        // canonical_cache: TypeId -> TypeId  ≈ 4+4 = 8
         let canonical = self.canonical_cache_entries * (BUCKET_OVERHEAD + 8);
 
-        // intersection_merge_cache: TypeId -> Option<TypeId>  ≈ 4+8 = 12
         let intersection_merge = self.intersection_merge_cache_entries * (BUCKET_OVERHEAD + 12);
 
-        // subtype_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
         let subtype = self.relation.subtype_entries * (BUCKET_OVERHEAD + 13);
 
-        // assignability_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
         let assignability = self.relation.assignability_entries * (BUCKET_OVERHEAD + 13);
 
-        // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
-        // CanonicalSubst inline = 4*(4+4) + len + cap = ~48 bytes; TypeId=4,
-        // u8=1, Option<TypeId>=8, value TypeId=4. Conservative per-bucket cost.
         let instantiation = self.instantiation_cache_entries * (BUCKET_OVERHEAD + 65);
 
-        // subtype_reduction_cache: (SortedTypeIds, u8) -> Arc<[TypeId]>
-        // SortedTypeIds inline = 8*4 + len + cap = ~48 bytes; u8=1; Arc=8.
-        // Value side is `Arc<[TypeId]>` — pointer+len fit in 16 bytes; the
-        // pointed-at slice is amortized via Arc sharing across hits.
         let subtype_reduction = self.subtype_reduction_cache_entries * (BUCKET_OVERHEAD + 73);
 
         eval + app_eval
@@ -387,16 +361,12 @@ pub struct QueryCache<'a> {
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
     subtype_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
-    /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
-    /// This ensures that loose assignability results (e.g., any is assignable to number)
-    /// don't contaminate strict subtype checks.
+    /// Separate cache for assignability to prevent loose results from poisoning subtype checks.
     assignability_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
     property_cache: RefCell<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
-    /// Task #41: Variance cache for generic type parameters.
-    /// Stores computed variance masks for `DefIds` to enable O(1) generic assignability.
+    /// Computed variance masks for generic `DefIds`.
     variance_cache: RefCell<FxHashMap<DefId, Arc<[Variance]>>>,
-    /// Task #49: Canonical cache for O(1) structural identity checks.
-    /// Maps `TypeId` -> canonical `TypeId` for structurally identical types.
+    /// Canonical `TypeId` for structurally identical types.
     canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Cache for intersection-to-merged-object results.
     /// Avoids expensive `collect_properties` calls for the same intersection target
