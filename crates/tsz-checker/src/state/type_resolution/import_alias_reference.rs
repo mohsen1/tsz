@@ -189,41 +189,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx
             .register_symbol_file_target(target_sym_id, target_file_idx);
-        if let Some((cached_type, cached_params)) = self
-            .ctx
-            .cached_cross_file_class_instance_type(target_sym_id, target_file_idx as u32)
-        {
-            return Some((cached_type, cached_params));
-        }
-
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
-        if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
-            return None;
-        }
-
-        let delegate_file_name = target_arena
-            .source_files
-            .first()
-            .map(|sf| sf.file_name.clone())
-            .unwrap_or_else(|| self.ctx.file_name.clone());
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            target_arena,
-            target_binder,
-            self.ctx.types,
-            delegate_file_name,
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
-        ));
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.current_file_idx = target_file_idx;
-        checker.propagate_class_delegation_setup(self, target_sym_id);
-
-        let result = checker.class_instance_type_with_params_from_symbol(target_sym_id);
+        let result = self.delegate_cross_arena_class_instance_type(target_sym_id);
         if let Some((instance_type, _)) = result.as_ref()
             && *instance_type != TypeId::ERROR
             && *instance_type != TypeId::UNKNOWN
@@ -235,9 +201,6 @@ impl<'a> CheckerState<'a> {
                 .symbol_instance_types
                 .insert(target_sym_id, *instance_type);
         }
-
-        self.ctx.leave_recursion();
-        Self::leave_cross_arena_delegation();
 
         result
     }
