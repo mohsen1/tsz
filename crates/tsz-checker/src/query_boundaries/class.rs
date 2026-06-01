@@ -669,7 +669,7 @@ fn is_coinductive_return_type_cycle(
         for (sp, tp) in s_params.iter().zip(t_params.iter()) {
             if sp.type_id != tp.type_id
                 && !checker
-                    .assign_relation_outcome(tp.type_id, sp.type_id)
+                    .function_type_compatibility_relation_outcome(tp.type_id, sp.type_id)
                     .related
             {
                 return false;

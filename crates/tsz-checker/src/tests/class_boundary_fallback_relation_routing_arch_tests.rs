@@ -103,9 +103,13 @@ fn class_coinductive_return_cycle_param_check_uses_relation_outcome_boundary() {
         .expect("failed to isolate coinductive return-cycle helper");
 
     assert!(
-        helper.contains("assign_relation_outcome(tp.type_id, sp.type_id)")
+        helper.contains("function_type_compatibility_relation_outcome(tp.type_id, sp.type_id)")
             && helper.contains(".related"),
-        "coinductive return-cycle parameter compatibility should route through RelationOutcome"
+        "coinductive return-cycle parameter compatibility should route through the function-type compatibility RelationRequest"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(tp.type_id, sp.type_id)"),
+        "coinductive return-cycle parameter compatibility should not use generic assignment request routing"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),

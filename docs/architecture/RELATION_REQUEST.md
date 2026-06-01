@@ -511,10 +511,11 @@ role.
 
 Function type diagnostics build `RelationRequest::function_type_compatibility`
 through `function_type_compatibility_relation_outcome` when probing contextual
-type-parameter constraints or JS constructor return union members before
-choosing a function-type diagnostic/recovery shape. The checker owns function
-syntax, contextual extraction, and recovery selection while the request names
-the relation role.
+type-parameter constraints, class coinductive return-cycle parameter
+compatibility, or JS constructor return union members before choosing a
+function-type diagnostic/recovery shape. The checker owns function syntax,
+contextual extraction, and recovery selection while the request names the
+relation role.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.
