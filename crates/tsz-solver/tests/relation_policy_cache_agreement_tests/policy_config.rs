@@ -30,11 +30,23 @@ fn relation_policy_cache_config_unifies_equivalent_flag_and_builder_bits() {
             RelationPolicy::unflagged_compatibility().with_skip_weak_type_checks(true),
         ),
         (
+            "assume related on cycle",
+            RelationPolicy::from_relation_flags(RelationFlags::ASSUME_RELATED_ON_CYCLE),
+            RelationPolicy::unflagged_compatibility().with_assume_related_on_cycle(true),
+        ),
+        (
             "disable generic erasure",
             RelationPolicy::from_relation_flags(RelationFlags::NO_ERASE_GENERICS),
             RelationPolicy::unflagged_compatibility().with_erase_generics(false),
         ),
     ];
+
+    assert!(
+        cases
+            .iter()
+            .any(|(name, _, _)| *name == "assume related on cycle"),
+        "flag-vs-builder cache config matrix must cover ASSUME_RELATED_ON_CYCLE",
+    );
 
     for (name, flagged, builder) in cases {
         assert_eq!(
