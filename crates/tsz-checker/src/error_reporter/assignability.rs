@@ -198,46 +198,97 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn should_suppress_assignment_after_overload_failure(&self, anchor_idx: NodeIndex) -> bool {
+    fn should_suppress_assignment_after_overload_failure(
+        &self,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        if source != TypeId::NEVER && source != TypeId::ERROR {
+            return false;
+        }
+
         let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
             return false;
         };
-        if anchor_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
+
+        // Case 1: `x = fn(true);` — anchor is EXPRESSION_STATEMENT
+        if anchor_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(anchor_node) else {
+                return false;
+            };
+            let expr_idx = self.ctx.arena.skip_parenthesized(expr_stmt.expression);
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                return false;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return false;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                return false;
+            };
+            if !self.is_assignment_operator(binary.operator_token) {
+                return false;
+            }
+            let rhs_idx = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(binary.right);
+            let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+                return false;
+            };
+            if rhs_node.kind != syntax_kind_ext::CALL_EXPRESSION
+                && rhs_node.kind != syntax_kind_ext::NEW_EXPRESSION
+            {
+                return false;
+            }
+            return self.call_or_new_expr_emitted_no_overload_failure(rhs_idx, rhs_node);
         }
-        let Some(expr_stmt) = self.ctx.arena.get_expression_statement(anchor_node) else {
-            return false;
-        };
-        let expr_idx = self.ctx.arena.skip_parenthesized(expr_stmt.expression);
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return false;
+
+        // Case 2: `const x: T = fn(true);` — anchor is the variable name IDENTIFIER.
+        // Walk up to the VARIABLE_DECLARATION and check the initializer.
+        if anchor_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let Some(ext) = self.ctx.arena.get_extended(anchor_idx) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                return false;
+            }
+            let Some(vd) = self.ctx.arena.get_variable_declaration(parent_node) else {
+                return false;
+            };
+            let init_idx = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(vd.initializer);
+            let Some(init_node) = self.ctx.arena.get(init_idx) else {
+                return false;
+            };
+            if init_node.kind != syntax_kind_ext::CALL_EXPRESSION
+                && init_node.kind != syntax_kind_ext::NEW_EXPRESSION
+            {
+                return false;
+            }
+            return self.call_or_new_expr_emitted_no_overload_failure(init_idx, init_node);
         }
-        let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
-            return false;
-        };
-        if !self.is_assignment_operator(binary.operator_token) {
-            return false;
-        }
-        let rhs_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(binary.right);
-        let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
-            return false;
-        };
-        if rhs_node.kind != syntax_kind_ext::CALL_EXPRESSION
-            && rhs_node.kind != syntax_kind_ext::NEW_EXPRESSION
-        {
-            return false;
-        }
-        self.ctx.diagnostics.iter().any(|diag| {
-            diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
-                && diag.start >= rhs_node.pos
-                && diag.start < rhs_node.end
-        })
+
+        false
+    }
+
+    fn call_or_new_expr_emitted_no_overload_failure(
+        &self,
+        expr_idx: NodeIndex,
+        expr_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.ctx.no_overload_call_nodes.contains(&expr_idx.0)
+            && self.ctx.diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                    && diag.start >= expr_node.pos
+                    && diag.start < expr_node.end
+            })
     }
 
     pub(super) fn private_or_protected_member_missing_display(
@@ -486,7 +537,7 @@ impl<'a> CheckerState<'a> {
             }
             return;
         }
-        if self.should_suppress_assignment_after_overload_failure(anchor_idx) {
+        if self.should_suppress_assignment_after_overload_failure(source, anchor_idx) {
             return;
         }
 

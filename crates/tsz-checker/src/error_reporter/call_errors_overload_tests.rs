@@ -529,3 +529,386 @@ class Box {
         "multi-overload nullable mismatch should stay TS2769, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn overload_impl_sig_excluded_bool_arg_errors_at_call_site() {
+    // The implementation signature (x: any) must never be included in the
+    // overload candidate set. If it were, `foo(true)` would silently succeed
+    // because `true` is assignable to `any`. The error must be TS2769 anchored
+    // at the call site (argument or callee), not inside the implementation.
+    let source = r#"
+function foo(x: string): string;
+function foo(x: number): number;
+function foo(x: any): any { return x; }
+foo(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let impl_start = source.find("function foo(x: any)").unwrap() as u32;
+    let impl_end = impl_start + "function foo(x: any): any { return x; }".len() as u32;
+    for diag in &diagnostics {
+        assert!(
+            diag.start < impl_start || diag.start >= impl_end,
+            "error must not be anchored inside the implementation signature, got: {diag:?}"
+        );
+    }
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for foo(true) — impl sig must not be an overload candidate, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn overload_impl_sig_excluded_class_method() {
+    // Class method variant: the implementation method `(x: any)` must not
+    // appear as a callable overload from the outside.
+    let source = r#"
+class C {
+    method(x: string): string;
+    method(x: number): number;
+    method(x: any): any { return x; }
+}
+const c = new C();
+c.method(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for c.method(true), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn overload_single_mismatch_reports_at_arg_not_impl_span() {
+    // When exactly one overload has arity-compatible mismatches the checker
+    // may take a single-mismatch fast path. The diagnostic must still be
+    // anchored at the argument, not at any declaration inside the function.
+    let source = r#"
+declare function fn(value: string): string;
+declare function fn(value: string, extra: number): number;
+const x = fn(42);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let arg_start = source.rfind("42").unwrap() as u32;
+    let overload1_start = source.find("fn(value: string)").unwrap() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| { (d.code == 2769 || d.code == 2345) && d.start == arg_start }),
+        "error must be at the argument `42` (position {arg_start}), overload start: {overload1_start}, got: {diagnostics:?}"
+    );
+}
+
+// ── Assignment-context + overloads ────────────────────────────────────────────────
+
+/// `const s: string = fn(42)` — overload 2 returns number, assigning to string
+/// should give TS2322 at `s`, NOT inside the implementation body.
+#[test]
+fn overload_return_mismatch_ts2322_anchored_at_variable() {
+    let source = r#"
+function fn(x: string): string;
+function fn(x: number): number;
+function fn(x: any): any { return x; }
+const s: string = fn(42);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    // fn(42) matches overload 2 returning number; `const s: string` triggers TS2322.
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322, got: {diagnostics:?}"
+    );
+    // The anchor must be at `s` — find its position.
+    let s_pos = source.find("const s").unwrap() as u32 + "const ".len() as u32;
+    assert_eq!(
+        ts2322[0].start, s_pos,
+        "TS2322 must be anchored at `s`, not inside the implementation; got: {:?}",
+        ts2322[0]
+    );
+}
+
+/// `const b: boolean = fn(true)` — no overload matches boolean, so TS2769 fires.
+/// After TS2769, there should be NO cascading TS2322 for the declaration.
+/// (tsc suppresses the assignment error when the call already failed.)
+#[test]
+fn overload_no_match_ts2769_no_cascading_ts2322_on_decl() {
+    let source = r#"
+function fn(x: string): string;
+function fn(x: number): number;
+function fn(x: any): any { return x; }
+const b: boolean = fn(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for fn(true), got: {diagnostics:?}"
+    );
+    // tsc does NOT cascade TS2322 on a variable declaration when the assigned
+    // expression already produced TS2769. Verify we do not double-report.
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 must not cascade after TS2769 on a variable declaration, got: {diagnostics:?}"
+    );
+}
+
+/// Assignment-statement form: `x = fn(true)` — TS2769 fires; no cascading TS2322.
+#[test]
+fn overload_no_match_ts2769_no_cascading_ts2322_on_assignment_stmt() {
+    let source = r#"
+function fn(x: string): string;
+function fn(x: number): number;
+function fn(x: any): any { return x; }
+let x: string;
+x = fn(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769, got: {diagnostics:?}"
+    );
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 must not cascade after TS2769 in assignment statement, got: {diagnostics:?}"
+    );
+}
+
+/// Overloaded generic: contextual return type should help select overload.
+/// `const n: number = fnG("hello")` — overload 1 returns T=number when annotated.
+#[test]
+fn overload_generic_contextual_return_type_selects_correct_overload() {
+    let source = r#"
+function fnG<T>(x: string): T;
+function fnG<T>(x: number): T;
+function fnG<T>(x: any): T { return x; }
+const n: number = fnG("hello");
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    // With contextual type `number`, T=number should be inferred.
+    // fn("hello") should succeed (string matches string param) and return number.
+    // If contextual type is missing, T=unknown and string->number gives TS2322.
+    // We accept both zero errors OR a single TS2322 at `n`.
+    // Key invariant: no error inside the implementation body.
+    let impl_start = source.find("function fnG<T>(x: any)").unwrap() as u32;
+    let impl_end = impl_start + "function fnG<T>(x: any): T { return x; }".len() as u32;
+    for d in &diagnostics {
+        assert!(
+            d.start < impl_start || d.start >= impl_end,
+            "error must not be inside the implementation body, got: {d:?}"
+        );
+    }
+}
+
+/// Implementation-site diagnostic guard: class method overload.
+/// Call that fails TS2769 must anchor at the call site, not inside the
+/// implementation method's body or its declaring class span.
+#[test]
+fn overload_class_method_ts2769_anchored_at_call_not_impl_body() {
+    let source = r#"
+class Processor {
+    run(x: string): string;
+    run(x: number): number;
+    run(x: any): any { return x; }
+}
+const p = new Processor();
+p.run(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for p.run(true), got: {diagnostics:?}"
+    );
+    // Anchor must be at the call `p.run(true)`, specifically at `true`.
+    let impl_start = source.find("run(x: any)").unwrap() as u32;
+    let impl_end = impl_start + "run(x: any): any { return x; }".len() as u32;
+    for d in diagnostics.iter().filter(|d| d.code == 2769) {
+        assert!(
+            d.start < impl_start || d.start >= impl_end,
+            "TS2769 anchor inside implementation body, got: {d:?}"
+        );
+    }
+}
+
+/// Overload with impl having no return annotation: the impl is invisible to
+/// callers. TS2769 must NOT include the implementation in failure list.
+#[test]
+fn overload_impl_no_return_annotation_excluded_from_failures() {
+    let source = r#"
+function transform(x: string): string;
+function transform(x: number): number;
+function transform(x: any) { return x; }
+transform({});
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for transform(object), got: {diagnostics:?}"
+    );
+    // Count related info: should have exactly 2 entries (one per overload, not 3).
+    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(ts2769.len(), 1, "expected one TS2769, got: {diagnostics:?}");
+    // The implementation starts at:
+    let impl_start = source.find("function transform(x: any)").unwrap() as u32;
+    let impl_end = impl_start + "function transform(x: any) { return x; }".len() as u32;
+    for d in &diagnostics {
+        assert!(
+            d.start < impl_start || d.start >= impl_end,
+            "no error should be anchored inside the implementation, got: {d:?}"
+        );
+    }
+}
+
+/// Assignment context propagates to narrow overload return when contextual type
+/// is explicit: `const s: string[] = map(["a","b"], x => x)` should work.
+/// (Array.map has overloads; the context string[] guides T inference.)
+#[test]
+fn overload_contextual_return_type_propagates_to_generic_arg_inference() {
+    let source = r#"
+function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+function map<T>(arr: T[]): T[];
+function map<T, U>(arr: T[], fn?: (x: T) => U): (T | U)[] { return arr as any; }
+const result: string[] = map(["a", "b"], x => x);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    // The call should succeed cleanly with correct contextual type propagation.
+    let non_trivial: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2769)
+        .collect();
+    assert!(
+        non_trivial.is_empty(),
+        "expected no type errors for map with contextual string[] return, got: {non_trivial:?}"
+    );
+}
+
+/// When all overloads return the same type, overload-failure recovery remains
+/// that type. tsc still reports the real downstream declaration TS2322.
+#[test]
+fn overload_same_return_type_ts2769_reports_decl_ts2322() {
+    let source = r#"
+function fn(x: string): string;
+function fn(x: number): string;
+function fn(x: any): any { return ""; }
+const n: number = fn(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for fn(true), got: {diagnostics:?}"
+    );
+    let n_pos = source.find("const n").unwrap() as u32 + "const ".len() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == n_pos),
+        "same-return overload recovery should keep the real declaration TS2322 at `n`, got: {diagnostics:?}"
+    );
+}
+
+/// Same as above but using assignment statement form rather than declaration.
+#[test]
+fn overload_same_return_type_ts2769_reports_assignment_ts2322() {
+    let source = r#"
+function fn(x: string): string;
+function fn(x: number): string;
+function fn(x: any): any { return ""; }
+let n: number;
+n = fn(true);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769, got: {diagnostics:?}"
+    );
+    let assignment_pos = source.rfind("n =").unwrap() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == assignment_pos),
+        "same-return overload recovery should keep the real assignment TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_overload_failure_does_not_suppress_outer_decl_ts2322() {
+    let source = r#"
+function inner(x: string): string;
+function inner(x: number): string;
+function inner(x: any): any { return ""; }
+function outer(value: any): string { return ""; }
+const n: number = outer(inner(true));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected nested TS2769 for inner(true), got: {diagnostics:?}"
+    );
+    let n_pos = source.find("const n").unwrap() as u32 + "const ".len() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == n_pos),
+        "nested overload failures must not suppress the real outer assignment TS2322 at `n`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_overload_failure_does_not_suppress_outer_assignment_ts2322() {
+    let source = r#"
+function inner(x: string): string;
+function inner(x: number): string;
+function inner(x: any): any { return ""; }
+function outer(value: any): string { return ""; }
+let n: number;
+n = outer(inner(true));
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected nested TS2769 for inner(true), got: {diagnostics:?}"
+    );
+    let assignment_pos = source.rfind("n =").unwrap() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == assignment_pos),
+        "nested overload failures must not suppress the real outer assignment TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn overload_failure_initializer_preserves_real_ts2322() {
+    let source = r#"
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type Assign<T, U> = Omit<T, keyof U> & U;
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+declare const Object: {
+    assign<T extends {}, U>(target: T, source: U): T & U;
+    assign(target: object, ...sources: any[]): any;
+};
+
+class Base<T> {
+    constructor(public t: T) { }
+}
+
+export class Foo<T> extends Base<T> {
+    update(): Foo<Assign<T, { x: number }>> {
+        const v: Assign<T, { x: number }> = Object.assign(this.t, { x: 1 });
+        return new Foo(v);
+    }
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for Object.assign(this.t, ...), got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322
+            && d.message_text
+                .contains("not assignable to type 'Assign<T, { x: number; }>'")),
+        "the initializer overload failure must not hide the real TS2322, got: {diagnostics:?}"
+    );
+}
