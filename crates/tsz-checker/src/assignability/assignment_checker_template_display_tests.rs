@@ -187,3 +187,63 @@ const foo4: Foo4 = foo3;
         "TS2322 should not repaint the application as wrapper aliases, got: {diag:?}"
     );
 }
+
+#[test]
+fn adjacent_recursive_mapped_alias_applications_both_report() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Id<T> = { [K in keyof T]: Id<T[K]> };
+type Foo1 = Id<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo2 = Id<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo1: Foo1;
+const foo2: Foo2 = foo1;
+
+type Id2<T> = { [K in keyof T]: Id2<Id2<T[K]>> };
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+"#,
+    );
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2322)
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "both recursive mapped alias assignments should report TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message_text
+            .contains("Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>")),
+        "second TS2322 should preserve the recursive alias application display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn recursive_mapped_alias_application_rejects_with_renamed_binders() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Recur<Value> = { [Prop in keyof Value]: Recur<Recur<Value[Prop]>> };
+type SourceWrap = Recur<{ outer: { inner: number } }>;
+type TargetWrap = Recur<{ outer: { inner: string } }>;
+declare const source: SourceWrap;
+const target: TargetWrap = source;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for recursive mapped alias mismatch");
+    assert!(
+        diag.message_text
+            .contains("Recur<{ outer: { inner: number; }; }>")
+            && diag
+                .message_text
+                .contains("Recur<{ outer: { inner: string; }; }>"),
+        "TS2322 should preserve recursive alias application args independent of binder names, got: {diag:?}"
+    );
+}

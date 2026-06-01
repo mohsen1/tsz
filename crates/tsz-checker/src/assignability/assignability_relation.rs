@@ -774,10 +774,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
-        let Some((source_base, source_args)) = self.application_display_info(source) else {
+        let Some((source_base, source_args)) =
+            self.application_info_for_alias_argument_rejection(source)
+        else {
             return false;
         };
-        let Some((target_base, target_args)) = self.application_display_info(target) else {
+        let Some((target_base, target_args)) =
+            self.application_info_for_alias_argument_rejection(target)
+        else {
             return false;
         };
         if source_base != target_base || source_args.len() != target_args.len() {
@@ -807,6 +811,8 @@ impl<'a> CheckerState<'a> {
         if self.type_alias_projects_static_member(source_base) {
             return true;
         }
+        let recursive_alias_application =
+            self.is_recursive_alias_application(source_base, &source_args);
         let variances =
             crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(
                 self.ctx.types.as_type_database(),
@@ -823,7 +829,13 @@ impl<'a> CheckerState<'a> {
                 match variance {
                     // Variance is unreliable or requires a structural fallback — the
                     // structural check is authoritative; don't force a rejection here.
-                    Some(v) if v.rejection_unreliable() || v.needs_structural_fallback() => false,
+                    // Recursive alias applications are the exception: structural
+                    // expansion can collapse the recursive mapped body and erase the
+                    // argument mismatch that tsc still reports.
+                    Some(v) if v.rejection_unreliable() => false,
+                    Some(v) if v.needs_structural_fallback() && !recursive_alias_application => {
+                        false
+                    }
                     // K in `{ [P in K]: V }` is CONTRAVARIANT: a source with wider keys
                     // covers a target with narrower keys, so reverse the direction.
                     Some(v) if v.is_contravariant() => {
@@ -834,6 +846,35 @@ impl<'a> CheckerState<'a> {
                 }
             },
         )
+    }
+
+    fn is_recursive_alias_application(&mut self, base: TypeId, args: &[TypeId]) -> bool {
+        let application = self.ctx.types.application(base, args.to_vec());
+        crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            application,
+        )
+    }
+
+    fn application_info_for_alias_argument_rejection(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        self.application_display_info(type_id)
+            .or_else(|| self.non_generic_alias_body_application_info(type_id))
+    }
+
+    fn non_generic_alias_body_application_info(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        crate::query_boundaries::common::application_info(self.ctx.types, def.body?)
     }
 
     fn type_alias_args_are_unwitnessed(

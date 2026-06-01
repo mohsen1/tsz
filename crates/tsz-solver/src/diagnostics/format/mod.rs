@@ -168,6 +168,55 @@ pub struct TypeFormatter<'a> {
 }
 
 impl<'a> TypeFormatter<'a> {
+    pub(super) fn is_recursive_type_alias_application_base(&self, base: TypeId) -> bool {
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
+            return false;
+        };
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+        let Some(def) = def_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let mut visited = FxHashSet::default();
+        self.type_reaches_alias_def(body, def_id, &mut visited)
+    }
+
+    fn type_reaches_alias_def(
+        &self,
+        type_id: TypeId,
+        target_def_id: DefId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+        if matches!(self.interner.lookup(type_id), Some(TypeData::Lazy(def_id)) if def_id == target_def_id)
+        {
+            return true;
+        }
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) {
+            let app = self.interner.type_application(app_id);
+            if matches!(self.interner.lookup(app.base), Some(TypeData::Lazy(def_id)) if def_id == target_def_id)
+            {
+                return true;
+            }
+        }
+        let mut found = false;
+        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
+            if !found {
+                found = self.type_reaches_alias_def(child, target_def_id, visited);
+            }
+        });
+        found
+    }
+
     fn is_primitive_key_union_data(&self, key: &TypeData) -> bool {
         let TypeData::Union(list_id) = key else {
             return false;
