@@ -1614,7 +1614,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    const fn is_function_like_hoist_boundary(&self, kind: u16) -> bool {
+    pub(in crate::emitter) const fn is_function_like_hoist_boundary(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || kind == syntax_kind_ext::ARROW_FUNCTION
