@@ -136,6 +136,12 @@ class C {
         }),
         "Expected TS1068 for module-like class member, got diagnostics: {diagnostics:?}"
     );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "';' expected."),
+        "Expected TS1005 semicolon recovery for module-like class member, got diagnostics: {diagnostics:?}"
+    );
 
     let arena = parser.get_arena();
     let source_file = arena.get_source_file_at(root).unwrap();
