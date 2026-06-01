@@ -1273,12 +1273,19 @@ impl<'a> Printer<'a> {
         let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
+        let hoist_loop_init_temps =
+            self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await;
 
         // Hoist done/error/return/value temps to the top of the source file scope.
         self.hoisted_for_of_temps.push(loop_done_name.clone());
         self.hoisted_for_of_temps.push(error_container_name.clone());
         self.hoisted_for_of_temps.push(return_temp_name.clone());
         self.hoisted_for_of_temps.push(value_temp_name.clone());
+        if hoist_loop_init_temps {
+            self.hoisted_for_of_temps.push(loop_guard_name.clone());
+            self.hoisted_for_of_temps.push(loop_iterator_name.clone());
+            self.hoisted_for_of_temps.push(loop_result_name.clone());
+        }
 
         // try block
         self.write("try {");
@@ -1299,7 +1306,12 @@ impl<'a> Printer<'a> {
         self.emit_downlevel_for_await_loop_label(for_of_idx);
 
         // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield/yield __await(...)] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
-        self.write("for (var ");
+        // Inside generated async generator bodies, tsc hoists these loop-init temps
+        // into the generator's var group instead of redeclaring them inline.
+        self.write("for (");
+        if !hoist_loop_init_temps {
+            self.write("var ");
+        }
         self.write(&loop_guard_name);
         self.write(" = true, ");
         self.write(&loop_iterator_name);
@@ -1311,14 +1323,17 @@ impl<'a> Printer<'a> {
             self.write_helper("__asyncValues");
             self.write("(");
             self.emit_expression(for_in_of.expression);
-            self.write(")), ");
+            self.write("))");
         } else {
             self.write_helper("__asyncValues");
             self.write("(");
             self.emit_expression(for_in_of.expression);
-            self.write("), ");
+            self.write(")");
         }
-        self.write(&loop_result_name);
+        if !hoist_loop_init_temps {
+            self.write(", ");
+            self.write(&loop_result_name);
+        }
         self.write("; ");
         self.write(&loop_result_name);
         self.write(" = ");
