@@ -12,22 +12,34 @@ fn keyof_assignability_suppression_uses_relation_outcome_boundary() {
             .join("src/assignability/application_keyof_helpers.rs"),
     )
     .expect("failed to read application_keyof_helpers.rs");
+    let checker_compact: String = checker.chars().filter(|c| !c.is_whitespace()).collect();
+    let helpers_compact: String = helpers.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        checker.contains("assign_relation_outcome(source, resolved_keyof)"),
-        "keyof diagnostic suppression should route evaluated-keyof probes through RelationOutcome"
+        checker_compact
+            .contains("keyof_diagnostic_suppression_relation_outcome(source,resolved_keyof)"),
+        "keyof diagnostic suppression should route evaluated-keyof probes through a dedicated RelationOutcome"
     );
     assert!(
-        helpers
-            .matches("assign_relation_outcome(member, target)")
+        helpers_compact
+            .matches("keyof_diagnostic_suppression_relation_outcome(member,target)")
             .count()
             >= 2,
-        "keyof interface augmentation coverage should route member probes through RelationOutcome"
+        "keyof interface augmentation coverage should route member probes through a dedicated RelationOutcome"
     );
     assert!(
-        helpers.contains("assign_relation_outcome(source_arg, constraint)")
-            && helpers.contains("assign_relation_outcome(constraint, source_arg)"),
-        "application/keyof type-argument fallback should route mutual probes through RelationOutcome"
+        helpers_compact
+            .contains("keyof_diagnostic_suppression_relation_outcome(source_arg,constraint,)")
+            && helpers_compact
+                .contains("keyof_diagnostic_suppression_relation_outcome(constraint,source_arg,)"),
+        "application/keyof type-argument fallback should route mutual probes through a dedicated RelationOutcome"
+    );
+    assert!(
+        !checker_compact.contains("assign_relation_outcome(source,resolved_keyof)")
+            && !helpers_compact.contains("assign_relation_outcome(member,target)")
+            && !helpers_compact.contains("assign_relation_outcome(source_arg,constraint)")
+            && !helpers_compact.contains("assign_relation_outcome(constraint,source_arg)"),
+        "keyof diagnostic suppression should not use generic assignment relation outcomes"
     );
     assert!(
         !checker.contains("ctx.types.is_assignable_to(source, resolved_keyof)")

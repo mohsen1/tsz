@@ -49,6 +49,8 @@ pub(crate) enum RelationKind {
     DuplicateIdentifier,
     /// Variable initializer compatibility probes for TS2322 elaboration paths.
     VariableInitializer,
+    /// `keyof` target compatibility probes for TS2322 diagnostic suppression.
+    KeyofDiagnosticSuppression,
     /// Diagnostic-source narrowing display probes.
     DiagnosticSourceNarrowing,
     /// Class implements index-signature value compatibility probes.
@@ -250,6 +252,10 @@ impl RelationRequest {
 
     pub(crate) const fn variable_initializer(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::VariableInitializer)
+    }
+
+    pub(crate) const fn keyof_diagnostic_suppression(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::KeyofDiagnosticSuppression)
     }
 
     pub(crate) const fn diagnostic_source_narrowing(source: TypeId, target: TypeId) -> Self {

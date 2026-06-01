@@ -210,8 +210,16 @@ impl<'a> CheckerState<'a> {
                     .and_then(|param| param.constraint)
                     .is_some_and(|constraint| {
                         constraint == source_arg
-                            || (self.assign_relation_outcome(source_arg, constraint).related
-                                && self.assign_relation_outcome(constraint, source_arg).related)
+                            || (self
+                                .keyof_diagnostic_suppression_relation_outcome(
+                                    source_arg, constraint,
+                                )
+                                .related
+                                && self
+                                    .keyof_diagnostic_suppression_relation_outcome(
+                                        constraint, source_arg,
+                                    )
+                                    .related)
                             || query::type_param_info(self.ctx.types, constraint)
                                 .zip(query::type_param_info(self.ctx.types, source_arg))
                                 .is_some_and(|(constraint_param, source_param)| {
@@ -235,7 +243,10 @@ impl<'a> CheckerState<'a> {
         let target_keyof_inner = query::keyof_inner_type(self.ctx.types, target);
         let source_keyof_inner = source_members.iter().find_map(|&member| {
             query::keyof_inner_type(self.ctx.types, member).filter(|_| {
-                member == target || self.assign_relation_outcome(member, target).related
+                member == target
+                    || self
+                        .keyof_diagnostic_suppression_relation_outcome(member, target)
+                        .related
             })
         });
         let Some(inner) = target_keyof_inner.or(source_keyof_inner) else {
@@ -325,7 +336,8 @@ impl<'a> CheckerState<'a> {
                     &self.ctx,
                     member,
                 );
-            self.assign_relation_outcome(member, target).related
+            self.keyof_diagnostic_suppression_relation_outcome(member, target)
+                .related
                 || query::keyof_inner_type(self.ctx.types, member)
                     .and_then(|member_inner| query::lazy_def_id(self.ctx.types, member_inner))
                     .is_some_and(|member_def_id| member_def_id == def_id)

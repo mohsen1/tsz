@@ -740,7 +740,9 @@ impl<'a> CheckerState<'a> {
                     target,
                 );
             if resolved_keyof != target
-                && self.assign_relation_outcome(source, resolved_keyof).related
+                && self
+                    .keyof_diagnostic_suppression_relation_outcome(source, resolved_keyof)
+                    .related
             {
                 return true;
             }
