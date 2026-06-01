@@ -51,6 +51,8 @@ pub(crate) enum RelationKind {
     SyntaxInstantiatedConstraint,
     /// Indexed-access generic constraint key-space compatibility probes.
     IndexedAccessConstraintKey,
+    /// Conditional generic constraint component compatibility probes.
+    ConditionalConstraintComponent,
     /// Generic constraint diagnostic property compatibility probes.
     GenericConstraintProperty,
     /// Source property-name literal compatibility against an index key type.
@@ -280,6 +282,10 @@ impl RelationRequest {
 
     pub(crate) const fn indexed_access_constraint_key(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::IndexedAccessConstraintKey)
+    }
+
+    pub(crate) const fn conditional_constraint_component(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ConditionalConstraintComponent)
     }
 
     pub(crate) const fn generic_constraint_property(source: TypeId, target: TypeId) -> Self {

@@ -21,10 +21,16 @@ fn conditional_result_branches_use_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "conditional branch relation decisions must use the shared relation outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "conditional branch relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
-        4,
-        "the conditional branch and indexed-object-map branch relations should route through RelationOutcome"
+        function
+            .matches("conditional_constraint_component_relation_outcome(")
+            .count(),
+        6,
+        "conditional branch, extends fallback, and indexed-object-map branch relations should route through the conditional constraint component request helper"
     );
 }
 
@@ -44,9 +50,15 @@ fn conditional_filter_helper_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "conditional filter relation decisions must use the shared relation outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "conditional filter relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("conditional_constraint_component_relation_outcome(")
+            .count(),
         4,
-        "the true and extends relation probes should route through RelationOutcome"
+        "the true and extends relation probes should route through the conditional constraint component request helper"
     );
 }
