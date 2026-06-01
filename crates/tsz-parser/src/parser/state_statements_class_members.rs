@@ -1127,9 +1127,10 @@ impl ParserState {
 
         let mut members = Vec::new();
 
-        while !self.is_token(SyntaxKind::CloseBraceToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken)
-        {
+        while !matches!(
+            self.token(),
+            SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+        ) {
             if let Some(close_pos) = self.class_member_list_outer_declaration_recovery_close_pos() {
                 self.parse_error_at(
                     close_pos,
@@ -1158,18 +1159,7 @@ impl ParserState {
                 break;
             }
 
-            if matches!(
-                self.token(),
-                SyntaxKind::GlobalKeyword
-                    | SyntaxKind::NamespaceKeyword
-                    | SyntaxKind::ModuleKeyword
-            ) && self.look_ahead_is_module_declaration()
-            {
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-                self.suppress_next_missing_class_close_brace_error_once = true;
+            if self.recover_module_like_class_member_as_outer_statement() {
                 break;
             }
 
@@ -2141,35 +2131,6 @@ impl ParserState {
                 initializer,
             },
         )
-    }
-
-    fn recover_invalid_module_like_class_member(&mut self) {
-        self.parse_error_at_current_token(
-            "Unexpected token. A constructor, method, accessor, or property was expected.",
-            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-        );
-        self.next_token();
-
-        if !self.is_token(SyntaxKind::CloseBraceToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken)
-            && !self.scanner.has_preceding_line_break()
-        {
-            self.error_token_expected(";");
-
-            while !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-                && !self.scanner.has_preceding_line_break()
-            {
-                self.next_token();
-            }
-        }
-
-        if self.is_token(SyntaxKind::CloseBraceToken) {
-            self.parse_error_at_current_token(
-                "Declaration or statement expected.",
-                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-            );
-        }
     }
 
     fn look_ahead_is_class_body_variable_statement(&mut self) -> bool {

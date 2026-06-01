@@ -52,6 +52,7 @@ mod namespace_directives;
 mod recovery_helpers;
 mod source_file;
 mod special_expressions;
+mod statement_erasure;
 mod statements;
 mod transform_dispatch;
 mod types;
