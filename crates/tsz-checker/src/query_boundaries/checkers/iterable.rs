@@ -22,6 +22,13 @@ pub(crate) fn classify_async_iterable_type(
     tsz_solver::type_queries::classify_async_iterable_type(db, type_id)
 }
 
+pub(crate) fn async_iterable_protocol_lookup_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::async_iterable_protocol_lookup_type(db, type_id)
+}
+
 pub(crate) fn classify_for_of_element_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

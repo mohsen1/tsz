@@ -168,6 +168,32 @@ pub fn classify_async_iterable_type(
     }
 }
 
+/// Return the semantic receiver that async-iterator protocol lookup should use.
+///
+/// Generic lib interface applications can evaluate to an empty structural object
+/// while the solver still records the original `Application` as the type's
+/// provenance. Protocol lookup needs that application form so inherited lib
+/// members like `[Symbol.asyncIterator]` remain visible after evaluation.
+pub fn async_iterable_protocol_lookup_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = db.lookup(type_id)
+    else {
+        return type_id;
+    };
+    let shape = db.object_shape(shape_id);
+    if !shape.properties.is_empty() || shape.string_index.is_some() || shape.number_index.is_some()
+    {
+        return type_id;
+    }
+    let Some(alias) = db.get_display_alias(type_id) else {
+        return type_id;
+    };
+    if alias != type_id && matches!(db.lookup(alias), Some(TypeData::Application(_))) {
+        alias
+    } else {
+        type_id
+    }
+}
+
 /// Classification for for-of element type computation.
 #[derive(Debug, Clone)]
 pub enum ForOfElementKind {
