@@ -269,6 +269,7 @@ jobs:
 
           check_exit=0
           node scripts/bench/check-artifact-readiness.mjs "${artifact}" \
+            --expect-source-commit="${GITHUB_SHA}" \
             || check_exit=$?
 
           if [[ "${check_exit}" -eq 1 ]]; then

@@ -341,6 +341,7 @@ jobs:
           )"
 
           node scripts/bench/check-artifact-readiness.mjs "${artifact}" --json \
+            --expect-source-commit="${GITHUB_SHA}" \
             > "${readiness_out}" || true
           echo "Wrote $(wc -c < "${readiness_out}") bytes to ${readiness_out}."
         continue-on-error: true

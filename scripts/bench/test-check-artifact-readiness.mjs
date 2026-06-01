@@ -173,6 +173,43 @@ withTempDir((dir) => {
 console.log("✅ complete all-green artifact exits 0");
 
 // ---------------------------------------------------------------------------
+// Test: expected source commit marks an artifact current when it matches.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json", "--expect-source-commit=abcdef1234567890"]);
+  assert.equal(result.status, 0, `current source artifact should exit 0:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.source_freshness.current, true, "JSON should mark matching source current");
+  assert.equal(parsed.source_freshness.warning, null, "matching source should not warn");
+  assert.match(result.stderr, /Source freshness.*current for abcdef123456/);
+});
+console.log("✅ source freshness reports current artifact source");
+
+// ---------------------------------------------------------------------------
+// Test: --require-source-current fails when the artifact source is stale.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, [
+    "--json",
+    "--expect-source-commit",
+    "1111111111111111111111111111111111111111",
+    "--require-source-current",
+  ]);
+  assert.equal(result.status, 1, "stale source should fail the source-current gate");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.source_freshness.current, false, "JSON should mark stale source not current");
+  assert.match(parsed.source_freshness.warning, /differs from expected 111111111111/);
+  assert.match(result.stderr, /source freshness failed/);
+});
+console.log("✅ --require-source-current fails on stale artifact source");
+
+// ---------------------------------------------------------------------------
 // Test: modern artifact without measurement_profile still exits 0 but reports
 // the missing profile so dashboards can surface the metadata gap.
 // ---------------------------------------------------------------------------
