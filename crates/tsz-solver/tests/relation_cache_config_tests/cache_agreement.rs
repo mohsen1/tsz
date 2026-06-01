@@ -257,7 +257,7 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
             | RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
             | RelationFlags::STRICT_READONLY_IDENTITY,
     );
-    let disabled = RelationPolicy::from_relation_flags(RelationFlags::empty());
+    let disabled = RelationPolicy::unflagged_compatibility();
 
     assert!(enabled.strict_null_checks());
     assert!(enabled.strict_function_types());
