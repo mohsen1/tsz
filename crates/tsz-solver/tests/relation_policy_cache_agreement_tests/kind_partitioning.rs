@@ -156,3 +156,71 @@ fn redeclaration_identity_relation_does_not_reuse_assignability_cache_slot() {
         "redeclaration identity must not overwrite or consume the ordinary assignability slot",
     );
 }
+
+#[test]
+fn redeclaration_identity_relation_does_not_reuse_subtype_cache_slot() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::default();
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+    let source = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+    let target = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let subtype_key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
+    let identical_key = RelationCacheKey::for_identical(source, target, policy.cache_config());
+
+    assert_ne!(
+        subtype_key, identical_key,
+        "redeclaration identity and subtype must occupy distinct relation cache keys",
+    );
+
+    let subtype_cached = db.is_subtype_of_with_policy(source, target, policy);
+    assert!(
+        subtype_cached,
+        "ordinary structural subtype should allow extra source properties",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "ordinary subtype should populate the subtype cache slot",
+    );
+
+    let redeclaration_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let redeclaration_with_cache_context = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext {
+            query_db: Some(&db),
+            ..RelationContext::default()
+        },
+    )
+    .is_related();
+
+    assert!(
+        !redeclaration_uncached,
+        "redeclaration identity must reject structurally subtype-compatible but non-identical object types",
+    );
+    assert_eq!(
+        redeclaration_with_cache_context, redeclaration_uncached,
+        "redeclaration identity with a query cache context must match uncached identity semantics",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "redeclaration identity must not overwrite or consume the ordinary subtype slot",
+    );
+}
