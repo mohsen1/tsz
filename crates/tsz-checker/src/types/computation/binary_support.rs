@@ -1404,7 +1404,7 @@ impl<'a> CheckerState<'a> {
                         if ret != TypeId::BOOLEAN
                             && ret != TypeId::ANY
                             && ret != TypeId::ERROR
-                            && !self.assign_relation_outcome(ret, TypeId::BOOLEAN).related
+                            && !self.return_relation_outcome(ret, TypeId::BOOLEAN).related
                         {
                             self.error_at_node_msg(
                                 right_idx,
@@ -1423,7 +1423,7 @@ impl<'a> CheckerState<'a> {
                                 && param_type != TypeId::ANY
                                 && param_type != TypeId::UNKNOWN
                                 && param_type != TypeId::ERROR
-                                && !self.assign_relation_outcome(lhs_type, param_type).related
+                                && !self.call_arg_relation_outcome(lhs_type, param_type).related
                             {
                                 self.error_at_node_msg(
                                     left_idx,

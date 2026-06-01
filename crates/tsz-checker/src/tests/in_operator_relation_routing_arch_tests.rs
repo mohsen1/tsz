@@ -73,23 +73,20 @@ fn binary_instanceof_symbol_hasinstance_relations_use_relation_outcomes() {
     );
     let compact_body = compact(body);
 
-    assert_eq!(
-        body.matches("assign_relation_outcome(").count(),
-        2,
-        "`instanceof` Symbol.hasInstance return and parameter checks should route through relation outcomes"
+    assert!(
+        body.contains("return_relation_outcome(ret, TypeId::BOOLEAN).related"),
+        "`instanceof` Symbol.hasInstance return check should use the return relation outcome"
     );
     assert!(
-        body.contains("assign_relation_outcome(ret, TypeId::BOOLEAN).related"),
-        "`instanceof` Symbol.hasInstance return check should use a relation outcome"
+        body.contains("call_arg_relation_outcome(lhs_type, param_type).related"),
+        "`instanceof` Symbol.hasInstance parameter check should use the call-argument relation outcome"
     );
     assert!(
-        body.contains("assign_relation_outcome(lhs_type, param_type).related"),
-        "`instanceof` Symbol.hasInstance parameter check should use a relation outcome"
-    );
-    assert!(
-        !body.contains("is_assignable_to(ret, TypeId::BOOLEAN)")
+        !body.contains("assign_relation_outcome(ret, TypeId::BOOLEAN)")
+            && !body.contains("assign_relation_outcome(lhs_type, param_type)")
+            && !body.contains("is_assignable_to(ret, TypeId::BOOLEAN)")
             && !body.contains("is_assignable_to(lhs_type, param_type)"),
-        "`instanceof` Symbol.hasInstance checks should not use raw boolean assignability gates"
+        "`instanceof` Symbol.hasInstance checks should not use generic assignment or raw boolean assignability gates"
     );
     assert!(
         compact_body.contains("diagnostic_relation_outcome(src,tgt).related"),

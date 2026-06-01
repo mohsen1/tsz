@@ -78,6 +78,9 @@ whether the awaited receiver satisfies a `then` signature's `this` type.
 Iterator `next(value)` compatibility diagnostics use the call-argument request
 when probing whether the value sent by `for...of`, spread, destructuring, or
 `yield*` is accepted by the iterator's `next` parameter type.
+`instanceof` `[Symbol.hasInstance]` validation uses the return request for the
+hook return type and the call-argument request for the left operand passed to
+the hook's first parameter.
 
 `assignability/assignment_checker/destructuring.rs` builds
 `RelationRequest::destructuring` for rest/default/property destructuring
