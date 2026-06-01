@@ -240,6 +240,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn overload_implementation_parameter",
             "RelationKind::OverloadImplementationParameter",
         ),
+        (
+            "fn binary_arithmetic_number",
+            "RelationKind::BinaryArithmeticNumber",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

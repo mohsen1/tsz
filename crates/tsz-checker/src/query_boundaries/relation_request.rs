@@ -99,6 +99,8 @@ pub(crate) enum RelationKind {
     CallAdapterIdentity,
     /// Overload implementation parameter-surface compatibility probe.
     OverloadImplementationParameter,
+    /// Indexed-access arithmetic operand compatibility against `number`.
+    BinaryArithmeticNumber,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -352,6 +354,10 @@ impl RelationRequest {
             target,
             RelationKind::OverloadImplementationParameter,
         )
+    }
+
+    pub(crate) const fn binary_arithmetic_number(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::BinaryArithmeticNumber)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

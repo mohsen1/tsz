@@ -1641,13 +1641,17 @@ impl<'a> CheckerState<'a> {
                     left,
                 )
                     || left_is_index_access
-                        && self.assign_relation_outcome(left, TypeId::NUMBER).related;
+                        && self
+                            .binary_arithmetic_number_relation_outcome(left, TypeId::NUMBER)
+                            .related;
                 let right_ok =
                     crate::query_boundaries::type_computation::core::is_arithmetic_operand(
                         self.ctx.types,
                         right,
                     ) || right_is_index_access
-                        && self.assign_relation_outcome(right, TypeId::NUMBER).related;
+                        && self
+                            .binary_arithmetic_number_relation_outcome(right, TypeId::NUMBER)
+                            .related;
                 left_ok && right_ok
             }
             _ => false,

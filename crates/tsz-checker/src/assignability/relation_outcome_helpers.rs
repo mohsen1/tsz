@@ -609,6 +609,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing binary arithmetic number relation for raw
+    /// checker types, preserving the canonical arithmetic operand request shape.
+    pub(crate) fn binary_arithmetic_number_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::binary_arithmetic_number(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

@@ -130,21 +130,28 @@ fn indexed_access_binary_arithmetic_uses_relation_outcomes() {
     let source = fs::read_to_string("src/types/computation/binary_support.rs")
         .expect("failed to read binary support source");
     let body = trailing_function_body(&source, "pub(super) fn resolve_indexed_access_binary_op(");
+    let compact_body = compact(body);
 
     assert_eq!(
-        body.matches("assign_relation_outcome(").count(),
+        body.matches("binary_arithmetic_number_relation_outcome(")
+            .count(),
         2,
-        "indexed-access arithmetic probes should route through relation outcomes"
+        "indexed-access arithmetic probes should route through role-specific relation outcomes"
     );
     assert!(
-        body.contains("assign_relation_outcome(left, TypeId::NUMBER).related")
-            && body.contains("assign_relation_outcome(right, TypeId::NUMBER).related"),
+        compact_body
+            .contains("binary_arithmetic_number_relation_outcome(left,TypeId::NUMBER).related")
+            && compact_body.contains(
+                "binary_arithmetic_number_relation_outcome(right,TypeId::NUMBER).related"
+            ),
         "indexed-access arithmetic probes should use relation outcome decisions"
     );
     assert!(
-        !body.contains("is_assignable_to(left, TypeId::NUMBER)")
-            && !body.contains("is_assignable_to(right, TypeId::NUMBER)"),
-        "indexed-access arithmetic probes should not use raw boolean assignability gates"
+        !compact_body.contains("assign_relation_outcome(left,TypeId::NUMBER)")
+            && !compact_body.contains("assign_relation_outcome(right,TypeId::NUMBER)")
+            && !compact_body.contains("is_assignable_to(left,TypeId::NUMBER)")
+            && !compact_body.contains("is_assignable_to(right,TypeId::NUMBER)"),
+        "indexed-access arithmetic probes should not use generic or raw boolean assignability gates"
     );
 }
 
