@@ -16,7 +16,7 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() <= 2,
+        source.matches("assign_relation_outcome(").count() <= 1,
         "remaining generic assignability diagnostics relation probes should keep shrinking"
     );
     let generic_start = argument_reports
@@ -79,6 +79,24 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     assert!(
         !weak_union_skip_helper.contains("assign_relation_outcome(source, target)"),
         "weak-union/excess-property fallback should not use the generic assign request"
+    );
+    let numeric_enum_start = root_source
+        .find("fn numeric_enum_assignment_override_from_source")
+        .expect("missing numeric enum assignment override helper");
+    let numeric_enum_end = root_source[numeric_enum_start..]
+        .find("pub(crate) fn check_assignable_or_report_at_exact_anchor")
+        .map(|offset| numeric_enum_start + offset)
+        .expect("missing next assignability diagnostics helper");
+    let numeric_enum_helper = &root_source[numeric_enum_start..numeric_enum_end];
+    assert!(
+        numeric_enum_helper.contains(
+            "numeric_enum_assignment_relation_outcome(source_literal, structural_target)"
+        ),
+        "numeric enum assignment override should use the numeric-enum assignment RelationOutcome"
+    );
+    assert!(
+        !numeric_enum_helper.contains("assign_relation_outcome(source_literal, structural_target)"),
+        "numeric enum assignment override should not use the generic assign request"
     );
     let default_reporter_start = root_source
         .find("fn check_assignable_or_report_at_with_options")

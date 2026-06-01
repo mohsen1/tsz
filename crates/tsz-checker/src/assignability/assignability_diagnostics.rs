@@ -812,8 +812,11 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
                 return Some(
-                    self.assign_relation_outcome(source_literal, structural_target)
-                        .related,
+                    self.numeric_enum_assignment_relation_outcome(
+                        source_literal,
+                        structural_target,
+                    )
+                    .related,
                 );
             }
             return None;

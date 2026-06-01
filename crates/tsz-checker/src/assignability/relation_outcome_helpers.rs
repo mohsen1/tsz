@@ -123,6 +123,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing numeric-enum assignment relation for raw
+    /// checker types, preserving the canonical numeric-enum assignment request shape.
+    pub(crate) fn numeric_enum_assignment_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::numeric_enum_assignment(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing type-parameter default relation for raw
     /// checker types, preserving the canonical default-constraint request shape.
     pub(crate) fn type_parameter_default_relation_outcome(

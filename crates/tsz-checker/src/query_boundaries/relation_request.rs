@@ -33,6 +33,8 @@ pub(crate) enum RelationKind {
     ImportAttributes,
     /// Computed enum-member initializer compatibility for TS18033.
     ComputedEnumMember,
+    /// Numeric-enum assignment override compatibility for TS2322 diagnostics.
+    NumericEnumAssignment,
     /// Type-parameter default compatibility against its constraint.
     TypeParameterDefault,
     /// Index-signature key/value compatibility for TS2411/TS2413 paths.
@@ -276,6 +278,10 @@ impl RelationRequest {
 
     pub(crate) const fn computed_enum_member(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ComputedEnumMember)
+    }
+
+    pub(crate) const fn numeric_enum_assignment(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::NumericEnumAssignment)
     }
 
     pub(crate) const fn type_parameter_default(source: TypeId, target: TypeId) -> Self {
