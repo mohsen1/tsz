@@ -230,3 +230,33 @@ assignPartial(value, { c: { 0: { a: 2, c: "y" } } });
         "inferred generic object-literal arguments should not be rechecked against unresolved conditional targets, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn dom_call_assignments_do_not_drop_ts2322_diagnostics() {
+    let libs = load_default_lib_files();
+    let diagnostics = check_source_with_libs(
+        r#"
+declare const d: Document;
+const a1: number = d.createElement("div");
+const a2: number = d.createElement("span");
+const a3: number = d.createElement("a");
+const a4: number = d.createElement("p");
+const a5: number = d.createElement("img");
+const a6: number = d.querySelector("x");
+const a7: number = d.getElementById("y");
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2020,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 7,
+        "all DOM-call assignment mismatches should report TS2322, got: {ts2322_count} from {diagnostics:?}"
+    );
+}

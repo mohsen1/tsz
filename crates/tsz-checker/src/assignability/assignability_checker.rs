@@ -685,9 +685,6 @@ impl<'a> CheckerState<'a> {
         if type_id.is_intrinsic() {
             return;
         }
-        if crate::state_domain::type_environment::lazy::global_resolution_fuel_exhausted() {
-            return;
-        }
         self.ensure_refs_resolved(type_id);
         self.ensure_application_symbols_resolved(type_id);
     }
