@@ -847,9 +847,129 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // Conditional types that survived `evaluate_type` (i.e. deferred
+        // conditionals like `T extends U ? X : Y` where `T` is a type
+        // parameter) are not handled by any structural shape arm above and
+        // would otherwise collapse to the bare `TypeMismatch` fallback,
+        // hiding the actual branch-level relation failure.
+        //
+        // The structural rule, applicable on either side: a relation
+        // involving a deferred conditional fails exactly when at least one
+        // of its branches fails the corresponding branch relation. Surface
+        // that failing branch as a `ConditionalBranchMismatch` carrying the
+        // nested branch reason so the diagnostic chain stays intact.
+        if let Some(reason) = self.explain_conditional_branch_failure(
+            source,
+            target,
+            resolved_source,
+            resolved_target,
+        ) {
+            return Some(reason);
+        }
+
         Some(SubtypeFailureReason::TypeMismatch {
             source_type: source,
             target_type: target,
+        })
+    }
+
+    /// Detect a deferred-conditional-shaped relation failure and surface the
+    /// failing branch as a `ConditionalBranchMismatch`.
+    ///
+    /// Applies to the three structural shapes:
+    ///
+    /// 1. **Concrete source vs deferred-conditional target** —
+    ///    `S <: (T extends U ? X : Y)`. Strategy 2 of
+    ///    `subtype_of_conditional_target` requires `S <: X` *and* `S <: Y`;
+    ///    when the relation has already failed, the failing branch is the
+    ///    one for which `check_subtype` returns false. Surface that branch.
+    /// 2. **Deferred-conditional source vs concrete target** —
+    ///    `(T extends U ? X : Y) <: T'`. Strategy 2 of
+    ///    `conditional_branches_subtype` requires `X <: T'` *and* `Y <: T'`;
+    ///    pick the first failing branch.
+    /// 3. **Conditional source vs conditional target** with matching extends
+    ///    shape — both `X <: X'` and `Y <: Y'` must hold; pick the first
+    ///    failing branch pair.
+    ///
+    /// True-branch failures are reported before false-branch failures so the
+    /// elaboration order is stable across runs and matches the textual
+    /// reading order of `T extends U ? X : Y`.
+    fn explain_conditional_branch_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        resolved_source: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        use crate::type_queries::data::get_conditional_type;
+
+        // Pick the branch pairs once based on which side is conditional. The
+        // three structural shapes all reduce to "try (true-pair, false-pair)
+        // in order", so iteration is identical regardless of side. When a
+        // side is not a conditional, the same resolved type sits in both
+        // branch slots, so the corresponding `(resolved_X, branch_Y)` pair
+        // falls out of the same construction.
+        //
+        // When neither side is a conditional there is nothing to surface and
+        // we fall back to the caller's `TypeMismatch`.
+        let source_cond = get_conditional_type(self.interner, resolved_source);
+        let target_cond = get_conditional_type(self.interner, resolved_target);
+        if source_cond.is_none() && target_cond.is_none() {
+            return None;
+        }
+
+        let (s_true, s_false) = source_cond
+            .as_deref()
+            .map_or((resolved_source, resolved_source), |s| {
+                (s.true_type, s.false_type)
+            });
+        let (t_true, t_false) = target_cond
+            .as_deref()
+            .map_or((resolved_target, resolved_target), |t| {
+                (t.true_type, t.false_type)
+            });
+        let pairs = [(s_true, t_true), (s_false, t_false)];
+
+        for (branch_source, branch_target) in pairs {
+            if let Some(reason) =
+                self.conditional_branch_reason(source, target, branch_source, branch_target)
+            {
+                return Some(reason);
+            }
+        }
+        None
+    }
+
+    /// Build a `ConditionalBranchMismatch` if the branch relation
+    /// `branch_source <: branch_target` actually fails. Returns `None` when
+    /// the branch relation succeeds (so the caller can try the other
+    /// branch) or when the branch pair would re-enter the outer relation —
+    /// a self-referential conditional whose branch reinterns to the outer
+    /// `(source, target)` pair would otherwise recurse indefinitely back
+    /// into the same explain query.
+    fn conditional_branch_reason(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        branch_source: TypeId,
+        branch_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        if branch_source == branch_target {
+            return None;
+        }
+        if branch_source == source && branch_target == target {
+            return None;
+        }
+        if self.check_subtype(branch_source, branch_target).is_true() {
+            return None;
+        }
+        let nested = self.explain_failure_guarded(branch_source, branch_target)?;
+        Some(SubtypeFailureReason::ConditionalBranchMismatch {
+            source_type: source,
+            target_type: target,
+            branch_source,
+            branch_target,
+            nested_reason: Box::new(nested),
         })
     }
 

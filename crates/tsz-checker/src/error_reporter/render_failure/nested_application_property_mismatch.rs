@@ -682,16 +682,43 @@ impl<'a> CheckerState<'a> {
         member_type: TypeId,
         nested_reason: &tsz_solver::SubtypeFailureReason,
     ) -> Diagnostic {
+        self.render_parent_with_child_relation(
+            ctx,
+            source_type,
+            target_type,
+            member_type,
+            target_type,
+            nested_reason,
+        )
+    }
+
+    /// Render an outer `Type 'S' is not assignable to type 'T'.` line and
+    /// elaborate it with the child relation `child_source <: child_target`,
+    /// preserving the nested reason chain.
+    ///
+    /// Shared by [`Self::render_union_source_mismatch`] and
+    /// [`Self::render_conditional_branch_mismatch`]: both shapes layer a
+    /// child branch relation one indent beneath the outer pair, with the
+    /// same depth handling and the same plain-leaf vs structural-recursion
+    /// split. The depth-0 outer line reuses `render_type_mismatch` so the
+    /// primary diagnostic keeps the standard source/target display
+    /// (e.g. preserving the full union surface). At deeper depths the
+    /// outer pair is formatted structurally.
+    fn render_parent_with_child_relation(
+        &mut self,
+        ctx: &RenderContext,
+        source_type: TypeId,
+        target_type: TypeId,
+        child_source: TypeId,
+        child_target: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
         let idx = ctx.idx;
         let depth = ctx.depth;
         let start = ctx.start;
         let length = ctx.length;
         let file_name = ctx.file_name.clone();
 
-        // The union-to-target line. At depth 0 this is the primary diagnostic, so
-        // reuse the standard type-mismatch formatting (which preserves the full
-        // union surface, e.g. `number | undefined`). When nested, the union and
-        // target types are formatted structurally one indent beneath the parent.
         let mut diag = if depth == 0 {
             self.render_type_mismatch(ctx)
         } else {
@@ -710,18 +737,19 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // The failing member sits exactly one indent level beneath the union
-        // line. At depth 0 the union line is the (un-indented) primary, so its
-        // first child is at related-depth 0; when nested it is at related-depth
-        // `depth`, so the child is at `depth + 1`.
+        // The failing child relation sits exactly one indent level beneath
+        // the outer line. At depth 0 the outer is the (un-indented) primary,
+        // so its first child is at related-depth 0; when nested, the outer
+        // is at related-depth `depth`, so the child is at `depth + 1`.
         if depth < 5 {
             let child_depth = if depth == 0 { 0 } else { depth + 1 };
             let (nested_source, nested_target) =
-                Self::nested_failure_display_types(nested_reason, member_type, target_type);
+                Self::nested_failure_display_types(nested_reason, child_source, child_target);
             if Self::nested_reason_is_plain_type_mismatch(nested_reason) {
-                // Plain leaf relation (e.g. `undefined` vs `number`): render the
-                // member/target structurally so the displayed source is the
-                // failing member, not the enclosing assignment's RHS expression.
+                // Plain leaf relation (e.g. `undefined` vs `number`): render
+                // the child source/target structurally so the displayed
+                // source is the failing branch/member, not the enclosing
+                // assignment's RHS expression.
                 let source_str = self.format_type_diagnostic(nested_source);
                 let target_str = self.format_type_diagnostic(nested_target);
                 diag.related_information.push(DiagnosticRelatedInformation {
@@ -789,6 +817,42 @@ impl<'a> CheckerState<'a> {
                 depth: (depth + 1).min(u8::MAX as u32) as u8,
             });
         }
+    }
+
+    /// Render a `ConditionalBranchMismatch` failure: a deferred conditional
+    /// relation that failed because at least one branch fails the
+    /// corresponding branch relation.
+    ///
+    /// The shape mirrors `render_union_source_mismatch`: emit the
+    /// conditional-vs-target line as the parent, then elaborate the failing
+    /// branch relation directly beneath it. The full chain inside the branch
+    /// is preserved by recursing through `render_failure_reason`, so a
+    /// branch that itself fails because of (say) a missing property or a
+    /// deeper conditional keeps elaborating instead of stopping at the
+    /// branch line:
+    ///
+    /// ```text
+    /// Type 'S' is not assignable to type 'T extends U ? X : Y'.
+    ///   Type 'S' is not assignable to type 'X'.
+    ///     <deeper reason for 'S' vs 'X'>
+    /// ```
+    pub(super) fn render_conditional_branch_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_type: TypeId,
+        target_type: TypeId,
+        branch_source: TypeId,
+        branch_target: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
+        self.render_parent_with_child_relation(
+            ctx,
+            source_type,
+            target_type,
+            branch_source,
+            branch_target,
+            nested_reason,
+        )
     }
 
     /// Render an `IndexSignatureMismatch` failure.
