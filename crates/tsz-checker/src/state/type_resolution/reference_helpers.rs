@@ -32,7 +32,7 @@ impl<'a> CheckerState<'a> {
             &import_name,
             Some(self.ctx.current_file_idx),
         )?;
-        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id) {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index_stable(target_sym_id) {
             self.ctx
                 .register_symbol_file_target(target_sym_id, file_idx);
         }

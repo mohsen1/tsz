@@ -139,9 +139,13 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(sym_id);
             }
+            // Resolve the declaring file the alias's module specifier is relative
+            // to from the stable global index, never the order-dependent dynamic
+            // overlay, so the specifier base is identical regardless of when this
+            // alias is first resolved (refs #7574, #12148).
             let source_file_idx = self
                 .ctx
-                .resolve_symbol_file_index(sym_id)
+                .resolve_symbol_file_index_stable(sym_id)
                 .unwrap_or(self.ctx.current_file_idx);
             // Look up the exported symbol in module_exports.
             // Only do this for named/default imports (import_name is Some).
@@ -166,11 +170,15 @@ impl<'a> CheckerState<'a> {
                         } else {
                             target_sym_id
                         };
-                    if let Some(target_file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id)
+                    if let Some(target_file_idx) =
+                        self.ctx.resolve_symbol_file_index_stable(target_sym_id)
                     {
                         // Keep the alias itself pinned to the owning file so later
                         // type computation doesn't re-read a colliding local symbol
-                        // with the same raw SymbolId.
+                        // with the same raw SymbolId. Pin to the target's *stable*
+                        // declaring file (not the order-dependent dynamic overlay)
+                        // so this alias→file mapping is identical regardless of
+                        // when the alias is first resolved (refs #7574, #12148).
                         self.ctx
                             .register_symbol_file_target(sym_id, target_file_idx);
                     }
@@ -270,12 +278,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Cross-file fallback: the module specifier is relative to the
-            // declaring file, not the current file.  Use resolve_symbol_file_index
-            // to find the source file and resolve_import_target_from_file to
-            // convert the relative specifier into a target file index.
+            // declaring file, not the current file.  Use the stable declaring-file
+            // index (never the order-dependent dynamic overlay) to find the source
+            // file and resolve_import_target_from_file to convert the relative
+            // specifier into a target file index (refs #7574, #12148).
             let source_file_idx = self
                 .ctx
-                .resolve_symbol_file_index(sym_id)
+                .resolve_symbol_file_index_stable(sym_id)
                 .unwrap_or(self.ctx.current_file_idx);
             if let Some(target_idx) = self
                 .ctx

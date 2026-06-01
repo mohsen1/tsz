@@ -17,6 +17,26 @@ use tsz_solver::TypeId;
 
 use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
+/// Kill-switch for order-independent cross-file alias/`export =` resolution.
+///
+/// When enabled (default), overlay writes that record a symbol's owning file
+/// prefer the stable, immutable `global_symbol_file_index` (declaring file)
+/// before consulting the monotonically-growing dynamic overlay, so the same
+/// `(file, symbol)` resolves to the same endpoint regardless of processing
+/// order. Set `TSZ_DISABLE_ORDER_INDEP_RESOLUTION=1` to restore the legacy
+/// dynamic-first behaviour for a clean A/B comparison (refs #7574, #12148).
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn order_independent_resolution_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_ORDER_INDEP_RESOLUTION")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
     /// Returns the number of affected symbols.
@@ -124,6 +144,43 @@ impl<'a> CheckerContext<'a> {
     /// Resolve only dynamically-discovered `SymbolId` ownership.
     pub fn resolve_dynamic_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
         self.cross_file_symbol_targets.borrow().get(sym_id)
+    }
+
+    /// Resolve a `SymbolId` to its *declaring* file index from the shared,
+    /// immutable `global_symbol_file_index` only.
+    ///
+    /// Unlike [`resolve_symbol_file_index`], this never consults the
+    /// monotonically-growing `cross_file_symbol_targets` overlay, so its answer
+    /// is a pure function of the bound program and is therefore identical
+    /// regardless of file/symbol processing order. Use this when the value is
+    /// fed back into the overlay (e.g. pinning an alias to its target's owning
+    /// file): reading the dynamic overlay there would let a prior, order-
+    /// dependent resolution choice propagate into a later pin, which is the
+    /// root cause of order-dependent cross-file alias resolution (refs #7574,
+    /// #12148).
+    ///
+    /// Returns `None` if the symbol has no statically-known declaring file
+    /// (e.g. ambient-module exports discovered only during resolution); callers
+    /// fall back to the dynamic overlay in that case.
+    pub fn resolve_symbol_declaring_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        self.global_symbol_file_index
+            .as_ref()
+            .and_then(|map| map.get(&sym_id).copied())
+    }
+
+    /// Resolve a `SymbolId` to a *stable* owning file index for overlay writes.
+    ///
+    /// Prefers the order-independent declaring-file index; falls back to the
+    /// dynamic overlay only for symbols with no statically-known declaring file.
+    /// Gated by the order-independence kill-switch so an A/B against the legacy
+    /// dynamic-first behaviour stays clean
+    /// (`TSZ_DISABLE_ORDER_INDEP_RESOLUTION=1`).
+    pub fn resolve_symbol_file_index_stable(&self, sym_id: SymbolId) -> Option<usize> {
+        if order_independent_resolution_disabled() {
+            return self.resolve_symbol_file_index(sym_id);
+        }
+        self.resolve_symbol_declaring_file_index(sym_id)
+            .or_else(|| self.resolve_dynamic_symbol_file_index(sym_id))
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.
