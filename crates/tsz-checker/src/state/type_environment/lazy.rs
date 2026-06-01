@@ -95,6 +95,16 @@ pub(crate) fn reset_all_thread_local_state() {
     GLOBAL_RESOLUTION_FUEL.set(0);
 }
 
+/// Whether we are currently inside a type-evaluation frame
+/// (`evaluate_type_with_env_impl`), i.e. resolving types for keyof / indexed
+/// access / mapped / conditional / contextual or generic-inference substitution
+/// rather than preparing a plain top-level relation input. Consumers that
+/// structurally decompose a type run inside such a frame, so deferral of a lib
+/// interface's transitive reference closure is unsafe here and must be skipped.
+pub(crate) fn in_type_evaluation_frame() -> bool {
+    EVAL_ENV_DEPTH.with(|d| d.get() > 0)
+}
+
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
 // Prevents explosive recursion when resolving lazy DefIds triggers type evaluation
 // (compute_type_of_symbol → evaluate_application_type → evaluate_type_with_env)

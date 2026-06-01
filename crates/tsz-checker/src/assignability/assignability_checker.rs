@@ -24,10 +24,10 @@ use tsz_solver::narrowing::NarrowingContext;
 /// referenced def, and (legacy behaviour) pushes the resolved result back onto
 /// its worklist so the *whole transitive reference closure* is materialized
 /// before any relation runs. For a lib interface like `Node` this eagerly lowers
-/// the entire DOM reference graph (`Node -> Document/Element/... -> 66
-/// `HTML*Element``), ~8000 interned types, and burns the per-process global
-/// resolution fuel — which then suppresses later relation diagnostics in the
-/// same file (a latent parity bug vs `tsc`). See issue #12101.
+/// the entire DOM reference graph (`Node` -> `Document`/`Element`/... -> all 66
+/// HTML element interfaces), ~8000 interned types, and burns the per-process
+/// global resolution fuel — which then suppresses later relation diagnostics in
+/// the same file (a latent parity bug vs `tsc`). See issue #12101.
 ///
 /// `TSZ_TRANSITIVE_REFS_MODE` selects:
 /// - unset / `0` -> mode 0: legacy (push every resolved ref). **Default.**
@@ -1534,20 +1534,29 @@ impl<'a> CheckerState<'a> {
                 if global_resolution_fuel_exhausted() {
                     break;
                 }
-                // EXPERIMENT: decide whether to defer this referenced def's
-                // transitive closure. When the kill-switch defers (mode 2 = lib
-                // interfaces only, mode 1 = all), we still resolve+insert the def
-                // (so the top-level ref is ready) but do NOT push its resolved
-                // result onto the worklist, leaving its nested refs for on-demand
+                // Decide whether to defer this referenced def's transitive
+                // closure. When deferring (mode 2 = eligible lib interfaces only,
+                // mode 1 = all), we still resolve+insert the def (so the
+                // top-level ref is ready) but do NOT push its resolved result
+                // onto the worklist, leaving its nested refs for on-demand
                 // relation resolution. Mode 2 restricts deferral to eligible
                 // simple lib interfaces (the DOM cascade) so user/generic types
                 // keep their proven transitive pre-resolution.
+                //
+                // Deferral is ONLY safe for plain top-level relation inputs.
+                // Inside a type-evaluation frame (keyof / indexed access / mapped
+                // / conditional / contextual or generic-inference substitution)
+                // the consumer structurally decomposes the interface and needs
+                // its full member closure, so never defer there — that is the
+                // variance/contextual-typing class the conformance A/B caught.
                 let defer_mode = transitive_refs_deferral_mode();
-                let defer_this = match defer_mode {
-                    1 => true,
-                    2 => self.def_id_is_simple_lib_interface(def_id),
-                    _ => false,
-                };
+                let defer_this =
+                    !crate::state_domain::type_environment::lazy::in_type_evaluation_frame()
+                        && match defer_mode {
+                            1 => true,
+                            2 => self.def_id_is_simple_lib_interface(def_id),
+                            _ => false,
+                        };
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
