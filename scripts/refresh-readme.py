@@ -154,8 +154,14 @@ def emit_summary_from_readme(text):
 
 
 def prefer_readme_emit_summary(candidate, readme_summary):
+    if readme_emit_summary_is_ahead(candidate, readme_summary):
+        return readme_summary
+    return candidate
+
+
+def readme_emit_summary_is_ahead(candidate, readme_summary):
     if readme_summary is None:
-        return candidate
+        return False
 
     same_domain = (
         readme_summary.get("jsTotal") == candidate.get("jsTotal")
@@ -165,7 +171,7 @@ def prefer_readme_emit_summary(candidate, readme_summary):
         readme_summary.get("jsPass", 0) >= candidate.get("jsPass", 0)
         and readme_summary.get("dtsPass", 0) >= candidate.get("dtsPass", 0)
     )
-    return readme_summary if same_domain and ahead_or_equal else candidate
+    return same_domain and ahead_or_equal
 
 
 def load_emit(args, readme_text):
@@ -189,6 +195,12 @@ def load_emit(args, readme_text):
         summary = normalize_emit_summary(data)
         if summary is not None:
             if args.emit_metrics_json is None and p == ROOT / "scripts" / "emit" / "emit-detail.json":
+                if readme_emit_summary_is_ahead(summary, readme_summary):
+                    print(
+                        "warning: preserving README emit metrics because "
+                        f"{p.relative_to(ROOT)} is behind the existing README emit block",
+                        file=sys.stderr,
+                    )
                 return prefer_readme_emit_summary(summary, readme_summary)
             return summary
     return None
