@@ -529,21 +529,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Optional source properties cannot satisfy required target properties.
-        // In standard mode, optional_property_type() widens the read type to `T | undefined`,
-        // but the property may still be absent.
-        if source.optional && !target.optional {
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(
-                    crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: source.name,
-                    },
-                )
-            {
-                return SubtypeResult::False;
-            }
-            return SubtypeResult::False;
-        }
+        // Note: optional source vs required target is also a failure, but it is
+        // resolved *after* the read-type check below so the captured failure reason
+        // matches tsc. When the read types are themselves incompatible, tsc reports
+        // the type-incompatibility chain (root mismatch), not the TS2327
+        // optional/required line; emitting TS2327 here would hide that root.
 
         // Note: TypeScript does NOT reject readonly source → mutable target for
         // individual properties. `{ readonly x: number }` IS assignable to `{ x: number }`.
@@ -598,6 +588,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.instantiated_generic_method_args
             .truncate(generic_args_start);
         self.in_property_check = prev_in_property_check;
+
+        // Optional source vs required target. This is only the *reported* failure
+        // once the read types are known compatible: an optional source property
+        // (present-but-maybe-absent) cannot satisfy a required target. If the read
+        // types already failed, that type-incompatibility reason takes precedence
+        // (matching tsc), so return it unchanged instead of overwriting it.
+        if result.is_true() && source.optional && !target.optional {
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(
+                    crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: source.name,
+                    },
+                )
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::False;
+        }
         result
     }
 

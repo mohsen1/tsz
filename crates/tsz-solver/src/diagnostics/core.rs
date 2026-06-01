@@ -272,6 +272,23 @@ pub enum SubtypeFailureReason {
         target_arg: TypeId,
         nested_reason: Box<Self>,
     },
+    /// A union **source** is not assignable to the target because one of its
+    /// members is not assignable.
+    ///
+    /// tsc elaborates this with the top-level `Type 'A | B' is not assignable to
+    /// type 'T'.` line followed by the first failing member's relation
+    /// (`Type 'B' is not assignable to type 'T'.`) carried in `nested_reason`
+    /// and rendered one level deeper. This keeps the root mismatch visible
+    /// instead of stopping at the bare union-to-target line.
+    ///
+    /// `member_type` is the first union member that fails against the target;
+    /// `nested_reason` explains that member's relation.
+    UnionSourceMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+        member_type: TypeId,
+        nested_reason: Box<Self>,
+    },
 }
 
 /// Diagnostic severity level.
@@ -603,6 +620,7 @@ impl SubtypeFailureReason {
             | Self::TooManyParameters { .. }
             | Self::IndexAccessTypeParameterMismatch { .. }
             | Self::TypeArgumentMismatch { .. }
+            | Self::UnionSourceMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
@@ -990,6 +1008,22 @@ impl SubtypeFailureReason {
                     vec![source.into(), target.into()],
                 );
                 diag = diag.with_related(nested_reason.to_diagnostic(*source_arg, *target_arg));
+                diag
+            }
+
+            Self::UnionSourceMismatch {
+                source_type,
+                target_type,
+                member_type,
+                nested_reason,
+            } => {
+                // Top-level `Type 'A | B' is not assignable to type 'T'.`, then
+                // the first failing member's relation directly beneath it.
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![(*source_type).into(), (*target_type).into()],
+                );
+                diag = diag.with_related(nested_reason.to_diagnostic(*member_type, *target_type));
                 diag
             }
         }

@@ -803,6 +803,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
+        // Union source: the relation failed, so at least one member is not
+        // assignable to the target. tsc keeps the root mismatch visible by
+        // elaborating the first failing member beneath the union-to-target line
+        // (`Type 'A | B' is not assignable to type 'T'.` -> `Type 'B' is not
+        // assignable to type 'T'.`). Without this, the chain stops at the bare
+        // union line and hides why the assignment fails (e.g. the `undefined`
+        // member contributed by an optional property).
+        if let Some(member_list) = union_list_id(self.interner, resolved_source) {
+            let members = self.interner.type_list(member_list);
+            for &member in members.iter() {
+                if member == source || member == resolved_source {
+                    // Defensive: avoid self-recursion on a degenerate union.
+                    continue;
+                }
+                if self.check_subtype(member, target).is_true() {
+                    continue;
+                }
+                // Elaborate only when the first failing member fails as a simple
+                // leaf relation (e.g. `undefined` vs `number`). A member that
+                // fails structurally (object/array/etc.) needs its own
+                // `Type 'M' is not assignable to type 'T'.` header before its
+                // sub-chain; that elaboration is owned by the structural render
+                // paths, so leave those to the existing top-level handling rather
+                // than producing a headerless, mis-indented chain here.
+                let nested = self.explain_failure_guarded(member, target);
+                if let Some(nested) = nested
+                    && matches!(
+                        nested,
+                        SubtypeFailureReason::TypeMismatch { .. }
+                            | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                            | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                    )
+                {
+                    return Some(SubtypeFailureReason::UnionSourceMismatch {
+                        source_type: source,
+                        target_type: target,
+                        member_type: member,
+                        nested_reason: Box::new(nested),
+                    });
+                }
+                break;
+            }
+        }
+
         Some(SubtypeFailureReason::TypeMismatch {
             source_type: source,
             target_type: target,
@@ -1000,24 +1044,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
 
-                // Check optional/required mismatch
+                // Check property type compatibility first.
                 //
-                // Always emit OptionalPropertyRequired when source is optional and target is
-                // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
-                // diagnostic priority: the optional-vs-required message (TS2327, "Property 'x'
-                // is optional in type 'S' but required in type 'T'.") takes precedence over a
-                // type-level mismatch message. The property is present-but-optional, not
-                // absent, so this is TS2327 rather than the missing-property TS2741.
-                // The main subtype check gates whether the assignment is actually compatible
-                // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
-                // reaches this explain path).
-                if sp.optional && !t_prop.optional {
-                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: t_prop.name,
-                    });
-                }
-
-                // Check property type compatibility
+                // The optional-vs-required message (TS2327) only applies when the
+                // property *types* are otherwise compatible, so optionality is the
+                // sole reason the relation fails. When the read types are themselves
+                // incompatible (e.g. `{a?: number}` vs `{a: number}`, where the
+                // optional source contributes `number | undefined` that is not
+                // assignable to `number`), tsc reports the type-incompatibility chain
+                // ("Types of property 'a' are incompatible." -> root mismatch) and
+                // does *not* collapse it to the optional/required line. Emitting
+                // TS2327 before this check would hide that root mismatch.
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
                 let allow_bivariant = sp.is_method || t_prop.is_method;
@@ -1035,6 +1072,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         source_property_type: source_type,
                         target_property_type: target_type,
                         nested_reason: nested.map(Box::new),
+                    });
+                }
+
+                // Read types are compatible: now optionality presence is the only
+                // remaining incompatibility (TS2327). This also covers
+                // `{a?: T}` vs `{a: T | undefined}` and exactOptionalPropertyTypes,
+                // where the read types match but the source may still be absent.
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
                     });
                 }
                 if !t_prop.readonly
@@ -1261,14 +1308,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
 
-                if sp.optional && !t_prop.optional {
-                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: t_prop.name,
-                    });
-                }
                 // NOTE: TypeScript allows readonly source to satisfy mutable target
                 // (readonly is a constraint on the reference, not structural compatibility)
 
+                // Check property type compatibility before the optional/required
+                // mismatch: TS2327 ("Property 'x' is optional ... but required ...")
+                // only applies when the read types are compatible and optionality is
+                // the sole failure. An incompatible read type must surface the
+                // "Types of property 'x' are incompatible." chain instead.
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
                 let allow_bivariant = sp.is_method || t_prop.is_method;
@@ -1286,6 +1333,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         source_property_type: source_type,
                         target_property_type: target_type,
                         nested_reason: nested.map(Box::new),
+                    });
+                }
+
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
                     });
                 }
                 if !t_prop.readonly
