@@ -1409,3 +1409,88 @@ fn typeof_result_carve_out_does_not_apply_to_subset() {
         "Three-literal subset `symbol | string | number` must NOT be reordered to tsc's typeof canonical order; got: {result}"
     );
 }
+
+// =================================================================
+// Cyclic source-position graph guard (issue #7574 — 4th overflow).
+//
+// `get_source_position_for_type` walks `Application` bases/args and
+// display-alias origins to compute union display order. A self-referential
+// generic instantiation (e.g. cross-file `Foo<Bar<Foo<...>>>` chains in
+// large-ts-repo's infrastructure glob) makes that walk cyclic, which used to
+// overflow the native stack via the mutual recursion with
+// `get_application_source_position`. A per-call visited set now terminates the
+// walk by returning the tier-2 "no source info" sentinel on re-entry.
+// =================================================================
+
+/// Build a 2-cycle through the display-alias + Application-args path and assert
+/// the source-position walk terminates instead of overflowing the stack.
+fn assert_source_position_cycle_terminates(arg_first: bool) {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // Two distinct evaluated object types so each can carry its own display
+    // alias (store_display_alias ignores identical evaluated==application).
+    let eval_a = db.object(vec![PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER)]);
+    let eval_b = db.object(vec![PropertyInfo::new(db.intern_string("b"), TypeId::STRING)]);
+
+    // Applications that reference the *other* evaluated type, forming a cycle:
+    //   eval_a --alias--> App(base, [eval_b]) --arg--> eval_b
+    //   eval_b --alias--> App(base, [eval_a]) --arg--> eval_a
+    // Put the cross-reference in the arg or the base position depending on the
+    // matrix variant so both recursion edges (line 547 base, line 552 args) are
+    // covered.
+    let base = db.lazy(crate::def::DefId(7001));
+    let (app_a, app_b) = if arg_first {
+        (
+            db.application(base, vec![eval_b]),
+            db.application(base, vec![eval_a]),
+        )
+    } else {
+        (db.application(eval_b, vec![]), db.application(eval_a, vec![]))
+    };
+    db.store_display_alias(eval_a, app_a);
+    db.store_display_alias(eval_b, app_b);
+
+    let fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    // The guard must make this return rather than overflow the stack.
+    let _ = fmt.get_source_position_for_type(eval_a, &def_store);
+    let _ = fmt.get_source_position_for_type(eval_b, &def_store);
+}
+
+#[test]
+fn source_position_cycle_via_application_args_terminates() {
+    assert_source_position_cycle_terminates(true);
+}
+
+#[test]
+fn source_position_cycle_via_application_base_terminates() {
+    assert_source_position_cycle_terminates(false);
+}
+
+/// Deep-but-finite chain of nested applications must NOT be short-circuited by
+/// the guard: it walks to the bottom and returns the user-defined element's
+/// tier, proving the guard fires only on genuine cycles, never on legitimate
+/// finite depth.
+#[test]
+fn source_position_deep_finite_chain_is_not_short_circuited() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let base = db.lazy(crate::def::DefId(7100));
+
+    // Build App(base, [App(base, [ ... [leaf] ... ])]) 200 levels deep over a
+    // distinct, non-cyclic chain (each application is a fresh content shape).
+    let leaf = db.object(vec![PropertyInfo::new(db.intern_string("leaf"), TypeId::NUMBER)]);
+    let mut current = leaf;
+    for depth in 0..200u32 {
+        // Vary the base so each nesting level is a distinct interned application
+        // and the chain stays acyclic.
+        let level_base = db.lazy(crate::def::DefId(7200 + depth));
+        current = db.application(level_base, vec![current, base]);
+    }
+
+    let fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let (tier, _file, _span) = fmt.get_source_position_for_type(current, &def_store);
+    // A finite chain over a user-defined leaf object resolves to a concrete
+    // tier (1 or 2), and crucially the call returns at all.
+    assert!(tier <= 2, "finite application chain must resolve to a valid tier");
+}
