@@ -429,6 +429,28 @@ impl<'a> Printer<'a> {
             return;
         }
         if let Some(lit) = self.arena.get_literal(node) {
+            if let Some(raw) = lit.raw_text.as_deref() {
+                if !self.ctx.options.target.supports_es2015()
+                    && let Some(downleveled) = self.downlevel_string_literal_for_es5(raw)
+                {
+                    self.write(&downleveled);
+                    return;
+                }
+                self.write(raw);
+                return;
+            }
+
+            if let Some(raw) = self.find_raw_string_literal_near(node, &lit.text) {
+                if !self.ctx.options.target.supports_es2015()
+                    && let Some(downleveled) = self.downlevel_string_literal_for_es5(&raw)
+                {
+                    self.write(&downleveled);
+                    return;
+                }
+                self.write(&raw);
+                return;
+            }
+
             // Preserve original quote style from source text
             let quote = self.detect_original_quote(node).unwrap_or({
                 if self.ctx.options.single_quote {
@@ -778,6 +800,18 @@ impl<'a> Printer<'a> {
                 out.push(ch);
             } else if ch == '\\' {
                 out.push_str("\\\\");
+            } else if ch == '\n' {
+                out.push_str("\\n");
+            } else if ch == '\r' {
+                out.push_str("\\r");
+            } else if ch == '\t' {
+                out.push_str("\\t");
+            } else if ch == '\u{2028}' {
+                out.push_str("\\u2028");
+            } else if ch == '\u{2029}' {
+                out.push_str("\\u2029");
+            } else if (ch as u32) < 0x20 || ch == '\x7F' {
+                let _ = write!(out, "\\u{:04X}", ch as u32);
             } else {
                 out.push(ch);
             }

@@ -351,10 +351,7 @@ impl<'a> Printer<'a> {
             init_vars,
         );
         self.write_line();
-        if let Some(capture_name) = this_capture {
-            self.emit_loop_this_capture_decl(&capture_name);
-        }
-        self.emit_hoisted_loop_var_decls(body_info);
+        self.emit_loop_capture_preamble(this_capture.as_deref(), body_info);
 
         self.write("for (");
         self.emit_for_initializer_as_var(loop_stmt.initializer);
@@ -388,10 +385,7 @@ impl<'a> Printer<'a> {
         let this_capture =
             self.emit_loop_function(&loop_fn_name, &[], loop_stmt.statement, body_info, &[]);
         self.write_line();
-        if let Some(capture_name) = this_capture {
-            self.emit_loop_this_capture_decl(&capture_name);
-        }
-        self.emit_hoisted_loop_var_decls(body_info);
+        self.emit_loop_capture_preamble(this_capture.as_deref(), body_info);
 
         match kind {
             ConditionLoopKind::DoWhile => {
@@ -424,6 +418,30 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
+    }
+
+    pub(in crate::emitter) fn emit_loop_capture_preamble(
+        &mut self,
+        this_capture: Option<&str>,
+        body_info: &LoopBodyVarInfo,
+    ) {
+        let Some(capture_name) = this_capture else {
+            self.emit_hoisted_loop_var_decls(body_info);
+            return;
+        };
+
+        if body_info.var_decl_names.is_empty() {
+            self.emit_loop_this_capture_decl(capture_name);
+            return;
+        }
+
+        self.write("var ");
+        self.write(capture_name);
+        self.write(" = this");
+        self.write(", ");
+        self.write(&body_info.var_decl_names.join(", "));
+        self.write(";");
+        self.write_line();
     }
 
     /// Emit the _`loop_N` function definition.

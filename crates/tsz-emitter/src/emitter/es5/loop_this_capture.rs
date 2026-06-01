@@ -167,6 +167,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn converted_for_of_coalesces_this_capture_and_body_var_hoists() {
+        let output = emit_es5(
+            "class C {\n\
+                run(xs: any[]) {\n\
+                    for (const item of xs) {\n\
+                        var leaked;\n\
+                        this.use(() => item);\n\
+                    }\n\
+                }\n\
+                use(f: any) {}\n\
+            }\n",
+        );
+
+        assert!(
+            output.contains("var this_1 = this, leaked;"),
+            "Converted for-of preamble should coalesce lexical `this` capture and body `var` hoists.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var this_1 = this;\n        var leaked;"),
+            "Body `var` hoist should not be emitted as a separate declaration after the lexical `this` capture.\nOutput:\n{output}"
+        );
+    }
+
     // Reproduces the `nestedLoops` witness shape: the `this` site is at the
     // loop body level and the inner arrow only closes over the loop bindings.
     // The capture decl is emitted at the function scope (after the `_loop_N`

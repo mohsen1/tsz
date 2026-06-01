@@ -63,6 +63,59 @@ const y = `\u{hello} ${100} \xtraordinary ${200} wonderful ${300} \uworld`;
 }
 
 #[test]
+fn es5_template_expression_escapes_line_terminators_in_string_text() {
+    let output = parse_lower_emit(
+        "
+const y = `before
+${value}
+after`;
+",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(r#"var y = "before\n".concat(value, "\nafter");"#),
+        "ES5 template downlevel should keep template newlines inside string text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn unterminated_template_at_eof_keeps_recovery_newline() {
+    let source = "// https://github.com/microsoft/TypeScript/issues/59345\n\
+export class ParseThemeData {\n\
+  parseButton(button: any) {\n\
+    const {type, size} = button;\n\
+    for (let item of type) {\n\
+      const fontType = item.type;\n\
+      const style = (state: string) => `color: var(--button-${fontType}-${state}-font-color)`;\n\
+      this.classFormat(`${style('active')});\n\
+    }\n\
+    for (let item of size) {\n\
+      const fontType = item.type;\n\
+      this.classFormat(\n\
+        [\n\
+          `font-size: var(--button-size-${fontType}-fontSize)`,\n\
+          `height: var(--button-size-${fontType}-height)`,\n\
+        ].join(';')\n\
+      );\n\
+    }\n\
+  }\n\
+}";
+
+    let es2015 = parse_lower_emit(source, ScriptTarget::ES2015);
+    assert!(
+        es2015.contains("}\n            ;"),
+        "ES2015 recovery should keep the synthesized empty statement on its own line.\nOutput:\n{es2015}"
+    );
+
+    let es5 = parse_lower_emit(source, ScriptTarget::ES5);
+    assert!(
+        es5.contains("}\\n\""),
+        "ES5 template downlevel should preserve the recovery newline inside string text.\nOutput:\n{es5}"
+    );
+}
+
+#[test]
 fn es5_tagged_template_cooked_non_bmp_codepoints_use_surrogate_escapes() {
     let output = parse_lower_emit(
         r#"
