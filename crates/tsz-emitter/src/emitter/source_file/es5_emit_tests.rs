@@ -132,12 +132,20 @@ fn for_await_temps_do_not_leak_to_source_scope() {
     let source_scope = &output[..function_start];
 
     assert!(
-        !source_scope.contains("var _a, e_1, _b, _c;"),
+        !source_scope.contains("var _a, e_1, _b, _c, _d, y_1, y_1_1;"),
         "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function* () {\n        var _a, e_1, _b, _c;"),
+        output.contains("function* () {\n        var _a, e_1, _b, _c, _d, y_1, y_1_1;"),
         "for-await temps should be hoisted inside the generated async body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (_d = true, y_1 = __asyncValues(y);"),
+        "for-await loop init should reuse the hoisted temps instead of redeclaring them inline.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("for (var _d = true, y_1 = __asyncValues(y);"),
+        "generated async bodies should not emit inline `var` for hoisted for-await loop temps.\nOutput:\n{output}"
     );
 }
 
@@ -163,12 +171,16 @@ fn async_arrow_for_await_temps_are_hoisted_inside_generator() {
     let source_scope = &output[..arrow_start];
 
     assert!(
-        !source_scope.contains("var _a, e_1, _b, _c;"),
+        !source_scope.contains("var _a, e_1, _b, _c, _d, _e, _f;"),
         "for-await temps from async arrows should not be hoisted outside the arrow.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function* () {\n    var _a, e_1, _b, _c;\n    try {"),
+        output.contains("function* () {\n    var _a, e_1, _b, _c, _d, _e, _f;\n    try {"),
         "for-await temps should be hoisted inside the async arrow generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (_d = true, _e = __asyncValues(gen());"),
+        "async arrows should reuse hoisted for-await loop-init temps.\nOutput:\n{output}"
     );
 }
 
@@ -191,7 +203,7 @@ fn async_arrow_for_await_assignment_binding_temps_are_hoisted() {
     let output = printer.get_output().to_string();
 
     assert!(
-        output.contains("const arrow = () => __awaiter(void 0, void 0, void 0, function* () {\n    var _a, e_1, _b, _c;\n    try {"),
+        output.contains("const arrow = () => __awaiter(void 0, void 0, void 0, function* () {\n    var _a, e_1, _b, _c, _d, _e, _f;\n    try {"),
         "assignment-target for-await temps should be hoisted in async arrow generator bodies.\nOutput:\n{output}"
     );
     assert!(
