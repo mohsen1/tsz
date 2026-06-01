@@ -200,6 +200,9 @@ impl<'a> CheckerState<'a> {
                         && !crate::query_boundaries::common::contains_type_parameters(
                             db, alias_type,
                         )
+                        && !crate::query_boundaries::common::conditional_check_defers_into_alias(
+                            db, alias_type,
+                        )
                     {
                         let evaluated = self.evaluate_type_with_env(alias_type);
                         if evaluated != alias_type {

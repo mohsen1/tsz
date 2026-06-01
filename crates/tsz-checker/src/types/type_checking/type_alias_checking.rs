@@ -310,6 +310,10 @@ impl<'a> CheckerState<'a> {
                 && !crate::query_boundaries::checkers::generic::contains_named_or_bound_type_parameter(
                     self.ctx.types,
                     body_type,
+                )
+                && !crate::query_boundaries::common::conditional_check_defers_into_alias(
+                    self.ctx.types,
+                    body_type,
                 );
             if !type_params.is_empty() || can_register_non_generic_conditional {
                 let alias_def_id = self.ctx.get_or_create_def_id(alias_sid);
