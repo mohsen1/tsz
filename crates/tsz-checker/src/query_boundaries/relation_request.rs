@@ -57,6 +57,8 @@ pub(crate) enum RelationKind {
     ClassImplementsIndexValue,
     /// Class implements whole-type compatibility probes.
     ClassImplementsWholeType,
+    /// Class static-side compatibility probes for TS2417 diagnostics.
+    ClassStaticSide,
     /// Interface heritage index-signature value compatibility probes.
     InterfaceHeritageIndexValue,
     /// Interface heritage generic-method specialization probes.
@@ -270,6 +272,10 @@ impl RelationRequest {
 
     pub(crate) const fn class_implements_whole_type(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ClassImplementsWholeType)
+    }
+
+    pub(crate) const fn class_static_side(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ClassStaticSide)
     }
 
     pub(crate) const fn interface_heritage_index_value(source: TypeId, target: TypeId) -> Self {

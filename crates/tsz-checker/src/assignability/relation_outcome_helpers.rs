@@ -299,6 +299,20 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing class static-side relation for raw checker
+    /// types, preserving the canonical class static-side request shape.
+    pub(crate) fn class_static_side_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::class_static_side(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing interface-heritage index relation for raw
     /// checker types, preserving the canonical heritage index request shape.
     pub(crate) fn interface_heritage_index_value_relation_outcome(
