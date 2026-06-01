@@ -944,6 +944,22 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing constructor-inference constraint relation
+    /// for raw checker types, preserving the canonical constructor-inference
+    /// request shape.
+    pub(crate) fn constructor_inference_constraint_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::constructor_inference_constraint(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing call-adapter compatibility relation for
     /// raw checker types, preserving the canonical call-adapter request shape.
     pub(crate) fn call_adapter_compatibility_relation_outcome(

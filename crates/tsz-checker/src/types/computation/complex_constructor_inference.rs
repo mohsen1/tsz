@@ -170,11 +170,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let constraint = self.evaluate_type_with_env(constraint);
-                if self
-                    .primitive_parts(actual)
-                    .into_iter()
-                    .any(|part| !self.assign_relation_outcome(part, constraint).related)
-                {
+                if self.primitive_parts(actual).into_iter().any(|part| {
+                    !self
+                        .constructor_inference_constraint_relation_outcome(part, constraint)
+                        .related
+                }) {
                     failed = true;
                 }
             }
