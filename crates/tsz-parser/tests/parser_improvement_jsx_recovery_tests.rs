@@ -936,6 +936,12 @@ const Widget = function View<T>(payload: Payload<T>) {
 };
 Widget({ label: "x" });
 "#,
+        r#"
+function render<T>(props: T) {
+  return <div {...(props as any < 1 ? props : { fallback: 1 })} />;
+}
+render({ value: 123 });
+"#,
     ] {
         assert_no_errors_named("test.tsx", source);
     }

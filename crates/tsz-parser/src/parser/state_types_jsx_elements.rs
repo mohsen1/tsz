@@ -1200,7 +1200,11 @@ impl ParserState {
             );
             NodeIndex::NONE
         } else {
-            self.parse_jsx_embedded_expression()
+            let was_in_initializer = self.in_jsx_attribute_initializer_element;
+            self.in_jsx_attribute_initializer_element = true;
+            let expression = self.parse_jsx_embedded_expression();
+            self.in_jsx_attribute_initializer_element = was_in_initializer;
+            expression
         };
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
