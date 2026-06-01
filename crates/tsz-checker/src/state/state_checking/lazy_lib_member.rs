@@ -197,14 +197,15 @@ impl CheckerState<'_> {
     }
 
     /// Try to resolve `prop_name` on an eligible simple lib-interface receiver by
-    /// lowering only that own property, returning a property-access `Success`
-    /// without materializing the rest of the interface.
+    /// lowering only that own property (and safe inherited plain property in its
+    /// `extends` chain), returning a property-access `Success` without
+    /// materializing the rest of the interface.
     ///
     /// Returns `None` (caller takes the full materialization path) when the
     /// receiver is not an eligible bare-`Lazy` lib interface, when the kill-switch
-    /// is set, when the interface does not declare `prop_name` as an own plain
-    /// property (including all heritage-inherited members), or when single-member
-    /// lowering cannot prove the member shape.
+    /// is set, when the interface (or any safe inherited interface in its `extends`
+    /// chain) does not declare `prop_name` as a supported plain property, or when
+    /// single-member lowering cannot prove the member shape.
     pub(crate) fn try_lazy_lib_member_property_access(
         &mut self,
         object_type: tsz_solver::TypeId,

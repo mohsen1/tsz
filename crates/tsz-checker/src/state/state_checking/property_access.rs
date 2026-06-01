@@ -246,9 +246,10 @@ impl<'a> CheckerState<'a> {
 
         // Lazy single-member fast path: when the receiver is a bare
         // `Lazy(DefId)` reference to a simple lib interface, resolve only the
-        // accessed own property instead of materializing the interface's full
-        // member set + heritage closure (e.g. `document.title`). Falls back to
-        // the full path on any miss/ambiguity, so behavior is unchanged there.
+        // accessed member (including safe inherited members) instead of
+        // materializing the interface's full member set + heritage closure
+        // (e.g. `document.title`, `document.nodeName`). Falls back to the full
+        // path on any miss/ambiguity, so behavior is unchanged there.
         // Gated by the `TSZ_DISABLE_LAZY_MEMBER_ACCESS` kill-switch inside the
         // eligibility predicate for byte-identical A/B comparison.
         if let Some(result) = self.try_lazy_lib_member_property_access(object_type, prop_name) {

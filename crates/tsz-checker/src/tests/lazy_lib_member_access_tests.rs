@@ -88,8 +88,8 @@ export {};
 }
 
 /// A heritage-inherited member (e.g. a property declared on a base interface)
-/// must still resolve correctly. The own-member fast path returns `None` for it
-/// and the full materialization path provides the inherited member.
+/// must still resolve correctly. The lookup now handles a safe inherited member
+/// path in addition to own-property fast paths.
 #[test]
 fn inherited_member_still_resolves() {
     // `Document.nodeName` is inherited from `Node`; reading it as a string must
@@ -104,6 +104,24 @@ export {};
     assert!(
         codes.is_empty(),
         "inherited lib member read should resolve cleanly, got {codes:?}",
+    );
+}
+
+/// Another inherited member access follows the same structural rule on a different
+/// interface name so this fast path is not tied to one receiver spelling.
+#[test]
+fn inherited_member_on_html_element_still_resolves() {
+    // `nodeName` is also inherited through `HTMLElement` -> `Element` -> `Node`.
+    let codes = dom_codes(
+        r#"
+declare const elem: HTMLElement;
+const n: string = elem.nodeName;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "inherited lib member read should resolve cleanly for different interface name, got {codes:?}",
     );
 }
 
