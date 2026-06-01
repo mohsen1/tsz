@@ -37,6 +37,8 @@ pub(crate) enum RelationKind {
     DecoratorCallee,
     /// JSDoc type-argument compatibility against a template constraint.
     JsdocTypeConstraint,
+    /// Source property-name literal compatibility against an index key type.
+    PropertyIndexKey,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -155,6 +157,10 @@ impl RelationRequest {
 
     pub(crate) const fn jsdoc_type_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsdocTypeConstraint)
+    }
+
+    pub(crate) const fn property_index_key(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::PropertyIndexKey)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

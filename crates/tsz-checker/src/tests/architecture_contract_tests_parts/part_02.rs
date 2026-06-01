@@ -125,6 +125,7 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn jsdoc_type_constraint",
             "RelationKind::JsdocTypeConstraint",
         ),
+        ("fn property_index_key", "RelationKind::PropertyIndexKey"),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
