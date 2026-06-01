@@ -983,9 +983,8 @@ jobs:
         with:
           name: conformance-shard-${{ matrix.shard }}
           path: |
-            .ci-metrics/conformance.json
-            .ci-metrics/conformance-failures-*.txt
-          include-hidden-files: true
+            ci-metrics/conformance.json
+            ci-metrics/conformance-failures-*.txt
           if-no-files-found: warn
           retention-days: 1
 
@@ -1141,7 +1140,7 @@ jobs:
         with:
           name: emit-details
           path: |
-            .ci-metrics/emit*.json
+            ci-metrics/emit*.json
             .ci-logs/emit/*.log
           if-no-files-found: ignore
 

@@ -365,11 +365,11 @@ jobs:
             exit 0
           fi
 
-          mkdir -p .ci-metrics
+          mkdir -p ci-metrics
           for suite in conformance emit fourslash; do
             OBJECT="tsz-ci-cache/metrics/latest/${suite}.json"
             URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
-            out=".ci-metrics/${suite}.json"
+            out="ci-metrics/${suite}.json"
             HTTP=$(curl -s -w "\n%{http_code}" -o "$out.tmp" \
               -H "Authorization: Bearer ${TOKEN}" "$URL")
             STATUS=$(echo "$HTTP" | tail -1)
