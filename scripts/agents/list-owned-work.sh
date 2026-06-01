@@ -85,6 +85,21 @@ fi
 REPOSITORY="${GITHUB_REPOSITORY:-mohsen1/tsz}"
 REPORT_ROWS=""
 
+collect_git_context() {
+  GIT_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  GIT_BRANCH="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  GIT_DETACHED=false
+  if [[ -z "$GIT_BRANCH" ]]; then
+    GIT_DETACHED=true
+    if [[ "$GIT_HEAD" == "unknown" ]]; then
+      GIT_BRANCH="detached:unknown"
+    else
+      GIT_BRANCH="detached:${GIT_HEAD:0:12}"
+    fi
+  fi
+  GIT_UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+}
+
 list_owned_items_rest() {
   local label="$1"
   local kind="$2"
@@ -390,9 +405,14 @@ NODE
 done
 
 if [[ -n "$JSON_REPORT" ]]; then
+  collect_git_context
   REPOSITORY="$REPOSITORY" \
   WITH_PR_STATE="$WITH_PR_STATE" \
   REPORT_ROWS="$REPORT_ROWS" \
+  GIT_HEAD="$GIT_HEAD" \
+  GIT_BRANCH="$GIT_BRANCH" \
+  GIT_DETACHED="$GIT_DETACHED" \
+  GIT_UPSTREAM="$GIT_UPSTREAM" \
   JSON_REPORT="$JSON_REPORT" \
   node <<'NODE'
 const fs = require("fs");
@@ -444,6 +464,12 @@ const report = {
   generated_by: "scripts/agents/list-owned-work.sh",
   repository: process.env.REPOSITORY,
   with_pr_state: process.env.WITH_PR_STATE === "true",
+  git_context: {
+    head: process.env.GIT_HEAD,
+    branch: process.env.GIT_BRANCH,
+    detached: process.env.GIT_DETACHED === "true",
+    upstream: process.env.GIT_UPSTREAM || null,
+  },
   owned_work_clear: ownedWorkClear,
   owned_work_status: ownedWorkClear ? "clear" : "active",
   total_pr_count: totalPrCount,
