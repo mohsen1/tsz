@@ -1,3 +1,109 @@
+/// Perf invariant: the per-evaluation *intermediate* seed/persist memo is
+/// gated by a structural cache-size soft cap, not by any fixture/file/name.
+///
+/// Below the cap the memo runs; once the persistent `env_eval_cache` grows
+/// past `ENV_EVAL_SEED_PERSIST_SOFT_CAP`, the O(cache_size)-per-call marshalling
+/// is skipped to avoid O(N^2) blowup across alias-sharing type positions. The
+/// gate is keyed only on cache length, so it triggers regardless of which
+/// `DefId`s populate the cache.
+#[test]
+fn test_env_eval_seed_persist_gate_is_cache_size_keyed() {
+    use crate::context::env_eval_cache::ENV_EVAL_SEED_PERSIST_SOFT_CAP;
+
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    // Empty cache: memo enabled.
+    assert!(
+        ctx.env_eval_seed_persist_enabled(),
+        "intermediate seed/persist must run while the cache is small"
+    );
+
+    // Fill exactly up to the cap with distinct lazy keys. DefId integers stand
+    // in for arbitrary alias references — the gate must not depend on the
+    // specific ids or any user-chosen name.
+    for i in 0..ENV_EVAL_SEED_PERSIST_SOFT_CAP as u32 {
+        let key = types.lazy(DefId(900_000 + i));
+        ctx.cache_env_eval_result(key, TypeId::STRING, false);
+    }
+    assert!(
+        ctx.env_eval_seed_persist_enabled(),
+        "memo stays enabled at exactly the cap ({ENV_EVAL_SEED_PERSIST_SOFT_CAP})"
+    );
+
+    // One past the cap: the marshalling memo is skipped.
+    let over = types.lazy(DefId(900_000 + ENV_EVAL_SEED_PERSIST_SOFT_CAP as u32));
+    ctx.cache_env_eval_result(over, TypeId::NUMBER, false);
+    assert!(
+        !ctx.env_eval_seed_persist_enabled(),
+        "memo must be skipped once the cache exceeds the soft cap"
+    );
+}
+
+/// Correctness invariant: skipping the intermediate seed/persist memo must not
+/// affect the authoritative top-level result memo. Even when the cache is far
+/// over the cap (gate skipping intermediate persistence), `cache_env_eval_result`
+/// / `lookup_env_eval_cache` still record and return results exactly.
+#[test]
+fn test_top_level_env_eval_memo_unaffected_by_seed_cap() {
+    use crate::context::env_eval_cache::ENV_EVAL_SEED_PERSIST_SOFT_CAP;
+
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    // Push the cache well past the cap so the intermediate memo is disabled.
+    for i in 0..(ENV_EVAL_SEED_PERSIST_SOFT_CAP as u32 + 16) {
+        let key = types.lazy(DefId(800_000 + i));
+        ctx.cache_env_eval_result(key, TypeId::STRING, false);
+    }
+    assert!(
+        !ctx.env_eval_seed_persist_enabled(),
+        "precondition: cache is over the cap"
+    );
+
+    // The top-level memo must still store and return an exact result.
+    let probe_key = types.lazy(DefId(700_001));
+    let probe_result = types.lazy(DefId(700_002));
+    ctx.cache_env_eval_result(probe_key, probe_result, false);
+    assert_eq!(
+        ctx.lookup_env_eval_cache(probe_key).map(|e| e.result),
+        Some(probe_result),
+        "top-level env-eval memo must be unaffected by the seed/persist cap"
+    );
+}
+
+/// Kill-switch: `TSZ_DISABLE_ENV_EVAL_SEED_CAP` forces the legacy always-on
+/// behavior. This guard documents the A/B contract — with the switch set the
+/// gate never skips, so cap-on vs cap-off output must be byte-identical.
+#[test]
+fn test_env_eval_seed_cap_killswitch_contract() {
+    // The killswitch reader is process-wide and cached; assert only that the
+    // default (unset) value is `false` so the cap is active by default. Setting
+    // the env var here would poison the OnceLock for sibling tests, so the
+    // forced-on path is covered by the conformance A/B harness instead.
+    assert!(
+        !crate::context::env_eval_cache::env_eval_seed_cap_disabled()
+            || std::env::var_os("TSZ_DISABLE_ENV_EVAL_SEED_CAP").is_some(),
+        "seed cap must be active unless TSZ_DISABLE_ENV_EVAL_SEED_CAP is set"
+    );
+}
+
 /// Guard: `ensure_def_ready_for_lowering` delegates to
 /// `extract_declared_type_params_for_reference_symbol` (not inline loops).
 #[test]
