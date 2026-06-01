@@ -1340,7 +1340,14 @@ impl<'a> Printer<'a> {
                 if !emitted_comment_line {
                     self.write_line();
                 }
-                self.increase_indent();
+                // A missing RHS (parse-error recovery) has no content to indent.
+                // Increasing indent here would cause the empty-string write inside
+                // emit_identifier to trigger ensure_indent and output spurious
+                // whitespace before the statement-level semicolon.
+                let right_is_missing = self.arena.is_missing_recovery_identifier(binary.right);
+                if !right_is_missing {
+                    self.increase_indent();
+                }
                 if !is_assignment_or_comma {
                     self.ctx.flags.optional_chain_needs_parens = true;
                     self.ctx.flags.nullish_coalescing_needs_parens = true;
@@ -1348,7 +1355,9 @@ impl<'a> Printer<'a> {
                 self.emit(binary.right);
                 self.ctx.flags.optional_chain_needs_parens = prev_optional;
                 self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
-                self.decrease_indent();
+                if !right_is_missing {
+                    self.decrease_indent();
+                }
                 self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
             }
