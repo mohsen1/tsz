@@ -49,6 +49,8 @@ pub(crate) enum RelationKind {
     UnionConstraintMember,
     /// Syntax-instantiated type-argument constraint compatibility probes.
     SyntaxInstantiatedConstraint,
+    /// Generic type-argument constraint compatibility probes.
+    TypeArgConstraint,
     /// Mapped-type key constraint key-space compatibility probes.
     MappedKeyConstraint,
     /// Indexed-access generic constraint key-space compatibility probes.
@@ -300,6 +302,10 @@ impl RelationRequest {
 
     pub(crate) const fn syntax_instantiated_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::SyntaxInstantiatedConstraint)
+    }
+
+    pub(crate) const fn type_arg_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::TypeArgConstraint)
     }
 
     pub(crate) const fn mapped_key_constraint(source: TypeId, target: TypeId) -> Self {

@@ -28,8 +28,18 @@ fn generic_constraint_validation_regular_checks_use_relation_outcome_boundary() 
     .expect("failed to read constraint_validation.rs");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 13,
-        "generic constraint validation should route regular relation probes through RelationOutcome"
+        source
+            .matches("type_arg_constraint_relation_outcome(")
+            .count()
+            >= 9,
+        "generic constraint validation should route plain type-argument probes through a named RelationRequest"
+    );
+    assert!(
+        source
+            .matches("conditional_constraint_component_relation_outcome(")
+            .count()
+            >= 4,
+        "generic constraint validation should route conditional component probes through a named RelationRequest"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),

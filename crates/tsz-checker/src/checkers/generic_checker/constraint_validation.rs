@@ -157,7 +157,10 @@ impl<'a> CheckerState<'a> {
                             && !query::contains_type_parameters(self.ctx.types, evaluated_original)
                         {
                             if self
-                                .assign_relation_outcome(evaluated_original, constraint_resolved)
+                                .type_arg_constraint_relation_outcome(
+                                    evaluated_original,
+                                    constraint_resolved,
+                                )
                                 .related
                             {
                                 if self.generic_boolean_literal_probe_should_remain_indeterminate(
@@ -188,7 +191,7 @@ impl<'a> CheckerState<'a> {
                         let concrete_arg = self.resolve_lazy_type(concrete_arg);
                         let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
                         if self
-                            .assign_relation_outcome(concrete_arg, constraint_resolved)
+                            .type_arg_constraint_relation_outcome(concrete_arg, constraint_resolved)
                             .related
                         {
                             if self.generic_boolean_literal_probe_should_remain_indeterminate(
@@ -373,7 +376,10 @@ impl<'a> CheckerState<'a> {
                         ) || self
                             .type_alias_application_filters_to_constraint(type_arg, inst_constraint)
                             || self
-                                .assign_relation_outcome(evaluated_arg, inst_constraint)
+                                .type_arg_constraint_relation_outcome(
+                                    evaluated_arg,
+                                    inst_constraint,
+                                )
                                 .related
                             || query::homomorphic_mapped_application_should_defer_constraint(
                                 self, type_arg,
@@ -725,13 +731,13 @@ impl<'a> CheckerState<'a> {
                                         let ext_evaluated =
                                             self.evaluate_type_for_assignability(ext_resolved);
                                         if self
-                                            .assign_relation_outcome(
+                                            .conditional_constraint_component_relation_outcome(
                                                 ext_evaluated,
                                                 constraint_resolved,
                                             )
                                             .related
                                             || self
-                                                .assign_relation_outcome(
+                                                .conditional_constraint_component_relation_outcome(
                                                     ext_resolved,
                                                     constraint_resolved,
                                                 )
@@ -1061,7 +1067,10 @@ impl<'a> CheckerState<'a> {
                             let base_for_check =
                                 self.evaluate_type_for_assignability(base_for_check);
                             let mut is_satisfied = self
-                                .assign_relation_outcome(base_for_check, inst_constraint)
+                                .type_arg_constraint_relation_outcome(
+                                    base_for_check,
+                                    inst_constraint,
+                                )
                                 .related
                                 || self.base_union_members_satisfy_constraint(
                                     base_for_check,
@@ -1239,13 +1248,13 @@ impl<'a> CheckerState<'a> {
                                 // extends type satisfies the constraint, skip TS2344.
                                 if false_type == TypeId::NEVER
                                     && (self
-                                        .assign_relation_outcome(
+                                        .conditional_constraint_component_relation_outcome(
                                             extends_evaluated,
                                             constraint_resolved,
                                         )
                                         .related
                                         || self
-                                            .assign_relation_outcome(
+                                            .conditional_constraint_component_relation_outcome(
                                                 extends_resolved,
                                                 constraint_resolved,
                                             )
@@ -1474,7 +1483,10 @@ impl<'a> CheckerState<'a> {
                             if is_checkable
                                 && base_for_check.is_none_or(|base_for_check| {
                                     !self
-                                        .assign_relation_outcome(base_for_check, inst_constraint)
+                                        .type_arg_constraint_relation_outcome(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
                                         .related
                                         && !self.base_union_members_satisfy_constraint(
                                             base_for_check,
@@ -1592,7 +1604,10 @@ impl<'a> CheckerState<'a> {
                                     );
                                 present.into_iter().any(|primitive_key| {
                                     !self
-                                        .assign_relation_outcome(primitive_key, inst_constraint)
+                                        .type_arg_constraint_relation_outcome(
+                                            primitive_key,
+                                            inst_constraint,
+                                        )
                                         .related
                                 })
                             }
@@ -1609,7 +1624,7 @@ impl<'a> CheckerState<'a> {
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
-                            .assign_relation_outcome(base_for_check, inst_constraint)
+                            .type_arg_constraint_relation_outcome(base_for_check, inst_constraint)
                             .related
                             || self.base_union_members_satisfy_constraint(
                                 base_for_check,
@@ -1788,8 +1803,11 @@ impl<'a> CheckerState<'a> {
                                 type_arg,
                             )
                         {
-                            self.assign_relation_outcome(type_arg, instantiated_constraint)
-                                .related
+                            self.type_arg_constraint_relation_outcome(
+                                type_arg,
+                                instantiated_constraint,
+                            )
+                            .related
                         } else {
                             self.no_weak_relation_outcome(type_arg, instantiated_constraint)
                                 .related
@@ -1886,7 +1904,7 @@ impl<'a> CheckerState<'a> {
                     let base = self.resolve_lazy_members_in_union(base);
                     let base = self.evaluate_type_for_assignability(base);
                     is_satisfied = self
-                        .assign_relation_outcome(base, instantiated_constraint)
+                        .type_arg_constraint_relation_outcome(base, instantiated_constraint)
                         .related
                         || self
                             .base_union_members_satisfy_constraint(base, instantiated_constraint)
