@@ -1610,21 +1610,8 @@ impl<'a> DeclarationEmitter<'a> {
         let call = self.arena.get_call_expr(expr_node)?;
         let binder = self.binder?;
         let raw_sym_id = self.value_reference_symbol(call.expression)?;
-        let imported_module = self
-            .imported_value_module_specifier(raw_sym_id, binder)
-            .or_else(|| self.imported_value_module_specifier_from_syntax(call.expression));
-        let sym_id = self
-            .resolve_portability_import_alias(raw_sym_id, binder)
-            .or_else(|| {
-                imported_module.as_deref().and_then(|module_specifier| {
-                    self.imported_value_export_symbol_from_syntax(
-                        call.expression,
-                        module_specifier,
-                        binder,
-                    )
-                })
-            })
-            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let (sym_id, imported_module) =
+            self.resolve_call_expression_callee_symbol(call.expression, raw_sym_id, binder);
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_node = source_arena.get(decl_idx)?;
@@ -2366,7 +2353,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn imported_value_export_symbol_from_syntax(
+    pub(in crate::declaration_emitter) fn imported_value_export_symbol_from_syntax(
         &self,
         expr_idx: NodeIndex,
         module_specifier: &str,

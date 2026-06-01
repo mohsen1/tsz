@@ -643,6 +643,7 @@ impl<'a> DeclarationEmitter<'a> {
                         initializer,
                         &type_text,
                     )
+                    && self.call_expression_returns_bare_type_parameter_reference(initializer)
                 {
                     self.write(" = ");
                     self.write(&type_text);
