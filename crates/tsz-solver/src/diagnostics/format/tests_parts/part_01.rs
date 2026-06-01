@@ -1225,7 +1225,7 @@ fn mapped_alias_application_expands_unrelated_argument_display_alias() {
     let k_param = TypeParamInfo::simple(db.intern_string("K"));
     let mapped_body = db.mapped(MappedType {
         type_param: k_param,
-        constraint: db.keyof(db.type_param(t_param.clone())),
+        constraint: db.keyof(db.type_param(t_param)),
         template: TypeId::NUMBER,
         name_type: None,
         readonly_modifier: None,
