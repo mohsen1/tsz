@@ -294,6 +294,16 @@ impl BinderState {
                     .insert(module.body.0, self.current_scope_id);
             }
 
+            // Namespaces are function scopes (`Scope::is_function_scope` is
+            // true for `ContainerKind::Module`), so `var`/`function`
+            // declarations in the body hoist to the namespace scope, including
+            // those nested in blocks/loops/try-catch/switch.
+            if module.body.is_some() {
+                self.collect_hoisted_from_node(arena, module.body);
+                self.process_hoisted_functions(arena);
+                self.process_hoisted_vars(arena);
+            }
+
             self.bind_node(arena, module.body);
 
             // Populate exports for the module symbol

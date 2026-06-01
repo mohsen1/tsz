@@ -1174,6 +1174,98 @@ function foo() {
     );
 }
 
+// 4.5 NAMESPACE-AS-FUNCTION-SCOPE HOISTING
+
+fn assert_hoisted_to_namespace(binder: &BinderState, name: &str) -> SymbolId {
+    let sym = binder
+        .symbols
+        .find_by_name(name)
+        .unwrap_or_else(|| panic!("expected symbol for {name}"));
+    let in_module = binder
+        .scopes
+        .iter()
+        .any(|scope| scope.kind == ContainerKind::Module && scope.table.get(name) == Some(sym));
+    assert!(
+        in_module,
+        "{name} should be hoisted into a namespace Module scope"
+    );
+    sym
+}
+
+#[test]
+fn nested_namespace_isolates_hoisting() {
+    // Also covers the single-namespace `var` hoist case structurally.
+    let (binder, _parser) = parse_and_bind(
+        r"
+namespace A {
+    namespace B {
+        if (true) {
+            var inner = 1;
+        }
+    }
+}
+",
+    );
+    let inner = assert_hoisted_to_namespace(&binder, "inner");
+    let owners = binder
+        .scopes
+        .iter()
+        .filter(|scope| {
+            scope.kind == ContainerKind::Module && scope.table.get("inner") == Some(inner)
+        })
+        .count();
+    assert_eq!(owners, 1, "var inner should be in exactly one Module scope");
+}
+
+#[test]
+fn var_inside_try_catch_in_namespace_hoists() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+namespace N {
+    try {
+        var t = 1;
+    } catch (e) {
+        var u = 2;
+    } finally {
+        var v = 3;
+    }
+}
+",
+    );
+    for name in ["t", "u", "v"] {
+        assert_hoisted_to_namespace(&binder, name);
+    }
+}
+
+#[test]
+fn function_declaration_at_namespace_top_level_hoists() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+namespace N {
+    var r = helper();
+    function helper(): number { return 1; }
+}
+",
+    );
+    let helper = assert_hoisted_to_namespace(&binder, "helper");
+    let flags = binder.symbols.get(helper).expect("symbol data").flags;
+    assert!(flags & symbol_flags::FUNCTION != 0, "FUNCTION flag missing");
+}
+
+#[test]
+fn dotted_namespace_path_hoists_at_innermost() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+namespace A.B {
+    if (true) {
+        var v = 1;
+    }
+}
+",
+    );
+    assert_hoisted_to_namespace(&binder, "v");
+}
+
 // =============================================================================
 // 5. DECLARATION BINDING
 // =============================================================================
