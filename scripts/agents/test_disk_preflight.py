@@ -167,6 +167,9 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertEqual("fail", report["status"])
             self.assertEqual("fail", report["disk_preflight_status"])
+            self.assertFalse(report["git_context"]["dirty"])
+            self.assertEqual(0, report["git_context"]["dirty_files"])
+            self.assertEqual(0, report["git_context"]["untracked_files"])
             self.assertEqual("low", report["disk_guard"]["disk_status"])
             self.assertIn("disk_shortfall_mb", report["disk_guard"])
             self.assertFalse(report["disk_guard"]["ok"])
@@ -183,6 +186,29 @@ class DiskPreflightTests(unittest.TestCase):
                 "Use scripts/setup/clean.sh --full only as a deliberate last resort.",
                 report["disk_pressure"]["cleanup_ladder"],
             )
+
+    def test_json_report_records_dirty_git_state(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            report_path = temp_root / "preflight.json"
+            (fake_repo / "README.md").write_text("# fake repo\n\nchanged\n", encoding="utf-8")
+            (fake_repo / "scratch.txt").write_text("scratch\n", encoding="utf-8")
+
+            result = self.run_preflight(
+                fake_repo,
+                fake_script,
+                "--json-report",
+                str(report_path),
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertIn("git_dirty=true", result.stdout)
+            self.assertIn("git_dirty_files=2", result.stdout)
+            self.assertIn("git_untracked_files=1", result.stdout)
+            self.assertTrue(report["git_context"]["dirty"])
+            self.assertEqual(2, report["git_context"]["dirty_files"])
+            self.assertEqual(1, report["git_context"]["untracked_files"])
 
     def test_json_report_records_sister_reuse_candidates(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

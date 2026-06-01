@@ -68,6 +68,15 @@ if [[ -z "$GIT_BRANCH" ]]; then
   GIT_DETACHED=true
 fi
 GIT_UPSTREAM="$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+GIT_STATUS_OUTPUT="$(git -C "$ROOT" status --porcelain --untracked-files=normal)"
+GIT_DIRTY=false
+GIT_DIRTY_FILES=0
+GIT_UNTRACKED_FILES=0
+if [[ -n "$GIT_STATUS_OUTPUT" ]]; then
+  GIT_DIRTY=true
+  GIT_DIRTY_FILES="$(printf '%s\n' "$GIT_STATUS_OUTPUT" | wc -l | awk '{ print $1 }')"
+  GIT_UNTRACKED_FILES="$(printf '%s\n' "$GIT_STATUS_OUTPUT" | awk 'substr($0, 1, 2) == "??" { count++ } END { print count + 0 }')"
+fi
 
 echo "agent=$AGENT"
 echo "repo=$ROOT"
@@ -81,6 +90,9 @@ if [[ -n "$GIT_UPSTREAM" ]]; then
 else
   echo "git_upstream=none"
 fi
+echo "git_dirty=$GIT_DIRTY"
+echo "git_dirty_files=$GIT_DIRTY_FILES"
+echo "git_untracked_files=$GIT_UNTRACKED_FILES"
 echo ""
 echo "== disk guard =="
 GUARD_OUTPUT="$("$ROOT/scripts/setup/disk-worktree-guard.sh")"
@@ -301,6 +313,9 @@ if [[ -n "$JSON_REPORT" ]]; then
   GIT_BRANCH="$GIT_BRANCH" \
   GIT_DETACHED="$GIT_DETACHED" \
   GIT_UPSTREAM="$GIT_UPSTREAM" \
+  GIT_DIRTY="$GIT_DIRTY" \
+  GIT_DIRTY_FILES="$GIT_DIRTY_FILES" \
+  GIT_UNTRACKED_FILES="$GIT_UNTRACKED_FILES" \
   GUARD_OUTPUT="$GUARD_OUTPUT" \
   TYPESCRIPT_STATE="$TYPESCRIPT_STATE" \
   TYPESCRIPT_TARGET="$TYPESCRIPT_TARGET" \
@@ -428,6 +443,9 @@ const report = {
     branch: process.env.GIT_BRANCH,
     detached: bool(process.env.GIT_DETACHED),
     upstream: process.env.GIT_UPSTREAM || null,
+    dirty: bool(process.env.GIT_DIRTY),
+    dirty_files: Number(process.env.GIT_DIRTY_FILES ?? 0),
+    untracked_files: Number(process.env.GIT_UNTRACKED_FILES ?? 0),
   },
   disk_guard: {
     ...guard,
