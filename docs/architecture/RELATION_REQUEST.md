@@ -184,11 +184,13 @@ and diagnostic anchoring while the request names the relation role.
 Mapped-key constraint diagnostics build
 `RelationRequest::mapped_key_constraint` through
 `mapped_key_constraint_relation_outcome` when probing whether a deferred or
-pre-evaluation indexed-access constraint is accepted by the mapped object's key
-space before accepting the mapped type key or reporting the invalid key
-constraint. The checker owns mapped-key validity, evaluation ordering, circular
-constraint checks, and diagnostic anchoring while the request names the relation
-role.
+pre-evaluation indexed-access constraint, evaluated current-object constraint,
+constraint-chain member, or conditional key candidate is accepted by the mapped
+object's key space before accepting the mapped type key, filtering current
+object keys, or reporting the invalid key constraint. The checker owns
+mapped-key validity, evaluation ordering, circular constraint checks,
+current-object key filtering, and diagnostic anchoring while the request names
+the relation role.
 
 Indexed-access generic constraint diagnostics build
 `RelationRequest::indexed_access_constraint_key` through
