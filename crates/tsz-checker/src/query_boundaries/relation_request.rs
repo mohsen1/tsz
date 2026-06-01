@@ -49,6 +49,8 @@ pub(crate) enum RelationKind {
     DuplicateIdentifier,
     /// Variable initializer compatibility probes for TS2322 elaboration paths.
     VariableInitializer,
+    /// Contextual binding-default identifier flow compatibility probes.
+    IdentifierBindingDefault,
     /// `keyof` target compatibility probes for TS2322 diagnostic suppression.
     KeyofDiagnosticSuppression,
     /// Diagnostic-source narrowing display probes.
@@ -262,6 +264,10 @@ impl RelationRequest {
 
     pub(crate) const fn variable_initializer(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::VariableInitializer)
+    }
+
+    pub(crate) const fn identifier_binding_default(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::IdentifierBindingDefault)
     }
 
     pub(crate) const fn keyof_diagnostic_suppression(source: TypeId, target: TypeId) -> Self {

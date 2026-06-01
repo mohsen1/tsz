@@ -1967,7 +1967,7 @@ impl<'a> CheckerState<'a> {
                         && has_enclosing_binding_default
                         && flow_type != TypeId::ERROR
                         && self
-                            .assign_relation_outcome(flow_type, declared_type)
+                            .identifier_binding_default_relation_outcome(flow_type, declared_type)
                             .related)
                 {
                     declared_type

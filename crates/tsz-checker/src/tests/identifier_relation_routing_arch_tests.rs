@@ -17,11 +17,14 @@ fn identifier_binding_default_preserve_declared_type_uses_relation_outcome() {
         .collect();
 
     assert!(
-        guard.contains("assign_relation_outcome(flow_type,declared_type).related"),
-        "binding-default identifier preservation should route through relation outcomes"
+        guard.contains(
+            "identifier_binding_default_relation_outcome(flow_type,declared_type).related"
+        ),
+        "binding-default identifier preservation should route through the identifier binding-default relation request"
     );
     assert!(
-        !guard.contains("is_assignable_to(flow_type,declared_type)"),
-        "binding-default identifier preservation should not use raw assignability"
+        !guard.contains("assign_relation_outcome(flow_type,declared_type)")
+            && !guard.contains("is_assignable_to(flow_type,declared_type)"),
+        "binding-default identifier preservation should not use generic or raw assignability"
     );
 }

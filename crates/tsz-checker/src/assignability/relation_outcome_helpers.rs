@@ -239,6 +239,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing contextual binding-default identifier
+    /// relation for raw checker types, preserving the canonical identifier request shape.
+    pub(crate) fn identifier_binding_default_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::identifier_binding_default(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `keyof` suppression relation for raw
     /// checker types, preserving the canonical `keyof` suppression request shape.
     pub(crate) fn keyof_diagnostic_suppression_relation_outcome(
