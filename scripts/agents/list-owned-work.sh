@@ -128,6 +128,16 @@ count_rows() {
   printf '%s\n' "$rows" | awk 'NF { count++ } END { print count + 0 }'
 }
 
+count_pr_state_rows() {
+  local rows="$1"
+  local state="$2"
+  if [[ -z "$rows" ]]; then
+    echo 0
+    return
+  fi
+  printf '%s\n' "$rows" | awk -v state="$state" '$2 == state { count++ } END { print count + 0 }'
+}
+
 json_array_from_lines() {
   local rows="$1"
   ROWS="$rows" node <<'NODE'
@@ -183,6 +193,8 @@ for agent in "${SELECTED[@]}"; do
     echo "- none"
   fi
   pr_count="$(count_rows "$prs")"
+  ready_pr_count="$(count_pr_state_rows "$prs" ready)"
+  draft_pr_count="$(count_pr_state_rows "$prs" draft)"
   echo ""
   echo "Issues:"
   issues="$(
@@ -205,6 +217,8 @@ for agent in "${SELECTED[@]}"; do
   fi
   echo ""
   echo "owned_pr_count=$pr_count"
+  echo "owned_ready_pr_count=$ready_pr_count"
+  echo "owned_draft_pr_count=$draft_pr_count"
   echo "owned_issue_count=$issue_count"
   echo "owned_work_status=$owned_work_status"
   echo ""
@@ -216,6 +230,8 @@ for agent in "${SELECTED[@]}"; do
       ROW_AGENT="$agent" \
       ROW_LABEL="$label" \
       ROW_PR_COUNT="$pr_count" \
+      ROW_READY_PR_COUNT="$ready_pr_count" \
+      ROW_DRAFT_PR_COUNT="$draft_pr_count" \
       ROW_ISSUE_COUNT="$issue_count" \
       ROW_STATUS="$owned_work_status" \
       ROW_PRS="$pr_json" \
@@ -227,6 +243,8 @@ const row = {
   prs: JSON.parse(process.env.ROW_PRS ?? "[]"),
   issues: JSON.parse(process.env.ROW_ISSUES ?? "[]"),
   pr_count: Number(process.env.ROW_PR_COUNT ?? 0),
+  ready_pr_count: Number(process.env.ROW_READY_PR_COUNT ?? 0),
+  draft_pr_count: Number(process.env.ROW_DRAFT_PR_COUNT ?? 0),
   issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
   owned_work_clear: process.env.ROW_STATUS === "clear",
   owned_work_status: process.env.ROW_STATUS,
@@ -252,6 +270,14 @@ const agents = (process.env.REPORT_ROWS ?? "")
   .filter(Boolean)
   .map((line) => JSON.parse(line));
 const totalPrCount = agents.reduce((sum, agent) => sum + Number(agent.pr_count ?? 0), 0);
+const totalReadyPrCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.ready_pr_count ?? 0),
+  0,
+);
+const totalDraftPrCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.draft_pr_count ?? 0),
+  0,
+);
 const totalIssueCount = agents.reduce(
   (sum, agent) => sum + Number(agent.issue_count ?? 0),
   0,
@@ -268,6 +294,8 @@ const report = {
   owned_work_clear: ownedWorkClear,
   owned_work_status: ownedWorkClear ? "clear" : "active",
   total_pr_count: totalPrCount,
+  total_ready_pr_count: totalReadyPrCount,
+  total_draft_pr_count: totalDraftPrCount,
   total_issue_count: totalIssueCount,
   total_owned_count: totalOwnedCount,
   agents,
