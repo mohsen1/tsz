@@ -207,8 +207,13 @@ fn indexed_access_computation_keyof_source_checks_use_relation_outcome_boundary(
         "indexed-access computation diagnostics should not use raw diagnostic boolean relation guards"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(pre_resolution_object_type,key_source).related"),
-        "keyof-source type-parameter checks should route relation truth through RelationOutcome"
+        !source.contains("assign_relation_outcome("),
+        "indexed-access computation diagnostics should use named RelationRequests"
+    );
+    assert!(
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(pre_resolution_object_type,key_source,).related"
+        ),
+        "keyof-source type-parameter checks should route relation truth through the indexed-access key-space request"
     );
 }
