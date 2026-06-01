@@ -17,6 +17,43 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::narrowing::NarrowingContext;
 
+/// Deferral mode for the relation-input pre-resolution walk's transitive
+/// reference-closure expansion ([`CheckerState::ensure_refs_resolved`]).
+///
+/// `ensure_refs_resolved` walks a type's `Lazy(DefId)` refs, fully resolves each
+/// referenced def, and (legacy behaviour) pushes the resolved result back onto
+/// its worklist so the *whole transitive reference closure* is materialized
+/// before any relation runs. For a lib interface like `Node` this eagerly lowers
+/// the entire DOM reference graph (`Node -> Document/Element/... -> 66
+/// `HTML*Element``), ~8000 interned types, and burns the per-process global
+/// resolution fuel — which then suppresses later relation diagnostics in the
+/// same file (a latent parity bug vs `tsc`). See issue #12101.
+///
+/// `TSZ_TRANSITIVE_REFS_MODE` selects:
+/// - unset / `0` -> mode 0: legacy (push every resolved ref). **Default.**
+/// - `2` -> mode 2: defer only eligible simple lib interfaces (the DOM cascade),
+///   keeping user/generic types on the legacy transitive path.
+/// - any other non-empty value (e.g. `1`) -> mode 1: defer all refs.
+///
+/// "Defer" means resolve+insert the top-level ref (so the relation's immediate
+/// input is ready) but do **not** push its resolved result onto the worklist,
+/// leaving its nested refs to be resolved on demand by the relation engine.
+///
+/// Kept gated (default = legacy) because the deferral changes which diagnostics
+/// are emitted across the corpus: it is byte-identical where fuel is not
+/// exhausted and strictly more `tsc`-correct where the legacy fuel-exhaustion
+/// dropped diagnostics, so flipping the default requires a full-CI conformance
+/// A/B (mode 2 vs mode 0).
+fn transitive_refs_deferral_mode() -> u8 {
+    use std::sync::OnceLock;
+    static MODE: OnceLock<u8> = OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("TSZ_TRANSITIVE_REFS_MODE") {
+        Ok(v) if v == "2" => 2,
+        Ok(v) if !v.is_empty() && v != "0" => 1,
+        _ => 0,
+    })
+}
+
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
     ///
@@ -1412,6 +1449,39 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Ensure all Lazy/Ref types in a type are resolved into the type environment.
+    /// EXPERIMENT helper: structural eligibility check mirroring
+    /// [`Self::lazy_lib_member_receiver_def_id`] but keyed by `DefId` directly.
+    /// True when `def_id` is a non-generic, non-compiler-managed, unshadowed
+    /// interface symbol from the actual/cloned standard library — i.e. the same
+    /// "simple lib interface" the #12117 single-member path is eligible for, the
+    /// interfaces whose full materialization drives the DOM reference cascade.
+    fn def_id_is_simple_lib_interface(&self, def_id: tsz_solver::DefId) -> bool {
+        let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
+            return false;
+        }
+        if self
+            .ctx
+            .get_def_type_params(def_id)
+            .is_some_and(|p| !p.is_empty())
+        {
+            return false;
+        }
+        let name = symbol.escaped_name.clone();
+        if crate::query_boundaries::common::is_compiler_managed_type(&name) {
+            return false;
+        }
+        if self.ctx.file_local_type_shadow_for_lib_name(&name) {
+            return false;
+        }
+        self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+    }
+
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         use crate::state_domain::type_environment::lazy::{
             enter_refs_resolution_scope, exit_refs_resolution_scope,
@@ -1464,9 +1534,24 @@ impl<'a> CheckerState<'a> {
                 if global_resolution_fuel_exhausted() {
                     break;
                 }
+                // EXPERIMENT: decide whether to defer this referenced def's
+                // transitive closure. When the kill-switch defers (mode 2 = lib
+                // interfaces only, mode 1 = all), we still resolve+insert the def
+                // (so the top-level ref is ready) but do NOT push its resolved
+                // result onto the worklist, leaving its nested refs for on-demand
+                // relation resolution. Mode 2 restricts deferral to eligible
+                // simple lib interfaces (the DOM cascade) so user/generic types
+                // keep their proven transitive pre-resolution.
+                let defer_mode = transitive_refs_deferral_mode();
+                let defer_this = match defer_mode {
+                    1 => true,
+                    2 => self.def_id_is_simple_lib_interface(def_id),
+                    _ => false,
+                };
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
+                    && !defer_this
                 {
                     worklist.push(result);
                 }
