@@ -244,6 +244,7 @@ pub(crate) fn contextual_callable_member_failure_is_generic_parameter_drift(
         super::relation_types::RelationFailure::TypeMismatch {
             source_type,
             target_type,
+            ..
         } if *source_type == *target_param && *target_type == *source_param
     )
 }

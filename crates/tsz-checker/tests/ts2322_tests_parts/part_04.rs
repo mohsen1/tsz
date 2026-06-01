@@ -1280,6 +1280,41 @@ const wrong: Select<Bird, "bird"> = { tag: "fish", wings: 6 };
     );
 }
 
+#[test]
+fn conditional_type_false_branch_object_literal_reveal_nested_mismatch() {
+    let source = r#"
+type A<T> = T extends string ? { ok: true } : { fail: true };
+
+const x: A<number> = { ok: true };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '{ ok: true; }' is not assignable to type '{ fail: true; }'")),
+        "expected conditional branch mismatch to include object shape detail, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn conditional_type_false_branch_alias_chain_preserves_nested_branch_mismatch() {
+    let source = r#"
+type Result<K> = K extends number ? { value: number } : { fail: true };
+type Wrapped<K> = Result<K>;
+
+const x: Wrapped<string> = { value: true };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '{ value: true; }' is not assignable to type '{ fail: true; }'")),
+        "expected wrapper conditional branch mismatch to include false-branch object mismatch, got: {messages:#?}"
+    );
+}
+
 // =============================================================================
 // Intersection source assigned to callable-interface target (issue #6202)
 // =============================================================================

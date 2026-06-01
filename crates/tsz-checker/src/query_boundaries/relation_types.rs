@@ -121,6 +121,7 @@ pub(crate) enum RelationFailure {
     TypeMismatch {
         source_type: TypeId,
         target_type: TypeId,
+        nested: Option<Box<RelationFailure>>,
     },
     /// Two distinct type parameters used as keys of structurally-identical
     /// indexed-access types — e.g. `JSX.IntrinsicElements[T1]` against
@@ -214,10 +215,13 @@ impl RelationFailure {
                 source_type,
                 target_type,
             },
-            SubtypeFailureReason::NoUnionMemberMatches { source_type, .. } => Self::TypeMismatch {
-                source_type,
-                target_type: TypeId::ERROR,
-            },
+            SubtypeFailureReason::NoUnionMemberMatches { source_type, .. } => {
+                Self::TypeMismatch {
+                    source_type,
+                    target_type: TypeId::ERROR,
+                    nested: None,
+                }
+            }
             SubtypeFailureReason::TypeMismatch {
                 source_type,
                 target_type,
@@ -249,18 +253,29 @@ impl RelationFailure {
                 source_type,
                 target_type,
                 ..
-            }
+            } => Self::TypeMismatch {
+                source_type,
+                target_type,
+                nested: None,
+            },
             // A deferred-conditional relation failure: the checker-facing
             // classification keeps the outer conditional/concrete pair; the
             // failing branch and its nested reason are rendered from the
             // solver reason's structured chain via `render_failure_reason`.
-            | SubtypeFailureReason::ConditionalBranchMismatch {
+            SubtypeFailureReason::ConditionalBranchMismatch {
                 source_type,
                 target_type,
-                ..
+                branch_source,
+                branch_target,
+                nested_reason,
             } => Self::TypeMismatch {
                 source_type,
                 target_type,
+                nested: Some(Box::new(Self::TypeMismatch {
+                    source_type: branch_source,
+                    target_type: branch_target,
+                    nested: Some(Box::new(Self::from_solver_reason(*nested_reason))),
+                })),
             },
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
@@ -273,6 +288,7 @@ impl RelationFailure {
             } => Self::TypeMismatch {
                 source_type: source_element,
                 target_type: target_element,
+                nested: None,
             },
             SubtypeFailureReason::IndexSignatureMismatch {
                 source_value_type,
@@ -281,6 +297,7 @@ impl RelationFailure {
             } => Self::TypeMismatch {
                 source_type: source_value_type,
                 target_type: target_value_type,
+                nested: None,
             },
             SubtypeFailureReason::TooManyParameters {
                 source_count,
@@ -304,6 +321,7 @@ impl RelationFailure {
             | SubtypeFailureReason::AbstractConstructorAssignment => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
+                nested: None,
             },
             SubtypeFailureReason::IndexAccessTypeParameterMismatch {
                 source_param,
@@ -324,6 +342,7 @@ impl RelationFailure {
             } => Self::TypeMismatch {
                 source_type: source_arg,
                 target_type: target_arg,
+                nested: None,
             },
         }
     }
