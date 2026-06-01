@@ -53,10 +53,10 @@ fn constructor_inference_constraint_checks_use_relation_outcome_boundary() {
     let applyable_helper = &source[applyable_start..applyable_end];
     assert_eq!(
         applyable_helper
-            .matches("assign_relation_outcome_with_env(")
+            .matches("constructor_inference_constraint_relation_outcome_with_env(")
             .count(),
         1,
-        "constructor type-argument applicability should route env-aware constraint checks through RelationOutcome"
+        "constructor type-argument applicability should route env-aware constraint checks through the constructor-inference RelationRequest"
     );
     assert!(
         applyable_helper.contains(".related"),
@@ -65,6 +65,10 @@ fn constructor_inference_constraint_checks_use_relation_outcome_boundary() {
     assert!(
         !applyable_helper.contains("is_assignable_to_with_env("),
         "constructor type-argument applicability should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !applyable_helper.contains("assign_relation_outcome_with_env("),
+        "constructor type-argument applicability should not use the generic assignment request"
     );
 
     let fallback_start = source

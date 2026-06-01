@@ -101,7 +101,10 @@ impl<'a> CheckerState<'a> {
                     && evaluated_constraint != TypeId::UNKNOWN
                     && evaluated_constraint != TypeId::ERROR
                     && !self
-                        .assign_relation_outcome_with_env(type_arg, evaluated_constraint)
+                        .constructor_inference_constraint_relation_outcome_with_env(
+                            type_arg,
+                            evaluated_constraint,
+                        )
                         .related
                 {
                     return false;

@@ -446,11 +446,14 @@ role.
 
 Generic constructor inference builds
 `RelationRequest::constructor_inference_constraint` through
-`constructor_inference_constraint_relation_outcome` when probing whether actual
-primitive argument parts satisfy type-parameter constraints before falling back
-to constraint-substituted constructor returns. The checker owns primitive-part
-extraction, type-parameter discovery, and fallback timing while the request
-names the relation role.
+`constructor_inference_constraint_relation_outcome` or
+`constructor_inference_constraint_relation_outcome_with_env` when probing
+whether concrete inferred type arguments or actual primitive argument parts
+satisfy type-parameter constraints before falling back to
+constraint-substituted constructor returns. The checker owns concrete
+type-argument filtering, primitive-part extraction, type-parameter discovery,
+constraint evaluation, and fallback timing while the request names the relation
+role.
 
 The call checker assignability adapter builds
 `RelationRequest::call_adapter_compatibility` and

@@ -339,6 +339,20 @@ impl<'a> CheckerState<'a> {
         self.relation_outcome_with_env(source, target, RelationRequest::assign)
     }
 
+    /// Execute an env-aware constructor-inference constraint relation while
+    /// preserving the canonical constructor-inference request shape.
+    pub(crate) fn constructor_inference_constraint_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(
+            source,
+            target,
+            RelationRequest::constructor_inference_constraint,
+        )
+    }
+
     /// Execute a diagnostic-bearing call-argument relation for raw checker
     /// types, preserving the canonical TS2345 relation path.
     pub(crate) fn call_arg_relation_outcome(
