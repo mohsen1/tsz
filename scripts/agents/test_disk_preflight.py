@@ -260,13 +260,29 @@ class DiskPreflightTests(unittest.TestCase):
                 fake_repo,
             )
             linked_script = linked_worktree / "scripts" / "agents" / "disk-preflight.sh"
+            report_path = temp_root / "preflight.json"
 
-            result = self.run_preflight(linked_worktree, linked_script)
+            result = self.run_preflight(
+                linked_worktree,
+                linked_script,
+                "--json-report",
+                str(report_path),
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
 
             self.assertIn("git_detached=true", result.stdout)
             self.assertRegex(result.stdout, r"git_branch=detached:[0-9a-f]+")
             self.assertIn("typescript=missing", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
+            self.assertIn(f"source={fake_repo} ts-populated", result.stdout)
+            self.assertIn(
+                {
+                    "kind": "source",
+                    "path": str(fake_repo),
+                    "state": "ts-populated",
+                },
+                report["typescript"]["reuse_sources"],
+            )
             self.assertIn("hint=run scripts/setup/link-ts-submodule.sh", result.stdout)
             self.assertIn("cargo_cache_status=missing", result.stdout)
             self.assertIn("cargo_cache_reuse_sources=1", result.stdout)
