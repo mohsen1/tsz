@@ -172,11 +172,14 @@ Generic type-argument constraint diagnostics build
 `type_arg_constraint_relation_outcome` or
 `type_arg_constraint_relation_outcome_with_env` when probing whether a
 substituted, evaluated, base-constraint, inferred substitution, or primitive-key
-witness satisfies an instantiated TS2344 constraint. The checker owns
-type-argument evaluation, scoped-parameter substitution, source-constraint
-fallback selection, base fallback selection, primitive key witness selection,
-weak-type fallback choice, and diagnostic anchoring while the request names the
-relation role.
+witness satisfies an instantiated TS2344 constraint. Evaluated witness and
+non-all-optional fallback probes use
+`type_arg_constraint_no_weak_relation_outcome` to preserve the
+`isTypeAssignableTo`-style no-weak policy while still naming the generic
+type-argument constraint role. The checker owns type-argument evaluation,
+scoped-parameter substitution, source-constraint fallback selection, base
+fallback selection, primitive key witness selection, weak-type fallback choice,
+and diagnostic anchoring while the request names the relation role.
 
 Mapped-key constraint diagnostics build
 `RelationRequest::mapped_key_constraint` through

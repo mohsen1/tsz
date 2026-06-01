@@ -330,7 +330,10 @@ impl<'a> CheckerState<'a> {
                                 TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                             )
                             && (self
-                                .no_weak_relation_outcome(evaluated_arg, evaluated_constraint)
+                                .type_arg_constraint_no_weak_relation_outcome(
+                                    evaluated_arg,
+                                    evaluated_constraint,
+                                )
                                 .related
                                 || self.satisfies_array_like_constraint(
                                     evaluated_arg,
@@ -1809,8 +1812,11 @@ impl<'a> CheckerState<'a> {
                             )
                             .related
                         } else {
-                            self.no_weak_relation_outcome(type_arg, instantiated_constraint)
-                                .related
+                            self.type_arg_constraint_no_weak_relation_outcome(
+                                type_arg,
+                                instantiated_constraint,
+                            )
+                            .related
                         });
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),
@@ -1884,7 +1890,10 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         is_satisfied = self
-                            .no_weak_relation_outcome(evaluated_arg, instantiated_constraint)
+                            .type_arg_constraint_no_weak_relation_outcome(
+                                evaluated_arg,
+                                instantiated_constraint,
+                            )
                             .related
                             || self.satisfies_array_like_constraint(
                                 evaluated_arg,

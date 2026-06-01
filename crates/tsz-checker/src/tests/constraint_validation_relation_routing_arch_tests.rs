@@ -9,13 +9,17 @@ fn generic_constraint_validation_no_weak_checks_use_relation_outcome_boundary() 
     )
     .expect("failed to read constraint_validation.rs");
 
-    assert!(
-        source.matches("no_weak_relation_outcome(").count() >= 3,
-        "generic constraint validation should route no-weak relation probes through RelationOutcome"
+    assert_eq!(
+        source
+            .matches("type_arg_constraint_no_weak_relation_outcome(")
+            .count(),
+        3,
+        "generic constraint validation should route no-weak relation probes through the named type-argument constraint fallback"
     );
     assert!(
-        !source.contains("diagnostic_relation_boolean_guard_no_weak_checks("),
-        "generic constraint validation should not use the raw no-weak boolean guard"
+        !source.contains("self.no_weak_relation_outcome(")
+            && !source.contains("diagnostic_relation_boolean_guard_no_weak_checks("),
+        "generic constraint validation should not use the raw no-weak relation helpers"
     );
 }
 

@@ -256,6 +256,17 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a generic type-argument constraint fallback relation while
+    /// preserving the `isTypeAssignableTo`-style no-weak policy used by this
+    /// TS2344 path.
+    pub(crate) fn type_arg_constraint_no_weak_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.no_weak_relation_outcome(source, target)
+    }
+
     /// Execute a diagnostic-bearing mapped-key constraint relation for raw
     /// checker types, preserving the canonical mapped-key request shape.
     pub(crate) fn mapped_key_constraint_relation_outcome(
