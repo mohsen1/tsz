@@ -410,6 +410,46 @@ let ok = <Comp><div /><div /></Comp>;
 }
 
 #[test]
+fn jsx_react16_intrinsic_empty_attrs_ignore_iterator_protocol_artifacts() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {
+            [Symbol.iterator](): Iterator<unknown>;
+            next(): IteratorResult<unknown>;
+        };
+    }
+}
+declare var React: any;
+"#;
+    let source = r#"
+const ok = <div />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        ),
+        "Empty intrinsic React16 <div /> attrs should not require iterator protocol props, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Empty intrinsic React16 <div /> attrs should not emit missing-required props, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_fixed_tuple_rejects_extra_children() {
     let source = format!(
         r#"
@@ -1756,4 +1796,3 @@ fn jsx_lma_user_type_named_factory_does_not_disable_default_props() {
          expected no TS2741 for `<Comp />`, got: {codes:?}"
     );
 }
-

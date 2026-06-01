@@ -530,14 +530,13 @@ impl<'a> CheckerState<'a> {
             })
             && let Some(flow_node) = self.flow_node_for_reference_usage(idx)
         {
-            // For identifier expressions, get_type_of_node_with_request() already
-            // applied flow narrowing to compute original_object_type. When the
-            // property-read flow node is identical to the expression's own flow
-            // node, re-narrowing the already-narrowed type would produce wrong
-            // results (double-narrowing through instanceof conditions). Only
-            // apply additional narrowing when the property access has a distinct
-            // flow node that may carry extra narrowing information.
-            if !self.is_redundant_receiver_narrow(access.expression, flow_node) {
+            // Identifier receivers are already narrowed by get_type_of_node_with_request().
+            // Reapply flow only for distinct property-read facts, or when a nullish
+            // component remains and predicate facts still need to remove it.
+            let receiver_narrow_is_redundant = self
+                .is_redundant_receiver_narrow(access.expression, flow_node)
+                && self.split_nullish_type(object_type).1.is_none();
+            if !receiver_narrow_is_redundant {
                 object_type = self.flow_analyzer_for_property_reads().get_flow_type(
                     access.expression,
                     object_type,

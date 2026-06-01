@@ -82,3 +82,28 @@ fn mapped_target_type_parameter_containment_is_structural() {
         "mapped target type-parameter containment should route through the structural query boundary"
     );
 }
+
+#[test]
+fn jsx_props_target_selection_avoids_anonymous_display_prefix_decision() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/props/validation.rs"
+    ))
+    .expect("JSX props validation source should be readable");
+    let formatted_member_call = ["format_type", "(member)"].join("");
+    let starts_with_object = [".starts_with", "('{')"].join("");
+    let inline_forbidden = format!("{formatted_member_call}{starts_with_object}");
+    for forbidden in [
+        inline_forbidden,
+        [
+            "let display = self.format_type(member);",
+            "let is_anonymous = display.starts_with('{');",
+        ]
+        .join("\n"),
+    ] {
+        assert!(
+            !source.contains(&forbidden),
+            "JSX props target selection must use TypeId/query facts, not formatted anonymous-object display prefixes: found {forbidden}"
+        );
+    }
+}
