@@ -104,6 +104,12 @@ pub fn clear_all_thread_local_state() {
     crate::state_domain::state::reset_cross_arena_depth();
     crate::state_domain::type_analysis::reset_cross_file_recursion_guards();
 
+    // Reset the contextual-retry cache-invalidation recursion-depth counter.
+    // The RAII guard self-cleans on scope exit and panic unwind, so this is
+    // normally a no-op, but resetting at row boundaries makes isolation total
+    // against any future non-unwinding bail-out from inside the walker.
+    crate::state_domain::cache_invalidation::reset_contextual_retry_path();
+
     // Reset type-alias resolution recursion guards and scratch pools.
     crate::types_domain::reset_type_resolution_guards();
 }

@@ -10,6 +10,98 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Maximum recursion depth for the contextual-retry cache-invalidation walker
+/// family. Real expression trees nest far below this; the cap exists only to
+/// turn a pathological self-referential expression-child link (which would
+/// otherwise recurse until the native stack overflows) into early termination.
+/// Chosen well above any legitimate expression nesting so the cap is never hit
+/// on a finite (acyclic) walk, keeping the guard byte-identical on every
+/// non-crashing input.
+const MAX_CONTEXTUAL_RETRY_DEPTH: u32 = 2048;
+
+thread_local! {
+    /// Active recursion depth of the contextual-retry cache-invalidation walker
+    /// ([`CheckerState::invalidate_expression_for_contextual_retry`] and
+    /// [`CheckerState::invalidate_function_like_for_contextual_retry`]). These
+    /// descend through expression children, normally a finite tree. A
+    /// pathological arena can expose a cyclic child link; bounding depth makes
+    /// the walk finite instead of overflowing the native stack. A depth bound
+    /// (rather than a visited set) is used because the walker legitimately
+    /// re-invalidates the same node across overload-retry rounds, so "already
+    /// seen" is not equivalent to "cyclic" — only unbounded depth is. Thread-
+    /// local because each file is checked on a single worker thread.
+    static CONTEXTUAL_RETRY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Kill-switch: set `TSZ_DISABLE_CONTEXTUAL_RETRY_CYCLE_GUARD` to a non-empty,
+/// non-`0` value to bypass the depth guard. Used to prove the guard is
+/// byte-identical on inputs that do not overflow (the guard only ever
+/// short-circuits recursion deeper than `MAX_CONTEXTUAL_RETRY_DEPTH`, which no
+/// finite expression tree reaches, so disabling it must not change diagnostics
+/// for any non-crashing input).
+fn contextual_retry_cycle_guard_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_CONTEXTUAL_RETRY_CYCLE_GUARD")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
+/// Reset the contextual-retry recursion depth.
+///
+/// [`ContextualRetryGuard`] already decrements on scope exit (including panic
+/// unwind), so the counter is normally zero between top-level invalidation
+/// requests. It is reset at independent-compilation boundaries anyway so a
+/// future non-unwinding bail-out can never leak a non-zero depth across rows.
+pub(crate) fn reset_contextual_retry_path() {
+    CONTEXTUAL_RETRY_DEPTH.with(|d| d.set(0));
+}
+
+#[cfg(test)]
+fn contextual_retry_depth_for_test() -> u32 {
+    CONTEXTUAL_RETRY_DEPTH.with(std::cell::Cell::get)
+}
+
+/// RAII guard that increments the contextual-retry recursion depth for the
+/// duration of one walker frame and decrements it on drop (including panic
+/// unwind).
+struct ContextualRetryGuard {
+    tracked: bool,
+}
+
+impl ContextualRetryGuard {
+    /// Enter one walker frame. Returns `Some(guard)` while depth is within the
+    /// cap (caller should recurse), or `None` once the cap is reached (caller
+    /// must stop — the only way to reach it is a non-terminating cyclic link).
+    /// When the kill-switch is set, always returns a non-tracking guard so the
+    /// walk runs exactly as before.
+    fn enter() -> Option<Self> {
+        if contextual_retry_cycle_guard_disabled() {
+            return Some(Self { tracked: false });
+        }
+        let next = CONTEXTUAL_RETRY_DEPTH.with(|d| {
+            let v = d.get();
+            if v >= MAX_CONTEXTUAL_RETRY_DEPTH {
+                None
+            } else {
+                d.set(v + 1);
+                Some(v + 1)
+            }
+        });
+        next.map(|_| Self { tracked: true })
+    }
+}
+
+impl Drop for ContextualRetryGuard {
+    fn drop(&mut self) {
+        if self.tracked {
+            CONTEXTUAL_RETRY_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn clear_binding_name_symbol_cache_recursive(&mut self, name_idx: NodeIndex) {
         if name_idx.is_none() {
@@ -137,6 +229,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Share the contextual-retry depth guard with
+        // `invalidate_expression_for_contextual_retry`: that walker recurses into
+        // this method for function-expression arguments (e.g. the comparator in
+        // `xs.sort(cmp)`), and a cyclic expression-child link can pass through
+        // here, so the shared depth bound must span both to make the cycle
+        // finite.
+        let Some(_retry_guard) = ContextualRetryGuard::enter() else {
+            return;
+        };
+
         self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
         self.invalidate_node_type_cache(idx);
         self.invalidate_implicit_any_tracking(idx);
@@ -197,6 +299,23 @@ impl<'a> CheckerState<'a> {
         if idx.is_none() {
             return;
         }
+
+        // Guard against pathological self-referential expression-child links.
+        // This method and `invalidate_function_like_for_contextual_retry`
+        // recurse over expression children, normally a finite tree. A small
+        // number of inputs produce an arena whose expression-child links form a
+        // cycle (observed on a chained-call shape such as
+        // `[...xs].sort(cmp).slice(0, n)` reached through cross-file generic
+        // instantiation), which would otherwise recurse until the native stack
+        // overflows. A shared depth bound (`MAX_CONTEXTUAL_RETRY_DEPTH`) makes
+        // the walk finite. A depth bound rather than a visited set is used
+        // because the walker legitimately re-invalidates the same node across
+        // overload-retry rounds, so the cap is only ever reached by a
+        // non-terminating cyclic link — it is byte-identical on every finite
+        // (acyclic) input.
+        let Some(_retry_guard) = ContextualRetryGuard::enter() else {
+            return;
+        };
 
         self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
 
@@ -684,5 +803,92 @@ impl<'a> CheckerState<'a> {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod contextual_retry_guard_tests {
+    use super::{
+        ContextualRetryGuard, MAX_CONTEXTUAL_RETRY_DEPTH, contextual_retry_depth_for_test,
+        reset_contextual_retry_path,
+    };
+
+    /// A fresh thread starts at depth zero, and a single entered frame raises
+    /// the active depth by exactly one, restoring it on drop. This is the base
+    /// invariant the whole stack-overflow guard relies on.
+    #[test]
+    fn enter_increments_and_drop_decrements() {
+        reset_contextual_retry_path();
+        assert_eq!(contextual_retry_depth_for_test(), 0);
+        {
+            let _g = ContextualRetryGuard::enter().expect("first frame must enter");
+            assert_eq!(contextual_retry_depth_for_test(), 1);
+            {
+                let _g2 = ContextualRetryGuard::enter().expect("nested frame must enter");
+                assert_eq!(contextual_retry_depth_for_test(), 2);
+            }
+            assert_eq!(contextual_retry_depth_for_test(), 1);
+        }
+        assert_eq!(contextual_retry_depth_for_test(), 0);
+    }
+
+    /// Any walk shallower than the cap always enters successfully — the cap is
+    /// chosen so legitimate (finite) expression trees never hit it, which is
+    /// what keeps the guard byte-identical on non-crashing inputs.
+    #[test]
+    fn frames_below_cap_always_enter() {
+        reset_contextual_retry_path();
+        let mut guards = Vec::new();
+        for expected in 1..=64u32 {
+            let g = ContextualRetryGuard::enter().expect("below-cap frame must enter");
+            assert_eq!(contextual_retry_depth_for_test(), expected);
+            guards.push(g);
+        }
+        drop(guards);
+        assert_eq!(contextual_retry_depth_for_test(), 0);
+    }
+
+    /// At the cap, `enter` returns `None` so the caller stops recursing. This is
+    /// the cycle/stack-overflow cutoff: a non-terminating cyclic expression-child
+    /// link is the only way to reach the cap, and reaching it terminates the
+    /// walk instead of overflowing the native stack.
+    #[test]
+    fn entering_at_cap_returns_none() {
+        reset_contextual_retry_path();
+        // Hold guards up to the cap so the depth is exactly at the limit.
+        let mut guards = Vec::new();
+        for _ in 0..MAX_CONTEXTUAL_RETRY_DEPTH {
+            guards.push(ContextualRetryGuard::enter().expect("frame below cap must enter"));
+        }
+        assert_eq!(
+            contextual_retry_depth_for_test(),
+            MAX_CONTEXTUAL_RETRY_DEPTH
+        );
+        // The next frame is refused, breaking the recursion.
+        assert!(
+            ContextualRetryGuard::enter().is_none(),
+            "a frame at the cap must be refused so a cyclic walk terminates"
+        );
+        // A refused frame must not change the depth.
+        assert_eq!(
+            contextual_retry_depth_for_test(),
+            MAX_CONTEXTUAL_RETRY_DEPTH
+        );
+        drop(guards);
+        assert_eq!(contextual_retry_depth_for_test(), 0);
+    }
+
+    /// `reset_contextual_retry_path` zeroes a leaked depth, guaranteeing row
+    /// isolation even if a future non-unwinding bail-out leaves the counter
+    /// non-zero.
+    #[test]
+    fn reset_zeroes_leaked_depth() {
+        reset_contextual_retry_path();
+        // Simulate a leaked frame by forgetting the guard (no drop runs).
+        let g = ContextualRetryGuard::enter().expect("frame must enter");
+        std::mem::forget(g);
+        assert_eq!(contextual_retry_depth_for_test(), 1);
+        reset_contextual_retry_path();
+        assert_eq!(contextual_retry_depth_for_test(), 0);
     }
 }
