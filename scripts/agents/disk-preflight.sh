@@ -364,6 +364,39 @@ function parseWorktreeSignals(text) {
     });
 }
 
+function parseGuardReuseCandidates(text) {
+  const lines = text.split(/\n/);
+  const candidates = [];
+  let inSection = false;
+  for (const line of lines) {
+    if (line === "sister_worktree_reuse_candidates:") {
+      inSection = true;
+      continue;
+    }
+    if (!inSection) continue;
+    if (!line.startsWith("  ")) break;
+
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === "none") continue;
+
+    const match = /^(.*?) branch=(.*?) inactive_hours>=(\d+)$/.exec(trimmed);
+    if (!match) {
+      candidates.push({
+        path: trimmed,
+        branch: null,
+        inactive_hours_min: null,
+      });
+      continue;
+    }
+    candidates.push({
+      path: match[1],
+      branch: match[2],
+      inactive_hours_min: Number(match[3]),
+    });
+  }
+  return candidates;
+}
+
 const guard = parseKeyValueLines(process.env.GUARD_OUTPUT ?? "");
 const bool = (value) => value === "true";
 const diskOk = guard.disk_status === "ok";
@@ -374,6 +407,9 @@ const toNumber = (value) => {
 const diskFreeMb = toNumber(guard.disk_free_mb);
 const minFreeGb = toNumber(guard.min_free_gb);
 const minFreeMb = minFreeGb * 1024;
+const sisterReuseCandidates = parseGuardReuseCandidates(
+  process.env.GUARD_OUTPUT ?? "",
+);
 const cleanupLadder = [
   "Reuse an existing worktree with TypeScript/cache state.",
   "Run scripts/setup/disk-worktree-guard.sh --auto-prune.",
@@ -403,6 +439,8 @@ const report = {
     free_mb: diskFreeMb,
     min_free_mb: minFreeMb,
     shortfall_mb: Math.max(0, minFreeMb - diskFreeMb),
+    sister_reuse_candidate_count: sisterReuseCandidates.length,
+    sister_reuse_candidates: sisterReuseCandidates,
     cleanup_ladder: diskOk ? [] : cleanupLadder,
   },
   typescript: {
