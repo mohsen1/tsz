@@ -46,8 +46,13 @@ fn class_member_fallback_relations_use_relation_outcome_boundary() {
         .and_then(|tail| tail.split("fn is_coinductive_return_type_cycle").next())
         .expect("failed to isolate own member mismatch helper");
     assert!(
-        own_member_helper.contains("checker.assign_relation_outcome(source, target).related"),
-        "own member mismatch fallback should route standard relation truth through assign_relation_outcome"
+        own_member_helper.contains("class_implements_whole_type_relation_outcome(source, target)")
+            && own_member_helper.contains(".related"),
+        "own member mismatch fallback should route standard relation truth through the class-implements whole-type RelationRequest"
+    );
+    assert!(
+        !own_member_helper.contains("checker.assign_relation_outcome(source, target).related"),
+        "own member mismatch fallback should not use generic assignment request routing"
     );
     assert!(
         own_member_helper.contains("no_erase_generics_relation_outcome(source, target)")

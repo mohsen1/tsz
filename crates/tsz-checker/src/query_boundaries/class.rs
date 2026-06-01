@@ -583,7 +583,9 @@ pub(crate) fn should_report_own_member_type_mismatch(
     // so the fallback does not leak universal quantification when target has
     // method-local type parameters and source does not.
     if generic_erasure_fallback_is_safe(checker, source, target)
-        && checker.assign_relation_outcome(source, target).related
+        && checker
+            .class_implements_whole_type_relation_outcome(source, target)
+            .related
     {
         return false;
     }
