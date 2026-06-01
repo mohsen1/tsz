@@ -75,6 +75,9 @@ Round-2 generic call argument rechecks and inference-refinement adoption guards
 also use the env-aware call-argument request when comparing refreshed,
 checker-refined, or synthetic argument-derived types against instantiated
 parameter/rest types.
+Generic `new` expression recovery uses the call-argument request when a
+contextually typed object or array literal argument is compared against the
+constructor parameter that supplied that context.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
 Iterator `next(value)` compatibility diagnostics use the call-argument request

@@ -147,6 +147,9 @@ mod class_property_typed_const_initializer_tests;
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
 #[cfg(test)]
+#[path = "tests/contextual_new_relation_routing_arch_tests.rs"]
+mod contextual_new_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]

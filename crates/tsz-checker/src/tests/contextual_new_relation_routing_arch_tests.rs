@@ -22,8 +22,12 @@ fn contextual_new_argument_recovery_uses_relation_outcome_boundary() {
     let compact_helper: String = helper.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        compact_helper.contains("assign_relation_outcome(contextual_actual,expected).related"),
-        "contextual new argument recovery should route compatibility through relation outcome"
+        compact_helper.contains("call_arg_relation_outcome(contextual_actual,expected).related"),
+        "contextual new argument recovery should route argument compatibility through call-argument relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(contextual_actual, expected)"),
+        "contextual new argument recovery should not regress to the generic assignment request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),
