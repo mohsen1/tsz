@@ -1,4 +1,4 @@
-use super::emit_es6::PrivateAutoAccessorInfo;
+use super::emit_es6_private_accessors::PrivateAutoAccessorInfo;
 use crate::emitter::Printer;
 use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef, StaticPrivateInit};
 
