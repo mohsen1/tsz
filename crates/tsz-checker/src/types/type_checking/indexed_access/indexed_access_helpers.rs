@@ -912,7 +912,7 @@ impl<'a> CheckerState<'a> {
         let current_base_keyof = self.ctx.types.evaluate_keyof(current_base);
         let current_index_for_check = self.evaluate_type_with_env(current_index);
         !self
-            .assign_relation_outcome(current_index_for_check, current_base_keyof)
+            .indexed_access_key_space_relation_outcome(current_index_for_check, current_base_keyof)
             .related
     }
 

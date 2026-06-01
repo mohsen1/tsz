@@ -86,7 +86,7 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         helpers
             .matches("indexed_access_key_space_relation_outcome(")
             .count(),
-        9,
+        10,
         "indexed-access helper key-space probes should route through the named RelationRequest"
     );
     assert!(
@@ -130,6 +130,12 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
             "indexed_access_key_space_relation_outcome(candidate,string_or_number).related"
         ),
         "string-index candidate checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(current_index_for_check,current_base_keyof).related"
+        ),
+        "deferred constraint-chain target checks should route through RelationOutcome"
     );
     assert!(
         !helpers.contains("assign_relation_outcome("),
