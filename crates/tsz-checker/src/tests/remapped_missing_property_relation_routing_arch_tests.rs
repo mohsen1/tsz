@@ -51,10 +51,14 @@ fn assignability_reason_entrypoints_use_relation_outcome_boundary() {
 
     assert_eq!(
         helper
-            .matches("assign_relation_outcome(source, target).related")
+            .matches("assignability_reason_relation_outcome(source, target)")
             .count(),
         2,
-        "assignability reason entrypoints should route relation truth through RelationOutcome"
+        "assignability reason entrypoints should route relation truth through their dedicated RelationOutcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(source, target).related"),
+        "assignability reason entrypoints should not use the generic assign request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard(source, target)"),
