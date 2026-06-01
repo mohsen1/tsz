@@ -642,6 +642,9 @@ mod generic_class_self_ref_method_param_tests;
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
+#[path = "tests/generic_instantiation_boundary_cache_tests.rs"]
+mod generic_instantiation_boundary_cache_tests;
+#[cfg(test)]
 #[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
 mod generic_rest_satisfies_anchor_tests;
 #[cfg(test)]
