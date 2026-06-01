@@ -41,6 +41,46 @@ fn async_namespace_import_return_type_does_not_become_promise_constructor() {
 }
 
 #[test]
+fn async_es5_nested_function_expression_gets_own_state_machine() {
+    let output = emit_es5_with_module(
+        "import * as Bluebird from \"bluebird\";\n\
+         async function a(): Bluebird<void> {\n\
+             try {\n\
+                 const b = async function b(): Bluebird<void> {\n\
+                     try {\n\
+                         await Bluebird.resolve();\n\
+                     } catch (error) {\n\
+                     }\n\
+                 };\n\
+                 await b();\n\
+             } catch (error) {\n\
+             }\n\
+         }\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("b = function b()"),
+        "Nested async function expressions should remain named function expressions.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .matches("return __awaiter(this, void 0, void 0, function ()")
+            .count()
+            >= 2,
+        "The outer function and nested function expression should each lower to an awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "ES5 output must not leak raw await from the nested async function expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var b, error_1;") && output.contains("var error_2;"),
+        "Nested catch bindings should stay in the nested async state machine.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_import_meta_file_is_wrapped_as_module() {
     let output = emit_es5_with_module(
         "(async () => {\n\
