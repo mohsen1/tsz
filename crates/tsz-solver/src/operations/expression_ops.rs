@@ -16,6 +16,7 @@ use crate::types::{
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
@@ -466,25 +467,29 @@ fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) ->
     out
 }
 
+type DisplayPropertyProvenance = (TypeId, TypeId, Option<SymbolId>);
+type DisplayPropertiesByName = FxHashMap<Atom, DisplayPropertyProvenance>;
+
 fn normalized_display_properties(
     interner: &dyn TypeDatabase,
     original_type: TypeId,
     normalized_properties: &[PropertyInfo],
 ) -> Vec<PropertyInfo> {
     let original_display = interner.get_display_properties(original_type);
-    let original_display_by_name: Option<FxHashMap<Atom, (TypeId, TypeId)>> =
+    let original_display_by_name: Option<DisplayPropertiesByName> =
         original_display.as_ref().map(|props| {
             props
                 .iter()
-                .map(|prop| (prop.name, (prop.type_id, prop.write_type)))
+                .map(|prop| (prop.name, (prop.type_id, prop.write_type, prop.parent_id)))
                 .collect()
         });
     let mut display_props: Vec<PropertyInfo> = normalized_properties
         .iter()
         .map(|prop| {
-            let Some((display_type, display_write_type)) = original_display_by_name
-                .as_ref()
-                .and_then(|props| props.get(&prop.name).copied())
+            let Some((display_type, display_write_type, display_parent_id)) =
+                original_display_by_name
+                    .as_ref()
+                    .and_then(|props| props.get(&prop.name).copied())
             else {
                 return prop.clone();
             };
@@ -492,6 +497,7 @@ fn normalized_display_properties(
             PropertyInfo {
                 type_id: display_type,
                 write_type: display_write_type,
+                parent_id: display_parent_id,
                 ..prop.clone()
             }
         })

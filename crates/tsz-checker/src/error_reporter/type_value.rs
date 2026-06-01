@@ -6,7 +6,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -45,10 +45,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             current_type,
         );
-        let prev_type_str = self.format_type_diagnostic_widened(prev_display);
+        let prev_type_str = self.format_type_for_redeclaration_message(prev_display);
         let current_type_str = self
             .ts2403_typeof_fundule_initializer_display(idx)
-            .unwrap_or_else(|| self.format_type_diagnostic_widened(current_display));
+            .unwrap_or_else(|| self.format_type_for_redeclaration_message(current_display));
         // Suppress when both types format to the same name. This handles cross-binder
         // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
         // to a separate DefId from the main checker's version. Interface declaration
@@ -61,6 +61,106 @@ impl<'a> CheckerState<'a> {
             "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
         self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
+    }
+
+    fn format_type_for_redeclaration_message(&self, type_id: TypeId) -> String {
+        self.format_global_window_display_object_for_redeclaration(type_id)
+            .unwrap_or_else(|| self.format_type_diagnostic_widened(type_id))
+    }
+
+    fn format_global_window_display_object_for_redeclaration(
+        &self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        if let Some(members) =
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, type_id)
+        {
+            let mut member_display_order = self
+                .ctx
+                .types
+                .get_union_origin(type_id)
+                .map(|origin| origin.as_ref().clone())
+                .unwrap_or_else(|| members.to_vec());
+            member_display_order.sort_by_key(|member| member.is_nullable());
+            let mut used_global_window_display = false;
+            let rendered = member_display_order
+                .iter()
+                .map(|&member| {
+                    if let Some(display) =
+                        self.format_global_window_display_object_for_redeclaration(member)
+                    {
+                        used_global_window_display = true;
+                        display
+                    } else {
+                        self.format_type_diagnostic_widened(member)
+                    }
+                })
+                .collect::<Vec<_>>();
+            return used_global_window_display.then(|| rendered.join(" | "));
+        }
+
+        let display_props = self.ctx.types.get_display_properties(type_id)?;
+        if !display_props
+            .iter()
+            .any(|prop| self.property_uses_global_window_annotation_display(prop))
+        {
+            return None;
+        }
+
+        let props = display_props
+            .iter()
+            .map(|prop| {
+                let name = self.format_redeclaration_display_property_name(prop);
+                let optional = if prop.optional { "?" } else { "" };
+                let type_display = if self.property_uses_global_window_annotation_display(prop) {
+                    "Window & typeof globalThis".to_string()
+                } else {
+                    let widened = crate::query_boundaries::diagnostics::widen_type_deep(
+                        self.ctx.types,
+                        prop.type_id,
+                    );
+                    self.format_type_diagnostic_widened(widened)
+                };
+                format!("{name}{optional}: {type_display};")
+            })
+            .collect::<Vec<_>>();
+
+        Some(format!("{{ {} }}", props.join(" ")))
+    }
+
+    fn property_uses_global_window_annotation_display(&self, prop: &PropertyInfo) -> bool {
+        let Some(sym_id) = prop.parent_id else {
+            return false;
+        };
+        crate::types_domain::window_global_this_annotation::declared_type_annotation_for_symbol(
+            &self.ctx, sym_id,
+        )
+        .is_some_and(|idx| {
+            crate::types_domain::window_global_this_annotation::is_window_and_typeof_global_this_type_node(
+                self.ctx.arena,
+                idx,
+            )
+        }) || self.symbol_is_global_window_like_value(sym_id)
+    }
+
+    fn symbol_is_global_window_like_value(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        matches!(symbol.escaped_name.as_str(), "self" | "window")
+            && self
+                .resolve_global_value_symbol(&symbol.escaped_name)
+                .is_some_and(|global_sym_id| global_sym_id == sym_id)
+    }
+
+    fn format_redeclaration_display_property_name(&self, prop: &PropertyInfo) -> String {
+        let name = self.ctx.types.resolve_atom_ref(prop.name);
+        if prop.is_string_named {
+            let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("\"{escaped}\"")
+        } else {
+            name.to_string()
+        }
     }
 
     fn ts2403_typeof_fundule_initializer_display(&self, decl_idx: NodeIndex) -> Option<String> {

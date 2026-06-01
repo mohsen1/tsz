@@ -225,6 +225,8 @@ impl<'a> CheckerState<'a> {
         // Maps property name → original literal TypeId before widening.
         // Only populated when a property's type was actually widened.
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        let mut display_parent_overrides: FxHashMap<Atom, tsz_binder::SymbolId> =
+            FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
         // Wide `symbol`-typed computed keys (see `symbol_key_routing`).
@@ -760,6 +762,20 @@ impl<'a> CheckerState<'a> {
                         {
                             let name_atom = self.ctx.types.intern_string(&name);
                             display_type_overrides.insert(name_atom, lit_type);
+                        }
+                        let window_global_this_display_symbol = if prop.initializer != prop.name
+                            && (self
+                                .is_window_and_global_this_declared_expression(prop.initializer)
+                                || (!self.is_global_this_expression(prop.initializer)
+                                    && self.is_global_this_like_expression(prop.initializer)))
+                        {
+                            self.resolve_identifier_symbol(prop.initializer)
+                        } else {
+                            None
+                        };
+                        if let Some(sym_id) = window_global_this_display_symbol {
+                            let name_atom = self.ctx.types.intern_string(&name);
+                            display_parent_overrides.insert(name_atom, sym_id);
                         }
 
                         final_type
@@ -1900,6 +1916,7 @@ impl<'a> CheckerState<'a> {
             super::super::object_literal_support::ObjectLiteralFinalizeCtx {
                 properties,
                 display_type_overrides,
+                display_parent_overrides,
                 string_index_types,
                 number_index_types,
                 symbol_index_types,

@@ -12,6 +12,8 @@ pub(crate) struct ObjectLiteralFinalizeCtx {
     pub(crate) properties: FxHashMap<Atom, PropertyInfo>,
     /// Per-property display-type overrides (used for freshness diagnostics).
     pub(crate) display_type_overrides: FxHashMap<Atom, TypeId>,
+    /// Per-property display parent overrides used by diagnostic-only provenance.
+    pub(crate) display_parent_overrides: FxHashMap<Atom, tsz_binder::SymbolId>,
     /// Value types for string index signatures collected from spreads.
     pub(crate) string_index_types: Vec<TypeId>,
     /// Value types for number index signatures collected from spreads.
@@ -341,6 +343,7 @@ impl<'a> CheckerState<'a> {
         let ObjectLiteralFinalizeCtx {
             properties,
             display_type_overrides,
+            display_parent_overrides,
             mut string_index_types,
             number_index_types,
             symbol_index_types,
@@ -412,19 +415,19 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.ctx.types.factory().object_fresh(properties.clone())
                     };
-                    if !display_type_overrides.is_empty() {
+                    if !display_type_overrides.is_empty() || !display_parent_overrides.is_empty() {
                         let mut display_props: Vec<PropertyInfo> = properties
                             .iter()
                             .map(|prop| {
+                                let mut display_prop = prop.clone();
                                 if let Some(&display_type) = display_type_overrides.get(&prop.name)
                                 {
-                                    PropertyInfo {
-                                        type_id: display_type,
-                                        ..prop.clone()
-                                    }
-                                } else {
-                                    prop.clone()
+                                    display_prop.type_id = display_type;
                                 }
+                                if let Some(&parent_id) = display_parent_overrides.get(&prop.name) {
+                                    display_prop.parent_id = Some(parent_id);
+                                }
+                                display_prop
                             })
                             .collect();
                         crate::query_boundaries::common::normalize_display_property_order(
