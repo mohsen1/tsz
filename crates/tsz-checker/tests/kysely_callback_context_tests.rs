@@ -112,6 +112,93 @@ builder.select([
 }
 
 #[test]
+fn cross_file_kysely_subclass_inherits_generic_builder_callback_context() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "expression-builder.ts",
+            r#"
+export interface ExpressionBuilder<T> {
+  ref<K extends keyof T & string>(key: K): T[K];
+  call<T>(value: T): T;
+}
+"#,
+        ),
+        (
+            "query-creator.ts",
+            r#"
+import type { ExpressionBuilder } from "./expression-builder.js";
+
+export interface SelectQueryBuilder<T> {
+  select(callback: (eb: ExpressionBuilder<T>) => ReadonlyArray<unknown>): void;
+}
+
+export class QueryCreator<DB> {
+  readonly #props: { executor: unknown };
+
+  constructor(props: { executor: unknown }) {
+    this.#props = props;
+  }
+
+  selectFrom<K extends keyof DB & string>(table: K): SelectQueryBuilder<DB[K]> {
+    this.#props.executor;
+    return undefined as any;
+  }
+}
+"#,
+        ),
+        (
+            "kysely.ts",
+            r#"
+import { QueryCreator } from "./query-creator.ts";
+
+export class Kysely<DB> extends QueryCreator<DB> {
+  readonly #props: { executor: unknown };
+
+  constructor(props: { executor: unknown }) {
+    super(props);
+    this.#props = props;
+  }
+}
+"#,
+        ),
+        (
+            "main.ts",
+            r#"
+type Database = {
+  user: { id: number; name: string };
+};
+
+import type { Kysely } from "./kysely.ts";
+
+declare const db: Kysely<Database>;
+
+db.selectFrom("user").select((eb) => [
+  eb.ref("id"),
+  eb.call<number>(1),
+]);
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 7006, 2347]),
+        "cross-file Kysely subclass should inherit generic builder callback context. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn kysely_join_if_chain_preserves_select_callback_context() {
     let source = r#"
 type SelectType<T> = T;

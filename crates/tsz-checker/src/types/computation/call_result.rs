@@ -102,7 +102,13 @@ impl<'a> CheckerState<'a> {
         let is_conditional_return = common::is_conditional_type(self.ctx.types, return_type);
         let is_monomorphic_meta_return = is_monomorphic_application || is_conditional_return;
         let return_type = if is_monomorphic_meta_return && !self.is_promise_type(return_type) {
-            self.evaluate_type_with_env(return_type)
+            if is_monomorphic_application
+                && self.return_application_uses_opaque_object_base(return_type)
+            {
+                self.evaluate_application_type_for_property_access(return_type)
+            } else {
+                self.evaluate_type_with_env(return_type)
+            }
         } else {
             return_type
         };
@@ -114,6 +120,44 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         }
+    }
+
+    fn return_application_uses_opaque_object_base(&self, ty: TypeId) -> bool {
+        let Some((base, args)) = common::application_info(self.ctx.types, ty) else {
+            return false;
+        };
+        let Some(def_id) = common::lazy_def_id(self.ctx.types, base) else {
+            return false;
+        };
+        let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def_info
+            .file_id
+            .is_some_and(|file_id| file_id == self.ctx.current_file_idx as u32)
+        {
+            return false;
+        }
+        if def_info.is_declare
+            || !matches!(
+                def_info.kind,
+                tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+            )
+        {
+            return false;
+        }
+
+        let has_alias_application_arg = args.iter().any(|arg| {
+            common::application_info(self.ctx.types, *arg).is_some_and(|(arg_base, _)| {
+                common::lazy_def_id(self.ctx.types, arg_base).is_some_and(|arg_def_id| {
+                    matches!(
+                        TypeResolver::get_def_kind(&self.ctx, arg_def_id),
+                        Some(tsz_solver::def::DefKind::TypeAlias)
+                    )
+                })
+            })
+        });
+        !has_alias_application_arg
     }
 
     fn apply_direct_callable_this_substitution(

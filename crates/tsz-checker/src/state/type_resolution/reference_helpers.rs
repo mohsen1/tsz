@@ -1,6 +1,7 @@
 //! Type reference resolution helpers: array types, simple type references,
 //! type parameter extraction, and class instance type construction.
 
+use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -231,10 +232,7 @@ impl<'a> CheckerState<'a> {
                         let has_defaults = type_params.iter().any(|p| p.default.is_some());
                         if has_defaults {
                             let default_args: Vec<TypeId> =
-                                crate::query_boundaries::common::resolve_default_type_args(
-                                    self.ctx.types,
-                                    &type_params,
-                                );
+                                query::resolve_default_type_args(self.ctx.types, &type_params);
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
                             // Resolve the type alias body so its type params and body
                             // are registered in type_env. Without this, Application
@@ -245,6 +243,43 @@ impl<'a> CheckerState<'a> {
                             let _ = self.get_type_of_symbol(sym_id);
                             let base_type_id = factory.lazy(def_id);
                             return factory.application(base_type_id, default_args);
+                        }
+                    } else if let Some(args) = &type_ref.type_arguments
+                        && self
+                            .ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+                    {
+                        let mut visited_aliases = AliasCycleTracker::new();
+                        let resolved_alias =
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases);
+                        let alias_target = resolved_alias
+                            .filter(|&target_sym_id| target_sym_id != sym_id)
+                            .or_else(|| self.resolve_import_alias_cross_file(sym_id));
+                        if let Some(target_sym_id) = alias_target {
+                            let target_is_class = self
+                                .get_symbol_from_registered_file_target(target_sym_id)
+                                .or_else(|| self.get_cross_file_symbol(target_sym_id))
+                                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
+                            if target_is_class {
+                                let (body_type, type_params) =
+                                    self.type_reference_symbol_type_with_params(target_sym_id);
+                                let type_args = args
+                                    .nodes
+                                    .iter()
+                                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                    .collect::<Vec<_>>();
+                                if !type_params.is_empty() && !type_args.is_empty() {
+                                    return query::instantiate_generic(
+                                        self.ctx.types,
+                                        body_type,
+                                        &type_params,
+                                        &type_args,
+                                    );
+                                }
+                                return body_type;
+                            }
                         }
                     }
                 }
@@ -298,7 +333,7 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                     .collect();
                 if !type_params.is_empty() && !type_args.is_empty() {
-                    return crate::query_boundaries::common::instantiate_generic(
+                    return query::instantiate_generic(
                         self.ctx.types,
                         body_type,
                         &type_params,
@@ -407,12 +442,41 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
-        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+        let Some(symbol) = self
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+        else {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
         let mixed_class_interface = symbol.has_any_flags(symbol_flags::CLASS)
             && symbol.has_any_flags(symbol_flags::INTERFACE);
+
+        if symbol.has_any_flags(symbol_flags::CLASS)
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+        {
+            let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
+            for &decl_idx in &declarations {
+                if let Some(names) = Self::type_param_names_in_arena(
+                    decl_arena,
+                    symbol.flags,
+                    decl_idx,
+                    &symbol.escaped_name,
+                ) && !names.is_empty()
+                {
+                    return names
+                        .into_iter()
+                        .map(|name| tsz_solver::TypeParamInfo {
+                            name: self.ctx.types.intern_string(&name),
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        })
+                        .collect();
+                }
+            }
+        }
 
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
@@ -590,6 +654,58 @@ impl<'a> CheckerState<'a> {
                         } else {
                             Some(params)
                         }
+                    } else if let Some(type_parameters) = &class.type_parameters {
+                        let type_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
+                                    .and_then(|def_id| {
+                                        self.ctx.def_to_symbol_id_with_fallback(def_id)
+                                    })
+                                    .map(|sym_id| sym_id.0)
+                            })
+                        };
+                        let def_id_resolver = |node_idx: NodeIndex| {
+                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
+                            })
+                        };
+                        let value_resolver =
+                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                        let name_resolver = |type_name: &str| {
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
+                        };
+                        let params = tsz_lowering::TypeLowering::with_hybrid_resolver(
+                            decl_arena,
+                            self.ctx.types,
+                            &type_resolver,
+                            &def_id_resolver,
+                            &value_resolver,
+                        )
+                        .with_name_def_id_resolver(&name_resolver)
+                        .prefer_name_def_id_resolution()
+                        .collect_type_parameters(type_parameters);
+                        Some(params)
                     } else {
                         None
                     }
@@ -1013,7 +1129,21 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if self
+            .get_symbol_from_registered_file_target(sym_id)
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            && let Some(result) = self.delegate_cross_arena_class_instance_type(sym_id)
+        {
+            return Some(result);
+        }
+
+        let symbol = self
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
         let mut decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         // When the primary declaration doesn't resolve to a class in the current
         // arena (e.g., class+interface merged symbol where value_declaration was
@@ -1080,11 +1210,8 @@ impl<'a> CheckerState<'a> {
                 // class_instance_type_cache which always has the correct final type.
                 if instance_type != TypeId::ERROR {
                     let cached_has_construct_signature =
-                        crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            instance_type,
-                        )
-                        .is_some_and(|shape| !shape.construct_signatures.is_empty());
+                        query::callable_shape_for_type(self.ctx.types, instance_type)
+                            .is_some_and(|shape| !shape.construct_signatures.is_empty());
                     if cached_has_construct_signature
                         && let Some(&class_cached) =
                             self.ctx.class_instance_type_cache.get(&decl_idx)
@@ -1338,13 +1465,10 @@ impl<'a> CheckerState<'a> {
     /// Try to extract the property name from a circular mapped type application.
     /// Returns (`unquoted_name`, `quoted_name`) for use in the diagnostic message.
     fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<(String, String)> {
-        let (_base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        let (_base, args) = query::get_application_info(self.ctx.types, type_id)?;
 
         for &arg_id in &args {
-            if let Some(atom) =
-                crate::query_boundaries::common::string_literal_value(self.ctx.types, arg_id)
-            {
+            if let Some(atom) = query::string_literal_value(self.ctx.types, arg_id) {
                 let name = self.ctx.types.resolve_atom(atom);
                 return Some((name.to_string(), format!("\"{name}\"")));
             }
@@ -1560,17 +1684,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        use crate::query_boundaries::common::{is_tuple_like_type, is_tuple_type};
-
         // Target must be a tuple-like type (the structural check that causes infinite expansion)
-        if !is_tuple_like_type(self.ctx.types.as_type_database(), target) {
+        if !query::is_tuple_like_type(self.ctx.types.as_type_database(), target) {
             return false;
         }
 
         // Source must be an Application type
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source)
-        else {
+        let Some((base, args)) = query::get_application_info(self.ctx.types, source) else {
             return false;
         };
 
@@ -1581,10 +1701,10 @@ impl<'a> CheckerState<'a> {
         // the symbol_types cache so aliased tuples are recognised.
         let db = self.ctx.types.as_type_database();
         let any_arg_is_tuple = args.iter().any(|&arg| {
-            if is_tuple_type(db, arg) {
+            if query::is_tuple_type(db, arg) {
                 return true;
             }
-            let Some(def_id) = crate::query_boundaries::common::lazy_def_id(db, arg) else {
+            let Some(def_id) = query::lazy_def_id(db, arg) else {
                 return false;
             };
             let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
@@ -1593,15 +1713,14 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .symbol_types
                 .get(&sym_id)
-                .is_some_and(|&resolved| is_tuple_type(db, resolved))
+                .is_some_and(|&resolved| query::is_tuple_type(db, resolved))
         });
         if !any_arg_is_tuple {
             return false;
         }
 
         // The base alias must have a direct homomorphic self-referential mapped body
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
-        else {
+        let Some(def_id) = query::lazy_def_id(self.ctx.types, base) else {
             return false;
         };
         let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {

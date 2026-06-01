@@ -4,8 +4,10 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{MappedTypeId, TypeId};
 
 pub(crate) use super::super::common::{
-    is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
+    TypeSubstitution, callable_shape_for_type as callable_shape, is_generic_type, lazy_def_id,
+    object_shape_for_type as object_shape,
 };
+pub(crate) use super::super::generic_instantiation::instantiate_type;
 pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };

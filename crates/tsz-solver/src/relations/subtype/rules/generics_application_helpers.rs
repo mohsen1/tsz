@@ -4,6 +4,7 @@ use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::types::{TypeData, TypeId, Variance};
 use crate::visitor::application_id;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 /// Maximum nesting depth, per generic `DefId`, for the one-sided application
@@ -128,6 +129,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn application_args_are_concrete(&self, args: &[TypeId]) -> bool {
+        args.iter().all(|&arg| {
+            !crate::contains_type_parameters(self.interner, arg)
+                && !crate::contains_this_type(self.interner, arg)
+        })
+    }
+
+    pub(super) fn recursive_mapped_alias_base_reaches_self(&self, base: TypeId) -> bool {
+        let Some(def_id) = self.application_base_def_id(base) else {
+            return false;
+        };
+        if self.resolver.get_def_kind(def_id) != Some(crate::def::DefKind::TypeAlias) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            return false;
+        };
+        if !matches!(self.interner.lookup(body), Some(TypeData::Mapped(_))) {
+            return false;
+        }
+
+        let mut visited = FxHashSet::default();
+        self.type_reaches_def(body, def_id, &mut visited)
+    }
+
+    fn type_reaches_def(
+        &self,
+        type_id: TypeId,
+        target_def_id: DefId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id))
+                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
+            {
+                return true;
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
+                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        let mut found = false;
+        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
+            if !found {
+                found = self.type_reaches_def(child, target_def_id, visited);
+            }
+        });
+        found
     }
 
     /// Resolve the per-type-parameter variance mask for a generic definition,

@@ -673,6 +673,26 @@ impl<'a> NarrowingContext<'a> {
         result
     }
 
+    fn remove_impossible_nullish_for_positive_predicate(
+        &self,
+        source_type: TypeId,
+        predicate_type: TypeId,
+    ) -> TypeId {
+        if super::utils::split_nullish_type(self.db, predicate_type)
+            .1
+            .is_some()
+        {
+            return source_type;
+        }
+
+        let non_nullish_source = super::utils::remove_nullish_query(self.db, source_type);
+        if non_nullish_source == TypeId::NEVER {
+            source_type
+        } else {
+            non_nullish_source
+        }
+    }
+
     fn resolve_type_uncached(&self, mut type_id: TypeId) -> TypeId {
         // Prevent infinite loops with a fuel counter
         let mut fuel = 100;
@@ -1682,19 +1702,25 @@ impl<'a> NarrowingContext<'a> {
                             // too loose for type predicates (e.g. {} is assignable to
                             // Record<string,unknown> but not a subtype).
                             let resolved_source = self.resolve_type(source_type);
+                            let resolved_target = self.resolve_type(*target_type);
+                            let effective_source = self
+                                .remove_impossible_nullish_for_positive_predicate(
+                                    resolved_source,
+                                    resolved_target,
+                                );
 
-                            if resolved_source == self.resolve_type(*target_type) {
-                                source_type
-                            } else if resolved_source == TypeId::UNKNOWN
-                                || resolved_source == TypeId::ANY
+                            if effective_source == resolved_target {
+                                effective_source
+                            } else if effective_source == TypeId::UNKNOWN
+                                || effective_source == TypeId::ANY
                             {
                                 *target_type
-                            } else if union_list_id(self.db, resolved_source).is_some() {
+                            } else if union_list_id(self.db, effective_source).is_some() {
                                 // For unions: filter members, fall back to
                                 // intersection if nothing matches.
-                                let narrowed = self.narrow_to_type(source_type, *target_type);
-                                if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
-                                    self.db.intersection2(source_type, *target_type)
+                                let narrowed = self.narrow_to_type(effective_source, *target_type);
+                                if narrowed == TypeId::NEVER && effective_source != TypeId::NEVER {
+                                    self.db.intersection2(effective_source, *target_type)
                                 } else if !crate::visitors::visitor_predicates::is_empty_object_type(
                                     self.db.as_type_database(),
                                     self.resolve_type(*target_type),
@@ -1718,7 +1744,7 @@ impl<'a> NarrowingContext<'a> {
                                 } else {
                                     narrowed
                                 }
-                            } else if crate::type_param_info(self.db, resolved_source).is_some()
+                            } else if crate::type_param_info(self.db, effective_source).is_some()
                                 && crate::visitors::visitor_predicates::contains_type_parameters(
                                     self.db,
                                     *target_type,
@@ -1751,8 +1777,10 @@ impl<'a> NarrowingContext<'a> {
                                 // true branch is the check type and false branch is never.
                                 // The result is always a subset of the check type T, so
                                 // if source IS that check type, return target directly.
-                                if self.is_conditional_subtype_of_source(*target_type, source_type)
-                                {
+                                if self.is_conditional_subtype_of_source(
+                                    *target_type,
+                                    effective_source,
+                                ) {
                                     return *target_type;
                                 }
                                 // Empty-object source (`{}`, no properties / no index
@@ -1768,7 +1796,7 @@ impl<'a> NarrowingContext<'a> {
                                 // controlFlowFavorAssertedTypeThroughTypePredicate.)
                                 if crate::visitors::visitor_predicates::is_empty_object_type(
                                     self.db.as_type_database(),
-                                    self.resolve_type(source_type),
+                                    self.resolve_type(effective_source),
                                 ) && !crate::visitors::visitor_predicates::is_empty_object_type(
                                     self.db.as_type_database(),
                                     self.resolve_type(*target_type),
@@ -1779,17 +1807,19 @@ impl<'a> NarrowingContext<'a> {
                                 // unchanged (assignable but possibly losing structural
                                 // info) or NEVER (no overlap), fall back to an
                                 // intersection to preserve the target's structure.
-                                let narrowed = self.narrow_to_type(source_type, *target_type);
-                                if narrowed == source_type && narrowed != *target_type {
-                                    if self.is_subtype_for_narrowing(source_type, *target_type) {
-                                        return source_type;
+                                let narrowed = self.narrow_to_type(effective_source, *target_type);
+                                if narrowed == effective_source && narrowed != *target_type {
+                                    if self.is_subtype_for_narrowing(effective_source, *target_type)
+                                    {
+                                        return effective_source;
                                     }
                                     // Source was unchanged — intersect to preserve
                                     // target-side structure such as index signatures.
-                                    self.db.intersection2(source_type, *target_type)
-                                } else if narrowed == TypeId::NEVER && source_type != TypeId::NEVER
+                                    self.db.intersection2(effective_source, *target_type)
+                                } else if narrowed == TypeId::NEVER
+                                    && effective_source != TypeId::NEVER
                                 {
-                                    self.db.intersection2(source_type, *target_type)
+                                    self.db.intersection2(effective_source, *target_type)
                                 } else {
                                     narrowed
                                 }

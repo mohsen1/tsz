@@ -17,6 +17,14 @@ impl ParserState {
             "Unexpected token. A constructor, method, accessor, or property was expected.",
             diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
         );
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        if !self.scanner.has_preceding_line_break() && self.is_property_name() {
+            self.error_token_expected(";");
+        }
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
         self.suppress_next_missing_class_close_brace_error_once = true;
         true
     }

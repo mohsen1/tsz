@@ -115,6 +115,46 @@ function assertNodeTagName<
 }
 
 #[test]
+fn type_predicate_narrows_nullable_node_before_property_access() {
+    let diagnostics = check_source_strict(
+        r#"
+declare global {
+    interface ElementTagNameMap {
+        [index: number]: HTMLElement;
+    }
+
+    interface HTMLElement {
+        [index: number]: HTMLElement;
+    }
+}
+
+function assertIsElement(node: Node | null): node is Element {
+    let nodeType = node === null ? null : node.nodeType;
+    return nodeType === 1;
+}
+
+function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]
+>(node: Node | null, tagName: T): node is U {
+    if (assertIsElement(node)) {
+        const nodeTagName = node.tagName.toLowerCase();
+        return nodeTagName === tagName;
+    }
+    return false;
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::IS_POSSIBLY_NULL),
+        "did not expect TS18047 after the explicit type predicate narrowed node, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renamed_indexed_access_base_constraint_satisfies_element_constraints() {
     let diagnostics = check_source_strict(
         r#"
