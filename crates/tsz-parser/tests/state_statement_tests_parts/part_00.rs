@@ -1416,6 +1416,27 @@ fn class_field_initializer_does_not_asi_before_computed_member() {
 }
 
 #[test]
+fn class_member_property_name_continuation_reports_missing_semicolon() {
+    let source = "class C {\n    global x\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.iter().any(|diag| diag.code == diagnostic_codes::EXPECTED
+            && diag.start == source.find('x').expect("x") as u32
+            && diag.message == "';' expected."),
+        "expected TS1005 at the second property name, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| diag.code == 1068),
+        "expected class-member recovery diagnostic TS1068, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| diag.code == 1128),
+        "expected close-brace recovery diagnostic TS1128, got {diags:?}"
+    );
+}
+
+#[test]
 fn class_field_initializer_comma_continuation_prefers_semicolon_error() {
     let source = "class Game {\n    private position = new DisplayPosition([), 3, 3, 3, 3, 3, 0, 3, 3, 3, 3, 3, 3, 0], NoMove, 0);\n}";
     let (parser, _root) = parse_source(source);

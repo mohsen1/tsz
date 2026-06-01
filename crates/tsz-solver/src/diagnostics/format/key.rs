@@ -398,13 +398,29 @@ impl<'a> TypeFormatter<'a> {
                 if self.skip_application_alias_names && base_str.as_ref() == "Omit" {
                     self.skip_application_display_alias_chase = true;
                 }
+                let base_has_mapped_body = if let Some(TypeData::Lazy(def_id)) = base_key
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(def_id)
+                    && let Some(body) = def.body
+                {
+                    crate::visitors::visitor_predicates::is_mapped_type(self.interner, body)
+                } else {
+                    false
+                };
                 let previous_preserve_application_arg_index_alias_surface =
                     self.preserve_application_arg_index_alias_surface;
                 self.preserve_application_arg_index_alias_surface = true;
                 let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
+                    .map(|&arg| {
+                        let display_arg = if base_has_mapped_body {
+                            self.simplify_mapped_application_arg_for_display(arg)
+                        } else {
+                            self.simplify_application_arg_for_display(arg)
+                        };
+                        self.format(display_arg)
+                    })
                     .collect();
                 self.preserve_application_arg_index_alias_surface =
                     previous_preserve_application_arg_index_alias_surface;

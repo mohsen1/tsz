@@ -1488,6 +1488,32 @@ impl TypeInterner {
                         crate::type_queries::contains_generic_type_parameters_db(self, arg)
                     })
                 });
+        let application_has_structural_args = application_is_alias
+            && self
+                .lookup(application)
+                .and_then(|data| match data {
+                    TypeData::Application(app_id) => Some(self.type_application(app_id)),
+                    _ => None,
+                })
+                .is_some_and(|app| {
+                    app.args.iter().any(|&arg| {
+                        matches!(
+                            self.lookup(arg),
+                            Some(
+                                TypeData::Object(_)
+                                    | TypeData::ObjectWithIndex(_)
+                                    | TypeData::Mapped(_)
+                                    | TypeData::Union(_)
+                                    | TypeData::Intersection(_)
+                                    | TypeData::Tuple(_)
+                                    | TypeData::Callable(_)
+                                    | TypeData::Function(_)
+                                    | TypeData::Conditional(_)
+                                    | TypeData::IndexAccess(_, _)
+                            )
+                        )
+                    })
+                });
         let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
         let evaluated_precedes_application = match (
             self.lookup_alloc_order(evaluated),
@@ -1529,6 +1555,26 @@ impl TypeInterner {
         {
             return;
         }
+        if evaluated_is_mapped && application_is_alias {
+            let existing_is_application =
+                self.display_alias.get(&evaluated).is_some_and(|existing| {
+                    matches!(self.lookup(*existing), Some(TypeData::Application(_)))
+                });
+            if existing_is_application
+                || (!application_has_generic_args
+                    && evaluated_precedes_application
+                    && !application_has_structural_args)
+            {
+                return;
+            }
+        }
+        if application_is_alias
+            && !application_has_generic_args
+            && evaluated_precedes_application
+            && !application_has_structural_args
+        {
+            return;
+        }
         self.display_alias.insert(evaluated, application);
     }
 
@@ -1567,6 +1613,23 @@ impl TypeInterner {
             .args
             .iter()
             .any(|&arg| crate::type_queries::contains_generic_type_parameters_db(self, arg));
+        let application_has_structural_args = app.args.iter().any(|&arg| {
+            matches!(
+                self.lookup(arg),
+                Some(
+                    TypeData::Object(_)
+                        | TypeData::ObjectWithIndex(_)
+                        | TypeData::Mapped(_)
+                        | TypeData::Union(_)
+                        | TypeData::Intersection(_)
+                        | TypeData::Tuple(_)
+                        | TypeData::Callable(_)
+                        | TypeData::Function(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::IndexAccess(_, _)
+                )
+            )
+        });
         let evaluated_precedes_application = match (
             self.lookup_alloc_order(evaluated),
             self.lookup_alloc_order(application),
@@ -1585,6 +1648,25 @@ impl TypeInterner {
             && self.get_display_alias(evaluated).is_some_and(|existing| {
                 matches!(self.lookup(existing), Some(TypeData::Application(_)))
             })
+        {
+            return;
+        }
+        if evaluated_is_mapped {
+            let existing_is_application =
+                self.get_display_alias(evaluated).is_some_and(|existing| {
+                    matches!(self.lookup(existing), Some(TypeData::Application(_)))
+                });
+            if existing_is_application
+                || (!application_has_generic_args
+                    && evaluated_precedes_application
+                    && !application_has_structural_args)
+            {
+                return;
+            }
+        }
+        if !application_has_generic_args
+            && evaluated_precedes_application
+            && !application_has_structural_args
         {
             return;
         }

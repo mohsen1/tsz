@@ -21,6 +21,7 @@ use crate::visitor::{
     application_id, lazy_def_id, object_shape_id, object_with_index_shape_id, template_literal_id,
     union_list_id,
 };
+use std::sync::Arc;
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -203,6 +204,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_def = self.class_relation_target_def(target_receiver, Some(target));
         if self.class_instance_extends_target_def(source, source_receiver, target_def) {
             return SubtypeResult::True;
+        }
+        let single_property_chain_depth =
+            self.matching_single_property_chain_depth(source, target, 0);
+        if single_property_chain_depth >= 5
+            && self.matching_same_symbol_single_property_chain_depth(source, target, 0) >= 3
+        {
+            return self.depth_result();
         }
         // Private brand checking for nominal typing of classes with private fields
         if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
@@ -683,6 +691,73 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.resolver
             .get_lazy_type_params(def_id)
             .is_some_and(|params| !params.is_empty())
+    }
+
+    fn evaluated_object_shape_id(&mut self, type_id: TypeId) -> Option<ObjectShapeId> {
+        object_shape_id(self.interner, type_id).or_else(|| {
+            let evaluated = self.evaluate_type(type_id);
+            object_shape_id(self.interner, evaluated)
+        })
+    }
+
+    fn evaluated_object_shape(&mut self, type_id: TypeId) -> Option<Arc<ObjectShape>> {
+        let shape_id = self.evaluated_object_shape_id(type_id)?;
+        Some(self.interner.object_shape(shape_id))
+    }
+
+    fn matching_single_property_chain_depth(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+        depth: u8,
+    ) -> u8 {
+        if depth >= 8 || source.properties.len() != 1 || target.properties.len() != 1 {
+            return depth;
+        }
+        let source_prop = &source.properties[0];
+        let target_prop = &target.properties[0];
+        if source_prop.name != target_prop.name {
+            return depth;
+        }
+        let Some(source_shape) = self.evaluated_object_shape(source_prop.type_id) else {
+            return depth.saturating_add(1);
+        };
+        let Some(target_shape) = self.evaluated_object_shape(target_prop.type_id) else {
+            return depth.saturating_add(1);
+        };
+        self.matching_single_property_chain_depth(&source_shape, &target_shape, depth + 1)
+    }
+
+    fn matching_same_symbol_single_property_chain_depth(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+        depth: u8,
+    ) -> u8 {
+        if depth >= 8
+            || source.properties.len() != 1
+            || target.properties.len() != 1
+            || source.symbol.is_none()
+            || source.symbol != target.symbol
+        {
+            return depth;
+        }
+        let source_prop = &source.properties[0];
+        let target_prop = &target.properties[0];
+        if source_prop.name != target_prop.name {
+            return depth;
+        }
+        let Some(source_shape) = self.evaluated_object_shape(source_prop.type_id) else {
+            return depth.saturating_add(1);
+        };
+        let Some(target_shape) = self.evaluated_object_shape(target_prop.type_id) else {
+            return depth.saturating_add(1);
+        };
+        self.matching_same_symbol_single_property_chain_depth(
+            &source_shape,
+            &target_shape,
+            depth + 1,
+        )
     }
 
     fn class_relation_target_def(

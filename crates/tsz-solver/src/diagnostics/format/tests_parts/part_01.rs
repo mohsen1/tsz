@@ -1069,6 +1069,46 @@ fn format_application_single_arg() {
 }
 
 #[test]
+fn mapped_application_arg_expands_computed_lazy_alias_body() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped_body = db.mapped(MappedType {
+        type_param: TypeParamInfo::simple(db.intern_string("K")),
+        constraint: type_param.default.unwrap_or(TypeId::STRING),
+        template: type_param.default.unwrap_or(TypeId::NUMBER),
+        name_type: None,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let id_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Id"),
+        vec![type_param],
+        mapped_body,
+    ));
+    let object = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    let computed_body = db.index_access(object, db.literal_string("p"));
+    let bar_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Bar"),
+        vec![],
+        computed_body,
+    ));
+    let app = db.application(db.lazy(id_def), vec![db.lazy(bar_def)]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+
+    assert_eq!(fmt.format(app), "Id<number>");
+}
+
+#[test]
 fn format_application_pads_missing_args_with_param_defaults() {
     // When the Application carries fewer args than the base's declared type
     // parameters, the formatter should pad missing trailing args with their
@@ -1189,6 +1229,39 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
     assert_eq!(
         result, "{ p: number; }",
         "A later generic application should not repaint an already-interned structural type"
+    );
+}
+
+#[test]
+fn mapped_display_alias_keeps_first_application_provenance() {
+    let db = TypeInterner::new();
+    let type_param = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo::simple(db.intern_string("K")),
+        constraint: type_param,
+        template: db.object(vec![PropertyInfo::new(
+            db.intern_string("value"),
+            type_param,
+        )]),
+        name_type: None,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let first_app = db.application(db.lazy(crate::def::DefId(10)), vec![type_param]);
+    let later_app = db.application(db.lazy(crate::def::DefId(11)), vec![type_param]);
+
+    db.store_display_alias_preferring_application(mapped, first_app);
+    db.store_display_alias_preferring_application(mapped, later_app);
+
+    assert_eq!(
+        db.get_display_alias(mapped),
+        Some(first_app),
+        "Mapped alias provenance should stay attached to the application that created it"
     );
 }
 

@@ -188,6 +188,27 @@ const stringRecord: NestedRecord<"a.b", string> = numberRecord;
     );
 }
 
+#[test]
+fn deeply_nested_record_conditional_type_assumes_related_after_symbol_hops() {
+    let source = r#"
+type NestedRecord<K extends string, V> = K extends `${infer A}.${infer B}`
+    ? { [X in A]: NestedRecord<B, V> }
+    : Record<K, V>;
+
+declare const numberRecord: NestedRecord<"x.y.z.a.b.c", number>;
+const stringRecord: NestedRecord<"x.y.z.a.b.c", string> = numberRecord;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "deep same-symbol NestedRecord chain must match tsc's deeply nested bailout. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "deep same-symbol NestedRecord chain must not produce TS2589. Got: {codes:?}"
+    );
+}
+
 /// tsc rule: assigning a value to a `RequiredDeep` annotated variable that has
 /// the exact right structure must not emit any error.
 #[test]

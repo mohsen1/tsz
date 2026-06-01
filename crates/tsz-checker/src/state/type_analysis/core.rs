@@ -41,6 +41,23 @@ impl<'a> CheckerState<'a> {
         alias_def_id: tsz_solver::def::DefId,
         type_id: TypeId,
     ) -> bool {
+        if self
+            .ctx
+            .definition_store
+            .get(alias_def_id)
+            .is_some_and(|def| {
+                def.kind == tsz_solver::def::DefKind::TypeAlias
+                    && def.type_params.is_empty()
+                    && def.body.is_some_and(|body| {
+                        crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            body,
+                        )
+                    })
+            })
+        {
+            return false;
+        }
         let mut pending =
             crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, type_id);
         if pending.is_empty() {
