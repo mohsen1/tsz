@@ -21,7 +21,7 @@ Categories:
 | Module | Category | Main exports / role | Notes |
 |---|---|---|---|
 | [`mod.rs`](../../crates/tsz-checker/src/query_boundaries/mod.rs) | Stable API policy | boundary module tree and ownership rules | Root module documents allowed checker/solver ownership direction. |
-| [`assignability.rs`](../../crates/tsz-checker/src/query_boundaries/assignability.rs) | Stable API plus quarantine helper | `RelationRequest`, `execute_relation`, assignability gates, property classification | One remaining direct `type_queries::data::get_intersection_members` call should move behind a solver query wrapper. |
+| [`assignability.rs`](../../crates/tsz-checker/src/query_boundaries/assignability.rs) | Stable API plus quarantine helper | `RelationRequest` re-export, `execute_relation`, assignability gates, property classification | One remaining direct `type_queries::data::get_intersection_members` call should move behind a solver query wrapper. |
 | [`application_keyof.rs`](../../crates/tsz-checker/src/query_boundaries/application_keyof.rs) | Compatibility shim | application/keyof helper facts for assignability fallbacks | Narrower wrapper over broad common queries used by `application_keyof_helpers`. |
 | [`capabilities.rs`](../../crates/tsz-checker/src/query_boundaries/capabilities.rs) | Stable API | environment capability structs and feature gates | Checker-owned capability facts. |
 | [`environment.rs`](../../crates/tsz-checker/src/query_boundaries/environment.rs) | Diagnostic adapter | `CapabilityDiagnostic` and environment diagnostic decisions | Produces diagnostic decisions; caller owns spans/emission. |
@@ -41,7 +41,8 @@ Categories:
 | [`name_resolution.rs`](../../crates/tsz-checker/src/query_boundaries/name_resolution.rs) | Diagnostic adapter | name-resolution diagnostic helpers | Keeps name lookup diagnostics structured. |
 | [`property_access.rs`](../../crates/tsz-checker/src/query_boundaries/property_access.rs) | Stable API | property/index access classification and lookup | Preferred property-access semantic boundary. |
 | [`recursive_alias.rs`](../../crates/tsz-checker/src/query_boundaries/recursive_alias.rs) | Stable API | recursive alias detection helpers | DefId/type alias boundary. |
-| [`relation_types.rs`](../../crates/tsz-checker/src/query_boundaries/relation_types.rs) | Stable API | relation failure/property classification data types | Shared request/result vocabulary. |
+| [`relation_request.rs`](../../crates/tsz-checker/src/query_boundaries/relation_request.rs) | Stable API | `RelationRequest`, `RelationKind`, and relation policy descriptor enums | Request vocabulary re-exported by `assignability.rs` and executed by `execute_relation`. |
+| [`relation_types.rs`](../../crates/tsz-checker/src/query_boundaries/relation_types.rs) | Stable API | relation failure/property classification data types | Shared result/failure vocabulary. |
 | [`spread.rs`](../../crates/tsz-checker/src/query_boundaries/spread.rs) | Compatibility shim | spread type construction helpers | Thin construction wrappers for spread handling. |
 | [`type_checking.rs`](../../crates/tsz-checker/src/query_boundaries/type_checking.rs) | Compatibility shim | constructor/function classification | Older checker-facing wrapper surface. |
 | [`type_checking_utilities.rs`](../../crates/tsz-checker/src/query_boundaries/type_checking_utilities.rs) | Compatibility shim | array/index/literal/intersection classifiers | Utility wrappers; prefer narrower stable modules when adding calls. |

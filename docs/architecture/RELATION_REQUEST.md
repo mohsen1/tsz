@@ -2,8 +2,8 @@
 
 `RelationRequest` is the checker-side policy descriptor for assignability
 queries that need structured failure information. It lives in
-`crates/tsz-checker/src/query_boundaries/assignability.rs` and is executed by
-`execute_relation`.
+`crates/tsz-checker/src/query_boundaries/relation_request.rs`, is re-exported
+through `query_boundaries::assignability`, and is executed by `execute_relation`.
 
 This document records current behavior. It does not claim every request field is
 fully centralized yet; several fields are intentionally tracked here as follow-up
@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -98,6 +98,11 @@ must be assignable to the valid LHS target type.
 `checkers/parameter_checker.rs` builds `RelationRequest::rest_parameter` for
 TS2370 rest-parameter array checks, where a declared, resolved, or initializer
 type must be assignable to readonly `any[]`.
+
+`declarations/import/declaration_attributes.rs` builds
+`RelationRequest::import_attributes` for TS2322 import-attribute object-shape
+checks, where the synthesized attribute object must be assignable to the global
+`ImportAttributes` target while checker code owns the import-attribute anchor.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

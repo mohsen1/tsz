@@ -1746,10 +1746,13 @@ fn test_excess_property_classification_quarantined_to_property_rs() {
 fn test_relation_request_and_outcome_live_in_query_boundaries() {
     let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
         .expect("failed to read query_boundaries/assignability.rs");
+    let request_source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     assert!(
-        boundary_source.contains("pub(crate) struct RelationRequest"),
-        "RelationRequest must be defined in query_boundaries/assignability.rs"
+        boundary_source.contains("pub(crate) use super::relation_request")
+            && request_source.contains("pub(crate) struct RelationRequest"),
+        "RelationRequest must be exposed through assignability and defined in query_boundaries/relation_request.rs"
     );
     assert!(
         boundary_source.contains("pub(crate) struct RelationOutcome"),
@@ -1762,19 +1765,19 @@ fn test_relation_request_and_outcome_live_in_query_boundaries() {
 
     // RelationRequest must encode all policy dimensions
     assert!(
-        boundary_source.contains("pub kind: RelationKind"),
+        request_source.contains("pub kind: RelationKind"),
         "RelationRequest must include a RelationKind field"
     );
     assert!(
-        boundary_source.contains("pub excess_property_mode: ExcessPropertyMode"),
+        request_source.contains("pub excess_property_mode: ExcessPropertyMode"),
         "RelationRequest must include an ExcessPropertyMode field"
     );
     assert!(
-        boundary_source.contains("pub missing_property_mode: MissingPropertyMode"),
+        request_source.contains("pub missing_property_mode: MissingPropertyMode"),
         "RelationRequest must include a MissingPropertyMode field"
     );
     assert!(
-        boundary_source.contains("pub source_is_fresh: bool"),
+        request_source.contains("pub source_is_fresh: bool"),
         "RelationRequest must include a source_is_fresh field"
     );
 
@@ -1797,8 +1800,8 @@ fn test_relation_request_and_outcome_live_in_query_boundaries() {
 /// property-policy enum vocabulary, not implicit booleans.
 #[test]
 fn test_relation_request_policy_enums_cover_canonical_modes() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     for variant in [
         "Assign",
@@ -1808,6 +1811,7 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
         "JsxProps",
         "Destructuring",
         "RestParameter",
+        "ImportAttributes",
         "Satisfies",
     ] {
         assert!(
@@ -1835,8 +1839,8 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
 /// explicit at the boundary instead of relying on ambient caller state.
 #[test]
 fn test_relation_request_new_encodes_default_policy() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     assert!(
         source.contains("fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self"),
@@ -1860,8 +1864,8 @@ fn test_relation_request_new_encodes_default_policy() {
 /// excess-property and missing-property policy at the boundary.
 #[test]
 fn test_relation_request_override_builders_remain_explicit() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     assert!(
         source.contains("fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self"),

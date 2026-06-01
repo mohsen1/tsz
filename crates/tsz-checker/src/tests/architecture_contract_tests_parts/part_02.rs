@@ -67,8 +67,8 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
 /// spread policy directly into the canonical relation request shape.
 #[test]
 fn test_relation_request_builders_encode_epc_policy() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     assert!(
         source.contains("fn with_fresh_source"),
@@ -97,8 +97,8 @@ fn test_relation_request_builders_encode_epc_policy() {
 /// ambient caller-side policy.
 #[test]
 fn test_relation_request_constructors_encode_relation_kind() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     for (ctor, kind) in [
         ("fn assign", "RelationKind::Assign"),
@@ -110,6 +110,7 @@ fn test_relation_request_constructors_encode_relation_kind() {
         ("fn satisfies", "RelationKind::Satisfies"),
         ("fn destructuring", "RelationKind::Destructuring"),
         ("fn rest_parameter", "RelationKind::RestParameter"),
+        ("fn import_attributes", "RelationKind::ImportAttributes"),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
