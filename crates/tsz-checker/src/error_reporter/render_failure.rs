@@ -582,7 +582,7 @@ impl<'a> CheckerState<'a> {
                 branch_source,
                 branch_target,
                 nested_reason,
-            } => self.render_conditional_branch_mismatch(
+            } => self.render_parent_with_child_relation(
                 &rctx,
                 *source_type,
                 *target_type,

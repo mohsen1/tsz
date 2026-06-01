@@ -1,7 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — import recovery.
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
+use crate::parser::{NodeIndex, ParserState, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
@@ -841,5 +841,252 @@ fn test_import_attributes_named_import_extensionless_newline() {
     assert!(
         parse_first_import_has_attributes("import { foo } from './module'\nwith { type: 'json' };"),
         "named import with extensionless path: newline 'with' must be attributes"
+    );
+}
+
+// =============================================================================
+// Helpers for the new tests below.
+// =============================================================================
+
+/// Parse `source`, assert no parser-level errors (code < 2000), and return
+/// the `(ParserState, NodeIndex)` pair for further structural assertions.
+fn parse_clean(source: &str, label: &str) -> (ParserState, NodeIndex) {
+    let (parser, root) = parse_source(source);
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "{label}: unexpected parse errors {parse_errors:?}"
+    );
+    (parser, root)
+}
+
+/// Assert that `source` parses cleanly AND the first statement's import
+/// declaration carries import attributes.
+fn assert_import_has_attributes_cleanly(source: &str, label: &str) {
+    let (parser, root) = parse_clean(source, label);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert!(
+        arena
+            .get_import_decl(stmt_node)
+            .is_some_and(|i| i.attributes.is_some()),
+        "{label}: import declaration must carry attributes"
+    );
+}
+
+/// Assert that `source` parses cleanly AND the first statement's export
+/// declaration carries import attributes.
+fn assert_export_has_attributes_cleanly(source: &str, label: &str) {
+    let (parser, root) = parse_clean(source, label);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert!(
+        arena
+            .get_export_decl(stmt_node)
+            .is_some_and(|e| e.attributes.is_some()),
+        "{label}: export declaration must carry attributes"
+    );
+}
+
+/// Assert that `source` produces no parser-level errors (code < 2000).
+fn assert_parses_cleanly(source: &str, label: &str) {
+    parse_clean(source, label);
+}
+
+// =============================================================================
+// Type-only import with attributes — comprehensive coverage
+// =============================================================================
+
+#[test]
+fn test_import_type_only_named_with_attributes_same_line() {
+    assert_import_has_attributes_cleanly(
+        r#"import type { Foo } from './module' with { type: 'json' };"#,
+        "type-only named import, same-line 'with'",
+    );
+}
+
+#[test]
+fn test_import_type_only_named_with_attributes_newline() {
+    // `with` on next line after module specifier is still import attributes for
+    // `import type` (same rule as bare `import`).
+    assert!(
+        parse_first_import_has_attributes(
+            "import type { Foo } from './module'\nwith { type: 'json' };"
+        ),
+        "type-only named import: newline before 'with' must still be attributes"
+    );
+}
+
+#[test]
+fn test_import_type_only_namespace_with_attributes_same_line() {
+    assert_import_has_attributes_cleanly(
+        r#"import type * as ns from './module' with { type: 'json' };"#,
+        "type-only namespace import, same-line 'with'",
+    );
+}
+
+#[test]
+fn test_import_type_only_namespace_with_attributes_newline() {
+    assert!(
+        parse_first_import_has_attributes(
+            "import type * as ns from './module'\nwith { type: 'json' };"
+        ),
+        "type-only namespace import: newline before 'with' must still be attributes"
+    );
+}
+
+#[test]
+fn test_import_namespace_with_attributes_same_line() {
+    assert_import_has_attributes_cleanly(
+        r#"import * as ns from './module' with { type: 'json' };"#,
+        "namespace import, same-line 'with'",
+    );
+}
+
+#[test]
+fn test_import_type_only_named_alias_with_attributes() {
+    // Named import with alias: `{ Foo as Bar }` should carry attributes identically
+    // to `{ Foo }`.
+    assert_import_has_attributes_cleanly(
+        r#"import type { Foo as Bar } from './module' with { type: 'json' };"#,
+        "type-only aliased import",
+    );
+}
+
+#[test]
+fn test_import_type_only_multiple_named_with_attributes() {
+    assert_import_has_attributes_cleanly(
+        r#"import type { Foo, Bar, Baz } from './module' with { type: 'json' };"#,
+        "multi-named type-only import",
+    );
+}
+
+// =============================================================================
+// Re-export with attributes
+// =============================================================================
+
+#[test]
+fn test_export_type_named_with_attributes_same_line() {
+    assert_export_has_attributes_cleanly(
+        r#"export type { Foo } from './module' with { type: 'json' };"#,
+        "type-only named re-export",
+    );
+}
+
+#[test]
+fn test_export_type_named_with_attributes_newline_not_parsed() {
+    // Exports do NOT allow newline before `with` (unlike imports).
+    assert!(
+        !parse_first_export_has_attributes(
+            "export type { Foo } from './module'\nwith { type: 'json' };"
+        ),
+        "type-only re-export: newline before 'with' must NOT be parsed as attributes"
+    );
+}
+
+#[test]
+fn test_export_star_namespace_with_attributes_same_line() {
+    // `export * as ns from './foo' with { type: 'json' }` — namespace re-export.
+    assert_export_has_attributes_cleanly(
+        r#"export * as ns from './foo' with { type: 'json' };"#,
+        "namespace re-export",
+    );
+}
+
+// =============================================================================
+// import() type expressions with valid options AND dotted member access
+// =============================================================================
+
+#[test]
+fn test_import_type_expr_with_valid_options() {
+    // Each case is a distinct surface: `with` options, legacy `assert` options,
+    // multi-dotted member access, intersection context, and bare type annotation.
+    let cases: &[(&str, &str)] = &[
+        (
+            r#"const a = (null as any as import("pkg", { with: { "resolution-mode": "require" } }).RequireInterface);"#,
+            "import type expr: 'with' options + single member (cast context)",
+        ),
+        (
+            r#"const a = (null as any as import("pkg", { assert: { type: "json" } }).RequireInterface);"#,
+            "import type expr: legacy 'assert' options + member (cast context)",
+        ),
+        (
+            r#"const a = (null as any as import("pkg", { with: { "resolution-mode": "require" } }).A.B.C);"#,
+            "import type expr: 'with' options + multi-dotted member (cast context)",
+        ),
+        (
+            "export type LocalInterface =\n    & import(\"pkg\", { with: { \"resolution-mode\": \"require\" } }).RequireInterface\n    & import(\"pkg\", { with: { \"resolution-mode\": \"import\" } }).ImportInterface;",
+            "import type expr: 'with' options in intersection",
+        ),
+        (
+            r#"type T = import("pkg", { with: { "resolution-mode": "require" } }).A;"#,
+            "import type expr: 'with' options in type annotation",
+        ),
+    ];
+    for (source, label) in cases {
+        assert_parses_cleanly(source, label);
+    }
+}
+
+// =============================================================================
+// Extensionless path variants
+// =============================================================================
+
+#[test]
+fn test_import_type_only_extensionless_path_with_attributes() {
+    assert_import_has_attributes_cleanly(
+        r#"import type { Foo } from './extensionless' with { type: 'json' };"#,
+        "type-only import, extensionless path",
+    );
+}
+
+#[test]
+fn test_import_namespace_extensionless_path_with_attributes() {
+    assert_import_has_attributes_cleanly(
+        r#"import * as ns from './extensionless' with { type: 'json' };"#,
+        "namespace import, extensionless path",
+    );
+}
+
+#[test]
+fn test_import_type_only_extensionless_newline_with_attributes() {
+    assert!(
+        parse_first_import_has_attributes(
+            "import type { Foo } from './extensionless'\nwith { type: 'json' };"
+        ),
+        "type-only import, extensionless path: newline 'with' must still be attributes"
+    );
+}
+
+// =============================================================================
+// assert (legacy) vs with for type-only imports
+// =============================================================================
+
+#[test]
+fn test_import_type_only_assert_same_line_parsed() {
+    // `import type { X } from './mod' assert { type: 'json' }` — same-line assert,
+    // type-only. Still valid attribute syntax (deprecated but parseable).
+    assert!(
+        parse_first_import_has_attributes(
+            r#"import type { X } from './mod' assert { type: 'json' };"#
+        ),
+        "type-only import: same-line 'assert' must be parsed as import attributes"
+    );
+}
+
+#[test]
+fn test_import_type_only_assert_newline_not_attributes() {
+    // Newline before `assert` — NOT import attributes, even for type-only imports.
+    assert!(
+        !parse_first_import_has_attributes(
+            "import type { X } from './mod'\nassert { type: 'json' };"
+        ),
+        "type-only import: newline before 'assert' must not be parsed as attributes"
     );
 }
