@@ -12,6 +12,7 @@ mod heritage_class_recovery;
 mod heritage_support;
 mod isolated_declarations;
 mod js_grammar;
+pub(crate) mod lazy_lib_member;
 mod mapped_object_literals;
 mod module_none;
 pub(crate) mod property;
