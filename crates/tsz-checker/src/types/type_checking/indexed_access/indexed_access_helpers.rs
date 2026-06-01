@@ -507,10 +507,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if !self
-                .assign_relation_outcome(index_for_check, value_keyof)
+                .indexed_access_key_space_relation_outcome(index_for_check, value_keyof)
                 .related
                 && !constraint_for_check.is_some_and(|constraint| {
-                    self.assign_relation_outcome(constraint, value_keyof)
+                    self.indexed_access_key_space_relation_outcome(constraint, value_keyof)
                         .related
                 })
             {
@@ -569,7 +569,7 @@ impl<'a> CheckerState<'a> {
         let nested_index_for_check = nested_index_constraint.unwrap_or(nested_index_type);
         let nested_index_for_check = self.evaluate_type_with_env(nested_index_for_check);
 
-        self.assign_relation_outcome(nested_index_for_check, nested_base_keyof)
+        self.indexed_access_key_space_relation_outcome(nested_index_for_check, nested_base_keyof)
             .related
             && self.type_literal_member_values_accept_index(
                 nested.object_type,
@@ -728,7 +728,8 @@ impl<'a> CheckerState<'a> {
         };
 
         members.iter().all(|&member| {
-            self.assign_relation_outcome(member, keyof_object).related
+            self.indexed_access_key_space_relation_outcome(member, keyof_object)
+                .related
                 || self
                     .get_index_key_kind(member)
                     .is_some_and(|(wants_string, wants_number)| {
@@ -754,7 +755,7 @@ impl<'a> CheckerState<'a> {
             let mapped = self.ctx.types.mapped_type(mapped_id);
             let template_keyof = self.ctx.types.evaluate_keyof(mapped.template);
             return self
-                .assign_relation_outcome(index_type, template_keyof)
+                .indexed_access_key_space_relation_outcome(index_type, template_keyof)
                 .related;
         }
 
@@ -775,7 +776,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let values_keyof = self.ctx.types.evaluate_keyof(values);
-        self.assign_relation_outcome(index_type, values_keyof)
+        self.indexed_access_key_space_relation_outcome(index_type, values_keyof)
             .related
     }
 
@@ -810,10 +811,13 @@ impl<'a> CheckerState<'a> {
         index_type == constraint_type
             || index_type_for_check == constraint_eval
             || (self
-                .assign_relation_outcome(index_type_for_check, constraint_eval)
+                .indexed_access_key_space_relation_outcome(index_type_for_check, constraint_eval)
                 .related
                 && self
-                    .assign_relation_outcome(constraint_eval, index_type_for_check)
+                    .indexed_access_key_space_relation_outcome(
+                        constraint_eval,
+                        index_type_for_check,
+                    )
                     .related)
     }
 
@@ -1111,7 +1115,7 @@ impl<'a> CheckerState<'a> {
         candidate: TypeId,
         string_or_number: TypeId,
     ) -> bool {
-        self.assign_relation_outcome(candidate, string_or_number)
+        self.indexed_access_key_space_relation_outcome(candidate, string_or_number)
             .related
             || self.keyof_candidate_target_is_array_like(candidate)
     }

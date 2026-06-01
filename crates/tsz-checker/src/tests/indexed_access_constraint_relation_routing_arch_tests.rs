@@ -76,26 +76,58 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         !helpers.contains("diagnostic_relation_boolean_guard"),
         "indexed-access type-checking key-space helpers must use relation outcomes"
     );
+    assert_eq!(
+        helpers
+            .matches("indexed_access_key_space_relation_outcome(")
+            .count(),
+        9,
+        "indexed-access helper key-space probes should route through the named RelationRequest"
+    );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(index_for_check,value_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_for_check,value_keyof).related"
+        ),
         "type-literal member value checks should route index/keyof compatibility through RelationOutcome"
     );
     assert!(
-        compact_helpers
-            .contains("assign_relation_outcome(nested_index_for_check,nested_base_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(nested_index_for_check,nested_base_keyof).related"
+        ),
         "nested type-literal indexed access checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(member,keyof_object).related"),
+        compact_helpers
+            .contains("indexed_access_key_space_relation_outcome(member,keyof_object).related"),
         "union index member checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(index_type,template_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_type,template_keyof).related"
+        ),
         "mapped constraint value checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(candidate,string_or_number).related"),
+        compact_helpers
+            .contains("indexed_access_key_space_relation_outcome(index_type,values_keyof).related"),
+        "constraint value-keyof checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,constraint_eval).related"
+        ) && compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(constraint_eval,index_type_for_check,).related"
+        ),
+        "mapped own-key constraint checks should route mutual compatibility through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(candidate,string_or_number).related"
+        ),
         "string-index candidate checks should route through RelationOutcome"
+    );
+    assert!(
+        !helpers.contains("assign_relation_outcome("),
+        "indexed-access key-space helper probes should use named RelationRequests"
     );
 }
 
