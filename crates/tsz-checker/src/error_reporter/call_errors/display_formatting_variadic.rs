@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             if !self
-                .assign_relation_outcome_with_env(actual.type_id, fixed.type_id)
+                .call_arg_relation_outcome_with_env(actual.type_id, fixed.type_id)
                 .related
             {
                 break;

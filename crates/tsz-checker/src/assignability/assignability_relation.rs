@@ -1,11 +1,11 @@
 //! Assignability relation execution and relation-specific fast paths.
 
 use crate::query_boundaries::assignability::{
-    AssignabilityQueryInputs, are_types_overlapping_with_env, assignability_cache_key,
-    check_application_variance_assignability, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, intersection_source_has_target_constituent,
-    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
-    object_shape_for_type,
+    AssignabilityQueryInputs, RelationOutcome, RelationRequest, are_types_overlapping_with_env,
+    assignability_cache_key, check_application_variance_assignability, get_allowed_keys,
+    get_keyof_type, get_string_literal_value, get_union_members,
+    intersection_source_has_target_constituent, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, object_shape_for_type,
 };
 use crate::query_boundaries::common::{
     intersection_members, object_shape_id, object_with_index_shape_id, union_members,
@@ -240,15 +240,13 @@ impl<'a> CheckerState<'a> {
         outcome
     }
 
-    /// Execute a diagnostic-bearing assignment relation using the current
-    /// `TypeEnvironment`, preserving the no-cache semantics of
-    /// `is_assignable_to_with_env` while returning a structured outcome.
-    pub(crate) fn assign_relation_outcome_with_env(
+    fn relation_outcome_with_env(
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let outcome = |related| crate::query_boundaries::assignability::RelationOutcome {
+        build_request: fn(TypeId, TypeId) -> RelationRequest,
+    ) -> RelationOutcome {
+        let outcome = |related| RelationOutcome {
             related,
             depth_exceeded: false,
             iteration_exceeded: false,
@@ -294,8 +292,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-            let request =
-                crate::query_boundaries::assignability::RelationRequest::assign(source, target);
+            let request = build_request(source, target);
             crate::query_boundaries::assignability::execute_relation(
                 &request,
                 self.ctx.types,
@@ -331,6 +328,17 @@ impl<'a> CheckerState<'a> {
         relation_outcome
     }
 
+    /// Execute a diagnostic-bearing assignment relation using the current
+    /// `TypeEnvironment`, preserving the no-cache semantics of
+    /// `is_assignable_to_with_env` while returning a structured outcome.
+    pub(crate) fn assign_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::assign)
+    }
+
     /// Execute a diagnostic-bearing call-argument relation for raw checker
     /// types, preserving the canonical TS2345 relation path.
     pub(crate) fn call_arg_relation_outcome(
@@ -342,6 +350,17 @@ impl<'a> CheckerState<'a> {
         let request =
             crate::query_boundaries::assignability::RelationRequest::call_arg(source, target);
         self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing call-argument relation using the current
+    /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
+    /// call diagnostics on the canonical TS2345 request shape.
+    pub(crate) fn call_arg_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::call_arg)
     }
 
     /// Execute a diagnostic-bearing bivariant-callback relation for raw

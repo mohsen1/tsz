@@ -63,6 +63,9 @@ including polymorphic-`this` object-literal property probes, and the return
 request when drilling into callback return expressions or return-source
 conditional branches. These callers reuse `RelationOutcome` to avoid
 separately recomputing weak-union and property-classification analysis.
+Call diagnostic display/recovery helpers use the env-aware call-argument
+request for contextual-signature, generator callback, and variadic tuple
+parameter probes.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
 
