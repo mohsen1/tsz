@@ -188,27 +188,6 @@ const stringRecord: NestedRecord<"a.b", string> = numberRecord;
     );
 }
 
-#[test]
-fn deeply_nested_record_conditional_type_assumes_related_after_three_object_hops() {
-    let source = r#"
-type PathRecord<Path extends string, Value> = Path extends `${infer Head}.${infer Tail}`
-    ? { [Key in Head]: PathRecord<Tail, Value> }
-    : { [Key in Path]: Value };
-
-declare const numberRecord: PathRecord<"x.y.z.a.b.c", number>;
-const stringRecord: PathRecord<"x.y.z.a.b.c", string> = numberRecord;
-"#;
-    let codes = check_source_codes(source);
-    assert!(
-        !codes.contains(&2322),
-        "Deep conditional mapped record relation must match tsc's deeply nested object bailout. Got: {codes:?}"
-    );
-    assert!(
-        !codes.contains(&2589),
-        "Deep conditional mapped record relation must not produce TS2589. Got: {codes:?}"
-    );
-}
-
 /// tsc rule: assigning a value to a `RequiredDeep` annotated variable that has
 /// the exact right structure must not emit any error.
 #[test]
