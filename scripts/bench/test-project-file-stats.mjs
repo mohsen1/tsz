@@ -330,10 +330,13 @@ assert.notEqual(
 
     const script = `set -euo pipefail
 SCRIPT_DIR='${SCRIPT_DIR.replace(/'/g, "'\\''")}'
-source '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers' 2>/dev/null || \
+if [ -f '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers' ]; then
+  source '${BENCH_SCRIPT.replace(/'/g, "'\\''")}.helpers'
+else
   awk '/^sum_ts_stats\\(\\)/{flag=1} flag{print} /^}/{if(flag){exit}}' '${BENCH_SCRIPT.replace(/'/g, "'\\''")}' > /tmp/tsz-sum-ts-stats-$$.sh
-source /tmp/tsz-sum-ts-stats-$$.sh
-rm -f /tmp/tsz-sum-ts-stats-$$.sh
+  source /tmp/tsz-sum-ts-stats-$$.sh
+  rm -f /tmp/tsz-sum-ts-stats-$$.sh
+fi
 sum_ts_stats '${srcDir.replace(/'/g, "'\\''")}'
 `;
     const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
