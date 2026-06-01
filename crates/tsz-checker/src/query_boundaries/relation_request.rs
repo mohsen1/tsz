@@ -29,6 +29,8 @@ pub(crate) enum RelationKind {
     CallableUnionParameter,
     /// Type-predicate type compatibility against its parameter type.
     TypePredicateParameter,
+    /// Generic argument diagnostic suppression compatibility probe.
+    GenericArgumentSuppression,
     JsxProps,
     JsxChildren,
     /// Component compatibility against user-defined `JSX.ElementType`.
@@ -271,6 +273,10 @@ impl RelationRequest {
 
     pub(crate) const fn type_predicate_parameter(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::TypePredicateParameter)
+    }
+
+    pub(crate) const fn generic_argument_suppression(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::GenericArgumentSuppression)
     }
 
     pub(crate) const fn jsx_props(source: TypeId, target: TypeId) -> Self {

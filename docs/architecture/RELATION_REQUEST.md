@@ -94,6 +94,12 @@ through `type_predicate_parameter_relation_outcome` when checking whether a
 predicate's narrowed type is compatible with its parameter type. The
 type-predicate boundary owns predicate-shape recursion while the request names
 the checker relation role.
+Generic argument suppression builds
+`RelationRequest::generic_argument_suppression` through
+`generic_argument_suppression_relation_outcome_with_env` when checking whether a
+self-referential mapped or contextual generic argument should suppress an outer
+mismatch. The checker owns suppression-shape recognition while the request names
+the env-aware relation role.
 Call-result recovery probes use the call-argument request when comparing actual
 argument types against parameter unions or polymorphic-`this` parameter targets.
 Round-2 generic call argument rechecks and inference-refinement adoption guards

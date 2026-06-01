@@ -10,8 +10,13 @@ fn generic_argument_suppression_uses_env_relation_outcome_boundary() {
     .expect("failed to read generic_argument_suppression.rs");
 
     assert!(
-        source.matches("assign_relation_outcome_with_env(").count() >= 5,
-        "generic argument suppression should route env-aware probes through RelationOutcome"
+        source.contains("generic_argument_suppression_relation_outcome_with_env("),
+        "generic argument suppression should use the generic-argument suppression RelationOutcome"
+    );
+    assert_eq!(
+        source.matches("assign_relation_outcome_with_env(").count(),
+        0,
+        "generic argument suppression should not use the generic env-aware assign request"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard_with_env("),

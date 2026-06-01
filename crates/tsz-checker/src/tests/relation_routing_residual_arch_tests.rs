@@ -36,7 +36,8 @@ fn collect_rust_sources(dir: &Path, sources: &mut Vec<PathBuf>) {
 
 fn allowed_raw_relation(relative_path: &str, line: &str) -> bool {
     if relative_path.starts_with("src/assignability/") {
-        return true;
+        return !line.contains(".assign_relation_outcome(")
+            && !line.contains(".assign_relation_outcome_with_env(");
     }
 
     if relative_path == "src/query_boundaries/assignability.rs"
