@@ -6,6 +6,7 @@
 mod attr_check_pipeline;
 mod attr_value;
 mod generic_spread;
+mod iterator_artifacts;
 pub(crate) mod resolution;
 mod special_attribute_callbacks;
 mod synthesized_display;

@@ -1482,29 +1482,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(in crate::checkers_domain::jsx) fn jsx_required_props_are_only_iterator_protocol_artifacts(
-        &mut self,
-        props_type: TypeId,
-    ) -> bool {
-        let Some(shape) = self.get_normalized_jsx_required_props_shape(props_type) else {
-            return false;
-        };
-
-        let mut saw_required = false;
-        shape
-            .properties
-            .iter()
-            .filter(|prop| !prop.optional)
-            .all(|prop| {
-                saw_required = true;
-                matches!(
-                    self.ctx.types.resolve_atom_ref(prop.name).as_ref(),
-                    "[Symbol.iterator]" | "__@iterator" | "next"
-                )
-            })
-            && saw_required
-    }
-
     fn jsx_component_member_signature_kinds(&mut self, component_type: TypeId) -> (bool, bool) {
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         let component_type = self.evaluate_type_with_env(component_type);
