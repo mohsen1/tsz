@@ -48,7 +48,9 @@ Usage:
 import os
 import sys
 import argparse
+import json
 from collections import Counter
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.conformance_query import (
@@ -58,6 +60,8 @@ from lib.conformance_query import (
     is_same_code_count_drift,
     load_detail,
 )
+
+DEFAULT_TSC_CACHE_PATH = Path(__file__).with_name("tsc-cache-full.json")
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
@@ -364,7 +368,37 @@ def build_campaign_result(data, name):
 # =============================================================================
 
 
-def show_dashboard(data, accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_PATH):
+def load_tsc_cache_test_total(path=DEFAULT_TSC_CACHE_PATH):
+    cache_path = Path(path)
+    if not cache_path.exists():
+        return None
+    with cache_path.open(encoding="utf-8") as f:
+        cache = json.load(f)
+    if not isinstance(cache, dict):
+        return None
+    return len(cache)
+
+
+def show_snapshot_freshness(data, tsc_cache_path=DEFAULT_TSC_CACHE_PATH):
+    snapshot_total = int(data["summary"].get("total", 0))
+    current_total = load_tsc_cache_test_total(tsc_cache_path)
+    if current_total is None or current_total == snapshot_total:
+        return
+
+    delta = current_total - snapshot_total
+    print(
+        "  Snapshot freshness: STALE checked detail "
+        f"covers {snapshot_total} tests, but the pinned TypeScript cache has "
+        f"{current_total} tests (delta {delta:+d})."
+    )
+    print("  Refresh conformance-detail.json before citing this dashboard as current public truth.")
+
+
+def show_dashboard(
+    data,
+    accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_PATH,
+    tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+):
     """Show the KPI dashboard that replaces overall conformance % as the daily signal."""
     s = data["summary"]
     failures = data["failures"]
@@ -378,6 +412,7 @@ def show_dashboard(data, accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_
     accepted_count = len(accepted["entries"])
     accepted_state = "missing" if not accepted["exists"] else f"{accepted_count} listed tests"
     print(f"  Accepted-regression gate: {accepted_state}")
+    show_snapshot_freshness(data, tsc_cache_path=tsc_cache_path)
     print()
 
     # KPI 1: Wrong-code count for big3
