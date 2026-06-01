@@ -344,6 +344,20 @@ function parseWorktreeSignals(text) {
 const guard = parseKeyValueLines(process.env.GUARD_OUTPUT ?? "");
 const bool = (value) => value === "true";
 const diskOk = guard.disk_status === "ok";
+const toNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const diskFreeMb = toNumber(guard.disk_free_mb);
+const minFreeGb = toNumber(guard.min_free_gb);
+const minFreeMb = minFreeGb * 1024;
+const cleanupLadder = [
+  "Reuse an existing worktree with TypeScript/cache state.",
+  "Run scripts/setup/disk-worktree-guard.sh --auto-prune.",
+  "Run scripts/setup/clean.sh --quiet to preserve .target, .target-bench, and target.",
+  "Delete only abandoned worktrees whose branch/PR owner is understood.",
+  "Use scripts/setup/clean.sh --full only as a deliberate last resort.",
+];
 const report = {
   ok: diskOk,
   status: diskOk ? "pass" : "fail",
@@ -353,6 +367,14 @@ const report = {
   disk_guard: {
     ...guard,
     ok: diskOk,
+  },
+  disk_pressure: {
+    ok: diskOk,
+    status: guard.disk_status ?? "unknown",
+    free_mb: diskFreeMb,
+    min_free_mb: minFreeMb,
+    shortfall_mb: Math.max(0, minFreeMb - diskFreeMb),
+    cleanup_ladder: diskOk ? [] : cleanupLadder,
   },
   typescript: {
     state: process.env.TYPESCRIPT_STATE,

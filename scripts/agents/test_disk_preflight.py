@@ -47,6 +47,7 @@ class DiskPreflightTests(unittest.TestCase):
     def run_preflight(self, fake_repo, fake_script, *extra_args, env_overrides=None):
         env = {
             **os.environ,
+            "TSZ_DISK_MIN_FREE_GB": "1",
             "TSZ_WORKTREE_INACTIVE_HOURS": "1",
             "TSZ_CARGO_CACHE_STUB_MAX_KB": "8",
             **(env_overrides or {}),
@@ -131,6 +132,12 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertTrue(report["disk_guard"]["ok"])
             self.assertNotIn("branch", report["disk_guard"])
             self.assertGreaterEqual(len(report["reusable_worktrees"]), 1)
+            self.assertTrue(report["disk_pressure"]["ok"])
+            self.assertEqual("ok", report["disk_pressure"]["status"])
+            self.assertGreater(report["disk_pressure"]["free_mb"], 0)
+            self.assertGreater(report["disk_pressure"]["min_free_mb"], 0)
+            self.assertEqual(0, report["disk_pressure"]["shortfall_mb"])
+            self.assertEqual([], report["disk_pressure"]["cleanup_ladder"])
 
     def test_json_report_marks_low_disk_guard_not_ok(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
@@ -152,6 +159,17 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertEqual("fail", report["disk_preflight_status"])
             self.assertEqual("low", report["disk_guard"]["disk_status"])
             self.assertFalse(report["disk_guard"]["ok"])
+            self.assertFalse(report["disk_pressure"]["ok"])
+            self.assertEqual("low", report["disk_pressure"]["status"])
+            self.assertGreater(report["disk_pressure"]["shortfall_mb"], 0)
+            self.assertIn(
+                "Run scripts/setup/disk-worktree-guard.sh --auto-prune.",
+                report["disk_pressure"]["cleanup_ladder"],
+            )
+            self.assertIn(
+                "Use scripts/setup/clean.sh --full only as a deliberate last resort.",
+                report["disk_pressure"]["cleanup_ladder"],
+            )
 
     def test_worktree_without_typescript_points_to_link_helper(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
