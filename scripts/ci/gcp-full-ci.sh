@@ -393,6 +393,7 @@ run_lint() {
   node scripts/bench/test-project-rows.mjs || return $?
   node scripts/bench/project-row-summary.mjs || return $?
   node scripts/bench/test-project-row-summary.mjs || return $?
+  node scripts/bench/test-project-file-stats.mjs || return $?
   node scripts/bench/validate-project-metadata.mjs || return $?
   node scripts/bench/test-validate-project-metadata.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?

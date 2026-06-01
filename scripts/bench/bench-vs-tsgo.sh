@@ -625,25 +625,31 @@ exit_codes_from_status() {
 /g' | sed '/^$/d'
 }
 
-sum_ts_lines() {
+# Single-pass aggregate of (lines, bytes, files) under a TypeScript source
+# tree. Used as the offline fallback when `project-file-stats.mjs` cannot load
+# the TypeScript package (e.g. tsc tooling not yet installed). Walks the tree
+# once and reads each file once via `wc -lc`, instead of the historical
+# triple-walk + double-read pattern.
+sum_ts_stats() {
     local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
-        | while IFS= read -r -d '' file; do
-            wc -l < "$file" 2>/dev/null || true
-        done \
-        | awk '{ total += $1 } END { print total + 0 }'
-}
-
-sum_ts_bytes() {
-    local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
-        | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
-}
-
-count_ts_files() {
-    local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null \
-        | wc -l | tr -d ' '
+    local lines=0
+    local bytes=0
+    local files=0
+    local file
+    local lc
+    local bc
+    while IFS= read -r -d '' file; do
+        # `wc -lc` reads each file once and outputs both counts; redirecting
+        # via stdin keeps the file name out of the output. When `wc` fails,
+        # the substitution is empty and the `read` leaves both vars unset.
+        read -r lc bc <<<"$(wc -lc <"$file" 2>/dev/null)"
+        [[ -n "$lc" && -n "$bc" ]] || continue
+        lines=$((lines + lc))
+        bytes=$((bytes + bc))
+        files=$((files + 1))
+    done < <(find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \
+        \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null)
+    echo "$lines $bytes $files"
 }
 
 project_tsconfig_stats() {
@@ -651,18 +657,14 @@ project_tsconfig_stats() {
     local fallback_src_dir="$2"
     local stats
 
-    if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
+    if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" \
+        TSZ_PROJECT_FILE_STATS_CACHE_DIR="${TSZ_PROJECT_FILE_STATS_CACHE_DIR:-${TEMP_DIR:-${TMPDIR:-/tmp}}/tsz-project-file-stats}" \
+        node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
         echo "$stats"
         return
     fi
 
-    local lines
-    local bytes
-    local file_count
-    lines=$(sum_ts_lines "$fallback_src_dir")
-    bytes=$(sum_ts_bytes "$fallback_src_dir")
-    file_count=$(count_ts_files "$fallback_src_dir")
-    echo "$lines $bytes $file_count"
+    sum_ts_stats "$fallback_src_dir"
 }
 
 # Timeout for pre-validation checks (seconds). Generous enough for heavy
