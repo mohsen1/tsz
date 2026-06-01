@@ -29,6 +29,7 @@ mod exports;
 mod helpers;
 mod interfaces;
 mod type_emission;
+mod type_emission_alias_rhs;
 pub mod usage_analyzer;
 
 #[cfg(test)]

@@ -184,6 +184,29 @@ fn unparenthesized_array_element_stays_unparenthesized() {
     );
 }
 
+#[test]
+fn parenthesized_recursive_array_alias_reference_keeps_parens() {
+    // `recursiveTypeReferences1`: a type-alias RHS whose array element is a
+    // source-parenthesized reference to the alias's own symbol keeps one paren
+    // layer, unlike ordinary `(Foo)[]` annotations.
+    let output = emit_dts_with_binding("export type Recursive = (Recursive)[];");
+    assert!(
+        output.contains("type Recursive = (Recursive)[];"),
+        "recursive array alias element must keep source parens: {output}"
+    );
+}
+
+#[test]
+fn parenthesized_recursive_array_alias_reference_keeps_parens_renamed() {
+    // Different alias spelling proves the rule is symbol-relative, not keyed
+    // on a particular source name.
+    let output = emit_dts_with_binding("export type TreeNodeList = (TreeNodeList)[];");
+    assert!(
+        output.contains("type TreeNodeList = (TreeNodeList)[];"),
+        "recursive array alias element must keep source parens (renamed): {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Fix C: a *bare* intersection member of a union keeps its source spelling
 // (`T | T & undefined` stays unparenthesized), while a *source-parenthesized*
