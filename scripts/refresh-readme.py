@@ -2,9 +2,9 @@
 """Refresh README.md progress blocks from the latest suite artifact JSON files.
 
 Reads:
-  - .ci-metrics/conformance.json (or scripts/conformance/conformance-detail.json)
-  - .ci-metrics/emit.json (or scripts/emit/emit-detail.json)
-  - .ci-metrics/fourslash.json (or scripts/fourslash/fourslash-detail.json)
+  - ci-metrics/conformance.json (or scripts/conformance/conformance-detail.json)
+  - ci-metrics/emit.json (or scripts/emit/emit-detail.json)
+  - ci-metrics/fourslash.json (or scripts/fourslash/fourslash-detail.json)
   - https://tsz.dev/benchmark-data/latest.json
 
 Updates the progress blocks between marker comments in README.md:
@@ -98,7 +98,7 @@ def load_conformance(args):
         "conformance",
         args.conformance_metrics_json,
         [
-            ROOT / ".ci-metrics" / "conformance.json",
+            ROOT / "ci-metrics" / "conformance.json",
             ROOT / "scripts" / "conformance" / "conformance-snapshot.json",
             ROOT / "scripts" / "conformance" / "conformance-detail.json",
         ],
@@ -183,7 +183,7 @@ def load_emit(args, readme_text):
             path = ROOT / path
         candidates.append(path)
     candidates.extend([
-        ROOT / ".ci-metrics" / "emit.json",
+        ROOT / "ci-metrics" / "emit.json",
         ROOT / "scripts" / "emit" / "emit-detail.json",
     ])
 
@@ -211,7 +211,7 @@ def load_fourslash(args):
         "fourslash",
         args.fourslash_metrics_json,
         [
-            ROOT / ".ci-metrics" / "fourslash.json",
+            ROOT / "ci-metrics" / "fourslash.json",
             ROOT / "scripts" / "fourslash" / "fourslash-detail.json",
             ROOT / "scripts" / "fourslash" / "fourslash-snapshot.json",
         ],
@@ -270,17 +270,17 @@ def parse_args():
     parser.add_argument(
         "--emit-metrics-json",
         type=Path,
-        help="use a local emit metrics artifact instead of the default .ci-metrics/emit.json",
+        help="use a local emit metrics artifact instead of the default ci-metrics/emit.json",
     )
     parser.add_argument(
         "--conformance-metrics-json",
         type=Path,
-        help="use a local conformance metrics artifact instead of the default .ci-metrics/conformance.json",
+        help="use a local conformance metrics artifact instead of the default ci-metrics/conformance.json",
     )
     parser.add_argument(
         "--fourslash-metrics-json",
         type=Path,
-        help="use a local fourslash metrics artifact instead of the default .ci-metrics/fourslash.json",
+        help="use a local fourslash metrics artifact instead of the default ci-metrics/fourslash.json",
     )
     return parser.parse_args()
 
