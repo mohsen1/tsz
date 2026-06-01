@@ -176,7 +176,7 @@ impl<'a> CheckerState<'a> {
             .zip(inner_target.params.iter())
             .any(|(source_param, target_param)| {
                 !self
-                    .assign_relation_outcome(target_param.type_id, source_param.type_id)
+                    .call_arg_relation_outcome(target_param.type_id, source_param.type_id)
                     .related
             })
     }
