@@ -44,10 +44,11 @@ class DiskWorktreeGuardTests(unittest.TestCase):
         self.run_git(["commit", "-m", "initial"], fake_repo)
         return fake_repo, fake_script
 
-    def run_guard(self, fake_repo, fake_script):
+    def run_guard(self, fake_repo, fake_script, env_overrides=None):
         env = {
             **os.environ,
             "TSZ_WORKTREE_INACTIVE_HOURS": "1",
+            **(env_overrides or {}),
         }
         return subprocess.run(
             ["bash", str(fake_script)],
@@ -100,6 +101,20 @@ class DiskWorktreeGuardTests(unittest.TestCase):
             dirty_real = dirty_worktree.resolve()
             self.assertIn(f"  {clean_real} branch=detached:", result.stdout)
             self.assertNotIn(str(dirty_real), result.stdout)
+
+    def test_low_disk_reports_shortfall(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+
+            result = self.run_guard(
+                fake_repo,
+                fake_script,
+                env_overrides={"TSZ_DISK_MIN_FREE_GB": "9999999"},
+            )
+
+            self.assertIn("disk_status=low", result.stdout)
+            self.assertRegex(result.stdout, r"disk_shortfall_mb=\d+")
 
 
 if __name__ == "__main__":
