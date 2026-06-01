@@ -7,6 +7,7 @@
 #
 # Usage:
 #   scripts/setup/disk-worktree-guard.sh
+#   scripts/setup/disk-worktree-guard.sh --json-report /tmp/tsz-disk-guard.json
 #   scripts/setup/disk-worktree-guard.sh --auto-prune
 #
 # Environment:
@@ -31,6 +32,7 @@ fi
 MIN_FREE_GB="${TSZ_DISK_MIN_FREE_GB:-20}"
 INACTIVE_HOURS="${TSZ_WORKTREE_INACTIVE_HOURS:-4}"
 AUTO_PRUNE=false
+JSON_REPORT=""
 
 usage() {
   cat <<'EOF'
@@ -41,6 +43,7 @@ worktree or before starting a large build when disk pressure is suspected.
 
 Usage:
   scripts/setup/disk-worktree-guard.sh
+  scripts/setup/disk-worktree-guard.sh --json-report /tmp/tsz-disk-guard.json
   scripts/setup/disk-worktree-guard.sh --auto-prune
 
 Environment:
@@ -52,6 +55,23 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --auto-prune) AUTO_PRUNE=true; shift ;;
+    --json-report)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      JSON_REPORT="$1"
+      shift
+      ;;
+    --json-report=*)
+      JSON_REPORT="${1#--json-report=}"
+      if [[ -z "$JSON_REPORT" ]]; then
+        echo "--json-report requires a path (try --help)" >&2
+        exit 2
+      fi
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
@@ -64,6 +84,13 @@ min_free_mb=$(( MIN_FREE_GB * 1024 ))
 
 printf 'disk_free_gb=%s path=%s\n' "$free_gb" "$WORKTREE_PARENT"
 printf 'disk_free_mb=%s\n' "$free_mb"
+
+disk_status=ok
+disk_shortfall_mb=0
+pruned=""
+disk_free_gb_after=""
+disk_free_mb_after=""
+disk_shortfall_mb_after=""
 
 prune_incremental() {
   local pruned=0
@@ -87,16 +114,22 @@ prune_incremental() {
 }
 
 if (( free_gb < MIN_FREE_GB )); then
+  disk_status=low
+  disk_shortfall_mb="$(( min_free_mb > free_mb ? min_free_mb - free_mb : 0 ))"
   printf 'disk_status=low min_free_gb=%s\n' "$MIN_FREE_GB"
-  printf 'disk_shortfall_mb=%s\n' "$(( min_free_mb > free_mb ? min_free_mb - free_mb : 0 ))"
+  printf 'disk_shortfall_mb=%s\n' "$disk_shortfall_mb"
   if [[ "$AUTO_PRUNE" == true ]]; then
-    prune_incremental
+    pruned="$(prune_incremental)"
+    echo "$pruned"
     df_kb="$(df -Pk "$WORKTREE_PARENT" | awk 'NR==2 {print $4}')"
     free_mb=$(( df_kb / 1024 ))
     free_gb=$(( free_mb / 1024 ))
-    printf 'disk_free_gb_after=%s\n' "$free_gb"
-    printf 'disk_free_mb_after=%s\n' "$free_mb"
-    printf 'disk_shortfall_mb_after=%s\n' "$(( min_free_mb > free_mb ? min_free_mb - free_mb : 0 ))"
+    disk_free_gb_after="$free_gb"
+    disk_free_mb_after="$free_mb"
+    disk_shortfall_mb_after="$(( min_free_mb > free_mb ? min_free_mb - free_mb : 0 ))"
+    printf 'disk_free_gb_after=%s\n' "$disk_free_gb_after"
+    printf 'disk_free_mb_after=%s\n' "$disk_free_mb_after"
+    printf 'disk_shortfall_mb_after=%s\n' "$disk_shortfall_mb_after"
   fi
 else
   printf 'disk_status=ok min_free_gb=%s\n' "$MIN_FREE_GB"
@@ -147,4 +180,73 @@ if [[ -n "$reuse_candidates" ]]; then
   printf '%s\n' "$reuse_candidates"
 else
   echo "  none"
+fi
+
+if [[ -n "$JSON_REPORT" ]]; then
+  REUSE_CANDIDATES="$reuse_candidates" \
+  JSON_REPORT="$JSON_REPORT" \
+  WORKTREE_PARENT="$WORKTREE_PARENT" \
+  REPO_ROOT="$REPO_ROOT" \
+  MIN_FREE_GB="$MIN_FREE_GB" \
+  MIN_FREE_MB="$min_free_mb" \
+  DISK_FREE_GB="$free_gb" \
+  DISK_FREE_MB="$free_mb" \
+  DISK_STATUS="$disk_status" \
+  DISK_SHORTFALL_MB="$disk_shortfall_mb" \
+  AUTO_PRUNE="$AUTO_PRUNE" \
+  PRUNED="$pruned" \
+  DISK_FREE_GB_AFTER="$disk_free_gb_after" \
+  DISK_FREE_MB_AFTER="$disk_free_mb_after" \
+  DISK_SHORTFALL_MB_AFTER="$disk_shortfall_mb_after" \
+  node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+function numberFromEnv(name) {
+  const value = process.env[name];
+  if (value == null || value === "") return null;
+  return Number(value);
+}
+
+const candidates = (process.env.REUSE_CANDIDATES ?? "")
+  .split(/\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => {
+    const match = line.match(/^(.*) branch=(\S+) inactive_hours>=(\d+)$/);
+    if (!match) return { raw: line };
+    return {
+      path: match[1],
+      branch: match[2],
+      inactive_hours_min: Number(match[3]),
+    };
+  });
+
+const report = {
+  ok: process.env.DISK_STATUS === "ok",
+  status: process.env.DISK_STATUS,
+  generated_by: "scripts/setup/disk-worktree-guard.sh",
+  repo_root: process.env.REPO_ROOT,
+  worktree_parent: process.env.WORKTREE_PARENT,
+  min_free_gb: numberFromEnv("MIN_FREE_GB"),
+  min_free_mb: numberFromEnv("MIN_FREE_MB"),
+  disk_free_gb: numberFromEnv("DISK_FREE_GB"),
+  disk_free_mb: numberFromEnv("DISK_FREE_MB"),
+  disk_shortfall_mb: numberFromEnv("DISK_SHORTFALL_MB"),
+  auto_prune: process.env.AUTO_PRUNE === "true",
+  pruned: process.env.PRUNED ? process.env.PRUNED.replace(/^pruned=/, "") : null,
+  disk_after_auto_prune: process.env.DISK_FREE_MB_AFTER
+    ? {
+        disk_free_gb: numberFromEnv("DISK_FREE_GB_AFTER"),
+        disk_free_mb: numberFromEnv("DISK_FREE_MB_AFTER"),
+        disk_shortfall_mb: numberFromEnv("DISK_SHORTFALL_MB_AFTER"),
+      }
+    : null,
+  reuse_candidate_count: candidates.length,
+  reuse_candidates: candidates,
+};
+
+fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
+fs.writeFileSync(process.env.JSON_REPORT, `${JSON.stringify(report, null, 2)}\n`);
+NODE
 fi
