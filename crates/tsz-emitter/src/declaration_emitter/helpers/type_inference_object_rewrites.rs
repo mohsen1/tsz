@@ -368,11 +368,12 @@ impl<'a> DeclarationEmitter<'a> {
         if !negative_numeric_computed_names.is_empty() {
             for line in &mut lines {
                 for (key_text, source_name_text) in &negative_numeric_computed_names {
-                    if Self::replace_object_literal_property_line_name(
+                    if let Some(rewritten) = Self::object_literal_property_line_with_name(
                         line,
                         key_text,
                         source_name_text,
                     ) {
+                        *line = rewritten;
                         break;
                     }
                 }
@@ -952,7 +953,11 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            *line = line.replacen(existing_union, source_union, 1);
+            if let Some(rewritten) =
+                Self::object_index_signature_line_with_value_type(line, source_union)
+            {
+                *line = rewritten;
+            }
         }
     }
 
@@ -1213,11 +1218,13 @@ impl<'a> DeclarationEmitter<'a> {
         name_text.trim().strip_prefix('[')?.strip_suffix(']')
     }
 
-    fn replace_object_literal_property_line_name(
-        line: &mut String,
+    fn object_literal_property_line_with_name(
+        line: &str,
         key_text: &str,
         replacement_name: &str,
-    ) -> bool {
+    ) -> Option<String> {
+        // OUTPUT_SURGERY_DEBT: rebuilds a DTS member line after type printing;
+        // migrate to declaration summary member spelling facts.
         let leading_len = line.len() - line.trim_start().len();
         let trimmed = &line[leading_len..];
         let candidates = [
@@ -1228,11 +1235,16 @@ impl<'a> DeclarationEmitter<'a> {
         for candidate in candidates {
             if trimmed.starts_with(&candidate) {
                 let replacement = format!("{replacement_name}:");
-                line.replace_range(leading_len..leading_len + candidate.len(), &replacement);
-                return true;
+                let suffix = &trimmed[candidate.len()..];
+                let mut rewritten =
+                    String::with_capacity(leading_len + replacement.len() + suffix.len());
+                rewritten.push_str(&line[..leading_len]);
+                rewritten.push_str(&replacement);
+                rewritten.push_str(suffix);
+                return Some(rewritten);
             }
         }
-        false
+        None
     }
 
     fn object_index_signature_line_with_key(line: &str, replacement_key: &str) -> Option<String> {
@@ -1252,6 +1264,50 @@ impl<'a> DeclarationEmitter<'a> {
             rewritten.push_str("readonly ");
         }
         rewritten.push_str(replacement_key);
+        rewritten.push_str(suffix);
+        Some(rewritten)
+    }
+
+    fn object_index_signature_line_with_value_type(
+        line: &str,
+        replacement_value_type: &str,
+    ) -> Option<String> {
+        // OUTPUT_SURGERY_DEBT: rebuilds a DTS index-signature line after type
+        // printing; migrate to structured declaration member facts.
+        let trimmed = line.trim_start();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        if !(without_readonly.starts_with("[x: string]:")
+            || without_readonly.starts_with("[x: number]:")
+            || without_readonly.starts_with("[x: symbol]:"))
+        {
+            return None;
+        }
+
+        let signature_start = line.len() - without_readonly.len();
+        let bracket_end = without_readonly.find(']')?;
+        let colon_relative = without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1;
+        let after_colon = signature_start + colon_relative + 1;
+        let value_tail = &line[after_colon..];
+        let value_leading_len = value_tail.len() - value_tail.trim_start().len();
+        let value_start = after_colon + value_leading_len;
+        let value_and_suffix = &line[value_start..];
+        let trimmed_value_len = value_and_suffix.trim_end().len();
+        let suffix_start = if value_and_suffix[..trimmed_value_len].ends_with(';') {
+            trimmed_value_len.saturating_sub(1)
+        } else {
+            trimmed_value_len
+        };
+
+        let prefix = &line[..value_start];
+        let suffix = &value_and_suffix[suffix_start..];
+        let replacement_value_type = replacement_value_type.trim();
+        let mut rewritten =
+            String::with_capacity(prefix.len() + replacement_value_type.len() + suffix.len());
+        rewritten.push_str(prefix);
+        rewritten.push_str(replacement_value_type);
         rewritten.push_str(suffix);
         Some(rewritten)
     }
@@ -1579,5 +1635,72 @@ mod object_index_signature_rewrite_tests {
     fn ignores_non_string_index_lines() {
         assert_eq!(rewrite("    [x: number]: boolean;"), None);
         assert_eq!(rewrite("    value: boolean;"), None);
+    }
+
+    #[test]
+    fn rewrites_index_signature_value_type_without_changing_key() {
+        assert_eq!(
+            DeclarationEmitter::object_index_signature_line_with_value_type(
+                "    [x: string]: Beta | Alpha;",
+                "Alpha | Beta",
+            )
+            .as_deref(),
+            Some("    [x: string]: Alpha | Beta;")
+        );
+        assert_eq!(
+            DeclarationEmitter::object_index_signature_line_with_value_type(
+                "    readonly [x: number]: Second | First;",
+                "First | Second",
+            )
+            .as_deref(),
+            Some("    readonly [x: number]: First | Second;")
+        );
+    }
+
+    #[test]
+    fn preserves_index_signature_spacing_and_suffix() {
+        assert_eq!(
+            DeclarationEmitter::object_index_signature_line_with_value_type(
+                "\t[x: symbol]:   Old | New;  ",
+                "New | Old",
+            )
+            .as_deref(),
+            Some("\t[x: symbol]:   New | Old;  ")
+        );
+    }
+}
+
+#[cfg(test)]
+mod object_property_name_rewrite_tests {
+    use super::DeclarationEmitter;
+
+    fn rewrite(line: &str, key: &str, replacement: &str) -> Option<String> {
+        DeclarationEmitter::object_literal_property_line_with_name(line, key, replacement)
+    }
+
+    #[test]
+    fn rewrites_quoted_property_prefix_to_source_name() {
+        assert_eq!(
+            rewrite("    \"-1\": string;", "-1", "[-1]").as_deref(),
+            Some("    [-1]: string;")
+        );
+        assert_eq!(
+            rewrite("    '-2': number;", "-2", "[-2]").as_deref(),
+            Some("    [-2]: number;")
+        );
+    }
+
+    #[test]
+    fn rewrites_bare_property_prefix_and_preserves_suffix() {
+        assert_eq!(
+            rewrite("\t-3: boolean;  ", "-3", "[-3]").as_deref(),
+            Some("\t[-3]: boolean;  ")
+        );
+    }
+
+    #[test]
+    fn ignores_non_matching_property_lines() {
+        assert_eq!(rewrite("    other: boolean;", "-1", "[-1]"), None);
+        assert_eq!(rewrite("    method(): boolean;", "-1", "[-1]"), None);
     }
 }
