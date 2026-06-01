@@ -817,6 +817,222 @@ impl<'a> CheckerState<'a> {
                     .related)
     }
 
+    pub(super) fn index_constraint_keyof_targets_foreign_indexed_object(
+        &mut self,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+    ) -> bool {
+        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type) {
+            return false;
+        }
+        let Some(index_constraint) = index_constraint else {
+            return false;
+        };
+        let Some((constraint_target, constraint_base, constraint_index)) =
+            self.keyof_indexed_access_target(index_constraint)
+        else {
+            return false;
+        };
+
+        for current_object in [object_type, object_type_for_check] {
+            if self.same_key_space_after_evaluation(constraint_target, current_object) {
+                return false;
+            }
+            let Some((current_base, current_index)) =
+                crate::query_boundaries::common::index_access_types(self.ctx.types, current_object)
+            else {
+                continue;
+            };
+            if self.same_key_space_after_evaluation(constraint_index, current_index) {
+                return !self.same_key_space_after_evaluation(constraint_base, current_base);
+            }
+        }
+        false
+    }
+
+    pub(super) fn ast_index_constraint_keyof_targets_foreign_indexed_object(
+        &mut self,
+        object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+    ) -> bool {
+        let Some(constraint_node_idx) =
+            self.resolve_index_constraint_node_from_declaration(index_node_idx)
+        else {
+            return false;
+        };
+        let Some(constraint_node) = self.ctx.arena.get(constraint_node_idx) else {
+            return false;
+        };
+        let Some(type_op) = self.ctx.arena.get_type_operator(constraint_node) else {
+            return false;
+        };
+        if type_op.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return false;
+        }
+        let Some(constraint_target_node) = self.ctx.arena.get(type_op.type_node) else {
+            return false;
+        };
+        let Some(constraint_target) = self
+            .ctx
+            .arena
+            .get_indexed_access_type(constraint_target_node)
+        else {
+            return false;
+        };
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+        let Some(current_object) = self.ctx.arena.get_indexed_access_type(object_node) else {
+            return false;
+        };
+        if !self.nodes_have_same_text(constraint_target.index_type, current_object.index_type) {
+            return false;
+        }
+
+        let constraint_base_name = self.simple_type_reference_name(constraint_target.object_type);
+        let current_base_name = self.simple_type_reference_name(current_object.object_type);
+        if constraint_base_name.is_some()
+            && current_base_name.is_some()
+            && constraint_base_name == current_base_name
+        {
+            return false;
+        }
+        if self.nodes_have_same_text(constraint_target.object_type, current_object.object_type) {
+            return false;
+        }
+
+        let current_base = self.get_type_from_type_node(current_object.object_type);
+        let current_index = self.get_type_from_type_node(current_object.index_type);
+        let current_base_keyof = self.ctx.types.evaluate_keyof(current_base);
+        let current_index_for_check = self.evaluate_type_with_env(current_index);
+        !self
+            .assign_relation_outcome(current_index_for_check, current_base_keyof)
+            .related
+    }
+
+    fn resolve_index_constraint_node_from_declaration(
+        &self,
+        index_node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let index_name = self.simple_type_reference_name(index_node_idx)?;
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(index_node_idx)
+            .map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            let type_params = match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function(parent_node)
+                        .and_then(|f| f.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_signature(parent_node)
+                        .and_then(|s| s.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent_node)
+                    .and_then(|i| i.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_class(parent_node)
+                        .and_then(|c| c.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(parent_node)
+                    .and_then(|ta| ta.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function_type(parent_node)
+                        .and_then(|ft| ft.type_parameters.as_ref())
+                }
+                _ => None,
+            };
+            if let Some(tp_list) = type_params {
+                for &tp_idx in &tp_list.nodes {
+                    let Some(tp_node) = self.ctx.arena.get(tp_idx) else {
+                        continue;
+                    };
+                    let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(tp.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == index_name && tp.constraint != NodeIndex::NONE {
+                        return Some(tp.constraint);
+                    }
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        None
+    }
+
+    fn keyof_indexed_access_target(&mut self, type_id: TypeId) -> Option<(TypeId, TypeId, TypeId)> {
+        for candidate in [type_id, self.evaluate_type_with_env(type_id)] {
+            let Some(target) =
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+            else {
+                continue;
+            };
+            if let Some((base, index)) =
+                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+            {
+                return Some((target, base, index));
+            }
+            let evaluated_target = self.evaluate_type_with_env(target);
+            if let Some((base, index)) = crate::query_boundaries::common::index_access_types(
+                self.ctx.types,
+                evaluated_target,
+            ) {
+                return Some((evaluated_target, base, index));
+            }
+        }
+        None
+    }
+
+    fn same_key_space_after_evaluation(&mut self, left: TypeId, right: TypeId) -> bool {
+        same_object_key_space(self.ctx.types, left, right) || {
+            let left_eval = self.evaluate_type_with_env(left);
+            let right_eval = self.evaluate_type_with_env(right);
+            same_object_key_space(self.ctx.types, left_eval, right)
+                || same_object_key_space(self.ctx.types, left, right_eval)
+                || same_object_key_space(self.ctx.types, left_eval, right_eval)
+        }
+    }
+
     pub(super) fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {

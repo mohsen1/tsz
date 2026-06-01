@@ -817,7 +817,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|&member| {
                 if is_application_type(self.ctx.types, member) {
-                    let evaluated = self.evaluate_application_type(member);
+                    let evaluated = self.evaluate_application_type_for_property_access(member);
                     if evaluated != member {
                         changed = true;
                     }
@@ -1098,7 +1098,7 @@ impl<'a> CheckerState<'a> {
                 // we need to expand the Application to its concrete type.
                 // This is critical for unions like `Box<number> | Box<string>`
                 // where the solver can't resolve Lazy bases in Application types.
-                let evaluated = self.evaluate_application_type(type_id);
+                let evaluated = self.evaluate_application_type_for_property_access(type_id);
                 if evaluated != type_id {
                     self.resolve_type_for_property_access_inner(evaluated, visited)
                 } else {

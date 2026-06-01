@@ -46,6 +46,7 @@ mod state_statements;
 mod state_statements_class;
 mod state_statements_class_declarations;
 mod state_statements_class_members;
+mod state_statements_class_recovery;
 mod state_statements_keywords;
 mod state_statements_recovery;
 mod state_switch_recovery;
@@ -65,6 +66,9 @@ pub(crate) mod test_fixture;
 // JSDoc-style types, tuples, etc.) can locate the related cases by file name
 // without grepping a single monolithic file. Each shard imports only the
 // `test_fixture` helpers it actually uses; tests share no per-shard helpers.
+#[cfg(test)]
+#[path = "../../tests/parser_async_arrow_context_tests.rs"]
+mod parser_async_arrow_context_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_arrow_recovery_tests.rs"]
 mod parser_improvement_arrow_recovery_tests;
@@ -101,6 +105,9 @@ mod parser_improvement_merging_no_duplicate_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_misc_statement_recovery_tests.rs"]
 mod parser_improvement_misc_statement_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_nested_generic_chain_tests.rs"]
+mod parser_improvement_nested_generic_chain_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_nullable_type_recovery_tests.rs"]
 mod parser_improvement_nullable_type_recovery_tests;

@@ -768,7 +768,11 @@ impl<'a> CheckerState<'a> {
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
-            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+            let resolved = self.resolve_alias_symbol(sym_id, &mut visited_aliases);
+            if let Some(target) = resolved
+                .filter(|&target| target != sym_id)
+                .or_else(|| self.resolve_import_alias_cross_file(sym_id))
+            {
                 sym_id = target;
             }
         }
@@ -805,9 +809,8 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
         let base_name = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
 
         // A type alias that circularly references itself collapses to a

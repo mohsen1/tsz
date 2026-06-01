@@ -120,6 +120,60 @@ class C {
 }
 
 #[test]
+fn test_module_like_class_member_recovers_as_outer_statement() {
+    let source = r"
+class C {
+    global x
+}
+";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        }),
+        "Expected TS1068 for module-like class member, got diagnostics: {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let statements = &source_file.statements.nodes;
+    assert!(
+        statements.len() >= 3,
+        "Recovered global declaration and following expression should survive outside the class: {statements:?}"
+    );
+
+    let class_node = arena.get(statements[0]).unwrap();
+    assert_eq!(
+        class_node.kind,
+        crate::parser::syntax_kind_ext::CLASS_DECLARATION
+    );
+    let class_data = arena.get_class(class_node).unwrap();
+    assert!(
+        class_data.members.nodes.is_empty(),
+        "Invalid module-like class member should terminate the class body"
+    );
+
+    let module_node = arena.get(statements[1]).unwrap();
+    assert_eq!(
+        module_node.kind,
+        crate::parser::syntax_kind_ext::MODULE_DECLARATION
+    );
+    assert!(
+        module_node.is_global_augmentation(),
+        "Recovered `global` declaration should keep the global augmentation flag"
+    );
+
+    let expr_node = arena.get(statements[2]).unwrap();
+    assert_eq!(
+        expr_node.kind,
+        crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+    );
+}
+
+#[test]
 fn test_bare_hash_at_top_level_emits_ts1127() {
     // Bare `#` at top level should emit TS1127, not cascading errors
     let source = "# foo";

@@ -149,6 +149,58 @@ function inferDominantSubsystemFromPerfSnapshot(snapshot) {
   return null;
 }
 
+function topSlowTiming(rows) {
+  if (!Array.isArray(rows)) return null;
+
+  let best = null;
+  for (const row of rows) {
+    const elapsedMs = asNumber(row?.elapsed_ms);
+    if (elapsedMs == null) continue;
+    if (!best || elapsedMs > best.elapsed_ms) {
+      best = { row, elapsed_ms: elapsedMs };
+    }
+  }
+
+  return best;
+}
+
+function inferDominantHotspotFromPerfSnapshot(snapshot) {
+  const typeAlias = topSlowTiming(snapshot?.slow_type_alias_check_timings);
+  if (typeAlias) {
+    const row = typeAlias.row;
+    return {
+      kind: "type_alias_phase",
+      name: typeof row?.name === "string" ? row.name : null,
+      phase: typeof row?.phase === "string" ? row.phase : null,
+      elapsed_ms: typeAlias.elapsed_ms,
+      file: typeof row?.file === "string" ? toPortablePath(row.file) : null,
+    };
+  }
+
+  const statement = topSlowTiming(snapshot?.slow_check_statement_timings);
+  if (statement) {
+    const row = statement.row;
+    return {
+      kind: "statement",
+      syntax_kind: asNumber(row?.kind),
+      elapsed_ms: statement.elapsed_ms,
+      file: typeof row?.file === "string" ? toPortablePath(row.file) : null,
+    };
+  }
+
+  const file = topSlowTiming(snapshot?.slow_check_file_timings);
+  if (file) {
+    const row = file.row;
+    return {
+      kind: "file",
+      elapsed_ms: file.elapsed_ms,
+      file: typeof row?.file === "string" ? toPortablePath(row.file) : null,
+    };
+  }
+
+  return null;
+}
+
 function sidecarPerfPath(inputPath) {
   if (typeof inputPath !== "string" || !inputPath.endsWith(".json")) return null;
   return inputPath.replace(/\.json$/, ".perf.json");
@@ -180,6 +232,9 @@ function sidecarAttributionForPath(perfPath) {
     mode,
     dominant_subsystem: isAttributionMode
       ? inferDominantSubsystemFromPerfSnapshot(snapshot)
+      : null,
+    dominant_hotspot: isAttributionMode
+      ? inferDominantHotspotFromPerfSnapshot(snapshot)
       : null,
     warning: isAttributionMode ? null : "sidecar perf snapshot mode is not attribution",
   };
@@ -243,8 +298,9 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
   const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
   const urlValue = artifact.url ?? null;
   const dominantSubsystem = artifact.dominant_subsystem ?? artifact.dominantSubsystem ?? null;
+  const dominantHotspot = artifact.dominant_hotspot ?? artifact.dominantHotspot ?? null;
   const warningValue = artifact.warning ?? null;
-  return {
+  const status = {
     present: true,
     path: pathValue,
     url: urlValue,
@@ -253,6 +309,10 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
     dominant_subsystem: dominantSubsystem,
     warning: warningValue ?? (dominantSubsystem ? null : "attribution dominant_subsystem missing"),
   };
+  if (dominantHotspot) {
+    status.dominant_hotspot = dominantHotspot;
+  }
+  return status;
 }
 
 function hasCompleteAttribution(status) {

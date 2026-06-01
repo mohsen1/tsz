@@ -453,6 +453,14 @@ withTempDir((dir) => {
     mode: "attribution",
     delegate: { misses: 0 },
     checker: { with_parent_cache_constructed: 2 },
+    slow_type_alias_check_timings: [
+      {
+        file: "ts-essentials/lib/xor/index.ts",
+        name: "XOR",
+        phase: "body_validation",
+        elapsed_ms: 55.98,
+      },
+    ],
     slow_check_file_timings: [
       { file: "ts-essentials/lib/xor/index.ts", elapsed_ms: 150, diagnostics: 0 },
     ],
@@ -476,6 +484,13 @@ withTempDir((dir) => {
     generated_at: report.target_gaps[0].attribution_status.generated_at,
     mode: "attribution",
     dominant_subsystem: "checker:semantic-check",
+    dominant_hotspot: {
+      kind: "type_alias_phase",
+      name: "XOR",
+      phase: "body_validation",
+      elapsed_ms: 55.98,
+      file: "ts-essentials/lib/xor/index.ts",
+    },
     warning: null,
   });
   assert.match(report.target_gaps[0].attribution_status.generated_at, /^\d{4}-\d{2}-\d{2}T/);
@@ -547,6 +562,11 @@ withTempDir((dir) => {
     generated_at: tsEssentials.attribution_status.generated_at,
     mode: "attribution",
     dominant_subsystem: "checker:semantic-check",
+    dominant_hotspot: {
+      kind: "file",
+      elapsed_ms: 150,
+      file: "ts-essentials/lib/xor/index.ts",
+    },
     warning: null,
   });
 });

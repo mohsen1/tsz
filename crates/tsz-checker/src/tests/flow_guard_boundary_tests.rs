@@ -47,6 +47,36 @@ function use(value: string | number) {
 }
 
 #[test]
+fn type_predicate_true_branch_removes_null_before_property_access() {
+    let codes = check_strict(
+        r#"
+interface Node {
+    nodeType: number;
+}
+
+interface Element extends Node {
+    tagName: string;
+}
+
+function isElement(node: Node | null): node is Element {
+    return node !== null && node.nodeType === 1;
+}
+
+function use(node: Node | null) {
+    if (isElement(node)) {
+        node.tagName.toLowerCase();
+    }
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&18047) && !codes.contains(&2339),
+        "expected type predicate to remove null and expose Element properties, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn instanceof_condition_narrows_both_branches() {
     let codes = check_strict(
         r#"

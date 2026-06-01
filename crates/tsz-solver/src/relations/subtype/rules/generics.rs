@@ -671,6 +671,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
         let mut all_ok = true;
         let mut any_checked = false;
+        let mut forward_rejected = false;
 
         for (i, variance) in variances.iter().enumerate() {
             let s_arg = s_args[i];
@@ -678,15 +679,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if variance.is_invariant() {
                 any_checked = true;
-                if !self.check_subtype(s_arg, t_arg).is_true()
-                    || !self.check_subtype(t_arg, s_arg).is_true()
-                {
+                if !self.check_subtype(s_arg, t_arg).is_true() {
+                    forward_rejected = true;
+                    all_ok = false;
+                    break;
+                }
+                if !self.check_subtype(t_arg, s_arg).is_true() {
                     all_ok = false;
                     break;
                 }
             } else if variance.is_covariant() {
                 any_checked = true;
                 if !self.check_subtype(s_arg, t_arg).is_true() {
+                    forward_rejected = true;
                     all_ok = false;
                     break;
                 }
@@ -722,6 +727,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !needs_structural_fallback
             && !rejection_unreliable
             && !args_contain_type_parameters(self.interner, &s_args)
+        {
+            return Some(SubtypeResult::False);
+        }
+
+        if any_checked
+            && !all_ok
+            && needs_structural_fallback
+            && !rejection_unreliable
+            && forward_rejected
+            && self.recursive_mapped_alias_base_reaches_self(s_app.base)
+            && self.application_args_are_concrete(&s_args)
+            && self.application_args_are_concrete(&t_args)
         {
             return Some(SubtypeResult::False);
         }

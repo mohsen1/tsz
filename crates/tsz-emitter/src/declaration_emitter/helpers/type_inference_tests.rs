@@ -881,6 +881,97 @@ const ts1 = ff2("foo", "bar");
 }
 
 #[test]
+fn declared_call_return_uses_annotation_for_single_placeholder_template_literal() {
+    let source = r#"
+declare function idTpl<T extends string>(x: T): `${T}`;
+const a = idTpl("foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(output.contains("declare const a: \"foo\";"), "{output}");
+    assert!(!output.contains("declare const a = \"foo\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_initializer_for_identity_type_parameter() {
+    let source = r#"
+declare function id<T extends string>(x: T): T;
+const b = id("foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(output.contains("declare const b = \"foo\";"), "{output}");
+    assert!(!output.contains("declare const b: \"foo\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_initializer_for_identity_with_renamed_type_parameter() {
+    // The structural rule must not depend on the chosen type-parameter name.
+    let source = r#"
+declare function id2<X extends string>(x: X): X;
+const c = id2("hello");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(output.contains("declare const c = \"hello\";"), "{output}");
+    assert!(!output.contains("declare const c: \"hello\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_annotation_for_union_with_undefined() {
+    // `T | undefined` is not an identity; the result is structurally composed
+    // even when one branch happens to be a literal.
+    let source = r#"
+declare function maybe<T extends string>(x: T): T | undefined;
+const u = maybe("foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(!output.contains("declare const u = \"foo\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_annotation_for_array_of_type_parameter() {
+    let source = r#"
+declare function wrapArr<T extends string>(x: T): T[];
+const arr = wrapArr("foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(!output.contains("declare const arr = \"foo\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_initializer_for_second_argument_identity() {
+    // The first arg is `any` so it can't supply T; T is bound from the
+    // second positional argument. Return type is still bare T, so the
+    // initializer form is recoverable.
+    let source = r#"
+declare function pickSecond<T extends string>(x: any, y: T): T;
+const s = pickSecond(42, "foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(output.contains("declare const s = \"foo\";"), "{output}");
+    assert!(!output.contains("declare const s: \"foo\";"), "{output}");
+}
+
+#[test]
+fn declared_call_return_uses_annotation_for_object_type_return() {
+    // `{ value: T }` is a composed type, not a bare type-parameter reference.
+    let source = r#"
+declare function unwrapBox<T extends string>(x: T): { value: T };
+const wrapped = unwrapBox("foo");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        !output.contains("declare const wrapped = \"foo\";"),
+        "{output}"
+    );
+}
+
+#[test]
 fn returned_intrinsic_call_preserves_outer_type_parameter() {
     let source = r#"
 declare function foo3<T extends string>(x: Uppercase<T>): T;

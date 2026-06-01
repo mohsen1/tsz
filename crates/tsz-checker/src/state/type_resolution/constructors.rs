@@ -1,6 +1,7 @@
 use crate::query_boundaries::common::call_signatures_for_type;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
@@ -928,12 +929,18 @@ impl<'a> CheckerState<'a> {
                 return self.cache_base_instance_result(expr_idx, should_cache, Some(instantiated));
             }
 
-            // Cross-file/lib heritage can resolve the symbol correctly but not the
-            // declaration node in the current arena. Preserve the merged class
-            // instance surface by resolving through the symbol-based class path
-            // before falling back to constructor-only synthesis.
+            let mut visited_aliases = AliasCycleTracker::new();
+            let resolved_alias = self
+                .resolve_alias_symbol(base_sym_id, &mut visited_aliases)
+                .filter(|&target_sym_id| target_sym_id != base_sym_id);
+            let cross_file_alias = self.resolve_import_alias_cross_file(base_sym_id);
+            let base_class_sym_id = resolved_alias.or(cross_file_alias).unwrap_or(base_sym_id);
+            // Cross-file/lib heritage can resolve the local import alias correctly
+            // while the class declaration lives behind the alias target. Preserve the
+            // merged class instance surface by resolving through the symbol-based
+            // class path before falling back to constructor-only synthesis.
             if let Some((base_instance_type, base_type_params)) =
-                self.class_instance_type_with_params_from_symbol(base_sym_id)
+                self.class_instance_type_with_params_from_symbol(base_class_sym_id)
             {
                 let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,

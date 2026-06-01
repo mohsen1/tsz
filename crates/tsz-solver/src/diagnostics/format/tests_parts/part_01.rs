@@ -1776,4 +1776,3 @@ fn format_callable_single_construct_signature() {
         "Single construct signature should NOT use object notation, got: {result}"
     );
 }
-

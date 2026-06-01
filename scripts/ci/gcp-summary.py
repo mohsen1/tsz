@@ -340,7 +340,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", required=True)
     parser.add_argument("--exit-code", type=int, default=0)
-    parser.add_argument("--metrics-dir", default=".ci-metrics")
+    parser.add_argument("--metrics-dir", default="ci-metrics")
     parser.add_argument("--logs-dir", default=".ci-logs")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()

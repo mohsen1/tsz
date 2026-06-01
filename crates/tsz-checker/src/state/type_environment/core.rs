@@ -2506,7 +2506,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn type_param_names_in_arena(
+    pub(crate) fn type_param_names_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         flags: u32,
         decl_idx: NodeIndex,

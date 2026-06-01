@@ -200,7 +200,7 @@ impl<'a> SignatureHelpProvider<'a> {
         has_explicit_type_args: bool,
         explicit_type_arg_texts: &[String],
     ) -> Vec<SignatureCandidate> {
-        self.expand_rest_tuple_union_variants(shape, checker)
+        self.expand_rest_tuple_union_variants(shape)
             .into_iter()
             .map(|variant| {
                 self.signature_candidate(
@@ -218,19 +218,19 @@ impl<'a> SignatureHelpProvider<'a> {
     pub(super) fn expand_rest_tuple_union_variants(
         &self,
         shape: &FunctionShape,
-        checker: &CheckerState,
     ) -> Vec<FunctionShape> {
         let Some(rest_index) = shape.params.iter().position(|param| param.rest) else {
             return vec![shape.clone()];
         };
         let rest_param = shape.params[rest_index];
-        let Some(TypeData::Union(list_id)) = checker.ctx.types.lookup(rest_param.type_id) else {
+        let Some(list_id) = visitor::union_list_id(self.interner, rest_param.type_id) else {
             return vec![shape.clone()];
         };
 
-        let mut variants = Vec::with_capacity(checker.ctx.types.type_list(list_id).len());
-        for &member in checker.ctx.types.type_list(list_id).iter() {
-            if !matches!(checker.ctx.types.lookup(member), Some(TypeData::Tuple(_))) {
+        let members = self.interner.type_list(list_id);
+        let mut variants = Vec::with_capacity(members.len());
+        for &member in members.iter() {
+            if visitor::tuple_list_id(self.interner, member).is_none() {
                 continue;
             }
             let mut variant = shape.clone();
@@ -286,9 +286,9 @@ impl<'a> SignatureHelpProvider<'a> {
             // as individual parameters. e.g. `...args: [...names: string[], allCaps: boolean]`
             // becomes `...names: string[], allCaps: boolean`.
             if param.rest
-                && let Some(TypeData::Tuple(list_id)) = checker.ctx.types.lookup(param.type_id)
+                && let Some(list_id) = visitor::tuple_list_id(self.interner, param.type_id)
             {
-                let elements = checker.ctx.types.tuple_list(list_id);
+                let elements = self.interner.tuple_list(list_id);
                 let param_base_name = param.name.map_or_else(
                     || "arg".to_string(),
                     |atom| checker.ctx.types.resolve_atom(atom),
