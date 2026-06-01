@@ -119,6 +119,8 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn type_parameter_default",
             "RelationKind::TypeParameterDefault",
         ),
+        ("fn index_signature", "RelationKind::IndexSignature"),
+        ("fn decorator_callee", "RelationKind::DecoratorCallee"),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

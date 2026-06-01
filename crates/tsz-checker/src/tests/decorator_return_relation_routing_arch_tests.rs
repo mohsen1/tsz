@@ -62,8 +62,12 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
     let callee_probe = &source[callee_probe_start..callee_probe_end];
 
     assert!(
-        callee_probe.contains("assign_relation_outcome(decorator_type, function_type)"),
-        "decorator Function fallback should route relation probing through assign_relation_outcome"
+        callee_probe.contains("decorator_callee_relation_outcome(decorator_type, function_type)"),
+        "decorator Function fallback should route relation probing through decorator_callee_relation_outcome"
+    );
+    assert!(
+        !callee_probe.contains("assign_relation_outcome(decorator_type, function_type)"),
+        "decorator Function fallback should not use generic assignment request routing"
     );
     assert!(
         !callee_probe.contains("diagnostic_relation_boolean_guard(decorator_type, function_type)"),

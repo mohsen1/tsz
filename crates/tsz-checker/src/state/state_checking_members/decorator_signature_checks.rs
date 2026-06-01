@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         let Some(function_type) = self.global_function_type_id() else {
             return false;
         };
-        self.assign_relation_outcome(decorator_type, function_type)
+        self.decorator_callee_relation_outcome(decorator_type, function_type)
             .related
     }
 

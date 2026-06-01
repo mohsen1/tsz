@@ -31,6 +31,10 @@ pub(crate) enum RelationKind {
     ComputedEnumMember,
     /// Type-parameter default compatibility against its constraint.
     TypeParameterDefault,
+    /// Index-signature key/value compatibility for TS2411/TS2413 paths.
+    IndexSignature,
+    /// Decorator callee compatibility against the global `Function` type.
+    DecoratorCallee,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -137,6 +141,14 @@ impl RelationRequest {
 
     pub(crate) const fn type_parameter_default(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::TypeParameterDefault)
+    }
+
+    pub(crate) const fn index_signature(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::IndexSignature)
+    }
+
+    pub(crate) const fn decorator_callee(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::DecoratorCallee)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
