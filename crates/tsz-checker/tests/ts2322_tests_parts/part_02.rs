@@ -83,17 +83,34 @@ fn test_ts2322_optional_property_required_includes_related_optional_property_det
         .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .expect("expected TS2322 for optional-to-required property assignment");
 
-    // The source property is present-but-optional, so tsc reports TS2327
-    // ("is optional ... but required"), not the absent-property message TS2741.
+    // An optional `one?: number` contributes `number | undefined`, which is not
+    // assignable to the required `one: number`. tsc keeps the root mismatch
+    // visible via the "Types of property 'one' are incompatible." chain down to
+    // the failing `undefined` member, rather than collapsing it to the TS2327
+    // optional/required line (that line is reserved for when the property types
+    // are otherwise compatible). See issue #10913.
     assert!(
         ts2322.related_information.iter().any(|info| {
-            info.code == diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            info.code == diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE
                 && info
                     .message_text
-                    .contains("Property 'one' is optional in type")
-                && info.message_text.contains("but required in type")
+                    .contains("Types of property 'one' are incompatible.")
         }),
-        "Expected TS2322 to include the TS2327 optional-but-required elaboration, got: {ts2322:?}"
+        "Expected TS2322 to include the type-incompatibility elaboration, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Type 'undefined' is not assignable to type 'number'.")
+        }),
+        "Expected TS2322 to surface the root `undefined` mismatch, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .related_information
+            .iter()
+            .all(|info| !info.message_text.contains("is optional in type")),
+        "TS2327 must not fire when the property types are incompatible, got: {ts2322:?}"
     );
 }
 
@@ -206,17 +223,25 @@ fn test_ts2345_optional_property_required_includes_related_optional_property_det
         })
         .expect("expected TS2345 for optional-to-required argument mismatch");
 
-    // The argument property is present-but-optional, so tsc reports TS2327
-    // ("is optional ... but required"), not the absent-property message TS2741.
+    // An optional `one?: number` contributes `number | undefined`, which is not
+    // assignable to the required `one: number`, so tsc reports the
+    // type-incompatibility chain rather than the TS2327 optional/required line.
+    // See issue #10913.
     assert!(
         ts2345.related_information.iter().any(|info| {
-            info.code == diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            info.code == diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE
                 && info
                     .message_text
-                    .contains("Property 'one' is optional in type")
-                && info.message_text.contains("but required in type")
+                    .contains("Types of property 'one' are incompatible.")
         }),
-        "Expected TS2345 to include the TS2327 optional-but-required elaboration, got: {ts2345:?}"
+        "Expected TS2345 to include the type-incompatibility elaboration, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Type 'undefined' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to surface the root `undefined` mismatch, got: {ts2345:?}"
     );
 }
 

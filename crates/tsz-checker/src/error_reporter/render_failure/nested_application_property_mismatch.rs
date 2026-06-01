@@ -121,6 +121,11 @@ impl<'a> CheckerState<'a> {
             | tsz_solver::SubtypeFailureReason::ErrorType {
                 source_type,
                 target_type,
+            }
+            | tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
+                source_type,
+                target_type,
+                ..
             } => (*source_type, *target_type),
             tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
@@ -383,8 +388,18 @@ impl<'a> CheckerState<'a> {
                 target_property_type,
                 nested_reason,
             );
-            let leaf_is_plain = leaf.is_none_or(Self::nested_reason_is_plain_type_mismatch);
-            if path.len() >= 2 && leaf_is_plain {
+            // A union-source leaf still terminates a collapsible property run:
+            // tsc folds `o.a` into one line and renders the union/member chain
+            // beneath it. It is not "plain" for the type-argument fast path, so
+            // keep that predicate separate here.
+            let leaf_is_collapsible = leaf.is_none_or(|reason| {
+                Self::nested_reason_is_plain_type_mismatch(reason)
+                    || matches!(
+                        reason,
+                        tsz_solver::SubtypeFailureReason::UnionSourceMismatch { .. }
+                    )
+            });
+            if path.len() >= 2 && leaf_is_collapsible {
                 let dotted = path.join(".");
                 let detail = format_message(
                     diagnostic_messages::THE_TYPES_OF_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
@@ -640,6 +655,96 @@ impl<'a> CheckerState<'a> {
                     depth + 1,
                 );
                 Self::push_nested_chain(&mut diag, nested_diag, depth);
+            }
+        }
+
+        diag
+    }
+
+    /// Render a union-source mismatch: a union type that is not assignable to
+    /// the target because one of its members fails.
+    ///
+    /// tsc keeps the root mismatch visible by elaborating the first failing
+    /// member directly beneath the union-to-target line:
+    ///
+    /// ```text
+    /// Type 'A | B' is not assignable to type 'T'.
+    ///   Type 'B' is not assignable to type 'T'.
+    /// ```
+    ///
+    /// The failing-member relation sits one indent level beneath the union
+    /// line, mirroring [`Self::render_type_argument_mismatch`].
+    pub(super) fn render_union_source_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_type: TypeId,
+        target_type: TypeId,
+        member_type: TypeId,
+        nested_reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Diagnostic {
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+
+        // The union-to-target line. At depth 0 this is the primary diagnostic, so
+        // reuse the standard type-mismatch formatting (which preserves the full
+        // union surface, e.g. `number | undefined`). When nested, the union and
+        // target types are formatted structurally one indent beneath the parent.
+        let mut diag = if depth == 0 {
+            self.render_type_mismatch(ctx)
+        } else {
+            let source_str = self.format_type_diagnostic(source_type);
+            let target_str = self.format_type_diagnostic(target_type);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            Diagnostic::error(
+                file_name,
+                start,
+                length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        };
+
+        // The failing member sits exactly one indent level beneath the union
+        // line. At depth 0 the union line is the (un-indented) primary, so its
+        // first child is at related-depth 0; when nested it is at related-depth
+        // `depth`, so the child is at `depth + 1`.
+        if depth < 5 {
+            let child_depth = if depth == 0 { 0 } else { depth + 1 };
+            let (nested_source, nested_target) =
+                Self::nested_failure_display_types(nested_reason, member_type, target_type);
+            if Self::nested_reason_is_plain_type_mismatch(nested_reason) {
+                // Plain leaf relation (e.g. `undefined` vs `number`): render the
+                // member/target structurally so the displayed source is the
+                // failing member, not the enclosing assignment's RHS expression.
+                let source_str = self.format_type_diagnostic(nested_source);
+                let target_str = self.format_type_diagnostic(nested_target);
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start,
+                    length,
+                    message_text: format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    ),
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth: child_depth.min(u8::MAX as u32) as u8,
+                });
+            } else {
+                let nested_diag = self.render_failure_reason(
+                    nested_reason,
+                    nested_source,
+                    nested_target,
+                    idx,
+                    child_depth.max(1),
+                );
+                Self::push_nested_chain(&mut diag, nested_diag, child_depth);
             }
         }
 

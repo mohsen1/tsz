@@ -564,6 +564,18 @@ impl<'a> CheckerState<'a> {
                 *target_arg,
                 nested_reason.as_ref(),
             ),
+            SubtypeFailureReason::UnionSourceMismatch {
+                source_type,
+                target_type,
+                member_type,
+                nested_reason,
+            } => self.render_union_source_mismatch(
+                &rctx,
+                *source_type,
+                *target_type,
+                *member_type,
+                nested_reason.as_ref(),
+            ),
             SubtypeFailureReason::TooManyParameters {
                 source_count,
                 target_count,

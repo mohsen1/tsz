@@ -241,6 +241,14 @@ impl RelationFailure {
             | SubtypeFailureReason::NoIntersectionMemberMatches {
                 source_type,
                 target_type,
+            }
+            // A union source whose member fails: the checker-facing
+            // classification keeps the union/target pair; the failing member is
+            // rendered from the solver reason's nested chain.
+            | SubtypeFailureReason::UnionSourceMismatch {
+                source_type,
+                target_type,
+                ..
             } => Self::TypeMismatch {
                 source_type,
                 target_type,

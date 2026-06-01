@@ -486,7 +486,7 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 source_property_type,
                 target_property_type,
-                ..
+                nested_reason,
             } => {
                 let target_property_type = if self.should_strip_nullish_for_property_display(target)
                 {
@@ -513,7 +513,7 @@ impl<'a> CheckerState<'a> {
                     target_str,
                 );
 
-                vec![
+                let mut items = vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
                         code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
@@ -538,7 +538,18 @@ impl<'a> CheckerState<'a> {
                         ),
                         depth: 0,
                     },
-                ]
+                ];
+                // When the property type fails because a union member is not
+                // assignable (the common `T | undefined` vs `T` case), surface
+                // the failing member so the root mismatch stays visible, matching
+                // tsc's `... -> Type 'undefined' is not assignable to type 'T'.`
+                // leaf instead of stopping at the union line.
+                if let Some(member_line) =
+                    self.union_member_related_line(nested_reason.as_deref(), start, length)
+                {
+                    items.push(member_line);
+                }
+                items
             }
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
                 // Present-but-optional source property assigned to a required
@@ -753,10 +764,55 @@ impl<'a> CheckerState<'a> {
                                     depth: 0,
                 }]
             }
+            SubtypeFailureReason::UnionSourceMismatch { .. } => {
+                match self.union_member_related_line(Some(reason), start, length) {
+                    Some(line) => vec![line],
+                    None => return None,
+                }
+            }
             _ => return None,
         };
 
         Some(self.normalize_related_information(related, RelatedInformationPolicy::ELABORATION))
+    }
+
+    /// Build the failing-member relation line for a [`UnionSourceMismatch`]
+    /// reason (`Type 'M' is not assignable to type 'T'.`), used to surface the
+    /// root mismatch beneath a union-typed property/argument failure.
+    fn union_member_related_line(
+        &mut self,
+        reason: Option<&tsz_solver::SubtypeFailureReason>,
+        start: u32,
+        length: u32,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
+            member_type,
+            target_type,
+            ..
+        } = reason?
+        else {
+            return None;
+        };
+        let member_str = self.format_type_for_diagnostic_role(
+            *member_type,
+            DiagnosticTypeDisplayRole::DefaultDiagnostic,
+        );
+        let target_str = self.format_type_for_diagnostic_role(
+            *target_type,
+            DiagnosticTypeDisplayRole::DefaultDiagnostic,
+        );
+        Some(DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            message_text: format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&member_str, &target_str],
+            ),
+            depth: 0,
+        })
     }
 
     pub(crate) fn related_from_diagnostic(

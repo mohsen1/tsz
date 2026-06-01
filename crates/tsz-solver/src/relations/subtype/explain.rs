@@ -10,8 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    CallSignature, CallableShape, FunctionShape, IntrinsicKind, LiteralValue, ObjectShape,
-    ObjectShapeId, PropertyInfo, TupleElement, TypeId, Visibility,
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeId,
+    Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -803,6 +803,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
+        // Union source: the relation failed, so at least one member is not
+        // assignable to the target. tsc keeps the root mismatch visible by
+        // elaborating the first failing member beneath the union-to-target line
+        // (`Type 'A | B' is not assignable to type 'T'.` -> `Type 'B' is not
+        // assignable to type 'T'.`). Without this, the chain stops at the bare
+        // union line and hides why the assignment fails (e.g. the `undefined`
+        // member contributed by an optional property).
+        if let Some(member_list) = union_list_id(self.interner, resolved_source) {
+            let members = self.interner.type_list(member_list);
+            for &member in members.iter() {
+                if member == source || member == resolved_source {
+                    // Defensive: avoid self-recursion on a degenerate union.
+                    continue;
+                }
+                if self.check_subtype(member, target).is_true() {
+                    continue;
+                }
+                // Elaborate only when the first failing member fails as a simple
+                // leaf relation (e.g. `undefined` vs `number`). A member that
+                // fails structurally (object/array/etc.) needs its own
+                // `Type 'M' is not assignable to type 'T'.` header before its
+                // sub-chain; that elaboration is owned by the structural render
+                // paths, so leave those to the existing top-level handling rather
+                // than producing a headerless, mis-indented chain here.
+                let nested = self.explain_failure_guarded(member, target);
+                if let Some(nested) = nested
+                    && matches!(
+                        nested,
+                        SubtypeFailureReason::TypeMismatch { .. }
+                            | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                            | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                    )
+                {
+                    return Some(SubtypeFailureReason::UnionSourceMismatch {
+                        source_type: source,
+                        target_type: target,
+                        member_type: member,
+                        nested_reason: Box::new(nested),
+                    });
+                }
+                break;
+            }
+        }
+
         Some(SubtypeFailureReason::TypeMismatch {
             source_type: source,
             target_type: target,
@@ -1000,24 +1044,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
 
-                // Check optional/required mismatch
+                // Check property type compatibility first.
                 //
-                // Always emit OptionalPropertyRequired when source is optional and target is
-                // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
-                // diagnostic priority: the optional-vs-required message (TS2327, "Property 'x'
-                // is optional in type 'S' but required in type 'T'.") takes precedence over a
-                // type-level mismatch message. The property is present-but-optional, not
-                // absent, so this is TS2327 rather than the missing-property TS2741.
-                // The main subtype check gates whether the assignment is actually compatible
-                // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
-                // reaches this explain path).
-                if sp.optional && !t_prop.optional {
-                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: t_prop.name,
-                    });
-                }
-
-                // Check property type compatibility
+                // The optional-vs-required message (TS2327) only applies when the
+                // property *types* are otherwise compatible, so optionality is the
+                // sole reason the relation fails. When the read types are themselves
+                // incompatible (e.g. `{a?: number}` vs `{a: number}`, where the
+                // optional source contributes `number | undefined` that is not
+                // assignable to `number`), tsc reports the type-incompatibility chain
+                // ("Types of property 'a' are incompatible." -> root mismatch) and
+                // does *not* collapse it to the optional/required line. Emitting
+                // TS2327 before this check would hide that root mismatch.
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
                 let allow_bivariant = sp.is_method || t_prop.is_method;
@@ -1035,6 +1072,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         source_property_type: source_type,
                         target_property_type: target_type,
                         nested_reason: nested.map(Box::new),
+                    });
+                }
+
+                // Read types are compatible: now optionality presence is the only
+                // remaining incompatibility (TS2327). This also covers
+                // `{a?: T}` vs `{a: T | undefined}` and exactOptionalPropertyTypes,
+                // where the read types match but the source may still be absent.
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
                     });
                 }
                 if !t_prop.readonly
@@ -1261,14 +1308,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
 
-                if sp.optional && !t_prop.optional {
-                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
-                        property_name: t_prop.name,
-                    });
-                }
                 // NOTE: TypeScript allows readonly source to satisfy mutable target
                 // (readonly is a constraint on the reference, not structural compatibility)
 
+                // Check property type compatibility before the optional/required
+                // mismatch: TS2327 ("Property 'x' is optional ... but required ...")
+                // only applies when the read types are compatible and optionality is
+                // the sole failure. An incompatible read type must surface the
+                // "Types of property 'x' are incompatible." chain instead.
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
                 let allow_bivariant = sp.is_method || t_prop.is_method;
@@ -1286,6 +1333,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         source_property_type: source_type,
                         target_property_type: target_type,
                         nested_reason: nested.map(Box::new),
+                    });
+                }
+
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
                     });
                 }
                 if !t_prop.readonly
@@ -1467,245 +1520,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Explain why a function type assignment failed.
-    fn explain_function_failure(
-        &mut self,
-        source: &FunctionShape,
-        target: &FunctionShape,
-    ) -> Option<SubtypeFailureReason> {
-        // Check return type
-        if !(self
-            .check_subtype(source.return_type, target.return_type)
-            .is_true()
-            || self.allow_void_return && target.return_type == TypeId::VOID)
-        {
-            let nested = self.explain_failure(source.return_type, target.return_type);
-            return Some(SubtypeFailureReason::ReturnTypeMismatch {
-                source_return: source.return_type,
-                target_return: target.return_type,
-                nested_reason: nested.map(Box::new),
-            });
-        }
-
-        // Check parameter count
-        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
-        let rest_elem_type = if target_has_rest {
-            target
-                .params
-                .last()
-                .map(|param| self.get_array_element_type(param.type_id))
-        } else {
-            None
-        };
-        let rest_is_top = self.allow_bivariant_rest
-            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
-        let source_required = self.required_param_count(&source.params);
-        let target_fixed_count = if target_has_rest {
-            target.params.len().saturating_sub(1)
-        } else {
-            target.params.len()
-        };
-        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
-        // When the target has a rest parameter (e.g., ...args: number[]),
-        // it can absorb unlimited arguments — skip the too-many check entirely
-        // so we fall through to per-parameter type checking.
-        if !rest_is_top
-            && !target_has_rest
-            && !allow_bivariant_param_count
-            && source_required > target_fixed_count
-        {
-            return Some(SubtypeFailureReason::TooManyParameters {
-                source_count: source_required,
-                target_count: target_fixed_count,
-            });
-        }
-
-        // Check parameter types
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
-        let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
-        } else {
-            source.params.len()
-        };
-        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        // Constructor and method signatures are bivariant even with strictFunctionTypes
-        let is_method_or_ctor =
-            source.is_method || target.is_method || source.is_constructor || target.is_constructor;
-        for i in 0..fixed_compare_count {
-            let s_param = &source.params[i];
-            let t_param = &target.params[i];
-            // Compare declared parameter types, matching the subtype rules.
-            // When both params are optional, strip `undefined` so
-            // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
-            let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
-            // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
-            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
-                let inner_reason = self.explain_failure(t_effective, s_effective).map(Box::new);
-                return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                    param_index: i,
-                    source_param: s_effective,
-                    target_param: t_effective,
-                    inner_reason,
-                });
-            }
-        }
-
-        if target_has_rest {
-            let Some(rest_elem_type) = rest_elem_type else {
-                return None; // Invalid rest parameter
-            };
-            if rest_elem_type.is_any_or_unknown()
-                && let Some((param_index, source_param)) =
-                    self.first_top_rest_unassignable_source_param(&source.params)
-            {
-                let inner_reason = self
-                    .explain_failure(rest_elem_type, source_param)
-                    .map(Box::new);
-                return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                    param_index,
-                    source_param,
-                    target_param: rest_elem_type,
-                    inner_reason,
-                });
-            }
-            if rest_is_top {
-                return None;
-            }
-
-            for i in target_fixed_count..source_fixed_count {
-                let s_param = &source.params[i];
-                if !self.are_parameters_compatible_impl(
-                    s_param.type_id,
-                    rest_elem_type,
-                    is_method_or_ctor,
-                ) {
-                    let inner_reason = self
-                        .explain_failure(rest_elem_type, s_param.type_id)
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                        param_index: i,
-                        source_param: s_param.type_id,
-                        target_param: rest_elem_type,
-                        inner_reason,
-                    });
-                }
-            }
-
-            if source_has_rest {
-                let s_rest_param = source.params.last()?;
-                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible_impl(
-                    s_rest_elem,
-                    rest_elem_type,
-                    is_method_or_ctor,
-                ) {
-                    let inner_reason = self
-                        .explain_failure(rest_elem_type, s_rest_elem)
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                        param_index: source_fixed_count,
-                        source_param: s_rest_elem,
-                        target_param: rest_elem_type,
-                        inner_reason,
-                    });
-                }
-            }
-        }
-
-        if source_has_rest {
-            let rest_param = source.params.last()?;
-            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
-
-            if !rest_is_top {
-                for i in source_fixed_count..target_fixed_count {
-                    let t_param = &target.params[i];
-                    if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
-                        let inner_reason = self
-                            .explain_failure(t_param.type_id, rest_elem_type)
-                            .map(Box::new);
-                        return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                            param_index: i,
-                            source_param: rest_elem_type,
-                            target_param: t_param.type_id,
-                            inner_reason,
-                        });
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    fn function_shape_from_call_signature(
-        signature: &CallSignature,
-        is_constructor: bool,
-    ) -> FunctionShape {
-        FunctionShape {
-            params: signature.params.clone(),
-            this_type: signature.this_type,
-            return_type: signature.return_type,
-            type_params: signature.type_params.clone(),
-            type_predicate: signature.type_predicate,
-            is_constructor,
-            is_method: signature.is_method,
-        }
-    }
-
-    fn explain_function_to_callable_failure(
-        &mut self,
-        source: &FunctionShape,
-        target: &CallableShape,
-    ) -> Option<SubtypeFailureReason> {
-        for target_signature in &target.call_signatures {
-            let target_function = Self::function_shape_from_call_signature(target_signature, false);
-            if !self
-                .check_function_subtype(source, &target_function)
-                .is_true()
-            {
-                return self.explain_function_failure(source, &target_function);
-            }
-        }
-        None
-    }
-
-    fn callable_properties_are_only_function_members(&self, properties: &[PropertyInfo]) -> bool {
-        properties.iter().all(|property| {
-            matches!(
-                self.interner.resolve_atom(property.name).as_str(),
-                "apply" | "bind" | "call" | "length" | "name" | "prototype"
-            )
-        })
-    }
-
-    fn explain_callable_to_callable_signature_failure(
-        &mut self,
-        source: &CallableShape,
-        target: &CallableShape,
-    ) -> Option<SubtypeFailureReason> {
-        for target_signature in &target.call_signatures {
-            let mut matching_source = None;
-            for source_signature in &source.call_signatures {
-                if self
-                    .check_call_signature_subtype(source_signature, target_signature)
-                    .is_true()
-                {
-                    matching_source = Some(source_signature);
-                    break;
-                }
-            }
-            if matching_source.is_none() {
-                let source_signature = source.call_signatures.first()?;
-                let source_function =
-                    Self::function_shape_from_call_signature(source_signature, false);
-                let target_function =
-                    Self::function_shape_from_call_signature(target_signature, false);
-                return self.explain_function_failure(&source_function, &target_function);
-            }
-        }
-        None
-    }
-
     /// Build a `TupleElementTypeMismatch` for a failing element pair, recursing
     /// into the element failure so the rendered chain carries the inner reason
     /// (matching tsc, which walks a tuple element exactly like a numerically
