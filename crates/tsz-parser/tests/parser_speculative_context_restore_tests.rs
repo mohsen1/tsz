@@ -232,3 +232,21 @@ fn nested_conditional_in_type_parameter_default_no_errors() {
         assert_no_errors(source);
     }
 }
+
+// ---------------------------------------------------------------------------
+// #11348: a conditional alias with an intersection true branch that uses a
+// parenthesized union should not disturb parsing and must parse cleanly with a
+// follow-up generic alias reference.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn intersection_true_branch_with_parenthesized_union_no_errors() {
+    for source in [
+        "type U<T> = T extends unknown ? { a: T } & ({ b: T } | { b: never }) : never;\n\
+         type R<T> = U<T>;\n",
+        "type Shape<X> = X extends unknown ? { left: X } & ({ right: X } | { right: never }) : never;\n\
+         type Alias<Y> = Shape<Y>;\n",
+    ] {
+        assert_no_errors(source);
+    }
+}
