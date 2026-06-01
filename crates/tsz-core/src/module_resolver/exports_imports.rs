@@ -23,29 +23,17 @@ pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
     key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
 }
 
-/// Splits a conditional key on its first `@` into `(base, range)`. Range is
-/// `None` for unversioned keys (`"types"`, `"node"`). Centralizing this lets
-/// the classifier and [`super::ModuleResolver::condition_key_matches`] share
-/// one grammar for `<base>@<range>` keys; either parser drifting from the
-/// other was the failure mode this fix forecloses.
-pub(super) fn parse_condition_key(key: &str) -> (&str, Option<&str>) {
-    match key.split_once('@') {
-        Some((base, range)) => (base, Some(range)),
-        None => (key, None),
-    }
-}
-
 /// Returns true when a conditional `exports`/`imports` key represents a
 /// TypeScript types lookup. Matched-key targets in types-flavored branches
 /// must go through declaration-aware probing (`try_types_entry`) instead of
 /// the runtime probe (`try_export_target`), which under Node16/NodeNext
 /// intentionally refuses to add an extension to an extensionless target.
 ///
-/// Recognized: `"types"` and its versioned variant `"types@<range>"`.
+/// Recognized: `"types"` (unversioned) and `"types@<range>"` (versioned).
 /// `"typings"` is **not** a tsc-recognized exports condition (it's a
 /// top-level `package.json` field), so it is not classified here.
 pub(super) fn is_types_condition_key(key: &str) -> bool {
-    parse_condition_key(key).0 == "types"
+    key == "types" || key.starts_with("types@")
 }
 
 fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
@@ -358,7 +346,7 @@ impl ModuleResolver {
         if conditions.iter().any(|condition| condition == key) {
             return true;
         }
-        let (base_condition, Some(version_range)) = parse_condition_key(key) else {
+        let Some((base_condition, version_range)) = key.split_once('@') else {
             return false;
         };
         if !conditions
