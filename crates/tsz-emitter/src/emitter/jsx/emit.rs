@@ -223,7 +223,8 @@ impl<'a> Printer<'a> {
 
         self.write("<");
         self.emit(jsx.tag_name);
-        self.emit(jsx.attributes);
+        let tag_end = self.arena.get(jsx.tag_name).map_or(node.pos, |tag| tag.end);
+        self.emit_jsx_attributes_after_tag(jsx.attributes, tag_end);
         // tsc always emits writeSpace() after tagName. Our emit_jsx_attributes
         // already prepends a space before each attribute, so the space is only
         // missing when there are no attributes at all.

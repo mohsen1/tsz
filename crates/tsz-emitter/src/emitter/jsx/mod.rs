@@ -653,6 +653,20 @@ mod tests {
     }
 
     #[test]
+    fn jsx_preserve_opening_attribute_comments_are_kept() {
+        let source = "const x = (<div\n    /* kept */\n    attr=\"x\"><span // line\n      value=\"y\" /></div>);";
+        let output = emit_jsx_preserve_es2015(source);
+        assert!(
+            output.contains("<div \n/* kept */\nattr=\"x\">"),
+            "Multiline comments before JSX attributes should stay in the opening tag.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("<span // line\n value=\"y\"/>"),
+            "Line comments before JSX attributes should keep the comment and tsc continuation spacing.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn recovered_jsx_conditional_missing_false_branch_preserves_tsc_layout() {
         let source = r#"// @target: es2015
 // @jsx: preserve
