@@ -782,15 +782,10 @@ const result: string[] = map(["a", "b"], x => x);
     );
 }
 
-/// When ALL overloads return the same type (e.g. both return `string`), the
-/// intersection fallback is `string`.  After TS2769, tsc does NOT also emit
-/// TS2322 on the declaration because the call's return type is `errorType` —
-/// it is not a concrete `string` the assignability check can see.
-///
-/// This tests that tsz likewise does NOT cascade TS2322 when all overloads
-/// share a return type and the declared annotation is incompatible.
+/// When all overloads return the same type, overload-failure recovery remains
+/// that type. tsc still reports the real downstream declaration TS2322.
 #[test]
-fn overload_same_return_type_ts2769_no_cascading_ts2322() {
+fn overload_same_return_type_ts2769_reports_decl_ts2322() {
     let source = r#"
 function fn(x: string): string;
 function fn(x: number): string;
@@ -802,16 +797,18 @@ const n: number = fn(true);
         diagnostics.iter().any(|d| d.code == 2769),
         "expected TS2769 for fn(true), got: {diagnostics:?}"
     );
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "tsc does not cascade TS2322 after TS2769 even when all overloads return same type; got: {diagnostics:?}"
+    let n_pos = source.find("const n").unwrap() as u32 + "const ".len() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == n_pos),
+        "same-return overload recovery should keep the real declaration TS2322 at `n`, got: {diagnostics:?}"
     );
 }
 
 /// Same as above but using assignment statement form rather than declaration.
 #[test]
-fn overload_same_return_type_ts2769_no_cascading_ts2322_assignment_stmt() {
+fn overload_same_return_type_ts2769_reports_assignment_ts2322() {
     let source = r#"
 function fn(x: string): string;
 function fn(x: number): string;
@@ -824,10 +821,12 @@ n = fn(true);
         diagnostics.iter().any(|d| d.code == 2769),
         "expected TS2769, got: {diagnostics:?}"
     );
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "tsc does not cascade TS2322 after TS2769 in assignment stmt when overloads share return type; got: {diagnostics:?}"
+    let assignment_pos = source.rfind("n =").unwrap() as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2322 && d.start == assignment_pos),
+        "same-return overload recovery should keep the real assignment TS2322, got: {diagnostics:?}"
     );
 }
 
@@ -875,5 +874,41 @@ n = outer(inner(true));
             .iter()
             .any(|d| d.code == 2322 && d.start == assignment_pos),
         "nested overload failures must not suppress the real outer assignment TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn overload_failure_initializer_preserves_real_ts2322() {
+    let source = r#"
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type Assign<T, U> = Omit<T, keyof U> & U;
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+declare const Object: {
+    assign<T extends {}, U>(target: T, source: U): T & U;
+    assign(target: object, ...sources: any[]): any;
+};
+
+class Base<T> {
+    constructor(public t: T) { }
+}
+
+export class Foo<T> extends Base<T> {
+    update(): Foo<Assign<T, { x: number }>> {
+        const v: Assign<T, { x: number }> = Object.assign(this.t, { x: 1 });
+        return new Foo(v);
+    }
+}
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769 for Object.assign(this.t, ...), got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322
+            && d.message_text
+                .contains("not assignable to type 'Assign<T, { x: number; }>'")),
+        "the initializer overload failure must not hide the real TS2322, got: {diagnostics:?}"
     );
 }

@@ -198,7 +198,15 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn should_suppress_assignment_after_overload_failure(&self, anchor_idx: NodeIndex) -> bool {
+    fn should_suppress_assignment_after_overload_failure(
+        &self,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        if source != TypeId::NEVER && source != TypeId::ERROR {
+            return false;
+        }
+
         let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
             return false;
         };
@@ -529,7 +537,7 @@ impl<'a> CheckerState<'a> {
             }
             return;
         }
-        if self.should_suppress_assignment_after_overload_failure(anchor_idx) {
+        if self.should_suppress_assignment_after_overload_failure(source, anchor_idx) {
             return;
         }
 
