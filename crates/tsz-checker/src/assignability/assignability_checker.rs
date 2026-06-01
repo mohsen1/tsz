@@ -724,6 +724,9 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if self.recursive_conditional_path_alias_mismatch_is_tsc_bailout(source, target) {
+            return true;
+        }
 
         if crate::query_boundaries::common::keyof_inner_type(self.ctx.types, target).is_some() {
             let resolved_keyof =
@@ -1295,6 +1298,39 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn recursive_conditional_path_alias_mismatch_is_tsc_bailout(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some((source_base, source_args)) = self.application_info_or_display_alias(source)
+        else {
+            return false;
+        };
+        let Some((target_base, target_args)) = self.application_info_or_display_alias(target)
+        else {
+            return false;
+        };
+        if source_base != target_base
+            || source_args.len() != target_args.len()
+            || source_args == target_args
+            || !self.ctx.types.is_conditional_alias_base(source_base)
+        {
+            return false;
+        }
+        source_args
+            .iter()
+            .zip(target_args.iter())
+            .any(|(&source_arg, &target_arg)| {
+                source_arg == target_arg
+                    && crate::query_boundaries::common::string_literal_value(
+                        self.ctx.types,
+                        source_arg,
+                    )
+                    .is_some_and(|atom| self.ctx.types.resolve_atom_ref(atom).contains('.'))
+            })
     }
 
     /// Suppress assignability diagnostics for parser-recovery artifacts.

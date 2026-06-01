@@ -140,13 +140,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
     /// Per-`DefId` one-sided application expansion depth; see `enter_app_expansion_depth`.
     pub(crate) app_expand_depth: FxHashMap<DefId, u32>,
-    /// Per conditional alias base depth while comparing nested object properties.
-    ///
-    /// TypeScript treats repeated object relations produced by the same recursive
-    /// conditional alias as deeply nested after a few property hops and assumes
-    /// related. This tracks that path-local depth without applying the shortcut
-    /// to non-conditional mapped aliases.
-    pub(crate) conditional_display_relation_depth: FxHashMap<TypeId, u32>,
     /// Symbol-pair visiting set for Object-level cycle detection.
     /// Catches cycles when comparing evaluated Object types with symbols
     /// (e.g., `Promise<X>` vs `PromiseLike<Y>`) where `DefId` information is lost
@@ -337,7 +330,6 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             app_expand_depth: FxHashMap::default(),
-            conditional_display_relation_depth: FxHashMap::default(),
             sym_visiting: FxHashSet::default(),
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
@@ -387,7 +379,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             app_expand_depth: FxHashMap::default(),
-            conditional_display_relation_depth: FxHashMap::default(),
             sym_visiting: FxHashSet::default(),
             strict_function_types: true,
             allow_void_return: false,
@@ -529,7 +520,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.reset();
         self.def_guard.reset();
         self.app_expand_depth.clear();
-        self.conditional_display_relation_depth.clear();
         self.sym_visiting.clear();
         self.eval_cache.clear();
     }

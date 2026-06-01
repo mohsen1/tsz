@@ -407,9 +407,11 @@ impl<'a> TypeFormatter<'a> {
                     false
                 };
                 if (self.skip_application_alias_names && base_str.as_ref() == "Omit")
-                    || base_has_mapped_body
+                    || (base_has_mapped_body && base_str.as_ref() != "Omit")
                 {
                     self.skip_application_display_alias_chase = true;
+                }
+                if base_has_mapped_body && base_str.as_ref() != "Omit" {
                     self.skip_object_display_alias = true;
                 }
                 let previous_preserve_application_arg_index_alias_surface =

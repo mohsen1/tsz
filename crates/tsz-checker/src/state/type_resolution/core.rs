@@ -125,6 +125,28 @@ impl<'a> CheckerState<'a> {
         };
 
         let type_name_idx = type_ref.type_name;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_none_or(|args| args.nodes.is_empty())
+            && let Some(type_name) = self.entity_name_text(type_name_idx)
+            && !type_name.contains('.')
+            && let Some(local_sym_id) = self.ctx.binder.file_locals.get(&type_name)
+            && self
+                .ctx
+                .binder
+                .get_symbol(local_sym_id)
+                .is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::ALIAS)
+                        && symbol.import_module.is_some()
+                        && symbol.import_name.as_deref() != Some("*")
+                })
+        {
+            let alias_type = self.type_reference_symbol_type(local_sym_id);
+            if let Some(instance_type) = self.instance_type_from_constructor_type(alias_type) {
+                return instance_type;
+            }
+        }
         let has_type_args = type_ref
             .type_arguments
             .as_ref()

@@ -463,6 +463,15 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(target_sym_id)
                     .map(|s| s.flags)
                     .unwrap_or(0);
+                if is_default_import_alias && target_flags & symbol_flags::VALUE != 0 {
+                    let value_type = self.get_type_of_symbol(target_sym_id);
+                    if let Some(instance_type) =
+                        self.instance_type_from_constructor_type(value_type)
+                    {
+                        self.ctx.leave_recursion();
+                        return instance_type;
+                    }
+                }
                 if target_flags & symbol_flags::VALUE != 0
                     && target_flags & symbol_flags::TYPE_ALIAS == 0
                     && let Some(type_alias_sym_id) =

@@ -1,5 +1,5 @@
 use crate::state::CheckerState;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::SymbolId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn query_file_is_declaration_file(&self, file_idx: Option<usize>) -> bool {
@@ -13,21 +13,6 @@ impl<'a> CheckerState<'a> {
             .and_then(|arenas| arenas.get(file_idx))
             .and_then(|arena| arena.source_files.first())
             .is_some_and(|source_file| source_file.is_declaration_file)
-    }
-
-    pub(crate) fn delegated_symbol_parent_is_namespace(
-        &self,
-        delegate_binder: &tsz_binder::BinderState,
-        sym_id: SymbolId,
-    ) -> bool {
-        delegate_binder
-            .get_symbol(sym_id)
-            .and_then(|symbol| {
-                (symbol.parent != SymbolId::NONE)
-                    .then(|| delegate_binder.get_symbol(symbol.parent))
-                    .flatten()
-            })
-            .is_some_and(|parent| parent.has_any_flags(symbol_flags::NAMESPACE))
     }
 
     pub(crate) fn get_symbol_from_registered_file_target(

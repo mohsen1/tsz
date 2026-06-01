@@ -17,7 +17,7 @@
 //! TS2353 ("does not exist in type") on assignments to object literals.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
+use tsz_checker::test_utils::{check_multi_file, check_source_with_libs, load_lib_files};
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let libs = load_lib_files(&["es5.d.ts"]);
@@ -35,6 +35,14 @@ fn no_ts2353(source: &str) {
         ts2353.is_empty(),
         "Expected no TS2353 for class+interface[+namespace] merge in type position, got: {diags:?}",
     );
+}
+
+fn assert_no_codes(diags: &[(u32, String)], forbidden: &[u32]) {
+    let hits: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| forbidden.contains(code))
+        .collect();
+    assert!(hits.is_empty(), "unexpected diagnostics: {hits:?}");
 }
 
 #[test]
@@ -60,6 +68,84 @@ namespace Quux { export const helper = "h"; }
 const q: Quux = { field: 9, extra: "z" };
 "#;
     no_ts2353(source);
+}
+
+#[test]
+fn cross_file_namespace_class_instance_members_survive_delegation() {
+    let diags = check_multi_file(
+        &[
+            (
+                "part1.ts",
+                r#"
+namespace A {
+    export interface Point { x: number; y: number; }
+}
+"#,
+            ),
+            (
+                "part2.ts",
+                r#"
+namespace A {
+    export namespace Utils {
+        export class Plane {
+            constructor(public tl: Point, public br: Point) {}
+        }
+    }
+}
+"#,
+            ),
+            (
+                "part3.ts",
+                r#"
+var p: { tl: A.Point; br: A.Point };
+var p: A.Utils.Plane;
+const q: A.Utils.Plane = { tl: { x: 0, y: 0 }, br: { x: 1, y: 1 } };
+"#,
+            ),
+        ],
+        "part3.ts",
+        CheckerOptions::default(),
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    assert_no_codes(&diags, &[2322, 2403]);
+}
+
+#[test]
+fn default_export_property_class_import_type_position_uses_instance_type() {
+    let diags = check_multi_file(
+        &[
+            (
+                "a.ts",
+                r#"
+namespace A {
+    export class B { constructor(b: number) {} }
+    export namespace B { export const b: number = 0; }
+}
+export default A.B;
+"#,
+            ),
+            (
+                "index.ts",
+                r#"
+import B from "./a";
+const b: B = new B(B.b);
+"#,
+            ),
+        ],
+        "index.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    assert_no_codes(&diags, &[2322, 2739]);
 }
 
 #[test]

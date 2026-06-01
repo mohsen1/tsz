@@ -1229,10 +1229,6 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_arena(symbol_arena)
                 .unwrap_or(self.ctx.binder)
         };
-        if self.delegated_symbol_parent_is_namespace(delegate_binder, sym_id) {
-            return None;
-        }
-
         // Cache check above returned None → about to do real work, so this
         // entry is a miss. Counts toward the `misses` denominator for
         // cache-hit-rate metrics.

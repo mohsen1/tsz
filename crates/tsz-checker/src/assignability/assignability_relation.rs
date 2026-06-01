@@ -801,9 +801,6 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return false;
         }
-        if self.ctx.types.is_conditional_alias_base(source_base) {
-            return false;
-        }
         if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
             return false;
         }
