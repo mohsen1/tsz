@@ -73,6 +73,51 @@ pub(crate) fn namespace_exports_cache_estimated_size_bytes(cache: &NamespaceExpo
 /// Keyed by `(current_file_idx, module_specifier, export_name)`.
 pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<SymbolId>>;
 
+/// Full **provenance** of a memoized alias / re-export / `export =` chain walk.
+///
+/// The previous endpoint-only memoization of `resolve_alias_symbol` was
+/// provenance-unsound: cross-file `import type` / `export type *` resolution is
+/// order-sensitive, so a bare endpoint `SymbolId` flips TS1361/TS1362/TS2693
+/// depending on file processing order. The fix is to memoize the **full
+/// provenance** the walk would otherwise reconstruct on every reference, so a
+/// cache hit is observationally identical to re-walking:
+///
+///  * `endpoint` — the resolved chain-endpoint `SymbolId`.
+///  * `chain` — every alias `SymbolId` the walk pushed onto its visiting set
+///    (in walk order). Downstream type-only classification
+///    (`alias_resolves_to_type_only`, the TS1361/TS1362 attribution passes in
+///    `error_reporter`, etc.) iterates this exact set; re-seeding it on a hit
+///    reproduces that classification byte-for-byte regardless of file order.
+///  * `registrations` — the `(SymbolId, file_idx)` symbol→file targets the walk
+///    registered as side effects. Replaying them on a hit keeps later
+///    cross-binder symbol/type-meaning lookups identical, so a hit needs no
+///    re-walk to re-establish ownership facts.
+#[derive(Clone, Debug)]
+pub struct ResolvedAliasProvenance {
+    pub endpoint: SymbolId,
+    pub chain: Vec<SymbolId>,
+    pub registrations: Vec<(SymbolId, usize)>,
+}
+
+/// Precomputed per-module export resolution table (Goal 4 resolution
+/// wall-breaker), carrying **full chain provenance** (see
+/// [`ResolvedAliasProvenance`]) rather than a bare endpoint.
+///
+/// Key: `(current_file_idx, alias_sym_id)` — the consuming file paired with the
+/// raw `SymbolId`. Both components are required: a bare `SymbolId(u32)` decodes
+/// against different binders to unrelated symbols, and the chain walk reads
+/// `current_file_idx`-scoped facts (e.g. `file_is_esm`, require/interop,
+/// ESM-vs-CJS resolution of relative specifiers), so two consumers of the same
+/// alias from different files can reach different endpoints. Because
+/// `current_file_idx` is part of the key, entries never collide across
+/// `switch_to_file`, exactly like [`ExportEqualsNamedCache`].
+///
+/// Only cycle-clean, top-level resolutions are inserted, so a cached answer is
+/// never a position-dependent truncation. Because the value carries the full
+/// chain + registrations, a hit replays the same provenance the walk produced,
+/// making the table **order-independent and safe to keep always-on**.
+pub type AliasResolutionTable = FxHashMap<(usize, SymbolId), ResolvedAliasProvenance>;
+
 #[must_use]
 pub(crate) fn export_equals_named_cache_entries(cache: &ExportEqualsNamedCache) -> usize {
     cache.len()

@@ -101,6 +101,25 @@ impl SymbolFileTargetsOverlay {
         self.delta.is_empty() && self.parent.is_none()
     }
 
+    /// Number of locally-registered (delta) entries. The export resolution
+    /// table snapshots this before/after an alias walk so it can capture the
+    /// exact symbol→file registrations the walk produced (it never freezes the
+    /// delta into a parent layer mid-walk, so the count is monotonic during one
+    /// resolution).
+    #[must_use]
+    pub fn delta_len(&self) -> usize {
+        self.delta.len()
+    }
+
+    /// Collect the current delta entries into a `Vec`, used to capture the
+    /// symbol→file registrations an alias walk produced so they can be replayed
+    /// verbatim on a later memoized cache hit (making the hit observationally
+    /// identical to re-walking). Order is unspecified but the set is complete.
+    #[must_use]
+    pub fn delta_entries(&self) -> Vec<(SymbolId, usize)> {
+        self.delta.iter().map(|(&s, &f)| (s, f)).collect()
+    }
+
     /// Freeze this overlay's current delta and return the immutable snapshot
     /// a child checker should use as its parent layer.
     pub(super) fn snapshot_for_child(&mut self) -> Option<Arc<SymbolFileTargetsNode>> {

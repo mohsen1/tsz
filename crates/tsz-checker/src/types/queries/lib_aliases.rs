@@ -1,9 +1,28 @@
 //! Alias-resolution query helpers for `CheckerState`.
 
+use crate::context::ResolvedAliasProvenance;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::syntax_kind_ext;
+
+/// Kill-switch for the provenance-aware export resolution table (Goal 4).
+///
+/// The table is **on by default**: unlike the prior endpoint-only experiment,
+/// the memoized value carries the *full chain provenance* (visited chain +
+/// symbol→file registrations), so a cache hit is observationally identical to
+/// re-walking — order-independent and diagnostic-preserving for `import type` /
+/// `export type *` chains. `TSZ_DISABLE_EXPORT_TABLE` force-disables it for A/B
+/// kill-switch verification (the byte-identical correctness gate).
+fn export_table_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_EXPORT_TABLE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
 
 impl<'a> CheckerState<'a> {
     /// Resolve an alias symbol to its target symbol.
@@ -45,9 +64,117 @@ impl<'a> CheckerState<'a> {
             crate::checkers_domain::trip_stack_overflow();
             return None;
         }
-        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+
+        // Goal 4: provenance-aware export resolution table. Resolving an alias /
+        // re-export / `export =` chain is otherwise a deep per-reference walk
+        // (≈18% of large-ts-repo infra check time as a single `resolve_alias_
+        // symbol` subtree). Memoizing the *full provenance* of a chain turns
+        // repeat references into one lookup whose replayed state is byte-
+        // identical to re-walking.
+        //
+        // A memoized entry is only consulted/inserted at the *top of the chain*
+        // (`visited_aliases` empty): a mid-chain endpoint can depend on which
+        // aliases are already on the walk, so it is not a position-independent
+        // fact. The key is `(current_file_idx, sym_id)`, mirroring
+        // `export_equals_named_cache` (both components required — see
+        // `AliasResolutionTable`).
+        let table_enabled = export_table_enabled() && visited_aliases.len() == 0;
+        let table_key = (self.ctx.current_file_idx, sym_id);
+
+        if table_enabled && let Some(provenance) = self.alias_table_lookup(table_key) {
+            // Replay the full provenance so downstream type-only / value-meaning
+            // classification observes exactly the state a full walk produced.
+            for &chain_sym in &provenance.chain {
+                visited_aliases.reseed(chain_sym);
+            }
+            for &(reg_sym, reg_file) in &provenance.registrations {
+                self.ctx.register_symbol_file_target(reg_sym, reg_file);
+            }
+            return Some(provenance.endpoint);
+        }
+
+        let epoch_before = visited_aliases.cycle_abort_epoch();
+        let delta_before = self.ctx.symbol_file_target_delta_len();
+        let chain_before: Vec<tsz_binder::SymbolId> = if table_enabled {
+            visited_aliases.iter().collect()
+        } else {
+            Vec::new()
+        };
+        let regs_before: Vec<(tsz_binder::SymbolId, usize)> = if table_enabled {
+            self.ctx.symbol_file_target_delta_entries()
+        } else {
+            Vec::new()
+        };
+
+        let result = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
             self.resolve_alias_symbol_inner(sym_id, visited_aliases)
-        })
+        });
+
+        // Insert only cycle-clean top-level resolutions. The captured chain /
+        // registration *delta* (what this walk added) is the provenance a later
+        // hit replays. A cycle/depth-cap truncation taints the epoch and is
+        // excluded, because a truncated answer is position-dependent.
+        if table_enabled
+            && let Some(endpoint) = result
+            && visited_aliases.cycle_abort_epoch() == epoch_before
+        {
+            let chain_delta: Vec<tsz_binder::SymbolId> = visited_aliases
+                .iter()
+                .filter(|s| !chain_before.contains(s))
+                .collect();
+            let registrations = self.alias_table_registration_delta(delta_before, &regs_before);
+            self.alias_table_insert(
+                table_key,
+                ResolvedAliasProvenance {
+                    endpoint,
+                    chain: chain_delta,
+                    registrations,
+                },
+            );
+        }
+
+        result
+    }
+
+    /// Clone of a memoized provenance entry, or `None` on a miss. The clone
+    /// keeps the borrow of the table scoped so the replay can re-enter the
+    /// resolver / registrations without a `RefCell` double-borrow.
+    fn alias_table_lookup(
+        &self,
+        key: (usize, tsz_binder::SymbolId),
+    ) -> Option<ResolvedAliasProvenance> {
+        self.ctx.alias_resolution_table.borrow().get(&key).cloned()
+    }
+
+    fn alias_table_insert(
+        &self,
+        key: (usize, tsz_binder::SymbolId),
+        provenance: ResolvedAliasProvenance,
+    ) {
+        self.ctx
+            .alias_resolution_table
+            .borrow_mut()
+            .insert(key, provenance);
+    }
+
+    /// Compute the symbol→file registrations a walk added, by diffing the
+    /// overlay delta length and entry set captured before the walk against the
+    /// current state. Only entries new to this walk are returned.
+    fn alias_table_registration_delta(
+        &self,
+        delta_len_before: usize,
+        regs_before: &[(tsz_binder::SymbolId, usize)],
+    ) -> Vec<(tsz_binder::SymbolId, usize)> {
+        if self.ctx.symbol_file_target_delta_len() == delta_len_before {
+            return Vec::new();
+        }
+        let before: rustc_hash::FxHashSet<tsz_binder::SymbolId> =
+            regs_before.iter().map(|&(s, _)| s).collect();
+        self.ctx
+            .symbol_file_target_delta_entries()
+            .into_iter()
+            .filter(|(s, _)| !before.contains(s))
+            .collect()
     }
 
     /// Look up the `export =` target for a require-style consumer of a module,
@@ -78,6 +205,9 @@ impl<'a> CheckerState<'a> {
         // Prevent stack overflow from long alias chains
         const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
         if visited_aliases.len() >= MAX_ALIAS_RESOLUTION_DEPTH {
+            // Depth-cap truncation: the answer is position-dependent, so taint
+            // the cycle epoch to keep this (sub)resolution out of the memo table.
+            visited_aliases.note_cycle_abort();
             return None;
         }
 
@@ -90,6 +220,8 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
         if visited_aliases.contains(&sym_id) {
+            // Re-export cycle hit: position-dependent truncation.
+            visited_aliases.note_cycle_abort();
             return None;
         }
         visited_aliases.push(sym_id);
@@ -101,7 +233,11 @@ impl<'a> CheckerState<'a> {
         // c.ts exports { x }
         if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
             // Prevent infinite loops in re-export chains
-            if !visited_aliases.contains(&resolved_sym_id) {
+            if visited_aliases.contains(&resolved_sym_id) {
+                // Cycle: skip recursion and fall through to the fallback paths.
+                // Mark the epoch so this position-dependent answer is not cached.
+                visited_aliases.note_cycle_abort();
+            } else {
                 let mut preferred_target = resolved_sym_id;
                 if let Some(module_name) = symbol.import_module.as_ref() {
                     let export_name = symbol
@@ -419,6 +555,8 @@ impl<'a> CheckerState<'a> {
             // Track resolution depth to prevent stack overflow
             let depth = visited_aliases.len();
             if depth >= 128 {
+                // Depth-cap truncation: keep this subtree out of the memo table.
+                visited_aliases.note_cycle_abort();
                 return None; // Prevent stack overflow
             }
             if let Some(target) =

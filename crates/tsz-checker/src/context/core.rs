@@ -198,6 +198,22 @@ impl<'a> CheckerContext<'a> {
             .register(sym_id, file_idx);
     }
 
+    /// Number of locally-registered symbol→file entries in the overlay delta.
+    /// The export resolution table snapshots this before/after an alias walk to
+    /// detect (and capture) the walk's symbol→file side effects.
+    #[must_use]
+    pub fn symbol_file_target_delta_len(&self) -> usize {
+        self.cross_file_symbol_targets.borrow().delta_len()
+    }
+
+    /// Snapshot the current overlay-delta entries. Used by the export
+    /// resolution table to diff before/after an alias walk and capture the
+    /// new symbol→file registrations for replay on a memoized cache hit.
+    #[must_use]
+    pub fn symbol_file_target_delta_entries(&self) -> Vec<(SymbolId, usize)> {
+        self.cross_file_symbol_targets.borrow().delta_entries()
+    }
+
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
         self.register_symbol_file_target(sym_id, file_idx);
     }

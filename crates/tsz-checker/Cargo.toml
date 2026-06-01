@@ -495,6 +495,10 @@ name = "ambient_module_renamed_export_ts2460_tests"
 path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 
 [[test]]
+name = "provenance_export_table_tests"
+path = "tests/provenance_export_table_tests.rs"
+
+[[test]]
 name = "ambient_module_value_export_tests"
 path = "tests/ambient_module_value_export_tests.rs"
 
