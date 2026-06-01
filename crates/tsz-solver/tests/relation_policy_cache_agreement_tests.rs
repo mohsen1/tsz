@@ -13,6 +13,9 @@ mod any_mode_partitioning;
 #[path = "relation_policy_cache_agreement_tests/class_context_partitioning.rs"]
 mod class_context_partitioning;
 
+#[path = "relation_policy_cache_agreement_tests/default_policy_protocol.rs"]
+mod default_policy_protocol;
+
 #[path = "relation_policy_cache_agreement_tests/effective_any_mode_policy_bits.rs"]
 mod effective_any_mode_policy_bits;
 

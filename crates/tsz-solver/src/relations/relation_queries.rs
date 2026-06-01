@@ -88,9 +88,9 @@ impl Default for RelationPolicy {
 impl RelationPolicy {
     /// Construct the historical no-flags compatibility policy.
     ///
-    /// This is equivalent to `RelationPolicy::from_flags(0)`, but keeps
-    /// default relation wrappers on a typed policy constructor instead of
-    /// spelling the legacy packed flag protocol at every no-flags call site.
+    /// This keeps default relation wrappers on a typed policy constructor
+    /// instead of spelling the legacy packed flag protocol at every no-flags
+    /// call site.
     pub const fn unflagged_compatibility() -> Self {
         Self {
             flags: RelationFlags::empty(),
