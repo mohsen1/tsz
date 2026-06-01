@@ -153,7 +153,7 @@ class DiskPreflightTests(unittest.TestCase):
             fake_repo, fake_script = self.make_fake_repo(temp_root)
             report_path = temp_root / "preflight.json"
 
-            self.run_preflight(
+            result = self.run_preflight(
                 fake_repo,
                 fake_script,
                 "--json-report",
@@ -166,7 +166,10 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertEqual("fail", report["status"])
             self.assertEqual("fail", report["disk_preflight_status"])
             self.assertEqual("low", report["disk_guard"]["disk_status"])
+            self.assertIn("disk_shortfall_mb", report["disk_guard"])
             self.assertFalse(report["disk_guard"]["ok"])
+            self.assertRegex(result.stdout, r"disk_shortfall_mb=\d+")
+            self.assertEqual(1, result.stdout.count("disk_shortfall_mb="))
             self.assertFalse(report["disk_pressure"]["ok"])
             self.assertEqual("low", report["disk_pressure"]["status"])
             self.assertGreater(report["disk_pressure"]["shortfall_mb"], 0)

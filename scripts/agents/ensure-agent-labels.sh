@@ -95,10 +95,25 @@ is_canonical_agent_label() {
   esac
 }
 
+collect_git_context() {
+  GIT_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  GIT_BRANCH="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  GIT_DETACHED=false
+  if [[ -z "$GIT_BRANCH" ]]; then
+    GIT_DETACHED=true
+    if [[ "$GIT_HEAD" == "unknown" ]]; then
+      GIT_BRANCH="detached:unknown"
+    else
+      GIT_BRANCH="detached:${GIT_HEAD:0:12}"
+    fi
+  fi
+  GIT_UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+}
+
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
 
 if [[ "$AUDIT" == true ]]; then
-  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels,body,url)"
+  prs_json="$(gh pr list --state open --limit 500 --json number,title,isDraft,labels,body,url)"
   issues_json="$(gh issue list --state open --limit 500 --json number,title,labels,url)"
   agents_json="$(
     printf '%s\n' "${AGENTS[@]}" | node -e '
@@ -106,7 +121,20 @@ if [[ "$AUDIT" == true ]]; then
       process.stdout.write(JSON.stringify(fs.readFileSync(0, "utf8").trim().split(/\n/).filter(Boolean)));
     '
   )"
-  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" STRICT_AUDIT="$STRICT_AUDIT" JSON_REPORT="$JSON_REPORT" node <<'NODE'
+  if [[ -n "$JSON_REPORT" ]]; then
+    collect_git_context
+  fi
+  AGENTS_JSON="$agents_json" \
+  LABELS_TEXT="$existing" \
+  PRS_JSON="$prs_json" \
+  ISSUES_JSON="$issues_json" \
+  STRICT_AUDIT="$STRICT_AUDIT" \
+  JSON_REPORT="$JSON_REPORT" \
+  GIT_HEAD="${GIT_HEAD:-}" \
+  GIT_BRANCH="${GIT_BRANCH:-}" \
+  GIT_DETACHED="${GIT_DETACHED:-false}" \
+  GIT_UPSTREAM="${GIT_UPSTREAM:-}" \
+  node <<'NODE'
 const fs = require("fs");
 const path = require("path");
 const canonical = new Set(JSON.parse(process.env.AGENTS_JSON).map((agent) => `agent:${agent}`));
@@ -153,6 +181,12 @@ for (const pr of prs) {
     noncanonicalPrs.push({ ...pr, agentLabels: generated });
   }
 }
+const readyIntentionallyUnassignedPrs = intentionallyUnassignedPrs.filter(
+  (pr) => pr.isDraft !== true,
+);
+const draftIntentionallyUnassignedPrs = intentionallyUnassignedPrs.filter(
+  (pr) => pr.isDraft === true,
+);
 
 for (const issue of issues) {
   const labels = issue.labels.map((label) => label.name);
@@ -187,6 +221,12 @@ console.log(`missing_canonical_labels=${missingCanonicalLabels.length}`);
 console.log(`noncanonical_agent_labels=${noncanonicalLabels.length}`);
 console.log(`open_prs_missing_agent_label=${missingPrs.length}`);
 console.log(`open_prs_intentionally_unassigned=${intentionallyUnassignedPrs.length}`);
+console.log(
+  `open_ready_prs_intentionally_unassigned=${readyIntentionallyUnassignedPrs.length}`,
+);
+console.log(
+  `open_draft_prs_intentionally_unassigned=${draftIntentionallyUnassignedPrs.length}`,
+);
 console.log(`open_prs_multiple_agent_labels=${multiplePrs.length}`);
 console.log(`open_prs_noncanonical_agent_label=${noncanonicalPrs.length}`);
 console.log(`open_release_issues_missing_agent_label=${missingIssues.length}`);
@@ -207,6 +247,8 @@ const metrics = {
   noncanonical_agent_labels: noncanonicalLabels.length,
   open_prs_missing_agent_label: missingPrs.length,
   open_prs_intentionally_unassigned: intentionallyUnassignedPrs.length,
+  open_ready_prs_intentionally_unassigned: readyIntentionallyUnassignedPrs.length,
+  open_draft_prs_intentionally_unassigned: draftIntentionallyUnassignedPrs.length,
   open_prs_multiple_agent_labels: multiplePrs.length,
   open_prs_noncanonical_agent_label: noncanonicalPrs.length,
   open_release_issues_missing_agent_label: missingIssues.length,
@@ -222,6 +264,10 @@ const summarizeWorkItem = (item) => ({
   title: item.title,
   url: item.url ?? null,
 });
+const summarizePrWorkItem = (item) => ({
+  ...summarizeWorkItem(item),
+  is_draft: item.isDraft === true,
+});
 const summarizeLabeledWorkItem = (item) => ({
   ...summarizeWorkItem(item),
   agent_labels: item.agentLabels,
@@ -231,11 +277,23 @@ if (process.env.JSON_REPORT) {
     ok,
     status: ok ? "pass" : "fail",
     agent_label_audit_status: ok ? "pass" : "fail",
+    git_context: {
+      head: process.env.GIT_HEAD,
+      branch: process.env.GIT_BRANCH,
+      detached: process.env.GIT_DETACHED === "true",
+      upstream: process.env.GIT_UPSTREAM || null,
+    },
     metrics,
     missing_canonical_labels: missingCanonicalLabels,
     noncanonical_agent_labels: noncanonicalLabels,
     open_prs_missing_agent_label: missingPrs.map(summarizeWorkItem),
-    open_prs_intentionally_unassigned: intentionallyUnassignedPrs.map(summarizeWorkItem),
+    open_prs_intentionally_unassigned: intentionallyUnassignedPrs.map(summarizePrWorkItem),
+    open_ready_prs_intentionally_unassigned: readyIntentionallyUnassignedPrs.map(
+      summarizePrWorkItem,
+    ),
+    open_draft_prs_intentionally_unassigned: draftIntentionallyUnassignedPrs.map(
+      summarizePrWorkItem,
+    ),
     open_prs_multiple_agent_labels: multiplePrs.map(summarizeLabeledWorkItem),
     open_prs_noncanonical_agent_label: noncanonicalPrs.map(summarizeLabeledWorkItem),
     open_release_issues_missing_agent_label: missingIssues.map(summarizeWorkItem),
@@ -254,6 +312,16 @@ printRows("Open PRs Missing Agent Label", missingPrs, prRow);
 printRows(
   "Open PRs Intentionally Unassigned",
   intentionallyUnassignedPrs,
+  prRow,
+);
+printRows(
+  "Open Ready PRs Intentionally Unassigned",
+  readyIntentionallyUnassignedPrs,
+  prRow,
+);
+printRows(
+  "Open Draft PRs Intentionally Unassigned",
+  draftIntentionallyUnassignedPrs,
   prRow,
 );
 printRows(

@@ -50,8 +50,8 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     fi
 
                     if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
-                      if [[ "$*" != *"--json number,title,labels,body,url"* ]]; then
-                        echo "expected PR audit to request url field: $*" >&2
+                      if [[ "$*" != *"--json number,title,isDraft,labels,body,url"* ]]; then
+                        echo "expected PR audit to request isDraft and url fields: $*" >&2
                         exit 98
                       fi
                       printf '%s\n' "${FAKE_GH_PRS}"
@@ -102,6 +102,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 1,
                     "title": "chore: intentionally unassigned",
+                    "isDraft": True,
                     "labels": [],
                     "body": "Coordination Notes\n- No canonical agent lane was assigned.",
                     "url": "https://github.com/mohsen1/tsz/pull/1",
@@ -109,6 +110,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 2,
                     "title": "fix: owned",
+                    "isDraft": False,
                     "labels": [{"name": "agent:Studio-F"}],
                     "body": "AgentName: Studio-F",
                     "url": "https://github.com/mohsen1/tsz/pull/2",
@@ -118,9 +120,12 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
 
         self.assertIn("open_prs_missing_agent_label=0", output)
         self.assertIn("open_prs_intentionally_unassigned=1", output)
+        self.assertIn("open_ready_prs_intentionally_unassigned=0", output)
+        self.assertIn("open_draft_prs_intentionally_unassigned=1", output)
         self.assertIn("agent_label_audit_findings=0", output)
         self.assertIn("agent_label_audit_status=pass", output)
         self.assertIn("Open PRs Intentionally Unassigned", output)
+        self.assertIn("Open Draft PRs Intentionally Unassigned", output)
         self.assertIn(
             "#1 chore: intentionally unassigned https://github.com/mohsen1/tsz/pull/1",
             output,
@@ -132,6 +137,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 3,
                     "title": "fix: missing label",
+                    "isDraft": False,
                     "labels": [],
                     "body": "AgentName: Studio-F",
                     "url": "https://github.com/mohsen1/tsz/pull/3",
@@ -154,6 +160,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 4,
                     "title": "fix: missing label",
+                    "isDraft": False,
                     "labels": [],
                     "body": "AgentName: Studio-F",
                     "url": "https://github.com/mohsen1/tsz/pull/4",
@@ -174,6 +181,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                 {
                     "number": 5,
                     "title": "chore: intentionally unassigned",
+                    "isDraft": False,
                     "labels": [],
                     "body": "Coordination Notes\n- No canonical agent lane was assigned.",
                     "url": "https://github.com/mohsen1/tsz/pull/5",
@@ -184,8 +192,71 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode)
         self.assertIn("open_prs_intentionally_unassigned=1", result.stdout)
+        self.assertIn("open_ready_prs_intentionally_unassigned=1", result.stdout)
+        self.assertIn("open_draft_prs_intentionally_unassigned=0", result.stdout)
         self.assertIn("agent_label_audit_findings=0", result.stdout)
         self.assertIn("agent_label_audit_status=pass", result.stdout)
+
+    def test_json_report_splits_ready_and_draft_intentionally_unassigned_prs(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "reports" / "agent-labels.json"
+            result = self.run_audit_result(
+                [
+                    {
+                        "number": 6,
+                        "title": "fix: ready unassigned",
+                        "isDraft": False,
+                        "labels": [],
+                        "body": "Coordination Notes\n- No canonical agent lane was assigned.",
+                        "url": "https://github.com/mohsen1/tsz/pull/6",
+                    },
+                    {
+                        "number": 7,
+                        "title": "fix: draft unassigned",
+                        "isDraft": True,
+                        "labels": [],
+                        "body": "Coordination Notes\n- No canonical agent lane was assigned.",
+                        "url": "https://github.com/mohsen1/tsz/pull/7",
+                    },
+                ],
+                args=["--audit", "--json-report", str(report_path)],
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertIn("open_prs_intentionally_unassigned=2", result.stdout)
+        self.assertIn("open_ready_prs_intentionally_unassigned=1", result.stdout)
+        self.assertIn("open_draft_prs_intentionally_unassigned=1", result.stdout)
+        self.assertEqual(
+            1,
+            report["metrics"]["open_ready_prs_intentionally_unassigned"],
+        )
+        self.assertEqual(
+            1,
+            report["metrics"]["open_draft_prs_intentionally_unassigned"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "number": 6,
+                    "title": "fix: ready unassigned",
+                    "url": "https://github.com/mohsen1/tsz/pull/6",
+                    "is_draft": False,
+                }
+            ],
+            report["open_ready_prs_intentionally_unassigned"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "number": 7,
+                    "title": "fix: draft unassigned",
+                    "url": "https://github.com/mohsen1/tsz/pull/7",
+                    "is_draft": True,
+                }
+            ],
+            report["open_draft_prs_intentionally_unassigned"],
+        )
 
     def test_audit_flags_release_issues_missing_agent_labels(self):
         output = self.run_audit_with_prs(
@@ -264,6 +335,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     {
                         "number": 30,
                         "title": "fix: missing owner",
+                        "isDraft": False,
                         "labels": [],
                         "body": "AgentName: Studio-F",
                         "url": "https://github.com/mohsen1/tsz/pull/30",
@@ -271,6 +343,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     {
                         "number": 31,
                         "title": "fix: generated owner",
+                        "isDraft": False,
                         "labels": [{"name": "agent:dreamy-runner"}],
                         "body": "AgentName: Studio-F",
                         "url": "https://github.com/mohsen1/tsz/pull/31",
@@ -285,6 +358,11 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertEqual("fail", report["status"])
         self.assertEqual("fail", report["agent_label_audit_status"])
         self.assertFalse(report["ok"])
+        self.assertIn("git_context", report)
+        self.assertIsInstance(report["git_context"]["head"], str)
+        self.assertIsInstance(report["git_context"]["branch"], str)
+        self.assertIsInstance(report["git_context"]["detached"], bool)
+        self.assertIn("upstream", report["git_context"])
         self.assertEqual(2, report["metrics"]["agent_label_audit_findings"])
         self.assertEqual(1, report["metrics"]["open_prs_missing_agent_label"])
         self.assertEqual(1, report["metrics"]["open_prs_noncanonical_agent_label"])
@@ -318,6 +396,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     {
                         "number": 32,
                         "title": "fix: owned",
+                        "isDraft": False,
                         "labels": [{"name": "agent:Studio-F"}],
                         "body": "AgentName: Studio-F",
                         "url": "https://github.com/mohsen1/tsz/pull/32",
@@ -332,6 +411,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual("pass", report["status"])
         self.assertEqual("pass", report["agent_label_audit_status"])
+        self.assertIn("git_context", report)
         self.assertEqual(0, report["metrics"]["agent_label_audit_findings"])
 
     def test_json_report_requires_audit_mode(self):
