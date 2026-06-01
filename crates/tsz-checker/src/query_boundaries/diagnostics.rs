@@ -259,6 +259,38 @@ pub(crate) fn mapped_type(
     tsz_solver::type_queries::get_mapped_type_with_id(db, type_id)
 }
 
+pub(crate) fn finite_mapped_property_surface(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some((mapped_id, mapped)) = tsz_solver::type_queries::get_mapped_type_with_id(db, type_id)
+    else {
+        return false;
+    };
+    if mapped_key_constraint_has_named_origin(db, mapped.constraint) {
+        return false;
+    }
+    tsz_solver::type_queries::collect_finite_mapped_property_names(db, mapped_id).is_some()
+}
+
+fn mapped_key_constraint_has_named_origin(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if tsz_solver::type_queries::get_enum_def_id(db, type_id).is_some() {
+        return true;
+    }
+    if tsz_solver::type_queries::get_lazy_def_id(db, type_id).is_some() {
+        return true;
+    }
+    tsz_solver::type_queries::get_union_members(db, type_id).is_some_and(|members| {
+        members
+            .iter()
+            .copied()
+            .any(|member| mapped_key_constraint_has_named_origin(db, member))
+    })
+}
+
 pub(crate) fn type_application(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,

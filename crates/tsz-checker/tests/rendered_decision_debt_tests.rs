@@ -362,3 +362,36 @@ fn missing_property_nominal_requalification_avoids_bare_rendered_name_comparison
         "missing-property requalification should route through the diagnostic query boundary"
     );
 }
+
+#[test]
+fn mapped_declared_source_display_uses_finite_property_surface() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/error_reporter/core/diagnostic_source.rs"
+    ))
+    .expect("diagnostic source should be readable");
+
+    source
+        .find("finite_mapped_property_surface(")
+        .expect("mapped declared source display should use finite mapped surface helper");
+
+    assert!(
+        !source.contains("declared_structural_display.starts_with('{')")
+            && !source.contains("declared_structural_display.contains(\" in \")"),
+        "mapped declared source display should not branch on rendered object-literal text"
+    );
+    assert!(
+        source.contains("query_boundaries::diagnostics::finite_mapped_property_surface"),
+        "mapped declared source display should route through the diagnostic query boundary"
+    );
+
+    let diagnostics = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/query_boundaries/diagnostics.rs"
+    ))
+    .expect("diagnostics query boundary source should be readable");
+    assert!(
+        diagnostics.contains("pub(crate) fn finite_mapped_property_surface"),
+        "finite mapped display classification should live in the diagnostic query boundary"
+    );
+}

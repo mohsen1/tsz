@@ -1669,18 +1669,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if prefer_declared_display
-            && crate::query_boundaries::common::is_mapped_type(self.ctx.types, declared_type)
+            && declared_type != expr_display_type
+            && crate::query_boundaries::diagnostics::finite_mapped_property_surface(
+                self.ctx.types,
+                declared_type,
+            )
+            && !crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, target)
         {
-            let declared_structural_display = self.format_type_diagnostic(declared_type);
-            if declared_structural_display.starts_with('{')
-                && !declared_structural_display.contains(" in ")
-            {
-                let expr_display =
-                    self.format_assignability_type_for_message(expr_display_type, target);
-                if declared_structural_display != expr_display {
-                    return Some(declared_structural_display);
-                }
-            }
+            return Some(self.format_type_diagnostic(declared_type));
         }
 
         let mut declared_display_type =
