@@ -79,9 +79,15 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
-            let prefer_interface_type_position =
-                (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
-            if flags & symbol_flags::CLASS != 0 && !prefer_interface_type_position {
+            // class+interface merged symbols (with or without namespace blocks) resolve
+            // in type position to the class instance type. `get_class_instance_type_inner`
+            // already merges interface declarations into the instance shape, so the
+            // class branch correctly returns a type that carries both the class's own
+            // members and the merged-interface members. Without this, routing through
+            // the interface branch silently drops class instance members for merged
+            // class+interface+namespace symbols (the interface path filters to
+            // interface declarations only).
+            if flags & symbol_flags::CLASS != 0 {
                 let instance_type_opt = self.class_instance_type_with_params_from_symbol(sym_id);
 
                 if let Some((instance_type, params)) = instance_type_opt {
@@ -1267,12 +1273,12 @@ impl<'a> CheckerState<'a> {
             }
 
             // For classes, use class_instance_type_with_params_from_symbol which
-            // returns both the instance type AND the type params used to build it
-            let prefer_interface_type_position = symbol.has_any_flags(symbol_flags::CLASS)
-                && symbol.has_any_flags(symbol_flags::INTERFACE);
-
+            // returns both the instance type AND the type params used to build it.
+            // class+interface merges (with or without namespace blocks) take this
+            // path too: `get_class_instance_type_inner` already merges interface
+            // declarations into the instance shape, so routing through the
+            // interface branch would drop class instance members.
             if symbol.has_any_flags(symbol_flags::CLASS)
-                && !prefer_interface_type_position
                 && let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
             {

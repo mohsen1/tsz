@@ -1954,5 +1954,9 @@ path = "tests/type_literal_method_overload_tests.rs"
 name = "overload_modifier_tests"
 path = "tests/overload_modifier_tests.rs"
 
+[[test]]
+name = "class_interface_namespace_merge_tests"
+path = "tests/class_interface_namespace_merge_tests.rs"
+
 [lints]
 workspace = true
