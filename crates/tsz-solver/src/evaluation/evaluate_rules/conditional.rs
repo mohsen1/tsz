@@ -1164,22 +1164,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Instantiate a `Callable` type's signatures using per-signature substitution.
     ///
-    /// When `typeof ClassExpr<T>` appears as the check type of a conditional like
-    /// `InstanceType<typeof ClassExpr<T>>`, the class's type parameters live inside
-    /// `sig.type_params` on the constructor signatures. The standard
-    /// `instantiate_generic` path calls `TypeInstantiator` which calls
-    /// `enter_shadowing_scope(&sig.type_params)`, adding those names to the shadowed
-    /// set and preventing them from being substituted.
+    /// When an instantiation expression like `typeof ClassExpr<T>` or
+    /// `typeof fn<T>` appears as the check type of a conditional like
+    /// `InstanceType<typeof ClassExpr<T>>` or `ReturnType<typeof fn<T>>`, the
+    /// generic signature's type parameters live inside `sig.type_params` on
+    /// either the constructor signatures (classes) or the call signatures
+    /// (regular generic functions/methods). The standard `instantiate_generic`
+    /// path calls `TypeInstantiator` which calls
+    /// `enter_shadowing_scope(&sig.type_params)`, adding those names to the
+    /// shadowed set and preventing them from being substituted.
     ///
-    /// This method bypasses that by building a substitution from each signature's own
-    /// `type_params` and applying it to the signature's parts individually (the same
-    /// approach as the checker's `instantiate_signature`). Type params are consumed
-    /// (set to `Vec::new()`) in the output signatures so the resulting Callable is
-    /// fully concrete with respect to the supplied `type_args`.
+    /// This method bypasses that by building a substitution from each
+    /// signature's own `type_params` and applying it to the signature's parts
+    /// individually (the same approach as the checker's `instantiate_signature`).
+    /// Type params are consumed (set to `Vec::new()`) in the output signatures
+    /// so the resulting Callable is fully concrete with respect to the supplied
+    /// `type_args`.
     ///
-    /// Returns `Some(new_callable_id)` when at least one construct signature was
-    /// successfully instantiated; returns `None` otherwise (wrong arg count, not a
-    /// Callable, etc.).
+    /// Both construct and call signatures are instantiated so that
+    /// `typeof fn<Args>` (where `fn`'s `<T>` lives on its call signature) and
+    /// `typeof ClassExpr<Args>` (where `<T>` lives on the constructor) follow
+    /// the same path. Without this, the application stays opaque and
+    /// downstream `ReturnType<...>`, `Parameters<...>`, and `infer` patterns
+    /// fail to substitute through to a mapped-type-bearing return type — the
+    /// homomorphic mapped result silently degrades to `any`, losing
+    /// `readonly`/`?` modifier intent.
+    ///
+    /// Returns `Some(new_callable_id)` when at least one signature was
+    /// successfully instantiated; returns `None` otherwise (no
+    /// arity-matching signature, not a Callable, etc.).
     pub(in crate::evaluation) fn try_instantiate_callable_type_params(
         &mut self,
         callable_id: TypeId,
@@ -1210,36 +1223,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .collect();
             let return_type = instantiate_type(interner, sig.return_type, &subst);
             let this_type = sig.this_type.map(|t| instantiate_type(interner, t, &subst));
+            // Type predicates can reference the consumed type params (e.g.
+            // `is T` in `<T>(x: any): x is T`); substitute them too so a
+            // predicate of the form `is T` becomes `is <concrete arg>`.
+            let type_predicate = sig.type_predicate.as_ref().map(|p| {
+                let mut predicate = *p;
+                predicate.type_id = predicate
+                    .type_id
+                    .map(|t| instantiate_type(interner, t, &subst));
+                predicate
+            });
             Some(CallSignature {
                 type_params: Vec::new(),
                 params,
                 return_type,
                 this_type,
-                type_predicate: sig.type_predicate,
+                type_predicate,
                 is_method: sig.is_method,
             })
         }
 
-        let mut new_construct_sigs: Vec<CallSignature> = Vec::new();
-        let mut any_changed = false;
-        for sig in shape.construct_signatures.iter() {
-            match instantiate_sig(self.interner(), sig, type_args) {
-                Some(new_sig) => {
-                    any_changed = true;
-                    new_construct_sigs.push(new_sig);
-                }
-                None => {
-                    new_construct_sigs.push(sig.clone());
+        fn instantiate_sig_list(
+            interner: &dyn crate::construction::TypeDatabase,
+            sigs: &[CallSignature],
+            type_args: &[TypeId],
+        ) -> (Vec<CallSignature>, bool) {
+            let mut out = Vec::with_capacity(sigs.len());
+            let mut changed = false;
+            for sig in sigs {
+                match instantiate_sig(interner, sig, type_args) {
+                    Some(new_sig) => {
+                        changed = true;
+                        out.push(new_sig);
+                    }
+                    None => out.push(sig.clone()),
                 }
             }
+            (out, changed)
         }
-        if !any_changed {
+
+        let (new_construct_sigs, construct_changed) =
+            instantiate_sig_list(self.interner(), &shape.construct_signatures, type_args);
+        let (new_call_sigs, call_changed) =
+            instantiate_sig_list(self.interner(), &shape.call_signatures, type_args);
+        if !construct_changed && !call_changed {
             return None;
         }
 
         let new_shape = CallableShape {
             construct_signatures: new_construct_sigs,
-            call_signatures: shape.call_signatures.to_vec(),
+            call_signatures: new_call_sigs,
             properties: shape.properties.to_vec(),
             string_index: shape.string_index,
             number_index: shape.number_index,

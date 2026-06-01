@@ -94,14 +94,20 @@ impl<'a> CheckerState<'a> {
                 // references after substituting explicit args). Type parameters whose
                 // defaults still reference other unsupplied params are left for the
                 // solver to infer from call-site arguments.
-                let instantiated_calls: Vec<tsz_solver::CallSignature> = matching_calls
+                let mut instantiated_calls: Vec<tsz_solver::CallSignature> = matching_calls
                     .iter()
                     .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
                     .collect();
-                let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching_constructs
-                    .iter()
-                    .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
-                    .collect();
+                let mut instantiated_constructs: Vec<tsz_solver::CallSignature> =
+                    matching_constructs
+                        .iter()
+                        .map(|sig| {
+                            self.instantiate_instantiation_expression_signature(sig, &type_args)
+                        })
+                        .collect();
+                // See `evaluate_substituted_signatures` for why.
+                self.evaluate_substituted_signatures(&mut instantiated_calls);
+                self.evaluate_substituted_signatures(&mut instantiated_constructs);
 
                 let new_shape = CallableShape {
                     call_signatures: instantiated_calls,
@@ -160,8 +166,12 @@ impl<'a> CheckerState<'a> {
                     self.instantiate_signature(&sig, &type_args)
                 };
 
+                let mut instantiated_calls = vec![instantiated_call];
+                // See `evaluate_substituted_signatures` for why.
+                self.evaluate_substituted_signatures(&mut instantiated_calls);
+
                 let new_shape = CallableShape {
-                    call_signatures: vec![instantiated_call],
+                    call_signatures: instantiated_calls,
                     construct_signatures: vec![],
                     properties: vec![],
                     string_index: None,
@@ -172,6 +182,62 @@ impl<'a> CheckerState<'a> {
                 factory.callable(new_shape)
             }
             _ => callee_type,
+        }
+    }
+
+    /// Evaluate the parameter, return, `this`, and predicate types of each
+    /// instantiated signature in `sigs`. Used after applying type arguments to
+    /// a generic callable so that mapped/conditional/index-access types in the
+    /// substituted signature reduce to their structural form. Without this
+    /// step, the substituted signature carries a deferred return type that
+    /// downstream `ReturnType<typeof f<X>>` / `Parameters<...>` / `infer R`
+    /// conditional patterns capture verbatim, and property access on the
+    /// captured deferred return falls through to `any`.
+    fn evaluate_substituted_signatures(&self, sigs: &mut [tsz_solver::CallSignature]) {
+        use crate::query_boundaries::state::type_environment::evaluate_type_with_cache;
+        let expand_aliases = self.ctx.is_declaration_file() || self.ctx.emit_declarations();
+        let eval = |type_id: TypeId| -> TypeId {
+            // Intrinsics (any/unknown/never/string/number/...) and ERROR are
+            // already in canonical form — evaluating them allocates an
+            // evaluator and produces the same TypeId. Skip the round-trip.
+            if type_id.is_intrinsic() || type_id == TypeId::ERROR {
+                return type_id;
+            }
+            let evaluated = evaluate_type_with_cache(
+                self.ctx.types,
+                &self.ctx,
+                type_id,
+                std::iter::empty(),
+                false,
+                expand_aliases,
+                Some(self.ctx.types),
+            )
+            .result;
+            if evaluated == TypeId::ERROR {
+                type_id
+            } else {
+                evaluated
+            }
+        };
+        for sig in sigs {
+            // Callers only pass signatures whose type parameters have been
+            // consumed by substitution. Skip anything still generic to keep
+            // partially-instantiated and uninstantiated signatures unchanged.
+            if !sig.type_params.is_empty() {
+                continue;
+            }
+            for param in &mut sig.params {
+                param.type_id = eval(param.type_id);
+            }
+            sig.return_type = eval(sig.return_type);
+            if let Some(this_type) = sig.this_type {
+                sig.this_type = Some(eval(this_type));
+            }
+            if let Some(predicate) = sig.type_predicate.as_mut()
+                && let Some(predicate_ty) = predicate.type_id
+            {
+                predicate.type_id = Some(eval(predicate_ty));
+            }
         }
     }
 
