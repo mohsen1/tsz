@@ -87,6 +87,8 @@ checker callback-return recovery build `RelationRequest::return_stmt` through
 `return_relation_outcome` or `return_relation_outcome_with_env`. Contextual
 generic call retry and callback-return retyping use the env-aware return request
 when comparing inferred or callback returns to contextual return targets.
+Method/accessor and property decorator return validation uses the return request
+when comparing decorator function returns to the decorator ABI return target.
 Weak-type TS2560 suggestions also use the return request when probing whether a
 call or construct result would satisfy the weak target.
 

@@ -18,12 +18,20 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
         .collect();
 
     assert!(
-        source.contains("assign_relation_outcome(return_type, expected_return)"),
-        "method/accessor decorator return diagnostics should route through assign_relation_outcome"
+        source.contains("return_relation_outcome(return_type, expected_return)"),
+        "method/accessor decorator return diagnostics should route through return_relation_outcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(return_type, TypeId::VOID)"),
-        "void-or-any decorator return diagnostics should route through assign_relation_outcome"
+        source.contains("return_relation_outcome(return_type, TypeId::VOID)"),
+        "void-or-any decorator return diagnostics should route through return_relation_outcome"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(return_type, expected_return)"),
+        "method/accessor decorator return diagnostics should not use generic assignment request routing"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(return_type, TypeId::VOID)"),
+        "void-or-any decorator return diagnostics should not use generic assignment request routing"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard(return_type, expected_return)"),
