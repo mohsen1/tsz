@@ -13,13 +13,13 @@
 use crate::operations::iterators::get_iterator_info;
 use crate::type_queries::get_return_type;
 use crate::types::{
-    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TypeId,
-    Visibility,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef,
+    TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::{
-    application_id, lazy_def_id, object_shape_id, object_with_index_shape_id, template_literal_id,
-    union_list_id,
+    application_id, lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id,
+    template_literal_id, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -822,16 +822,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn same_conditional_display_alias_base(
-        &mut self,
+        &self,
         source: TypeId,
         target: TypeId,
     ) -> Option<TypeId> {
-        let source_base = self.conditional_display_alias_base(source)?;
-        let target_base = self.conditional_display_alias_base(target)?;
-        (source_base == target_base).then_some(source_base)
+        let (source_base, source_args) = self.conditional_display_alias_application(source)?;
+        let (target_base, target_args) = self.conditional_display_alias_application(target)?;
+        if source_base != target_base {
+            return None;
+        }
+        self.conditional_display_relation_has_path_arg(&source_args, &target_args)
+            .then_some(source_base)
     }
 
-    fn conditional_display_alias_base(&mut self, type_id: TypeId) -> Option<TypeId> {
+    fn conditional_display_alias_application(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
         let app_id = application_id(self.interner, type_id).or_else(|| {
             self.interner
                 .get_display_alias(type_id)
@@ -839,7 +846,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })?;
         let app = self.interner.type_application(app_id);
         self.is_conditional_alias_base_inline(app.base)
-            .then_some(app.base)
+            .then_some((app.base, app.args.clone()))
+    }
+
+    fn conditional_display_relation_has_path_arg(
+        &self,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> bool {
+        source_args.len() == target_args.len()
+            && source_args
+                .iter()
+                .zip(target_args)
+                .any(|(&source_arg, &target_arg)| {
+                    source_arg == target_arg && self.is_dot_path_string_literal(source_arg)
+                })
+    }
+
+    fn is_dot_path_string_literal(&self, type_id: TypeId) -> bool {
+        let Some(LiteralValue::String(atom)) = literal_value(self.interner, type_id) else {
+            return false;
+        };
+        self.interner.resolve_atom_ref(atom).contains('.')
     }
 
     fn leave_conditional_display_relation(&mut self, base: TypeId) {
