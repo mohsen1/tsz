@@ -1,0 +1,255 @@
+//! Function- and callable-signature failure explanation for subtype checking.
+//!
+//! Split out of `explain.rs` to keep each hand-authored shard under the
+//! repository-wide file-size limit. These methods produce structured
+//! `SubtypeFailureReason`s for function/callable relation failures and are
+//! invoked from the main `explain_failure_inner` dispatch.
+
+use crate::def::resolver::TypeResolver;
+use crate::diagnostics::SubtypeFailureReason;
+use crate::relations::subtype::SubtypeChecker;
+use crate::types::{CallSignature, CallableShape, FunctionShape, PropertyInfo, TypeId};
+
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    pub(super) fn explain_function_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> Option<SubtypeFailureReason> {
+        // Check return type
+        if !(self
+            .check_subtype(source.return_type, target.return_type)
+            .is_true()
+            || self.allow_void_return && target.return_type == TypeId::VOID)
+        {
+            let nested = self.explain_failure(source.return_type, target.return_type);
+            return Some(SubtypeFailureReason::ReturnTypeMismatch {
+                source_return: source.return_type,
+                target_return: target.return_type,
+                nested_reason: nested.map(Box::new),
+            });
+        }
+
+        // Check parameter count
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let rest_elem_type = if target_has_rest {
+            target
+                .params
+                .last()
+                .map(|param| self.get_array_element_type(param.type_id))
+        } else {
+            None
+        };
+        let rest_is_top = self.allow_bivariant_rest
+            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
+        let source_required = self.required_param_count(&source.params);
+        let target_fixed_count = if target_has_rest {
+            target.params.len().saturating_sub(1)
+        } else {
+            target.params.len()
+        };
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
+        // When the target has a rest parameter (e.g., ...args: number[]),
+        // it can absorb unlimited arguments — skip the too-many check entirely
+        // so we fall through to per-parameter type checking.
+        if !rest_is_top
+            && !target_has_rest
+            && !allow_bivariant_param_count
+            && source_required > target_fixed_count
+        {
+            return Some(SubtypeFailureReason::TooManyParameters {
+                source_count: source_required,
+                target_count: target_fixed_count,
+            });
+        }
+
+        // Check parameter types
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
+        let source_fixed_count = if source_has_rest {
+            source.params.len().saturating_sub(1)
+        } else {
+            source.params.len()
+        };
+        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        // Constructor and method signatures are bivariant even with strictFunctionTypes
+        let is_method_or_ctor =
+            source.is_method || target.is_method || source.is_constructor || target.is_constructor;
+        for i in 0..fixed_compare_count {
+            let s_param = &source.params[i];
+            let t_param = &target.params[i];
+            // Compare declared parameter types, matching the subtype rules.
+            // When both params are optional, strip `undefined` so
+            // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
+            let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
+            // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
+            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
+                let inner_reason = self.explain_failure(t_effective, s_effective).map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index: i,
+                    source_param: s_effective,
+                    target_param: t_effective,
+                    inner_reason,
+                });
+            }
+        }
+
+        if target_has_rest {
+            let Some(rest_elem_type) = rest_elem_type else {
+                return None; // Invalid rest parameter
+            };
+            if rest_elem_type.is_any_or_unknown()
+                && let Some((param_index, source_param)) =
+                    self.first_top_rest_unassignable_source_param(&source.params)
+            {
+                let inner_reason = self
+                    .explain_failure(rest_elem_type, source_param)
+                    .map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index,
+                    source_param,
+                    target_param: rest_elem_type,
+                    inner_reason,
+                });
+            }
+            if rest_is_top {
+                return None;
+            }
+
+            for i in target_fixed_count..source_fixed_count {
+                let s_param = &source.params[i];
+                if !self.are_parameters_compatible_impl(
+                    s_param.type_id,
+                    rest_elem_type,
+                    is_method_or_ctor,
+                ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_param.type_id)
+                        .map(Box::new);
+                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                        param_index: i,
+                        source_param: s_param.type_id,
+                        target_param: rest_elem_type,
+                        inner_reason,
+                    });
+                }
+            }
+
+            if source_has_rest {
+                let s_rest_param = source.params.last()?;
+                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                if !self.are_parameters_compatible_impl(
+                    s_rest_elem,
+                    rest_elem_type,
+                    is_method_or_ctor,
+                ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_rest_elem)
+                        .map(Box::new);
+                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                        param_index: source_fixed_count,
+                        source_param: s_rest_elem,
+                        target_param: rest_elem_type,
+                        inner_reason,
+                    });
+                }
+            }
+        }
+
+        if source_has_rest {
+            let rest_param = source.params.last()?;
+            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
+            let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
+
+            if !rest_is_top {
+                for i in source_fixed_count..target_fixed_count {
+                    let t_param = &target.params[i];
+                    if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                        let inner_reason = self
+                            .explain_failure(t_param.type_id, rest_elem_type)
+                            .map(Box::new);
+                        return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                            param_index: i,
+                            source_param: rest_elem_type,
+                            target_param: t_param.type_id,
+                            inner_reason,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn function_shape_from_call_signature(
+        signature: &CallSignature,
+        is_constructor: bool,
+    ) -> FunctionShape {
+        FunctionShape {
+            params: signature.params.clone(),
+            this_type: signature.this_type,
+            return_type: signature.return_type,
+            type_params: signature.type_params.clone(),
+            type_predicate: signature.type_predicate,
+            is_constructor,
+            is_method: signature.is_method,
+        }
+    }
+
+    pub(super) fn explain_function_to_callable_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let target_function = Self::function_shape_from_call_signature(target_signature, false);
+            if !self
+                .check_function_subtype(source, &target_function)
+                .is_true()
+            {
+                return self.explain_function_failure(source, &target_function);
+            }
+        }
+        None
+    }
+
+    pub(super) fn callable_properties_are_only_function_members(
+        &self,
+        properties: &[PropertyInfo],
+    ) -> bool {
+        properties.iter().all(|property| {
+            matches!(
+                self.interner.resolve_atom(property.name).as_str(),
+                "apply" | "bind" | "call" | "length" | "name" | "prototype"
+            )
+        })
+    }
+
+    pub(super) fn explain_callable_to_callable_signature_failure(
+        &mut self,
+        source: &CallableShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let mut matching_source = None;
+            for source_signature in &source.call_signatures {
+                if self
+                    .check_call_signature_subtype(source_signature, target_signature)
+                    .is_true()
+                {
+                    matching_source = Some(source_signature);
+                    break;
+                }
+            }
+            if matching_source.is_none() {
+                let source_signature = source.call_signatures.first()?;
+                let source_function =
+                    Self::function_shape_from_call_signature(source_signature, false);
+                let target_function =
+                    Self::function_shape_from_call_signature(target_signature, false);
+                return self.explain_function_failure(&source_function, &target_function);
+            }
+        }
+        None
+    }
+}
