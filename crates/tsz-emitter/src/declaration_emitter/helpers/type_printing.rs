@@ -873,6 +873,7 @@ impl<'a> DeclarationEmitter<'a> {
         let printed = self
             .expand_imported_indexed_access_type_text(&printed)
             .unwrap_or(printed);
+        let printed = Self::parenthesize_first_generic_function_type_argument_text(&printed);
         if Self::contains_portable_mapped_object_text(&printed)
             && let Some(expanded) =
                 self.expand_portable_intersection_type_text(self.arena, &printed)

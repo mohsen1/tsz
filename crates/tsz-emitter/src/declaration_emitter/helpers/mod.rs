@@ -302,6 +302,7 @@ mod type_inference_package_matching;
 mod type_inference_parameter_return;
 mod type_inference_portable_mapped_objects;
 mod type_inference_public_packages;
+mod type_inference_return_async;
 mod type_inference_return_guards;
 mod type_inference_return_normalization;
 mod type_inference_return_surface;
