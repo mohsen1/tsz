@@ -32,3 +32,13 @@ fn default_relation_cache_config_tests_do_not_spell_empty_relation_flags() {
         "relation_cache_config_tests.rs must use RelationPolicy::unflagged_compatibility() for no-flags compatibility policies",
     );
 }
+
+#[test]
+fn cache_agreement_shard_does_not_spell_empty_relation_flags() {
+    let source = include_str!("../relation_cache_config_tests/cache_agreement.rs");
+
+    assert!(
+        !source.contains("RelationPolicy::from_relation_flags(RelationFlags::empty())"),
+        "relation_cache_config_tests/cache_agreement.rs must use RelationPolicy::unflagged_compatibility() for no-flags compatibility policies",
+    );
+}
