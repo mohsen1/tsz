@@ -39,6 +39,8 @@ pub(crate) enum RelationKind {
     JsdocTypeConstraint,
     /// Source property-name literal compatibility against an index key type.
     PropertyIndexKey,
+    /// Null/undefined source compatibility against a nullable structured target.
+    NullishErrorTarget,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -161,6 +163,10 @@ impl RelationRequest {
 
     pub(crate) const fn property_index_key(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::PropertyIndexKey)
+    }
+
+    pub(crate) const fn nullish_error_target(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::NullishErrorTarget)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

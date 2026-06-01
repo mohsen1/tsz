@@ -12,12 +12,31 @@ fn nullish_target_diagnostic_uses_relation_outcome_boundary() {
         .expect("missing nullish target relation branch");
 
     assert!(
-        branch.contains("self.assign_relation_outcome(source, nullable).related"),
-        "nullish target diagnostic should use the shared relation outcome boundary"
+        branch.contains("nullish_error_target_relation_outcome(source, nullable)")
+            && branch.contains(".related"),
+        "nullish target diagnostic should use the typed nullish-target relation outcome boundary"
+    );
+    assert!(
+        !branch.contains("assign_relation_outcome(source, nullable)"),
+        "nullish target diagnostic should not use the generic assignment request"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard(source, nullable)"),
         "nullish target diagnostic should not use the legacy boolean guard"
+    );
+}
+
+#[test]
+fn nullish_target_relation_outcome_uses_nullish_request() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/assignability/relation_outcome_helpers.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+
+    assert!(
+        source.contains("fn nullish_error_target_relation_outcome(")
+            && source.contains("RelationRequest::nullish_error_target("),
+        "nullish target relation helper should build the canonical nullish-target request"
     );
 }
 

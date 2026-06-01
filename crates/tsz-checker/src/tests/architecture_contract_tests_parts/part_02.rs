@@ -126,6 +126,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "RelationKind::JsdocTypeConstraint",
         ),
         ("fn property_index_key", "RelationKind::PropertyIndexKey"),
+        (
+            "fn nullish_error_target",
+            "RelationKind::NullishErrorTarget",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
