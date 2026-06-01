@@ -282,45 +282,7 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
 
         let resolved = if node.kind == SyntaxKind::Identifier as u16 {
-            self.resolve_identifier_symbol(idx).map(|sym_id| {
-                let symbol = self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .or_else(|| self.get_cross_file_symbol(sym_id));
-                if symbol.is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ALIAS)) {
-                    let mut visited_aliases = AliasCycleTracker::new();
-                    if let Some(target_sym_id) = self
-                        .ctx
-                        .resolve_import_alias_and_register(sym_id)
-                        .or_else(|| self.resolve_alias_symbol(sym_id, &mut visited_aliases))
-                        .or_else(|| {
-                            let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                            let module_specifier = symbol.import_module.as_ref()?;
-                            let import_name = symbol
-                                .import_name
-                                .as_deref()
-                                .unwrap_or(&symbol.escaped_name);
-                            self.resolve_cross_file_export_from_file(
-                                module_specifier,
-                                import_name,
-                                Some(self.ctx.current_file_idx),
-                            )
-                        })
-                        && self
-                            .ctx
-                            .resolve_symbol_file_index(target_sym_id)
-                            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
-                            .and_then(|binder| binder.get_symbol(target_sym_id))
-                            .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
-                            .or_else(|| self.get_cross_file_symbol(target_sym_id))
-                            .is_some_and(|target| target.has_any_flags(CLASS))
-                    {
-                        return target_sym_id;
-                    }
-                }
-                sym_id
-            })
+            self.resolve_identifier_symbol(idx)
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             self.resolve_qualified_symbol(idx)
         } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {

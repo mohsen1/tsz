@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(crate) fn same_file_type_alias_parts_for_name(
+    fn same_file_type_alias_parts_for_name(
         &self,
         name: &str,
     ) -> Option<(Option<NodeList>, NodeIndex, Option<tsz_binder::SymbolId>)> {
@@ -881,12 +881,30 @@ impl<'a> CheckerState<'a> {
                     if let Some((instance_type, params)) =
                         self.class_instance_type_with_params_from_symbol(target_sym_id)
                     {
-                        return query::instantiate_generic(
+                        let def_id = self
+                            .ctx
+                            .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);
+                        if self.ctx.get_def_type_params(def_id).is_none() {
+                            self.ctx.insert_def_type_params(def_id, params.clone());
+                        }
+                        self.ctx
+                            .register_class_instance_in_envs(def_id, instance_type);
+                        let base = self.ctx.types.factory().lazy(def_id);
+                        let application = self
+                            .ctx
+                            .types
+                            .factory()
+                            .application(base, type_args.clone());
+                        let instantiated = query::instantiate_generic(
                             self.ctx.types,
                             instance_type,
                             &params,
                             &type_args,
                         );
+                        self.ctx
+                            .types
+                            .store_display_alias(instantiated, application);
+                        return instantiated;
                     }
                     let def_id = self
                         .ctx

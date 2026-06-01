@@ -1,6 +1,8 @@
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source, check_source_diagnostics, diagnostic_code_messages};
-use tsz_common::common::ScriptTarget;
+use tsz_checker::test_utils::{
+    check_multi_file, check_source, check_source_diagnostics, diagnostic_code_messages,
+};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::options::checker::CheckerOptions;
 
 fn ts2322_diagnostic(source: &str) -> Diagnostic {
@@ -39,6 +41,46 @@ fn check_es2015(source: &str) -> Vec<(u32, String)> {
             ..CheckerOptions::default()
         },
     ))
+}
+
+#[test]
+fn type_only_imported_generic_class_missing_property_uses_instantiated_display() {
+    let diagnostics = diagnostic_code_messages(check_multi_file(
+        &[
+            (
+                "a.ts",
+                r#"
+export class A<T> { a!: T }
+export type { A as B };
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import type { A } from './a';
+import { B } from './a';
+let a: A<string> = { a: "" };
+let b: B<number> = { a: 3 };
+let c: A<boolean> = {};
+let d: B = { a: "" };
+"#,
+            ),
+        ],
+        "b.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2741 && message.contains("required in type 'A<boolean>'")
+        }),
+        "expected TS2741 to display the instantiated imported class name, got {diagnostics:#?}"
+    );
 }
 
 #[test]

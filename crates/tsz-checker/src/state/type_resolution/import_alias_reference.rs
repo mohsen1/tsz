@@ -3,7 +3,7 @@
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -15,6 +15,9 @@ impl<'a> CheckerState<'a> {
         let Some(alias) = self.local_import_alias(sym_id) else {
             return Vec::new();
         };
+        if self.local_import_alias_is_import_equals(alias) {
+            return Vec::new();
+        }
         let Some(module_specifier) = alias.import_module.clone() else {
             return Vec::new();
         };
@@ -165,6 +168,9 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let alias = self.local_import_alias(sym_id)?;
+        if self.local_import_alias_is_import_equals(alias) {
+            return None;
+        }
         let module_specifier = alias.import_module.clone()?;
         let import_name = alias
             .import_name
@@ -203,5 +209,14 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    pub(crate) fn local_import_alias_is_import_equals(&self, alias: &tsz_binder::Symbol) -> bool {
+        alias.all_declarations().iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+        })
     }
 }
