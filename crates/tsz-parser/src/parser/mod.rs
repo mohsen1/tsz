@@ -103,6 +103,9 @@ mod parser_improvement_merging_no_duplicate_tests;
 #[path = "../../tests/parser_improvement_misc_statement_recovery_tests.rs"]
 mod parser_improvement_misc_statement_recovery_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_improvement_nested_generic_chain_tests.rs"]
+mod parser_improvement_nested_generic_chain_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_improvement_nullable_type_recovery_tests.rs"]
 mod parser_improvement_nullable_type_recovery_tests;
 #[cfg(test)]
