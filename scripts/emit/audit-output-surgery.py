@@ -14,8 +14,10 @@ import dataclasses
 import json
 import pathlib
 import re
+import subprocess
 import sys
 from collections import Counter, defaultdict
+from typing import Optional
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -314,6 +316,38 @@ def classify_budget_status(allowlisted_calls: int, allowlist_cap: int) -> str:
     return "available"
 
 
+def _run_git(root: pathlib.Path, args: list[str]) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def build_git_context(root: pathlib.Path = ROOT, run_git=_run_git) -> dict[str, object]:
+    status = run_git(root, ["status", "--porcelain"])
+    branch = run_git(root, ["branch", "--show-current"])
+    return {
+        "repo_root": root.as_posix(),
+        "head": run_git(root, ["rev-parse", "HEAD"]),
+        "branch": branch or None,
+        "upstream": run_git(
+            root,
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ),
+        "dirty": None if status is None else bool(status),
+        "dirty_path_count": None if status is None else len(status.splitlines()),
+    }
+
+
 def format_budget_metrics(budget: BudgetSummary) -> str:
     return (
         f"allowlisted_calls={budget.allowlisted_calls}, "
@@ -341,6 +375,7 @@ def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
     failures: list[str],
+    git_context: Optional[dict[str, object]] = None,
 ) -> dict[str, object]:
     counts = grouped_counts(findings)
     summary = summarize_failures(failures)
@@ -350,6 +385,7 @@ def build_json_report(
         "ok": not failures,
         "status": "failed" if failures else "passed",
         "output_surgery_status": "failed" if failures else "passed",
+        "git_context": git_context if git_context is not None else build_git_context(),
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "allowlisted_calls": budget.allowlisted_calls,
