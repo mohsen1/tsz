@@ -10,6 +10,9 @@ use tsz_solver::construction::TypeInterner;
 
 use crate::type_cache_view::TypeCacheView;
 
+/// Resolves a source-authored setter parameter name from the printed property name.
+pub type SetterParameterNameResolver<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
 /// Prints types as TypeScript syntax for declaration emit.
 ///
 /// # Examples
@@ -53,6 +56,9 @@ pub struct TypePrinter<'a> {
     /// Optional resolver for checking whether a foreign symbol has a local import
     /// alias that will be emitted, so the symbol can be referenced by name.
     has_local_import_alias_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
+    /// Optional source declaration fact for naming synthesized setter parameters
+    /// in structural accessor signatures.
+    setter_parameter_name_resolver: Option<&'a SetterParameterNameResolver<'a>>,
     /// When false, standalone `null` and `undefined` widen to `any` and are
     /// filtered from union members (matching tsc's DTS behaviour).
     strict_null_checks: bool,
@@ -85,6 +91,7 @@ impl<'a> TypePrinter<'a> {
             import_equals_alias_resolver: None,
             local_import_alias_name_resolver: None,
             has_local_import_alias_resolver: None,
+            setter_parameter_name_resolver: None,
             strict_null_checks: true,
             outer_type_param_names: Vec::new(),
             type_param_renames: Vec::new(),
@@ -195,6 +202,15 @@ impl<'a> TypePrinter<'a> {
         resolver: &'a dyn Fn(SymbolId) -> bool,
     ) -> Self {
         self.has_local_import_alias_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a resolver for source-authored setter parameter names by property name.
+    pub fn with_setter_parameter_name_resolver(
+        mut self,
+        resolver: &'a SetterParameterNameResolver<'a>,
+    ) -> Self {
+        self.setter_parameter_name_resolver = Some(resolver);
         self
     }
 
