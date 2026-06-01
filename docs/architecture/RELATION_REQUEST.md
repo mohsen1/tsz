@@ -89,6 +89,11 @@ Callable-source to union-arm compatibility builds
 least one callable union member. The checker owns signature extraction and
 union-arm selection while the requests name the return and contravariant
 parameter relation roles.
+Type-predicate validation builds `RelationRequest::type_predicate_parameter`
+through `type_predicate_parameter_relation_outcome` when checking whether a
+predicate's narrowed type is compatible with its parameter type. The
+type-predicate boundary owns predicate-shape recursion while the request names
+the checker relation role.
 Call-result recovery probes use the call-argument request when comparing actual
 argument types against parameter unions or polymorphic-`this` parameter targets.
 Round-2 generic call argument rechecks and inference-refinement adoption guards

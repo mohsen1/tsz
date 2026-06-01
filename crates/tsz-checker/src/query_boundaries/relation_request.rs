@@ -27,6 +27,8 @@ pub(crate) enum RelationKind {
     CallableUnionReturn,
     /// Callable-source to union-arm parameter compatibility probe.
     CallableUnionParameter,
+    /// Type-predicate type compatibility against its parameter type.
+    TypePredicateParameter,
     JsxProps,
     JsxChildren,
     /// Component compatibility against user-defined `JSX.ElementType`.
@@ -265,6 +267,10 @@ impl RelationRequest {
 
     pub(crate) const fn callable_union_parameter(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallableUnionParameter)
+    }
+
+    pub(crate) const fn type_predicate_parameter(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::TypePredicateParameter)
     }
 
     pub(crate) const fn jsx_props(source: TypeId, target: TypeId) -> Self {

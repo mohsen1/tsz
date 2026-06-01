@@ -60,6 +60,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a type-predicate-to-parameter relation for raw checker types,
+    /// preserving the canonical type-predicate parameter request shape.
+    pub(crate) fn type_predicate_parameter_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::type_predicate_parameter(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing JSX children relation for raw checker types,
     /// preserving the canonical JSX children request shape.
     pub(crate) fn jsx_children_relation_outcome(

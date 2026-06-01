@@ -835,7 +835,10 @@ impl<'a> CheckerState<'a> {
             types,
             predicate_type,
             param_type,
-            |source, target| self.assign_relation_outcome(source, target).related,
+            |source, target| {
+                self.type_predicate_parameter_relation_outcome(source, target)
+                    .related
+            },
         )
     }
 

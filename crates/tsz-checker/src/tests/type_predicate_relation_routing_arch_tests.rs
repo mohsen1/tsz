@@ -29,9 +29,14 @@ fn function_type_predicate_validation_uses_relation_outcome_boundary() {
         "function declaration predicate validation should use the checker relation helper"
     );
     assert!(
-        compact_relation
-            .contains("|source,target|self.assign_relation_outcome(source,target).related"),
-        "checker-state type-predicate validation should provide outcome-shaped relation truth"
+        compact_relation.contains(
+            "|source,target|{self.type_predicate_parameter_relation_outcome(source,target).related}"
+        ),
+        "checker-state type-predicate validation should provide type-predicate parameter RelationOutcome truth"
+    );
+    assert!(
+        !compact_relation.contains("|source,target|self.assign_relation_outcome(source,target)"),
+        "checker-state type-predicate validation should not use generic assign requests"
     );
     assert!(
         !compact_relation.contains("|source,target|self.is_assignable_to(source,target)"),
