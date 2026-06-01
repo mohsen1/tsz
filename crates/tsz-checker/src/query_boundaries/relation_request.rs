@@ -47,6 +47,18 @@ pub(crate) enum RelationKind {
     VariableInitializer,
     /// Diagnostic-source narrowing display probes.
     DiagnosticSourceNarrowing,
+    /// Class implements index-signature value compatibility probes.
+    ClassImplementsIndexValue,
+    /// Class implements whole-type compatibility probes.
+    ClassImplementsWholeType,
+    /// Interface heritage index-signature value compatibility probes.
+    InterfaceHeritageIndexValue,
+    /// Interface heritage generic-method specialization probes.
+    InterfaceHeritageGenericMethod,
+    /// Interface heritage property-vs-index compatibility probes.
+    InterfaceHeritagePropertyIndex,
+    /// JSDoc heritage object constraint property compatibility probes.
+    JsdocHeritageConstraint,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
@@ -215,6 +227,30 @@ impl RelationRequest {
 
     pub(crate) const fn diagnostic_source_narrowing(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::DiagnosticSourceNarrowing)
+    }
+
+    pub(crate) const fn class_implements_index_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ClassImplementsIndexValue)
+    }
+
+    pub(crate) const fn class_implements_whole_type(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ClassImplementsWholeType)
+    }
+
+    pub(crate) const fn interface_heritage_index_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InterfaceHeritageIndexValue)
+    }
+
+    pub(crate) const fn interface_heritage_generic_method(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InterfaceHeritageGenericMethod)
+    }
+
+    pub(crate) const fn interface_heritage_property_index(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InterfaceHeritagePropertyIndex)
+    }
+
+    pub(crate) const fn jsdoc_heritage_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::JsdocHeritageConstraint)
     }
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {

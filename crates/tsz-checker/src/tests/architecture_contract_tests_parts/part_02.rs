@@ -143,6 +143,30 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "RelationKind::DiagnosticSourceNarrowing",
         ),
         (
+            "fn class_implements_index_value",
+            "RelationKind::ClassImplementsIndexValue",
+        ),
+        (
+            "fn class_implements_whole_type",
+            "RelationKind::ClassImplementsWholeType",
+        ),
+        (
+            "fn interface_heritage_index_value",
+            "RelationKind::InterfaceHeritageIndexValue",
+        ),
+        (
+            "fn interface_heritage_generic_method",
+            "RelationKind::InterfaceHeritageGenericMethod",
+        ),
+        (
+            "fn interface_heritage_property_index",
+            "RelationKind::InterfaceHeritagePropertyIndex",
+        ),
+        (
+            "fn jsdoc_heritage_constraint",
+            "RelationKind::JsdocHeritageConstraint",
+        ),
+        (
             "fn object_literal_computed_key",
             "RelationKind::ObjectLiteralComputedKey",
         ),

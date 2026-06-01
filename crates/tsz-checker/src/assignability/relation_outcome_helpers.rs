@@ -224,6 +224,96 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing class-implements index relation for raw
+    /// checker types, preserving the canonical class index request shape.
+    pub(crate) fn class_implements_index_value_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::class_implements_index_value(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing class-implements whole-type relation for
+    /// raw checker types, preserving the canonical class implements request shape.
+    pub(crate) fn class_implements_whole_type_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::class_implements_whole_type(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing interface-heritage index relation for raw
+    /// checker types, preserving the canonical heritage index request shape.
+    pub(crate) fn interface_heritage_index_value_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::interface_heritage_index_value(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing interface-heritage generic-method relation
+    /// for raw checker types, preserving the canonical heritage method request shape.
+    pub(crate) fn interface_heritage_generic_method_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::interface_heritage_generic_method(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing interface-heritage property/index relation
+    /// for raw checker types, preserving the canonical heritage index request shape.
+    pub(crate) fn interface_heritage_property_index_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::interface_heritage_property_index(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing JSDoc heritage constraint relation for raw
+    /// checker types, preserving the canonical JSDoc heritage request shape.
+    pub(crate) fn jsdoc_heritage_constraint_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::jsdoc_heritage_constraint(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing object-literal computed-key relation for
     /// raw checker types, preserving the canonical computed-key request shape.
     pub(crate) fn object_literal_computed_key_relation_outcome(
