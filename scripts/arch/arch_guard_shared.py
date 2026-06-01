@@ -317,13 +317,13 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
         4275,
     ),
-    # LSP signature-help: carries TypeData and direct lookup() baseline debt
-    # (see arch_guard_policy.toml exclusions). Ratchet down per §19 splitting
-    # and arch-debt burn-down in Track 10.
+    # LSP signature-help: the root provider has been split by concern. Existing
+    # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
+    # arch_guard_policy.toml exclusions) and should burn down separately.
     (
         "LSP boundary: signature_help monolith size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
-        4808,
+        968,
     ),
     # Scanner main loop: issue #9431 tracks splitting by token family.
     (
