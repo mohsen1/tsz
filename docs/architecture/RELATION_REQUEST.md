@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -147,6 +147,13 @@ Duplicate declaration diagnostics build
 property, method, accessor, or index declarations are mutually compatible. The
 checker owns TS2300/TS2717 diagnostic selection while the request names the
 relation role.
+
+Variable initializer diagnostics build
+`RelationRequest::variable_initializer` through
+`variable_initializer_relation_outcome` when probing initializer assignment
+failure before object-literal/property elaboration or generic TS2322 fallback.
+The checker owns variable-declaration anchoring and elaboration order while the
+request names the relation role.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

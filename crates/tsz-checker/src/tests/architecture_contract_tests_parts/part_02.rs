@@ -134,6 +134,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn duplicate_identifier",
             "RelationKind::DuplicateIdentifier",
         ),
+        (
+            "fn variable_initializer",
+            "RelationKind::VariableInitializer",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

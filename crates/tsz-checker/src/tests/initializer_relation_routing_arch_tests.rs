@@ -8,13 +8,36 @@ fn variable_initializer_diagnostics_use_relation_outcome_boundary() {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
     assert_eq!(
-        source.matches("assign_relation_outcome").count(),
+        source
+            .matches("variable_initializer_relation_outcome")
+            .count(),
         4,
-        "variable initializer diagnostic probes should route through assign_relation_outcome"
+        "variable initializer diagnostic probes should route through variable_initializer_relation_outcome"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome("),
+        "variable initializer diagnostics should not use the generic assignment request"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),
         "variable initializer diagnostics should not regress to raw boolean relation guards"
+    );
+}
+
+#[test]
+fn variable_initializer_relation_outcome_uses_initializer_request() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/assignability/relation_outcome_helpers.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+
+    assert!(
+        source.contains("fn variable_initializer_relation_outcome("),
+        "variable initializer diagnostics should have a dedicated outcome helper"
+    );
+    assert!(
+        source.contains("RelationRequest::variable_initializer("),
+        "variable initializer relation outcome helper should use the initializer request"
     );
 }
 

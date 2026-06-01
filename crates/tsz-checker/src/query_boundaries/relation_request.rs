@@ -43,6 +43,8 @@ pub(crate) enum RelationKind {
     NullishErrorTarget,
     /// Duplicate declaration compatibility probes for TS2300/TS2717 paths.
     DuplicateIdentifier,
+    /// Variable initializer compatibility probes for TS2322 elaboration paths.
+    VariableInitializer,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -173,6 +175,10 @@ impl RelationRequest {
 
     pub(crate) const fn duplicate_identifier(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::DuplicateIdentifier)
+    }
+
+    pub(crate) const fn variable_initializer(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::VariableInitializer)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
