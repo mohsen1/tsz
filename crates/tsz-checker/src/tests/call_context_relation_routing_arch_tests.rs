@@ -102,9 +102,11 @@ fn round2_argument_recheck_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         2,
-        "round-2 argument recheck should route env-aware relation probes through RelationOutcome"
+        "round-2 argument recheck should route env-aware relation probes through call-argument RelationOutcome"
     );
     assert!(
         helper.matches(".related").count() >= 2,
@@ -113,6 +115,10 @@ fn round2_argument_recheck_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "round-2 argument recheck should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "round-2 argument recheck should not use generic assignment request routing"
     );
 }
 
