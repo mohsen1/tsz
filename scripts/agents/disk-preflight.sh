@@ -123,6 +123,21 @@ cache_size_kb() {
   fi
 }
 
+guard_value() {
+  local key="$1"
+  awk -v key="$key" '
+    {
+      for (i = 1; i <= NF; i++) {
+        split($i, parts, "=")
+        if (parts[1] == key) {
+          print parts[2]
+          exit
+        }
+      }
+    }
+  ' <<<"$GUARD_OUTPUT"
+}
+
 CARGO_CACHE_STUB_MAX_KB="${TSZ_CARGO_CACHE_STUB_MAX_KB:-1024}"
 LOCAL_CARGO_CACHE_DIR_COUNT=0
 LOCAL_CARGO_CACHE_PRESENT_COUNT=0
@@ -283,6 +298,13 @@ REUSABLE_WORKTREE_OUTPUT="$(
 echo "$REUSABLE_WORKTREE_OUTPUT"
 
 if echo "$GUARD_OUTPUT" | grep -q 'disk_status=low'; then
+  DISK_FREE_MB="$(guard_value disk_free_mb)"
+  DISK_MIN_FREE_GB="$(guard_value min_free_gb)"
+  if [[ "$DISK_FREE_MB" =~ ^[0-9]+$ && "$DISK_MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
+    DISK_MIN_FREE_MB=$((DISK_MIN_FREE_GB * 1024))
+    DISK_SHORTFALL_MB=$((DISK_MIN_FREE_MB > DISK_FREE_MB ? DISK_MIN_FREE_MB - DISK_FREE_MB : 0))
+    echo "disk_shortfall_mb=$DISK_SHORTFALL_MB"
+  fi
   cat <<'LOWDISK'
 
 == low disk cleanup ladder ==
