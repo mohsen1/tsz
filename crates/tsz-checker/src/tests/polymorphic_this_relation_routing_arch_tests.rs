@@ -13,14 +13,22 @@ fn polymorphic_this_receiver_uses_relation_outcome_boundary() {
         .split("let default_atom = self.ctx.types.intern_string(\"default\");")
         .next()
         .expect("missing end of polymorphic this receiver relation branch");
+    let compact: String = branch.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        branch.contains("self.assign_relation_outcome(receiver_type, target).related"),
-        "receiver relation should use the shared relation outcome boundary"
+        compact.contains(
+            "self.polymorphic_this_receiver_relation_outcome(receiver_type,target).related"
+        ),
+        "receiver relation should use the polymorphic-this receiver request"
     );
     assert!(
-        branch.contains("self.assign_relation_outcome(member, target).related"),
-        "intersection member relation should use the shared relation outcome boundary"
+        compact.contains("self.polymorphic_this_receiver_relation_outcome(member,target).related"),
+        "intersection member relation should use the polymorphic-this receiver request"
+    );
+    assert!(
+        !compact.contains("assign_relation_outcome(receiver_type,target)")
+            && !compact.contains("assign_relation_outcome(member,target)"),
+        "polymorphic this receiver branch should not use generic assignment relation outcomes"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard"),
