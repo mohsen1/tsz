@@ -1131,7 +1131,26 @@ impl<'a> AstToIr<'a> {
         // Final reference to temp
         comma_parts.push(IRNode::id(temp));
 
-        IRNode::object_literal_comma_expr(comma_parts)
+        if self.source_range_contains_line_comment(source_range) {
+            IRNode::CommaExprMultiline(comma_parts)
+        } else {
+            IRNode::object_literal_comma_expr(comma_parts)
+        }
+    }
+
+    fn source_range_contains_line_comment(&self, source_range: Option<(u32, u32)>) -> bool {
+        let Some((start, end)) = source_range else {
+            return false;
+        };
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let start = (start as usize).min(source_text.len());
+        let end = (end as usize).min(source_text.len());
+        start < end
+            && tsz_common::comments::get_comment_ranges(&source_text[start..end])
+                .iter()
+                .any(|comment| !comment.is_multi_line)
     }
 
     /// Lower a single object property to an ES5 assignment or Object.defineProperty call

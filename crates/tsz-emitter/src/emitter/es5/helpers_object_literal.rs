@@ -1,4 +1,4 @@
-use super::super::Printer;
+use super::super::{CommentKind, Printer, get_trailing_comment_ranges};
 use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{MethodDeclData, Node};
@@ -702,6 +702,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let use_multiline = use_multiline
+            || self.computed_object_literal_needs_multiline_layout(elements, source_range);
+
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
@@ -751,6 +754,58 @@ impl<'a> Printer<'a> {
         if wrap_in_parens {
             self.write(")");
         }
+    }
+
+    fn computed_object_literal_needs_multiline_layout(
+        &self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) -> bool {
+        let has_computed = elements
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
+        if !has_computed {
+            return false;
+        }
+
+        if let Some((start, end)) = source_range
+            && self.source_range_contains_line_comment(start, end)
+        {
+            return true;
+        }
+
+        elements.iter().any(|&idx| {
+            if !emit_utils::is_computed_property_member(self.arena, idx) {
+                return false;
+            }
+
+            let Some(text) = self.source_text else {
+                return false;
+            };
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+
+            if self.source_range_contains_line_comment(node.pos, node.end) {
+                return true;
+            }
+
+            get_trailing_comment_ranges(text, node.end as usize)
+                .iter()
+                .any(|comment| comment.kind == CommentKind::SingleLine)
+        })
+    }
+
+    fn source_range_contains_line_comment(&self, start: u32, end: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (start as usize).min(text.len());
+        let end = (end as usize).min(text.len());
+        start < end
+            && tsz_common::comments::get_comment_ranges(&text[start..end])
+                .iter()
+                .any(|comment| !comment.is_multi_line)
     }
 
     /// Emit object literal with spread using __assign pattern
@@ -1006,5 +1061,82 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::output::printer::{PrintOptions, lower_and_print};
+    use tsz_common::ScriptTarget;
+    use tsz_parser::ParserState;
+
+    fn emit_es5(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        lower_and_print(
+            &parser.arena,
+            root,
+            PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        )
+        .code
+    }
+
+    #[test]
+    fn computed_object_member_line_comment_uses_multiline_comma_layout() {
+        let source = "class Base {\n\
+    bar() { return 0; }\n\
+}\n\
+class C extends Base {\n\
+    foo() {\n\
+        () => {\n\
+            var obj = {\n\
+                [super.bar()]() { } // needs capture\n\
+            };\n\
+        }\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains(
+                "var obj = (_a = {},\n                _a[_super.prototype.bar.call(_this)] = function () { } // needs capture\n            ,\n                _a);"
+            ),
+            "Computed-object comma lowering should place following comma items after the trailing line comment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(
+                "_a = {}, _a[_super.prototype.bar.call(_this)] = function () { } // needs capture"
+            ),
+            "Trailing line comments must not be emitted in compact comma layout.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn computed_object_member_without_line_comment_stays_compact() {
+        let source = "class Base {\n\
+    bar() { return 0; }\n\
+}\n\
+class C extends Base {\n\
+    foo() {\n\
+        () => {\n\
+            var obj = {\n\
+                [super.bar()]() { }\n\
+            };\n\
+        }\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains(
+                "var obj = (_a = {}, _a[_super.prototype.bar.call(_this)] = function () { }, _a);"
+            ),
+            "Computed-object members without trailing line comments should keep the compact comma layout.\nOutput:\n{output}"
+        );
     }
 }
