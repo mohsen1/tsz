@@ -35,6 +35,7 @@ import os
 import sys
 import argparse
 import re
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -243,10 +244,29 @@ def emit_freshness_status(detail_summary, public_summary):
     return {"state": "current", **status}
 
 
+def emit_freshness_report(detail_summary, public_summary):
+    status = emit_freshness_status(detail_summary, public_summary)
+    return {
+        "state": status["state"],
+        "detailSummary": detail_summary,
+        "publicSummary": public_summary,
+        "detailIsCurrent": emit_detail_is_current(status),
+        "jsPassDelta": status.get("jsPassDelta"),
+        "dtsPassDelta": status.get("dtsPassDelta"),
+        "jsTotalDelta": status.get("jsTotalDelta"),
+        "dtsTotalDelta": status.get("dtsTotalDelta"),
+        "message": emit_freshness_status_line_from_status(status),
+    }
+
+
 def emit_freshness_status_line(data):
     detail_summary = emit_summary(data)
     public_summary = emit_summary_from_readme()
     status = emit_freshness_status(detail_summary, public_summary)
+    return emit_freshness_status_line_from_status(status)
+
+
+def emit_freshness_status_line_from_status(status):
     state = status["state"]
     if state == "stale":
         return (
@@ -318,6 +338,15 @@ def failure_family_surface_heading(surface, title, detail_total, detail_summary,
 
 def print_emit_freshness_status(data):
     print(emit_freshness_status_line(data))
+
+
+def print_emit_freshness_json(data):
+    print(
+        json.dumps(
+            emit_freshness_report(emit_summary(data), emit_summary_from_readme()),
+            sort_keys=True,
+        )
+    )
 
 
 def print_emit_freshness_note(data):
@@ -579,6 +608,11 @@ def main():
     parser.add_argument("--top", type=int, default=40, help="Limit rows shown")
     parser.add_argument("--freshness", action="store_true", help="Report whether emit-detail.json is current")
     parser.add_argument(
+        "--freshness-json",
+        action="store_true",
+        help="Report emit-detail freshness as machine-readable JSON",
+    )
+    parser.add_argument(
         "--require-current-detail",
         action="store_true",
         help="Exit non-zero unless README/public aggregate matches emit-detail.json",
@@ -593,7 +627,9 @@ def main():
         print(emit_freshness_status_line(data), file=sys.stderr)
         return 1
 
-    if args.freshness:
+    if args.freshness_json:
+        print_emit_freshness_json(data)
+    elif args.freshness:
         print_emit_freshness_status(data)
     elif args.js_failures:
         show_js_failures(filtered_data, args.top, args.paths_only)
