@@ -127,9 +127,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         let tuple_elements = self.interner().tuple_list(tuple_id);
         let mut mapped_elements = Vec::with_capacity(tuple_elements.len());
+        let mut seen_rest = false;
 
         for (index, elem) in tuple_elements.iter().copied().enumerate() {
-            mapped_elements.push(self.evaluate_mapped_tuple_element(mapped, source, index, elem));
+            // Fixed elements that follow any rest element have ambiguous numeric
+            // indices on the full source tuple (T[i] can land in the rest range
+            // or a suffix slot depending on the actual length). The per-element
+            // helper receives this flag so it can use a proxy source instead.
+            let is_suffix = seen_rest && !elem.rest;
+            if elem.rest {
+                seen_rest = true;
+            }
+            mapped_elements
+                .push(self.evaluate_mapped_tuple_element(mapped, source, index, elem, is_suffix));
         }
 
         self.interner().tuple(mapped_elements)
@@ -153,6 +163,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source: TypeId,
         index: usize,
         elem: TupleElement,
+        is_suffix: bool,
     ) -> TupleElement {
         let rest_inner_kind = elem.rest.then(|| self.interner().lookup(elem.type_id));
 
@@ -196,11 +207,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
-        // Per-element source rebinding for concrete array rests:
-        // T -> `Array<E>`, K -> number. This makes `T[K]` evaluate to E rather
-        // than the union of every tuple element type - the bug we are fixing.
+        // Per-element source rebinding so that `T[K]` evaluates to the element's
+        // own type rather than the union of every tuple element type:
+        //
+        // - Array rest `...E[]`: rebind T -> `E[]`, K -> number so `(E[])[number]` = E.
+        // - Fixed suffix element (after any rest): T[i] is ambiguous because i can
+        //   land in either the rest range or the suffix. Rebind T -> `[elem_type]` and
+        //   K -> "0" so `([elem_type])["0"]` = elem_type unambiguously.
+        // - Fixed prefix element: every preceding position is fixed, so the existing
+        //   string-literal index is unambiguous; no rebinding needed.
         let (new_source, key) = if elem.rest {
             (elem.type_id, TypeId::NUMBER)
+        } else if is_suffix {
+            let proxy = self
+                .interner()
+                .tuple(vec![TupleElement::fixed(elem.type_id)]);
+            (proxy, self.interner().literal_string("0"))
         } else {
             (source, self.interner().literal_string(&index.to_string()))
         };
