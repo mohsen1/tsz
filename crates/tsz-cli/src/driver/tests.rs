@@ -2308,13 +2308,13 @@ fn module_none_outfile_dynamic_import_downlevels_without_bundling_js_module() {
     .expect("write tsconfig");
     fs::write(dir.path().join("a.ts"), r#"const foo = import("./b");"#).expect("write a");
     fs::write(dir.path().join("b.js"), "export default 1;\n").expect("write b");
-
     let project = dir.path().to_string_lossy().to_string();
     let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
         .expect("project args");
     let result = compile(&args, dir.path()).expect("compile succeeds");
-
-    let bundle_path = dir.path().join("a.js");
+    let bundle_path = fs::canonicalize(dir.path())
+        .expect("canonical dir")
+        .join("a.js");
     assert!(
         result.emitted_files.iter().any(|path| path == &bundle_path),
         "expected bundle to be written, emitted: {:?}",
