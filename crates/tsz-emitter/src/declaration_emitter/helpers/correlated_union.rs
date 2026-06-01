@@ -836,6 +836,20 @@ impl<'a> DeclarationEmitter<'a> {
                     param.type_annotation,
                     type_param_names,
                 );
+            if let Some((param_name, value_text)) = self
+                .infer_contextual_callback_return_substitution(
+                    &source_function_type,
+                    arg_idx,
+                    type_param_names,
+                    &blocked_return_type_params,
+                    &substitutions,
+                )
+                && !substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_name.as_str())
+            {
+                substitutions.push((param_name, value_text));
+            }
             Self::infer_function_type_substitutions(
                 &source_function_type,
                 &argument_function_type,

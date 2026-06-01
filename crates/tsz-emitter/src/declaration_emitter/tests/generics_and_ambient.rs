@@ -1168,6 +1168,42 @@ let result = dispatchMethod<StringMethodDescriptor>("stringMethod", ["hello", 35
 }
 
 #[test]
+fn test_generic_pipe_callback_contextual_length_return_is_number() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function compose<Args extends any[], Value, Result>(
+    first: (...args: Args) => Value,
+    second: (value: Value) => Result
+): (...args: Args) => Result;
+
+let made = compose(input => "hello", value => value.length);
+"#,
+    );
+    assert!(
+        output.contains("declare let made: (input: any) => number;"),
+        "Expected contextual callback length return to infer number: {output}"
+    );
+}
+
+#[test]
+fn test_renamed_generic_pipe_callback_contextual_length_return_is_number() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function flow<Items extends any[], Item, Output>(
+    left: (...parts: Items) => Item,
+    right: (source: Item) => Output
+): (...parts: Items) => Output;
+
+let result = flow(token => "x", renamed => renamed.length);
+"#,
+    );
+    assert!(
+        output.contains("declare let result: (token: any) => number;"),
+        "Expected renamed contextual callback length return to infer number: {output}"
+    );
+}
+
+#[test]
 fn test_unannotated_method_returning_indexed_helper_call_preserves_this_surface() {
     let output = emit_dts_with_method_node_return_type(
         r#"
