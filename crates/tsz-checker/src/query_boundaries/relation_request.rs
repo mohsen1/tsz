@@ -23,6 +23,8 @@ pub(crate) enum RelationKind {
     Return,
     JsxProps,
     JsxChildren,
+    /// Component compatibility against user-defined `JSX.ElementType`.
+    JsxElementType,
     /// Destructuring: `const { a, b } = expr`
     Destructuring,
     /// Rest parameter array compatibility: `function f(...args: T)`
@@ -250,6 +252,10 @@ impl RelationRequest {
 
     pub(crate) const fn jsx_children(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsxChildren)
+    }
+
+    pub(crate) const fn jsx_element_type(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::JsxElementType)
     }
 
     pub(crate) const fn satisfies(source: TypeId, target: TypeId) -> Self {

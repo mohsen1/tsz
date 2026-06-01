@@ -148,12 +148,14 @@ pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId
     crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
 }
 
-pub(crate) fn types_are_assignable(
+pub(crate) fn component_satisfies_element_type(
     checker: &mut CheckerState<'_>,
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    checker.assign_relation_outcome(source, target).related
+    checker
+        .jsx_element_type_relation_outcome(source, target)
+        .related
 }
 
 pub(crate) fn props_are_assignable(
@@ -477,17 +479,28 @@ fn contains_anonymous_object_surface_inner(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn types_are_assignable_uses_relation_outcome_boundary() {
+    fn component_element_type_check_uses_relation_outcome_boundary() {
         let source = include_str!("jsx.rs");
+        let helper = source
+            .split("pub(crate) fn component_satisfies_element_type")
+            .nth(1)
+            .and_then(|tail| tail.split("pub(crate) fn props_are_assignable").next())
+            .expect("failed to isolate JSX ElementType relation helper");
+        let compact_helper = helper.split_whitespace().collect::<String>();
         let legacy = concat!("diagnostic_relation", "_boolean_guard(");
 
         assert!(
-            source.contains("checker.assign_relation_outcome(source, target).related"),
-            "JSX assignability boundary should route relation decisions through \
-             the shared relation outcome boundary"
+            compact_helper
+                .contains("checker.jsx_element_type_relation_outcome(source,target).related"),
+            "JSX ElementType compatibility should route relation decisions through \
+             the JSX element-type RelationRequest"
         );
         assert!(
-            !source.contains(legacy),
+            !compact_helper.contains("checker.assign_relation_outcome(source,target).related"),
+            "JSX ElementType compatibility should not use generic assignment request routing"
+        );
+        assert!(
+            !helper.contains(legacy),
             "JSX assignability boundary should not use raw diagnostic relation \
              boolean guards"
         );

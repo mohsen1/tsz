@@ -42,6 +42,20 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing JSX element-type relation for raw checker
+    /// types, preserving the canonical `JSX.ElementType` request shape.
+    pub(crate) fn jsx_element_type_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::jsx_element_type(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `for...in` LHS relation for raw checker
     /// types, preserving the canonical `for...in` LHS request shape.
     pub(crate) fn for_in_lhs_relation_outcome(

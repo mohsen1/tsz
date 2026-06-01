@@ -898,8 +898,11 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return;
                 }
-                if jsx_boundary::types_are_assignable(self, component_type, evaluated_element_type)
-                {
+                if jsx_boundary::component_satisfies_element_type(
+                    self,
+                    component_type,
+                    evaluated_element_type,
+                ) {
                     return;
                 }
                 self.report_invalid_jsx_component_return_type(tag_name_idx);
