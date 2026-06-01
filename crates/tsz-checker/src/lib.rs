@@ -822,6 +822,9 @@ mod jsdoc_typedef_module_export_tests;
 #[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
 mod jsx_children_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsx_component_props_relation_routing_arch_tests.rs"]
+mod jsx_component_props_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_element_type_constraint_tests.rs"]
 mod jsx_element_type_constraint_tests;
 #[cfg(test)]

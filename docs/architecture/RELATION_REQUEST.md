@@ -82,7 +82,8 @@ target.
 
 JSX props and attribute validation paths build `RelationRequest::jsx_props`
 through `jsx_props_relation_outcome` in the JSX props resolution, validation,
-spread, overload, generic-spread, and union-props checkers.
+spread, overload, generic-spread, union-props, and intrinsic tag-resolution
+checkers.
 
 JSX children and text-child validation paths build
 `RelationRequest::jsx_children` through `jsx_children_relation_outcome` in the
