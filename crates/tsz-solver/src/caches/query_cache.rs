@@ -1961,33 +1961,23 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        // 1. Check cache first
+        // Session cache first (shared with the resolver-aware cached boundary).
         if let Some(cached) = self.variance_cache.borrow().get(&def_id) {
             return Some(Arc::clone(cached));
         }
-
-        // 2. Compute variance using the type's body
-        // This requires the database to also be a TypeResolver (which QueryDatabase is)
+        // Compute via the type's body. `self` is both db and resolver here.
         let params = self.get_lazy_type_params(def_id)?;
         if params.is_empty() {
             return None;
         }
-
         let body = self.resolve_lazy(def_id, self.as_type_database())?;
-
-        let mut variances = Vec::with_capacity(params.len());
-        for param in &params {
-            // Compute variance for each type parameter
-            let v = crate::relations::variance::compute_variance(self, body, param.name);
-            variances.push(v);
-        }
-        let result = Arc::from(variances);
-
-        // 3. Store in cache
+        let result: Arc<[Variance]> = params
+            .iter()
+            .map(|param| crate::relations::variance::compute_variance(self, body, param.name))
+            .collect();
         self.variance_cache
             .borrow_mut()
             .insert(def_id, Arc::clone(&result));
-
         Some(result)
     }
 

@@ -184,3 +184,107 @@ fn contravariant_consumer_is_name_agnostic() {
         );
     }
 }
+
+/// Recursive (self-referential) generic. The session cache may only promote a
+/// `DefId` mask computed at a context-free top-level entry (empty active-def
+/// set). A recursive back-edge into the same def is truncated to the
+/// "independent" placeholder *while that def is active*; that truncated mask
+/// must never reach the session cache, or a later top-level reference would
+/// observe the wrong variance. This program references the recursive generic
+/// many times so the cache is warm by the later references.
+fn recursive_generic_program(param: &str) -> String {
+    format!(
+        r#"
+interface List<{param}> {{ head: {param}; tail: List<{param}>; }}
+interface Foo {{ x: number; }}
+interface Bar {{ x: number; y: number; }}
+
+declare var a1: List<Foo>;
+declare var b1: List<Bar>;
+declare var a2: List<Foo>;
+declare var b2: List<Bar>;
+declare var a3: List<Foo>;
+declare var b3: List<Bar>;
+
+a1 = b1; // ok: List is covariant in its element (head covariant, tail recursive)
+b1 = a1; // ERROR: Foo missing y
+a2 = b2; // ok
+b2 = a2; // ERROR
+a3 = b3; // ok
+b3 = a3; // ERROR
+"#
+    )
+}
+
+#[test]
+fn recursive_generic_cycle_safe_and_name_agnostic() {
+    // The recursive def must compute a stable covariant mask: exactly the three
+    // reverse assignments fail, and warm references do not change the answer.
+    // If a truncated (cycle-placeholder) mask leaked into the session cache, a
+    // later reference would see a different variance and the count would drift.
+    let baseline = codes(&recursive_generic_program("T"));
+    assert_eq!(
+        baseline.iter().filter(|c| **c == 2322).count(),
+        3,
+        "recursive covariant generic must reject exactly the three reverse \
+         assignments regardless of cache warmth, got {baseline:?}"
+    );
+    for param in ["K", "Element", "TNode"] {
+        let renamed = codes(&recursive_generic_program(param));
+        assert_eq!(
+            baseline, renamed,
+            "recursive-generic diagnostics must be identical for spelling `{param}`"
+        );
+    }
+}
+
+/// Deeply nested chain of distinct generics, each wrapping the next. The
+/// nested generics are reached through `visit_application` while the outer def
+/// is still on the recursion stack, so they are *not* context-free entries and
+/// must not be promoted to the session cache from within the outer walk — yet
+/// each is also referenced directly at top level (the `declare var` lines force
+/// a top-level variance query), so the cache must still serve those without
+/// changing the deep-chain diagnostics.
+fn nested_chain_program(p1: &str, p2: &str, p3: &str) -> String {
+    format!(
+        r#"
+interface Inner<{p3}> {{ get(): {p3}; }}
+interface Middle<{p2}> {{ inner: Inner<{p2}>; }}
+interface Outer<{p1}> {{ middle: Middle<{p1}>; }}
+interface Foo {{ x: number; }}
+interface Bar {{ x: number; y: number; }}
+
+declare var ao1: Outer<Foo>;
+declare var bo1: Outer<Bar>;
+declare var ao2: Outer<Foo>;
+declare var bo2: Outer<Bar>;
+declare var ai1: Inner<Foo>;
+declare var bi1: Inner<Bar>;
+
+ao1 = bo1; // ok: covariant through the whole chain
+bo1 = ao1; // ERROR
+ao2 = bo2; // ok
+bo2 = ao2; // ERROR
+ai1 = bi1; // ok
+bi1 = ai1; // ERROR
+"#
+    )
+}
+
+#[test]
+fn nested_chain_warm_cache_is_name_agnostic() {
+    let baseline = codes(&nested_chain_program("T", "U", "V"));
+    assert_eq!(
+        baseline.iter().filter(|c| **c == 2322).count(),
+        3,
+        "deeply-nested covariant chain must reject exactly the three reverse \
+         assignments, got {baseline:?}"
+    );
+    for (p1, p2, p3) in [("A", "B", "C"), ("X1", "X2", "X3"), ("P", "Q", "R")] {
+        let renamed = codes(&nested_chain_program(p1, p2, p3));
+        assert_eq!(
+            baseline, renamed,
+            "nested-chain diagnostics must be identical for spellings `{p1}`/`{p2}`/`{p3}`"
+        );
+    }
+}
