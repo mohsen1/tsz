@@ -85,6 +85,8 @@ after
         self.assertIn("JS 13,459/13,530 vs 13,094/13,530", note)
         self.assertIn("DTS 1,644/1,669 vs 1,606/1,669", note)
         self.assertIn("Pass delta: JS +365, DTS +38", note)
+        self.assertIn("historical checked-detail triage only", note)
+        self.assertIn("do not cite them as the current public remaining set", note)
 
     def test_freshness_status_reports_stale_detail(self):
         status = self.mod.emit_freshness_status(
@@ -180,7 +182,7 @@ after
             "js", "JavaScript", 436, detail_summary, public_summary
         )
 
-        self.assertIn("JavaScript checked-detail: 436 failures/timeouts", heading)
+        self.assertIn("JavaScript STALE checked-detail triage: 436 failures/timeouts", heading)
         self.assertIn("public aggregate remaining: 71", heading)
         self.assertIn("detail aggregate remaining: 436", heading)
 
