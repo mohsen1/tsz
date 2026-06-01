@@ -242,6 +242,7 @@ const findingCount =
   multipleIssues.length +
   noncanonicalIssues.length;
 const ok = findingCount === 0;
+const warningCount = readyIntentionallyUnassignedPrs.length;
 const metrics = {
   missing_canonical_labels: missingCanonicalLabels.length,
   noncanonical_agent_labels: noncanonicalLabels.length,
@@ -255,8 +256,10 @@ const metrics = {
   open_issues_multiple_agent_labels: multipleIssues.length,
   open_issues_noncanonical_agent_label: noncanonicalIssues.length,
   agent_label_audit_findings: findingCount,
+  agent_label_audit_warnings: warningCount,
 };
 console.log(`agent_label_audit_findings=${findingCount}`);
+console.log(`agent_label_audit_warnings=${warningCount}`);
 console.log(`agent_label_audit_status=${ok ? "pass" : "fail"}`);
 
 const summarizeWorkItem = (item) => ({
@@ -277,6 +280,8 @@ if (process.env.JSON_REPORT) {
     ok,
     status: ok ? "pass" : "fail",
     agent_label_audit_status: ok ? "pass" : "fail",
+    warning_count: warningCount,
+    warning_status: warningCount > 0 ? "warn" : "clear",
     git_context: {
       head: process.env.GIT_HEAD,
       branch: process.env.GIT_BRANCH,
