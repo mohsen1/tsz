@@ -1,9 +1,21 @@
 //! Support methods for `TypeEvaluator` argument expansion, simplification,
 //! and visitor dispatch.
 
+use crate::instantiation::instantiate::instantiate_generic_cached;
+
 use super::*;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    #[inline]
+    pub(super) fn cached_generic_instantiation(
+        &self,
+        body: TypeId,
+        type_params: &[TypeParamInfo],
+        args: &[TypeId],
+    ) -> TypeId {
+        instantiate_generic_cached(self.interner, self.query_db, body, type_params, args)
+    }
+
     /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
     /// This detects patterns like `T extends Promise<infer U> ? U : T`.
     pub(crate) fn is_conditional_with_application_infer(&self, type_id: TypeId) -> bool {
@@ -1167,7 +1179,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .iter()
                         .map(|p| p.default.unwrap_or(TypeId::ERROR))
                         .collect();
-                    instantiate_generic(self.interner, resolved, &type_params, &default_args)
+                    instantiate_generic_cached(
+                        self.interner,
+                        self.query_db,
+                        resolved,
+                        &type_params,
+                        &default_args,
+                    )
                 } else {
                     resolved
                 }

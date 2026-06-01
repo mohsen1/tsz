@@ -9,7 +9,7 @@ mod object_infer;
 mod phases;
 
 use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_generic, instantiate_type, instantiate_type_with_infer,
+    TypeSubstitution, instantiate_generic_cached, instantiate_type, instantiate_type_with_infer,
 };
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
@@ -1143,7 +1143,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if type_params.len() != app.args.len() {
             return None;
         }
-        let instantiated = instantiate_generic(self.interner(), resolved, &type_params, &app.args);
+        let instantiated = instantiate_generic_cached(
+            self.interner(),
+            self.query_db(),
+            resolved,
+            &type_params,
+            &app.args,
+        );
         if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(instantiated) {
             let evaluated_obj = self.evaluate(obj);
             let evaluated_idx = self.evaluate(idx);

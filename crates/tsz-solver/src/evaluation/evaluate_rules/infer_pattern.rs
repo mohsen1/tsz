@@ -1296,8 +1296,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
         let body = self.resolver().resolve_lazy(def_id, self.interner())?;
-        let substituted = crate::instantiation::instantiate::instantiate_generic(
+        let substituted = crate::instantiation::instantiate::instantiate_generic_cached(
             self.interner(),
+            self.query_db(),
             body,
             &type_params,
             &app.args,

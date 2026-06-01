@@ -1,6 +1,6 @@
 //! Named phases for conditional type evaluation.
 
-use crate::instantiation::instantiate::instantiate_generic;
+use crate::instantiation::instantiate::instantiate_generic_cached;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{ConditionalType, TypeData, TypeId};
 use tracing::trace;
@@ -66,8 +66,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 let args = app.args.clone();
                 let expanded_args = self.expand_type_args(&args);
-                let instantiated = instantiate_generic(
+                let instantiated = instantiate_generic_cached(
                     self.interner(),
+                    self.query_db(),
                     resolved_base,
                     &type_params,
                     &expanded_args,

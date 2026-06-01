@@ -7,7 +7,9 @@
 //! - Placeholder normalization
 
 use crate::construction::TypeDatabase;
-use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_generic};
+use crate::instantiation::instantiate::{
+    TypeInstantiator, TypeSubstitution, instantiate_generic_cached,
+};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,8 +61,13 @@ fn literal_preservation_constraint_target(
             };
             let type_params = resolver.get_lazy_type_params(def_id)?;
             let body = resolver.resolve_lazy(def_id, interner.as_type_database())?;
-            let instantiated =
-                instantiate_generic(interner.as_type_database(), body, &type_params, &app.args);
+            let instantiated = instantiate_generic_cached(
+                interner.as_type_database(),
+                Some(interner),
+                body,
+                &type_params,
+                &app.args,
+            );
             Some(interner.evaluate_type(instantiated))
         }
         Some(

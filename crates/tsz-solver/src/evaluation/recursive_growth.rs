@@ -10,7 +10,7 @@
 //! infinite") for such aliases; these helpers let the evaluator do the same.
 
 use crate::def::DefId;
-use crate::instantiation::instantiate::instantiate_generic;
+use crate::instantiation::instantiate::instantiate_generic_cached;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
 
@@ -158,8 +158,13 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         }
 
         // Instantiate the body with the type arguments — but do NOT evaluate.
-        let instantiated =
-            instantiate_generic(self.interner(), resolved, &type_params, &expanded_args);
+        let instantiated = instantiate_generic_cached(
+            self.interner(),
+            self.query_db(),
+            resolved,
+            &type_params,
+            &expanded_args,
+        );
         Some(instantiated)
     }
 }
