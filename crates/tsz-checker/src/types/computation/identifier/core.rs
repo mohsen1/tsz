@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn same_file_value_symbol_for_type_symbol(
+    pub(crate) fn same_file_value_symbol_for_type_symbol(
         &self,
         type_sym_id: tsz_binder::SymbolId,
     ) -> Option<(tsz_binder::SymbolId, NodeIndex, usize)> {
