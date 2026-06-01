@@ -153,6 +153,22 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing generic constraint property relation for
+    /// raw checker types, preserving the canonical generic-constraint request
+    /// shape.
+    pub(crate) fn generic_constraint_property_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::generic_constraint_property(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing property-index-key relation for raw
     /// checker types, preserving the canonical property-index-key request shape.
     pub(crate) fn property_index_key_relation_outcome(

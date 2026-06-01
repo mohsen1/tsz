@@ -748,14 +748,16 @@ impl<'a> CheckerState<'a> {
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
             if !self
-                .assign_relation_outcome(prop_value, resolved_constraint)
+                .generic_constraint_property_relation_outcome(prop_value, resolved_constraint)
                 .related
                 && !self
-                    .assign_relation_outcome(prop.type_id, constraint)
+                    .generic_constraint_property_relation_outcome(prop.type_id, constraint)
                     .related
-                && !self.assign_relation_outcome(prop_value, constraint).related
                 && !self
-                    .assign_relation_outcome(prop.type_id, resolved_constraint)
+                    .generic_constraint_property_relation_outcome(prop_value, constraint)
+                    .related
+                && !self
+                    .generic_constraint_property_relation_outcome(prop.type_id, resolved_constraint)
                     .related
             {
                 return false;

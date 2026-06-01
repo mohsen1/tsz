@@ -37,6 +37,8 @@ pub(crate) enum RelationKind {
     DecoratorCallee,
     /// JSDoc type-argument compatibility against a template constraint.
     JsdocTypeConstraint,
+    /// Generic constraint diagnostic property compatibility probes.
+    GenericConstraintProperty,
     /// Source property-name literal compatibility against an index key type.
     PropertyIndexKey,
     /// Null/undefined source compatibility against a nullable structured target.
@@ -221,6 +223,10 @@ impl RelationRequest {
 
     pub(crate) const fn jsdoc_type_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsdocTypeConstraint)
+    }
+
+    pub(crate) const fn generic_constraint_property(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::GenericConstraintProperty)
     }
 
     pub(crate) const fn property_index_key(source: TypeId, target: TypeId) -> Self {
