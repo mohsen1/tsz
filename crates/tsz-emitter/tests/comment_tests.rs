@@ -137,6 +137,52 @@ fn trailing_comment_after_arrow_block_statement_stays_after_call() {
 }
 
 #[test]
+fn trailing_block_comment_after_statement_without_semicolon_is_kept() {
+    // An unterminated block comment trailing an expression statement that has
+    // no source semicolon (ASI) must still be emitted after the inserted `;`.
+    // The statement's node `end` over-extends into the trailing trivia, so the
+    // trailing-comment scanner must not treat the comment as "before end" and
+    // silently drop it. Mirrors parserKeywordsAsIdentifierName2.
+    let source = "a.public /*";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("a.public; /*"),
+        "Trailing block comment after an ASI statement must be kept.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_block_comment_after_getter_and_setter_body_stays_after_body() {
+    // Both getter and setter accessor bodies must keep a trailing line comment
+    // after the closing brace, regardless of the accessor's iteration name.
+    let source = r#"class C {
+    get value() { return this._value; } // get-trailer
+    set thing(x: number) { this._t = x; } // set-trailer
+}"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("get value() { return this._value; } // get-trailer"),
+        "Getter body trailing comment must stay after the body close.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return this._value; // get-trailer }"),
+        "Getter body must not absorb the following line comment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("set thing(x) { this._t = x; } // set-trailer"),
+        "Setter body trailing comment must stay after the body close.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this._t = x; // set-trailer }"),
+        "Setter body must not absorb the following line comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn same_line_statement_trailing_comment_still_stays_on_statement() {
     let source = r#"function f() {
     let x = 1; // inside

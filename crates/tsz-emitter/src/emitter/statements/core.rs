@@ -1410,7 +1410,15 @@ impl<'a> Printer<'a> {
         } else if expression_trailing_comment_range.is_none()
             && let Some(expr_node) = self.arena.get(expr_stmt.expression)
         {
-            self.emit_trailing_comments(expr_node.end);
+            // The parser extends an expression's `end` over trailing trivia up
+            // to the next token. For an ASI statement whose only trailing token
+            // is a comment (e.g. `a.public /*` at EOF), that pushes `end` past
+            // the comment's start, so the trailing-comment scanner would treat
+            // it as already-emitted leading trivia and silently drop it. Anchor
+            // the scan at the expression's real code end (before trivia) so a
+            // same-line trailing comment is recognized and kept.
+            let scan_end = self.find_last_expr_end_before_trivia(expr_node.pos, expr_node.end);
+            self.emit_trailing_comments(scan_end);
         }
         if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
             self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
