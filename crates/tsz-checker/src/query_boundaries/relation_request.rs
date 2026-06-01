@@ -41,6 +41,8 @@ pub(crate) enum RelationKind {
     PropertyIndexKey,
     /// Null/undefined source compatibility against a nullable structured target.
     NullishErrorTarget,
+    /// Duplicate declaration compatibility probes for TS2300/TS2717 paths.
+    DuplicateIdentifier,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -167,6 +169,10 @@ impl RelationRequest {
 
     pub(crate) const fn nullish_error_target(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::NullishErrorTarget)
+    }
+
+    pub(crate) const fn duplicate_identifier(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::DuplicateIdentifier)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

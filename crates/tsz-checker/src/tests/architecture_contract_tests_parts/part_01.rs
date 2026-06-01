@@ -1815,7 +1815,7 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
         "ComputedEnumMember",
         "TypeParameterDefault",
         "IndexSignature",
-        "DecoratorCallee", "JsdocTypeConstraint", "PropertyIndexKey", "NullishErrorTarget",
+        "DecoratorCallee", "JsdocTypeConstraint", "PropertyIndexKey", "NullishErrorTarget", "DuplicateIdentifier",
         "Satisfies",
     ] {
         assert!(
