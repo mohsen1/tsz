@@ -1361,6 +1361,46 @@ fn typeof_function_type_query_tail_emits_second_comma_error() {
 }
 
 #[test]
+fn typeof_object_type_query_tail_recovers_inside_variable_list() {
+    let source = "var x1: typeof {};";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+
+    assert_eq!(
+        sf.statements.nodes.len(),
+        1,
+        "recovered object target should stay in the variable statement"
+    );
+
+    let stmt = arena
+        .get(sf.statements.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("variable statement");
+    let decl_list = arena
+        .get(stmt.declarations.nodes[0])
+        .and_then(|node| arena.get_variable(node))
+        .expect("declaration list");
+
+    assert_eq!(
+        decl_list.declarations.nodes.len(),
+        2,
+        "`typeof {{}}` recovery should add a second declarator"
+    );
+
+    let recovered_decl = arena
+        .get(decl_list.declarations.nodes[1])
+        .and_then(|node| arena.get_variable_declaration(node))
+        .expect("recovered declaration");
+    let recovered_name = arena.get(recovered_decl.name).expect("recovered name");
+    assert_eq!(
+        recovered_name.kind,
+        syntax_kind_ext::OBJECT_BINDING_PATTERN,
+        "recovered object target should parse as an object binding declarator"
+    );
+}
+
+#[test]
 fn class_field_initializer_does_not_asi_before_computed_member() {
     let (parser, _root) = parse_source("class C {\n    [e]: number = 0\n    [e2]: number\n}");
     let diags = parser.get_diagnostics();
