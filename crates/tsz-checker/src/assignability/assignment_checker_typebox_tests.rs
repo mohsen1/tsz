@@ -27,6 +27,10 @@ function problematicFunction1(ors: Input[]): Output[] {
     return ors;
 }
 
+function problematicFunction2<T extends Output[]>(ors: Input[]): T {
+    return ors;
+}
+
 export declare const Readonly: unique symbol;
 export declare const Optional: unique symbol;
 export declare const Hint: unique symbol;
@@ -72,6 +76,7 @@ declare namespace Type {
     );
 
     assert_static_array_message(&diagnostics, "Static<typeof", "TypeBox");
+    assert_static_array_generic_target_message(&diagnostics, "TypeBox");
 }
 
 #[test]
@@ -98,6 +103,10 @@ export const Output = Schema.Object({
 })
 
 function problematicFunction1(ors: Input[]): Output[] {
+    return ors;
+}
+
+function problematicFunction2<T extends Output[]>(ors: Input[]): T {
     return ors;
 }
 
@@ -146,6 +155,7 @@ declare namespace Schema {
     );
 
     assert_static_array_message(&diagnostics, "Resolve<typeof", "renamed schema");
+    assert_static_array_generic_target_message(&diagnostics, "renamed schema");
 }
 
 fn assert_static_array_message(
@@ -171,5 +181,26 @@ fn assert_static_array_message(
             .iter()
             .all(|message| !message.contains("Input[]") && !message.contains(leaked_alias)),
         "{label} structural display should not leak alias/application array names, got: {messages:?}"
+    );
+}
+
+fn assert_static_array_generic_target_message(
+    diagnostics: &[crate::diagnostics::Diagnostic],
+    label: &str,
+) {
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    if messages.is_empty() {
+        return;
+    }
+
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '{ level1: { level2: { foo: string; }; }; }[]' is not assignable to type 'T'."
+        )),
+        "{label} generic return diagnostic should keep the target type parameter and structural source array, got: {messages:?}"
     );
 }
