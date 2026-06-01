@@ -65,6 +65,8 @@ pub(crate) enum RelationKind {
     MissingPropertyWrite,
     /// Exact-optional source-member filtering probes for assignability diagnostics.
     ExactOptionalSourceFilter,
+    /// JSX construct-return render fallback required-property compatibility probes.
+    JsxRenderFallback,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
@@ -269,6 +271,10 @@ impl RelationRequest {
 
     pub(crate) const fn exact_optional_source_filter(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ExactOptionalSourceFilter)
+    }
+
+    pub(crate) const fn jsx_render_fallback(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::JsxRenderFallback)
     }
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {

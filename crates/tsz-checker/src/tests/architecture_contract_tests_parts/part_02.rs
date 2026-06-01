@@ -179,6 +179,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "RelationKind::ExactOptionalSourceFilter",
         ),
         (
+            "fn jsx_render_fallback",
+            "RelationKind::JsxRenderFallback",
+        ),
+        (
             "fn object_literal_computed_key",
             "RelationKind::ObjectLiteralComputedKey",
         ),
