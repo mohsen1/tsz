@@ -121,12 +121,87 @@ pub fn compute_actual_type_param_variances_with_resolver(
     computer.compute_def_variances(def_id)
 }
 
+/// Session-cached form of [`compute_type_param_variances_with_resolver`].
+///
+/// Variance of a generic `DefId` is a pure function of that definition's
+/// resolved body, so for a fixed checking session the declared-variance mask is
+/// stable across every reference to the generic. Without memoization, each type
+/// reference that validates its type arguments rebuilds a fresh
+/// [`VarianceComputer`] and re-walks the entire (possibly deep, lazy-ref-heavy)
+/// type graph from scratch — the dominant cost when checking large
+/// generic-alias-heavy projects.
+///
+/// This helper computes the mask **using the supplied resolver** (never the
+/// query database's own resolver, which may not see local alias bodies) but
+/// threads the session-level variance cache exposed by [`QueryDatabase`] into
+/// the [`VarianceComputer`] so that *every* `DefId` resolved at a context-free
+/// top-level entry — both the queried def and any nested generic reached
+/// through `visit_application` whose own walk starts with an empty active-def
+/// set — is read from / written to one persistent map. The cache key is the
+/// `DefId` alone: the stored value is the declared-variance mask, identical to
+/// what the uncached call would return, so consulting/populating the cache
+/// cannot change any diagnostic.
+///
+/// ## Soundness gate (the empty-active-def entry rule)
+///
+/// A [`VarianceComputer`] tracks `active_defs` to truncate cyclic
+/// self-references (returning the "independent" placeholder mask). The mask a
+/// `DefId` produces is therefore a pure function of its resolved body **only
+/// when its `compute_def_variances` walk begins with no other def already on the
+/// recursion stack**: if an outer def is active, a back-edge into it would be
+/// truncated, yielding a context-dependent mask. The visitor-level nesting
+/// counters (`mapped_depth`, `method_bivariant_depth`, `inside_unreliable`,
+/// `bound_type_params`) never cross a `compute_def_variances` boundary — each
+/// nested def starts fresh visitors at base context — so an empty `active_defs`
+/// at entry is the exact, complete condition for context-freedom.
+///
+/// The cache is consulted and populated **only** for `compute_def_variances`
+/// calls observed with an empty `active_defs` set at entry. The handful of
+/// genuinely context-sensitive defs (those reached only through a nested
+/// application while an outer def is active) never satisfy this gate and are
+/// never cached, so they recompute on every reference exactly as before.
+///
+/// Only fully-resolved (`Some`) results are memoized. A `None` (unresolved or
+/// non-generic) result is not cached, so a later reference made after the
+/// definition's body becomes resolvable still recomputes.
+pub fn compute_type_param_variances_with_resolver_cached(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    query_db: Option<&dyn QueryDatabase>,
+    def_id: DefId,
+) -> Option<Arc<[Variance]>> {
+    let session_cache = query_db.filter(|_| variance_cache_enabled());
+    let mut computer = VarianceComputer::new(db, resolver);
+    computer.session_cache = session_cache;
+    computer.compute_def_variances(def_id)
+}
+
+/// Debug kill-switch for the session-level computed-variance cache.
+///
+/// Set `TSZ_DISABLE_VARIANCE_CACHE=1` to bypass both reads and writes so the
+/// resolver-aware variance walk runs uncached on every reference. Used to
+/// bisect regressions and prove byte-identical diagnostics; defaults to enabled.
+fn variance_cache_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TSZ_DISABLE_VARIANCE_CACHE").is_err())
+}
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,
     use_declared_variance: bool,
     active_defs: FxHashSet<DefId>,
     cached_def_variances: FxHashMap<DefId, Option<Arc<[Variance]>>>,
+    /// Optional session-persistent declared-variance cache.
+    ///
+    /// When present, `compute_def_variances` reads from and writes to this map
+    /// for every def whose walk begins with an empty `active_defs` set (the
+    /// context-free top-level entry — see
+    /// [`compute_type_param_variances_with_resolver_cached`]). Only wired in for
+    /// `use_declared_variance` computers: the map stores declared masks, so the
+    /// `new_actual` computer must never touch it.
+    session_cache: Option<&'a dyn QueryDatabase>,
 }
 
 impl<'a> VarianceComputer<'a> {
@@ -137,6 +212,7 @@ impl<'a> VarianceComputer<'a> {
             use_declared_variance: true,
             active_defs: FxHashSet::default(),
             cached_def_variances: FxHashMap::default(),
+            session_cache: None,
         }
     }
 
@@ -147,6 +223,7 @@ impl<'a> VarianceComputer<'a> {
             use_declared_variance: false,
             active_defs: FxHashSet::default(),
             cached_def_variances: FxHashMap::default(),
+            session_cache: None,
         }
     }
 
@@ -166,6 +243,22 @@ impl<'a> VarianceComputer<'a> {
             return cached.clone();
         }
 
+        // Context-free top-level entry: no other def is on the recursion stack,
+        // so the mask this walk produces is a pure function of the resolved
+        // body and is safe to share project-wide. Consult the session cache
+        // before doing any work. The visitor-level nesting counters never cross
+        // this boundary, so an empty `active_defs` is the exact gate (see
+        // `compute_type_param_variances_with_resolver_cached`).
+        let context_free_entry = self.active_defs.is_empty();
+        if context_free_entry
+            && let Some(qdb) = self.session_cache
+            && let Some(cached) = qdb.get_cached_type_param_variance(def_id)
+        {
+            self.cached_def_variances
+                .insert(def_id, Some(cached.clone()));
+            return Some(cached);
+        }
+
         if !self.active_defs.insert(def_id) {
             // Recursive self-reference: return independent (empty) variance for
             // each type parameter. This tells visit_application to skip the
@@ -178,7 +271,7 @@ impl<'a> VarianceComputer<'a> {
             return params.map(|p| Arc::from(vec![Variance::empty(); p.len()]));
         }
 
-        let result = (|| {
+        let result: Option<Arc<[Variance]>> = (|| {
             let params = self.resolver.get_lazy_type_params(def_id)?;
             if params.is_empty() {
                 return None;
@@ -193,6 +286,20 @@ impl<'a> VarianceComputer<'a> {
         })();
 
         self.active_defs.remove(&def_id);
+
+        // Promote to the session cache only when this walk was a context-free
+        // top-level entry (empty `active_defs` at entry) and produced a fully
+        // resolved mask. A `None` (unresolved/non-generic) is not cached so a
+        // later reference after the body resolves still recomputes. The stored
+        // mask equals the uncached result, so replaying it cannot change a
+        // diagnostic.
+        if context_free_entry
+            && let Some(qdb) = self.session_cache
+            && let Some(variances) = result.as_ref()
+        {
+            qdb.insert_type_param_variance(def_id, variances.clone());
+        }
+
         self.cached_def_variances.insert(def_id, result.clone());
         result
     }

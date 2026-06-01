@@ -1396,6 +1396,20 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
 
+    /// Pure session-cache lookup for a previously stored variance mask.
+    ///
+    /// Unlike [`Self::get_type_param_variance`], this never computes a result on
+    /// a miss (it does not run `resolve_lazy`/`compute_variance` using the query
+    /// database's own resolver). It only returns an entry that was already
+    /// inserted via [`Self::insert_type_param_variance`]. Resolver-aware callers
+    /// use it to memoize variance keyed by `DefId` without delegating the
+    /// computation to a resolver that may not see local alias bodies.
+    ///
+    /// Default implementation always misses.
+    fn get_cached_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {
+        None
+    }
+
     /// Store a resolver-computed variance mask for reuse by later relation checks.
     fn insert_type_param_variance(&self, _def_id: DefId, _variance: Arc<[Variance]>) {}
 }
