@@ -1317,6 +1317,14 @@ run_isolated() {
 
 is_project_compatibility_row() {
     local candidate="$1"
+    # Fast path: use the compat row set pre-loaded from project-rows.mjs by
+    # project-fixtures.sh at module init, avoiding a Node.js process spawn.
+    if [[ -n "${_TSZ_PACKED_COMPAT_ROWS:-}" ]]; then
+        [[ "|${_TSZ_PACKED_COMPAT_ROWS}|" == *"|${candidate}|"* ]]
+        return
+    fi
+    # Fallback: spawn Node.js (used when project-fixtures.sh was not sourced or
+    # when _TSZ_PACKED_COMPAT_ROWS was not populated).
     command -v node >/dev/null 2>&1 || return 1
 
     PROJECT_ROW_NAME="$candidate" \

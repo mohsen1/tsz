@@ -35,39 +35,31 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "type-challenges-solutions-project"
 )
 
+# Row metadata pre-loaded by tsz_load_fixture_pins_from_rows (pipe-delimited).
+# Set once at module init; subsequent tsz_sync_project_row_groups calls use
+# these values directly so no additional Node.js processes are needed.
+_TSZ_PROJECT_METADATA_LOADED=""
+_TSZ_PACKED_GUARD_REQUIRED_ROWS=""
+_TSZ_PACKED_CANARY_ROWS=""
+_TSZ_PACKED_COMPAT_ROWS=""
+
+_tsz_unpack_row_groups() {
+  IFS='|' read -ra TSZ_COMPILE_GUARD_REQUIRED_ROWS <<< "$_TSZ_PACKED_GUARD_REQUIRED_ROWS"
+  IFS='|' read -ra TSZ_COMPILE_GUARD_CANARY_ROWS <<< "$_TSZ_PACKED_CANARY_ROWS"
+}
+
 tsz_sync_project_row_groups() {
-  if ! command -v node >/dev/null 2>&1; then
+  # Fast path: use row groups already loaded by tsz_load_fixture_pins_from_rows.
+  if [[ -n "${_TSZ_PACKED_GUARD_REQUIRED_ROWS:-}" && -n "${_TSZ_PACKED_CANARY_ROWS:-}" ]]; then
+    _tsz_unpack_row_groups
     return 0
   fi
 
-  local required_rows
-  local canary_rows
-
-  required_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
-import { pathToFileURL } from "node:url";
-const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
-console.log(rowModule.COMPILE_GUARD_REQUIRED_ROWS.join("\n"));
-NODE
-  )"
-  canary_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
-import { pathToFileURL } from "node:url";
-const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
-console.log(rowModule.COMPILE_CANARY_PROJECT_ROWS.join("\n"));
-NODE
-  )"
-
-  TSZ_COMPILE_GUARD_REQUIRED_ROWS=()
-  if [ -n "$required_rows" ]; then
-    while IFS= read -r row_name; do
-      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_REQUIRED_ROWS+=("$row_name")
-    done <<< "$required_rows"
-  fi
-
-  TSZ_COMPILE_GUARD_CANARY_ROWS=()
-  if [ -n "$canary_rows" ]; then
-    while IFS= read -r row_name; do
-      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_CANARY_ROWS+=("$row_name")
-    done <<< "$canary_rows"
+  # Fallback: trigger the consolidated metadata load (handles the case where node
+  # was unavailable at module init) then retry the fast path.
+  tsz_load_fixture_pins_from_rows
+  if [[ -n "${_TSZ_PACKED_GUARD_REQUIRED_ROWS:-}" && -n "${_TSZ_PACKED_CANARY_ROWS:-}" ]]; then
+    _tsz_unpack_row_groups
   fi
 }
 
@@ -146,14 +138,19 @@ NODE
 }
 
 tsz_load_fixture_pins_from_rows() {
+  # Idempotency guard: skip if already loaded in this process.
+  [[ -n "${_TSZ_PROJECT_METADATA_LOADED:-}" ]] && return 0
   command -v node >/dev/null 2>&1 || return 0
 
   local assignments
   assignments="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
 import { pathToFileURL } from "node:url";
-const { PROJECT_ROW_DEFINITIONS } = await import(
-  pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS)
-);
+const {
+  PROJECT_ROW_DEFINITIONS,
+  COMPILE_GUARD_REQUIRED_ROWS,
+  COMPILE_CANARY_PROJECT_ROWS,
+  REQUIRED_PROJECT_ROWS,
+} = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS));
 
 const PIN_FIELDS = [
   ["repo_env", "repo"],
@@ -169,16 +166,44 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     }
   }
 }
+
+// Emit row group metadata so callers avoid separate Node.js invocations.
+// __TSZ_GUARD_REQUIRED__ = compile-guard required rows (guard_set=required).
+// __TSZ_CANARY__         = compile-guard canary rows (guard_set=canary).
+// __TSZ_COMPAT__         = all rows tracked for compatibility reporting
+//                          (benchmark_set=required ∪ guard_set=canary).
+const guardRequired = Array.isArray(COMPILE_GUARD_REQUIRED_ROWS) ? COMPILE_GUARD_REQUIRED_ROWS : [];
+const canary = Array.isArray(COMPILE_CANARY_PROJECT_ROWS) ? COMPILE_CANARY_PROJECT_ROWS : [];
+const benchRequired = Array.isArray(REQUIRED_PROJECT_ROWS) ? REQUIRED_PROJECT_ROWS : [];
+// Some rows have both benchmark_set=required and guard_set=canary (e.g. ts-toolbelt, zod,
+// kysely), so a Set dedup is required before joining.
+const compatSet = new Set([...benchRequired, ...canary]);
+
+if (guardRequired.length > 0)
+  process.stdout.write("__TSZ_GUARD_REQUIRED__=" + guardRequired.join("|") + "\n");
+if (canary.length > 0)
+  process.stdout.write("__TSZ_CANARY__=" + canary.join("|") + "\n");
+if (compatSet.size > 0)
+  process.stdout.write("__TSZ_COMPAT__=" + [...compatSet].join("|") + "\n");
 NODE
   )" || return 0
 
   local varname value
   while IFS='=' read -r varname value; do
     [ -z "$varname" ] && continue
-    if [[ -z "${!varname+x}" ]]; then
-      export "$varname=$value"
-    fi
+    case "$varname" in
+      __TSZ_GUARD_REQUIRED__) _TSZ_PACKED_GUARD_REQUIRED_ROWS="$value" ;;
+      __TSZ_CANARY__)         _TSZ_PACKED_CANARY_ROWS="$value" ;;
+      __TSZ_COMPAT__)         _TSZ_PACKED_COMPAT_ROWS="$value" ;;
+      *)
+        if [[ -z "${!varname+x}" ]]; then
+          export "$varname=$value"
+        fi
+        ;;
+    esac
   done <<< "$assignments"
+
+  _TSZ_PROJECT_METADATA_LOADED=1
 }
 
 tsz_load_fixture_pins_from_rows

@@ -57,17 +57,22 @@ function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 }
 
+function runShellScript(script, env = {}) {
+  const result = spawnSync("bash", ["-lc", script], {
+    cwd: ROOT,
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  });
+  return result;
+}
+
 function shellFixtureSources(rowName, env = {}) {
   const script = `
 set -euo pipefail
 source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
 tsz_project_fixture_sources "${rowName}"
 `;
-  const result = spawnSync("bash", ["-lc", script], {
-    cwd: ROOT,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
-  });
+  const result = runShellScript(script, env);
   assert.equal(
     result.status,
     0,
@@ -86,11 +91,7 @@ printf '%s\\n' "\${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"
 printf 'canary\\n'
 printf '%s\\n' "\${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"
 `;
-  const result = spawnSync("bash", ["-lc", script], {
-    cwd: ROOT,
-    env: process.env,
-    encoding: "utf8",
-  });
+  const result = runShellScript(script);
   assert.equal(
     result.status,
     0,
@@ -104,6 +105,32 @@ printf '%s\\n' "\${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"
   return {
     required: lines.slice(requiredIndex + 1, canaryIndex),
     canary: lines.slice(canaryIndex + 1),
+  };
+}
+
+function shellPreloadedRowMetadata() {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+printf '%s\\n' "\${_TSZ_PACKED_GUARD_REQUIRED_ROWS}"
+printf 'CANARY\\n'
+printf '%s\\n' "\${_TSZ_PACKED_CANARY_ROWS}"
+printf 'COMPAT\\n'
+printf '%s\\n' "\${_TSZ_PACKED_COMPAT_ROWS}"
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `pre-loaded row metadata check failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  const lines = result.stdout.trim().split(/\r?\n/);
+  const canaryIdx = lines.indexOf("CANARY");
+  const compatIdx = lines.indexOf("COMPAT");
+  return {
+    guardRequired: lines.slice(0, canaryIdx).join("").split("|").filter(Boolean),
+    canary: lines.slice(canaryIdx + 1, compatIdx).join("").split("|").filter(Boolean),
+    compat: lines.slice(compatIdx + 1).join("").split("|").filter(Boolean),
   };
 }
 
@@ -179,6 +206,23 @@ assert.deepEqual(
     canary: COMPILE_GUARD_CANARY_PROJECT_ROWS,
   },
   "project-fixtures.sh runtime row groups must sync from scripts/bench/project-rows.mjs",
+);
+
+const preloadedMeta = shellPreloadedRowMetadata();
+assert.deepEqual(
+  preloadedMeta.guardRequired.sort(),
+  COMPILE_GUARD_REQUIRED_ROWS.slice().sort(),
+  "_TSZ_PACKED_GUARD_REQUIRED_ROWS must be pre-loaded at module init from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  preloadedMeta.canary.sort(),
+  COMPILE_GUARD_CANARY_PROJECT_ROWS.slice().sort(),
+  "_TSZ_PACKED_CANARY_ROWS must be pre-loaded at module init from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  preloadedMeta.compat.sort(),
+  sortedUnique([...REQUIRED_PROJECT_ROWS, ...COMPILE_CANARY_PROJECT_ROWS]),
+  "_TSZ_PACKED_COMPAT_ROWS must cover all compatibility rows (required ∪ canary) from project-rows.mjs",
 );
 assert.deepEqual(
   sortedUnique(ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.keys()),
