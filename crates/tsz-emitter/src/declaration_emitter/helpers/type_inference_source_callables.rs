@@ -58,9 +58,6 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let new_expr = self.arena.get_call_expr(expr_node)?;
-        if new_expr.type_arguments.is_some() {
-            return None;
-        }
 
         if let Some(type_text) = self
             .reference_declared_source_type_annotation_text(new_expr.expression)
@@ -89,6 +86,14 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(type_node) = self.arena.get(var_decl.type_annotation) else {
                 continue;
             };
+            if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_sym_id) = self
+                    .declaration_type_symbol_from_type_node(self.arena, var_decl.type_annotation)
+                && let Some(type_text) =
+                    self.source_construct_return_for_type_symbol(type_sym_id, new_expr)
+            {
+                return Some(type_text);
+            }
             if type_node.kind != syntax_kind_ext::CONSTRUCTOR_TYPE {
                 continue;
             }
@@ -251,6 +256,14 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(type_node) = self.arena.get(decl.type_annotation) else {
                 continue;
             };
+            if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_sym_id) =
+                    self.declaration_type_symbol_from_type_node(self.arena, decl.type_annotation)
+                && let Some(type_text) =
+                    self.source_construct_return_for_type_symbol(type_sym_id, new_expr)
+            {
+                return Some(type_text);
+            }
             if type_node.kind != syntax_kind_ext::CONSTRUCTOR_TYPE {
                 continue;
             }
@@ -277,13 +290,112 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn source_construct_return_for_type_symbol(
+        &self,
+        type_sym_id: SymbolId,
+        new_expr: &tsz_parser::parser::node::CallExprData,
+    ) -> Option<String> {
+        self.with_symbol_declarations(type_sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            if let Some(interface) = source_arena.get_interface(decl_node) {
+                return self.source_construct_return_from_members(
+                    source_arena,
+                    &interface.members,
+                    new_expr,
+                );
+            }
+            if let Some(alias) = source_arena.get_type_alias(decl_node) {
+                let alias_node = source_arena.get(alias.type_node)?;
+                if alias_node.kind == syntax_kind_ext::TYPE_LITERAL
+                    && let Some(type_literal) = source_arena.get_type_literal(alias_node)
+                {
+                    return self.source_construct_return_from_members(
+                        source_arena,
+                        &type_literal.members,
+                        new_expr,
+                    );
+                }
+                if alias_node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE {
+                    let ctor_type = source_arena.get_function_type(alias_node)?;
+                    let return_type_text = self.source_type_annotation_text_for_declaration_reuse(
+                        source_arena,
+                        ctor_type.type_annotation,
+                    )?;
+                    return self.substitute_source_construct_signature_type_parameters(
+                        source_arena,
+                        ctor_type.type_parameters.as_ref(),
+                        Some(&ctor_type.parameters),
+                        new_expr,
+                        return_type_text,
+                    );
+                }
+            }
+            None
+        })
+    }
+
+    fn source_construct_return_from_members(
+        &self,
+        source_arena: &NodeArena,
+        members: &NodeList,
+        new_expr: &tsz_parser::parser::node::CallExprData,
+    ) -> Option<String> {
+        for &member_idx in &members.nodes {
+            let Some(member_node) = source_arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                continue;
+            }
+            let Some(signature) = source_arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(return_type_text) = self.source_type_annotation_text_for_declaration_reuse(
+                source_arena,
+                signature.type_annotation,
+            ) else {
+                continue;
+            };
+            let Some(type_text) = self.substitute_source_construct_signature_type_parameters(
+                source_arena,
+                signature.type_parameters.as_ref(),
+                signature.parameters.as_ref(),
+                new_expr,
+                return_type_text,
+            ) else {
+                continue;
+            };
+            if !type_text.contains("unknown") && !type_text.contains("any") {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
     fn substitute_source_construct_type_parameters(
         &self,
         ctor_type: &tsz_parser::parser::node::FunctionTypeData,
         call: &tsz_parser::parser::node::CallExprData,
+        type_text: String,
+    ) -> Option<String> {
+        self.substitute_source_construct_signature_type_parameters(
+            self.arena,
+            ctor_type.type_parameters.as_ref(),
+            Some(&ctor_type.parameters),
+            call,
+            type_text,
+        )
+    }
+
+    fn substitute_source_construct_signature_type_parameters(
+        &self,
+        source_arena: &NodeArena,
+        type_params: Option<&NodeList>,
+        parameters: Option<&NodeList>,
+        call: &tsz_parser::parser::node::CallExprData,
         mut type_text: String,
     ) -> Option<String> {
-        let Some(type_params) = ctor_type.type_parameters.as_ref() else {
+        let Some(type_params) = type_params else {
             return Some(type_text);
         };
         if type_params.nodes.is_empty() {
@@ -294,26 +406,26 @@ impl<'a> DeclarationEmitter<'a> {
         let mut type_param_constraints = Vec::new();
         let mut type_param_defaults = Vec::new();
         for &param_idx in &type_params.nodes {
-            let Some(param_node) = self.arena.get(param_idx) else {
+            let Some(param_node) = source_arena.get(param_idx) else {
                 continue;
             };
-            let Some(param) = self.arena.get_type_parameter(param_node) else {
+            let Some(param) = source_arena.get_type_parameter(param_node) else {
                 continue;
             };
-            let Some(name_text) = self.get_identifier_text(param.name) else {
+            let Some(name_text) = self.identifier_text_from_arena(source_arena, param.name) else {
                 continue;
             };
             if param.constraint.is_some()
                 && let Some(constraint) = self
-                    .emit_type_node_text(param.constraint)
-                    .or_else(|| self.source_slice_from_arena(self.arena, param.constraint))
+                    .emit_type_node_text_from_arena(source_arena, param.constraint)
+                    .or_else(|| self.source_slice_from_arena(source_arena, param.constraint))
             {
                 type_param_constraints.push((name_text.clone(), constraint));
             }
             if param.default.is_some()
                 && let Some(default_text) = self
-                    .emit_type_node_text(param.default)
-                    .or_else(|| self.source_slice_from_arena(self.arena, param.default))
+                    .emit_type_node_text_from_arena(source_arena, param.default)
+                    .or_else(|| self.source_slice_from_arena(source_arena, param.default))
             {
                 type_param_defaults.push((name_text.clone(), default_text));
             }
@@ -327,13 +439,24 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(type_text);
         }
 
-        let mut substitutions = self.infer_call_type_param_substitutions_from_arguments(
-            self.arena,
-            &ctor_type.parameters,
-            call,
-            &type_param_names,
-            &type_param_constraints,
-        );
+        let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        let mut substitutions = if explicit_type_args.is_empty() {
+            parameters.map_or_else(Vec::new, |parameters| {
+                self.infer_call_type_param_substitutions_from_arguments(
+                    source_arena,
+                    parameters,
+                    call,
+                    &type_param_names,
+                    &type_param_constraints,
+                )
+            })
+        } else {
+            type_param_names
+                .iter()
+                .zip(explicit_type_args.iter())
+                .map(|(name_text, arg_text)| (name_text.clone(), arg_text.clone()))
+                .collect()
+        };
         for (name_text, default_text) in type_param_defaults {
             if substitutions
                 .iter()
