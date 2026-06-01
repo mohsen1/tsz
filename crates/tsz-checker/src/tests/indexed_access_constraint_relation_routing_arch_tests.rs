@@ -20,10 +20,13 @@ fn indexed_access_constraint_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "indexed-access key-space relation decisions must use the shared relation outcome boundary"
     );
-    assert_eq!(
-        function.matches("assign_relation_outcome").count(),
-        1,
-        "the keyed-object to object-keys relation should route through RelationOutcome"
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "indexed-access constraint key-space checks should route through named RelationRequests"
+    );
+    assert!(
+        function.contains("indexed_access_constraint_key_relation_outcome("),
+        "the keyed-object to object-keys relation should route through the indexed-access constraint request helper"
     );
 }
 

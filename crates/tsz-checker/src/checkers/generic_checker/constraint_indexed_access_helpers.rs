@@ -111,7 +111,7 @@ impl<'a> CheckerState<'a> {
                     keyed_object_type
                 };
             if !self
-                .assign_relation_outcome(keyed_object_type, object_keys)
+                .indexed_access_constraint_key_relation_outcome(keyed_object_type, object_keys)
                 .related
             {
                 return None;

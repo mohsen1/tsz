@@ -49,6 +49,8 @@ pub(crate) enum RelationKind {
     UnionConstraintMember,
     /// Syntax-instantiated type-argument constraint compatibility probes.
     SyntaxInstantiatedConstraint,
+    /// Indexed-access generic constraint key-space compatibility probes.
+    IndexedAccessConstraintKey,
     /// Generic constraint diagnostic property compatibility probes.
     GenericConstraintProperty,
     /// Source property-name literal compatibility against an index key type.
@@ -274,6 +276,10 @@ impl RelationRequest {
 
     pub(crate) const fn syntax_instantiated_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::SyntaxInstantiatedConstraint)
+    }
+
+    pub(crate) const fn indexed_access_constraint_key(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::IndexedAccessConstraintKey)
     }
 
     pub(crate) const fn generic_constraint_property(source: TypeId, target: TypeId) -> Self {
