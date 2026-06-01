@@ -487,10 +487,19 @@ pub fn instantiate_generic(
     instantiate_generic_cached(interner, None, type_id, type_params, type_args)
 }
 
-/// Cache-aware variant of [`instantiate_generic`]. Shares cache slots with
-/// [`instantiate_type_cached`] via the same `(body, canonical_subst)` key, so
+/// Cache-aware variant of [`instantiate_generic`]. Shares the canonical
+/// `(body, canonical_subst, mode_bits=0, this_type=None)` cache slot so
 /// recursive utility expansion that re-applies the same body/substitution
 /// pair reuses memoized walks instead of re-traversing the body each step.
+///
+/// Routes through the staged [`instantiate_with_request_cached`] engine
+/// rather than [`instantiate_type_cached`] so the full `TypeInstantiator`
+/// walk runs on every cache miss. The leaf fast path on `instantiate_type_cached`
+/// for top-level `IndexAccess` returns the raw `IndexAccess(obj, idx)`
+/// without the eager `evaluate_index_access` step that
+/// `TypeInstantiator::instantiate` performs for fully-concrete index-access
+/// types; delegating to it would regress mapped/keyof conformance for
+/// bodies whose top-level shape is `T[K]`.
 pub fn instantiate_generic_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
@@ -504,10 +513,15 @@ pub fn instantiate_generic_cached(
         return type_id;
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
-    if substitution.is_identity_for(interner, type_params) {
+    if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
         return type_id;
     }
-    instantiate_type_cached(interner, query_db, type_id, &substitution)
+    instantiate_with_request_cached(
+        interner,
+        query_db,
+        InstantiationRequest::new(type_id, &substitution),
+    )
+    .into_type_id()
 }
 
 /// Substitute `ThisType` with a concrete type throughout a type.
