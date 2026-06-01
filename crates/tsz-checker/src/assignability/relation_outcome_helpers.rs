@@ -30,6 +30,36 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a callable-source to union-arm return relation for raw checker
+    /// types, preserving the canonical callable-union return request shape.
+    pub(crate) fn callable_union_return_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::callable_union_return(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a callable-source to union-arm parameter relation for raw checker
+    /// types, preserving the canonical callable-union parameter request shape.
+    pub(crate) fn callable_union_parameter_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::callable_union_parameter(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing JSX children relation for raw checker types,
     /// preserving the canonical JSX children request shape.
     pub(crate) fn jsx_children_relation_outcome(

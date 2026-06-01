@@ -82,6 +82,13 @@ request for contextual-signature, generator callback, variadic tuple parameter,
 polymorphic-`this` rest-target, and aggregate/fresh/rest argument recovery
 probes. Generator callback recovery also uses the call-argument request for
 `TNext` because that component is the value accepted by `next(value)`.
+Callable-source to union-arm compatibility builds
+`RelationRequest::callable_union_return` and
+`RelationRequest::callable_union_parameter` through their matching
+`RelationOutcome` helpers when checking whether a callable source satisfies at
+least one callable union member. The checker owns signature extraction and
+union-arm selection while the requests name the return and contravariant
+parameter relation roles.
 Call-result recovery probes use the call-argument request when comparing actual
 argument types against parameter unions or polymorphic-`this` parameter targets.
 Round-2 generic call argument rechecks and inference-refinement adoption guards

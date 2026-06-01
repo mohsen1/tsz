@@ -23,6 +23,10 @@ pub(crate) enum RelationKind {
     CallArg,
     /// Return statement: `return expr` where function returns T
     Return,
+    /// Callable-source to union-arm return compatibility probe.
+    CallableUnionReturn,
+    /// Callable-source to union-arm parameter compatibility probe.
+    CallableUnionParameter,
     JsxProps,
     JsxChildren,
     /// Component compatibility against user-defined `JSX.ElementType`.
@@ -253,6 +257,14 @@ impl RelationRequest {
 
     pub(crate) const fn return_stmt(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Return)
+    }
+
+    pub(crate) const fn callable_union_return(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::CallableUnionReturn)
+    }
+
+    pub(crate) const fn callable_union_parameter(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::CallableUnionParameter)
     }
 
     pub(crate) const fn jsx_props(source: TypeId, target: TypeId) -> Self {
