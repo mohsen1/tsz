@@ -34,6 +34,24 @@ import {
   assert.equal(subsystems["relations-assignability"].count, 3);
 }
 
+// Encounter-order regression: when source labels interleave, the global
+// `codes` list must reflect input order, NOT the source-bucket order. A
+// previous refactor derived `codes` post-walk by iterating buckets in the
+// fixed sequence (tsc, tsz, tsgo, unattributed); that reshuffled the order
+// recorded into row.diagnostic_codes when a `tsz:` line preceded a `tsc:`
+// line, which downstream feeds known_blockers/summary routing.
+{
+  const agg = aggregateRowDeltas([
+    "tsz: src/a.ts(1,1): error TS2322: assignability failed.",
+    "tsc: src/b.ts(2,2): error TS2304: Cannot find name 'foo'.",
+    "tsz: src/c.ts(3,3): error TS2345: argument mismatch.",
+  ]);
+  assert.deepEqual(agg.codes, ["TS2322", "TS2304", "TS2345"]);
+  // Per-source codes still group by source.
+  assert.deepEqual(agg.codesBySource.tsz, ["TS2322", "TS2345"]);
+  assert.deepEqual(agg.codesBySource.tsc, ["TS2304"]);
+}
+
 // Single-pass property: aggregateRowDeltas must populate every output bucket
 // using a single linear walk. Drive that with a counted accessor and assert
 // each delta line is read at most once for bucket population.

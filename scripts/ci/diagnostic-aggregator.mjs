@@ -80,6 +80,16 @@ export function aggregateRowDeltas(deltas, { subsystemFor } = {}) {
   };
   const bodiesBySource = { tsc: [], tsz: [], tsgo: [], unattributed: [] };
   const subsystemGroups = new Map();
+  // Global `codes` list and seen-set track input-order encounter across the
+  // unified delta walk. Recording first-seen codes inline (rather than
+  // re-deriving from `codesBySource` per source) preserves the historical
+  // encounter order when source labels interleave — e.g. a `tsz: TS2322`
+  // line before a `tsc: TS2304` line must report `[TS2322, TS2304]`,
+  // not the source-bucket order `[TS2304, TS2322]`. This invariant feeds
+  // `known_blockers` and summary routing, so reshuffling would change the
+  // recorded row fingerprint without any underlying diagnostic change.
+  const codes = [];
+  const codesSeen = new Set();
   const coded = [];
   const uncoded = [];
   let firstLocation = null;
@@ -110,6 +120,10 @@ export function aggregateRowDeltas(deltas, { subsystemFor } = {}) {
       const sourceCodeList = codesBySource[sourceKey];
       const sourceCodeSeen = codesSeenBySource[sourceKey];
       for (const code of lineCodes) {
+        if (!codesSeen.has(code) && codes.length < CODE_LIMIT) {
+          codesSeen.add(code);
+          codes.push(code);
+        }
         if (!sourceCodeSeen.has(code) && sourceCodeList.length < CODE_LIMIT) {
           sourceCodeSeen.add(code);
           sourceCodeList.push(code);
@@ -143,20 +157,6 @@ export function aggregateRowDeltas(deltas, { subsystemFor } = {}) {
         for (const code of lineCodes) pushUnique(group.codes, code, CODE_LIMIT);
       }
       if (group.examples.length < SUBSYSTEM_EXAMPLE_LIMIT) group.examples.push(line);
-    }
-  }
-
-  // `codes` is the deduped union of the four per-source lists in
-  // encounter order. Maintaining it inline during the walk would duplicate
-  // the per-source dedup state; deriving it once at the end is cleaner.
-  const codes = [];
-  const codesSeen = new Set();
-  for (const sourceKey of ["tsc", "tsz", "tsgo", "unattributed"]) {
-    for (const code of codesBySource[sourceKey]) {
-      if (codes.length >= CODE_LIMIT) break;
-      if (codesSeen.has(code)) continue;
-      codesSeen.add(code);
-      codes.push(code);
     }
   }
 
