@@ -71,9 +71,10 @@ probes. Generator callback recovery also uses the call-argument request for
 `TNext` because that component is the value accepted by `next(value)`.
 Call-result recovery probes use the call-argument request when comparing actual
 argument types against parameter unions or polymorphic-`this` parameter targets.
-Round-2 generic call argument rechecks also use the env-aware call-argument
-request when comparing refreshed argument types or synthetic spread markers
-against instantiated parameter/rest types.
+Round-2 generic call argument rechecks and inference-refinement adoption guards
+also use the env-aware call-argument request when comparing refreshed,
+checker-refined, or synthetic argument-derived types against instantiated
+parameter/rest types.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
 Iterator `next(value)` compatibility diagnostics use the call-argument request

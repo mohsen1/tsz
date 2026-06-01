@@ -1459,7 +1459,7 @@ impl<'a> CheckerState<'a> {
             // fresh subtype of the solver's. This rejects any widening the
             // filtered substitution might still introduce.
             if self
-                .assign_relation_outcome_with_env(new_type, params[i].type_id)
+                .call_arg_relation_outcome_with_env(new_type, params[i].type_id)
                 .related
             {
                 params[i].type_id = new_type;
@@ -1500,7 +1500,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self
-                .assign_relation_outcome_with_env(literal_type, current)
+                .call_arg_relation_outcome_with_env(literal_type, current)
                 .related
             {
                 params[i].type_id = literal_type;

@@ -137,8 +137,15 @@ fn round2_inference_refinement_uses_env_relation_outcome_boundary() {
 
     assert_eq!(
         helper.matches("assign_relation_outcome_with_env(").count(),
-        4,
-        "round-2 inference refinement should route env-aware relation probes through RelationOutcome"
+        2,
+        "round-2 inference refinement should keep type-equivalence probes on generic RelationOutcome"
+    );
+    assert_eq!(
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
+        2,
+        "round-2 inference refinement should route parameter-adoption probes through call-argument RelationOutcome"
     );
     assert!(
         helper.matches(".related").count() >= 4,
