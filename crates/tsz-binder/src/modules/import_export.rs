@@ -626,10 +626,19 @@ impl BinderState {
                         if let Some(source_module) = module_name {
                             let current_file = self.debugger.current_file.clone();
 
-                            // Collect all the export mappings first (before mutable borrow)
-                            // Also collect node indices and names for creating symbols
-                            let mut export_mappings: Vec<(String, Option<String>, NodeIndex)> =
-                                Vec::new();
+                            // Collect per-spec re-export facts up front, then materialize
+                            // symbols and the file's `reexports` map. Carries the per-spec
+                            // type-only flag merged with the declaration-level flag so
+                            // `export { type Foo, Bar } from "./mod"` keeps `Foo` type-only
+                            // and `Bar` value-bearing (matches tsc's TS1361/TS1362).
+                            struct ReexportSpec {
+                                exported: String,
+                                original: Option<String>,
+                                spec_idx: NodeIndex,
+                                is_type_only: bool,
+                            }
+                            let mut reexport_specs: Vec<ReexportSpec> =
+                                Vec::with_capacity(named.elements.nodes.len());
                             for &spec_idx in &named.elements.nodes {
                                 if let Some(spec_node) = arena.get(spec_idx)
                                     && let Some(spec) = arena.get_specifier(spec_node)
@@ -654,11 +663,13 @@ impl BinderState {
                                     };
 
                                     if let Some(exported) = exported_name.or(original_name) {
-                                        export_mappings.push((
-                                            exported.to_string(),
-                                            original_name.map(std::string::ToString::to_string),
+                                        reexport_specs.push(ReexportSpec {
+                                            exported: exported.to_string(),
+                                            original: original_name
+                                                .map(std::string::ToString::to_string),
                                             spec_idx,
-                                        ));
+                                            is_type_only: export_type_only || spec.is_type_only,
+                                        });
                                     }
                                 }
                             }
@@ -669,41 +680,49 @@ impl BinderState {
                             // leaving the duplicate-identifier checker with two single-decl
                             // symbols and no TS2300. Append the second spec to the existing
                             // re-export alias's declarations instead so the checker sees both.
-                            for (exported, original, spec_idx) in &export_mappings {
+                            for spec in &reexport_specs {
                                 if let Some(existing_id) =
-                                    self.existing_reexport_alias_for_name(arena, exported)
+                                    self.existing_reexport_alias_for_name(arena, &spec.exported)
                                 {
-                                    let span = Self::declaration_span(arena, *spec_idx);
+                                    // First-bound spec's `is_type_only` wins; TS2300 fires on
+                                    // each conflicting declaration site.
+                                    let span = Self::declaration_span(arena, spec.spec_idx);
                                     if let Some(sym) = self.symbols.get_mut(existing_id) {
-                                        sym.add_declaration(*spec_idx, span);
+                                        sym.add_declaration(spec.spec_idx, span);
                                     }
                                     Arc::make_mut(&mut self.node_symbols)
-                                        .insert(spec_idx.0, existing_id);
+                                        .insert(spec.spec_idx.0, existing_id);
                                     continue;
                                 }
                                 let sym_id = self.declare_symbol(
                                     arena,
-                                    exported,
+                                    &spec.exported,
                                     symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
-                                    *spec_idx,
+                                    spec.spec_idx,
                                     true,
                                 );
                                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                                     sym.is_exported = true;
-                                    sym.is_type_only = export_type_only;
+                                    sym.is_type_only = spec.is_type_only;
                                     sym.import_module = Some(source_module.clone());
-                                    sym.import_name =
-                                        Some(original.clone().unwrap_or_else(|| exported.clone()));
+                                    sym.import_name = Some(
+                                        spec.original
+                                            .as_deref()
+                                            .unwrap_or(&spec.exported)
+                                            .to_string(),
+                                    );
                                 }
-                                Arc::make_mut(&mut self.node_symbols).insert(spec_idx.0, sym_id);
+                                Arc::make_mut(&mut self.node_symbols)
+                                    .insert(spec.spec_idx.0, sym_id);
                             }
 
                             // Now apply the mutable borrow to insert the mappings
                             let file_reexports = Arc::make_mut(&mut self.reexports)
                                 .entry(current_file)
                                 .or_default();
-                            for (exported, original, _) in export_mappings {
-                                file_reexports.insert(exported, (source_module.clone(), original));
+                            for spec in reexport_specs {
+                                file_reexports
+                                    .insert(spec.exported, (source_module.clone(), spec.original));
                             }
                         }
                     }

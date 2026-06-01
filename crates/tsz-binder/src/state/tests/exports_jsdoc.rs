@@ -182,6 +182,52 @@ export type { Foo } from './a';
     assert!(!bar_sym.is_type_only);
 }
 
+/// `export { type X, Y } from "./mod"` (per-specifier `type` modifier on a
+/// re-export) must mark only `X` as type-only — independent of whether the
+/// enclosing declaration is `export {}` or `export type {}`. Before the fix the
+/// re-export branch hard-coded `sym.is_type_only = export_type_only`, dropping
+/// the per-specifier flag and letting downstream value imports through `X`
+/// silently succeed (regression in TS1361/TS1362 attribution).
+#[test]
+fn per_specifier_type_modifier_on_reexport_marks_alias_type_only() {
+    let source = r"
+export { type Foo, Bar } from './mod';
+export { type Renamed as Aliased } from './mod';
+";
+    let (binder, _parser) = parse_and_bind(source);
+    let lookup = |name: &str| {
+        let id = binder
+            .file_locals
+            .get(name)
+            .unwrap_or_else(|| panic!("expected {name} alias in file_locals"));
+        binder
+            .symbols
+            .get(id)
+            .unwrap_or_else(|| panic!("expected symbol data for {name}"))
+    };
+
+    let foo_sym = lookup("Foo");
+    assert!(
+        foo_sym.is_type_only,
+        "per-specifier `type Foo` must mark the re-export alias type-only"
+    );
+    assert_eq!(foo_sym.import_module.as_deref(), Some("./mod"));
+    assert_eq!(foo_sym.import_name.as_deref(), Some("Foo"));
+
+    let bar_sym = lookup("Bar");
+    assert!(
+        !bar_sym.is_type_only,
+        "sibling value spec `Bar` in the same export clause must stay value-bearing"
+    );
+
+    let aliased_sym = lookup("Aliased");
+    assert!(
+        aliased_sym.is_type_only,
+        "renamed per-spec `type Renamed as Aliased` must also be type-only"
+    );
+    assert_eq!(aliased_sym.import_name.as_deref(), Some("Renamed"));
+}
+
 #[test]
 fn records_import_metadata_for_exported_reexports() {
     let source = r"
