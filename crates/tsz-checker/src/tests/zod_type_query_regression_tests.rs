@@ -421,6 +421,87 @@ const msg = issueData.message || "";
 }
 
 #[test]
+fn cross_file_array_to_enum_value_import_preserves_literal_members() {
+    let diags = check_multi_file(
+        &[
+            (
+                "helpers/util.ts",
+                r#"
+export namespace util {
+    export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(
+        items: U
+    ): { [k in U[number]]: k } => {
+        const obj: any = {};
+        for (const item of items) obj[item] = item;
+        return obj as any;
+    };
+}
+"#,
+            ),
+            (
+                "helpers/parseUtil.ts",
+                r#"
+import { ZodIssueCode } from "../ZodError";
+import { util } from "./util";
+
+export const ZodParsedType = util.arrayToEnum([
+    "string",
+    "undefined",
+]);
+export type ZodParsedType = keyof typeof ZodParsedType;
+
+export const makeIssueCode = () => ZodIssueCode.invalid_type;
+"#,
+            ),
+            (
+                "ZodError.ts",
+                r#"
+import { ZodParsedType } from "./helpers/parseUtil";
+import { util } from "./helpers/util";
+
+export const ZodIssueCode = util.arrayToEnum([
+    "invalid_type",
+    "custom",
+]);
+export type ZodIssueCode = keyof typeof ZodIssueCode;
+"#,
+            ),
+            (
+                "types.ts",
+                r#"
+import { ZodIssueCode } from "./ZodError";
+import { makeIssueCode, ZodParsedType } from "./helpers/parseUtil";
+
+const code: "invalid_type" = ZodIssueCode.invalid_type;
+const viaCycle: "invalid_type" = makeIssueCode();
+const parsed: "string" = ZodParsedType.string;
+"#,
+            ),
+        ],
+        "types.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2345 | 2353))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected imported arrayToEnum members to keep literal value members, got: {:?}",
+        relevant
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn zod_issue_5030_defaults_path_with_logical_or_array_literal() {
     let diags = check_source_diagnostics(
         r#"
