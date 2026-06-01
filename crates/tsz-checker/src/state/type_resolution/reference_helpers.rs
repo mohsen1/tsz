@@ -44,12 +44,26 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .ref_type_params
+            .get(&sym_id)
+        {
+            return cached.clone();
+        }
         let declared =
             self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
-        if !declared.is_empty() {
-            return declared;
-        }
-        self.get_display_type_params_for_symbol(sym_id)
+        let result = if !declared.is_empty() {
+            declared
+        } else {
+            self.get_display_type_params_for_symbol(sym_id)
+        };
+        self.ctx
+            .type_reference_validation_caches
+            .ref_type_params
+            .insert(sym_id, result.clone());
+        result
     }
 
     pub(crate) fn count_required_reference_type_params(
@@ -57,13 +71,26 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> usize {
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .ref_type_params
+            .get(&sym_id)
+        {
+            return cached.iter().filter(|p| p.default.is_none()).count();
+        }
         let declared =
             self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
         if !declared.is_empty() {
-            return declared
+            let count = declared
                 .iter()
                 .filter(|param| param.default.is_none())
                 .count();
+            self.ctx
+                .type_reference_validation_caches
+                .ref_type_params
+                .insert(sym_id, declared);
+            return count;
         }
         self.count_required_type_params(sym_id)
     }
