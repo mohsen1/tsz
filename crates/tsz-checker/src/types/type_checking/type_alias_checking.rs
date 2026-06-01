@@ -1339,31 +1339,47 @@ impl<'a> CheckerState<'a> {
     /// - Conditional types (recurse into branches, respecting narrowing)
     /// - Mapped types (check constraint is valid key type via TS2322, recurse into template)
     pub(crate) fn check_type_node(&mut self, node_idx: NodeIndex) {
+        let nested_in_type_literal = self.type_node_is_nested_in_type_literal(node_idx);
+        self.check_type_node_with_literal_context(node_idx, nested_in_type_literal);
+    }
+
+    fn check_type_node_with_literal_context(
+        &mut self,
+        node_idx: NodeIndex,
+        nested_in_type_literal: bool,
+    ) {
         if node_idx == NodeIndex::NONE {
             return;
         }
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
         };
+        let child_nested_in_type_literal =
+            nested_in_type_literal || node.kind == syntax_kind_ext::TYPE_LITERAL;
+        macro_rules! check_child_type_node {
+            ($checker:expr, $child:expr) => {
+                $checker.check_type_node_with_literal_context($child, child_nested_in_type_literal)
+            };
+        }
 
         match node.kind {
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 self.check_indexed_access_type(node_idx);
                 if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
-                    self.check_type_node(indexed.object_type);
-                    self.check_type_node(indexed.index_type);
+                    check_child_type_node!(self, indexed.object_type);
+                    check_child_type_node!(self, indexed.index_type);
                 }
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {
                     for &child in &composite.types.nodes {
-                        self.check_type_node(child);
+                        check_child_type_node!(self, child);
                     }
                 }
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                    self.check_type_node(arr.element_type);
+                    check_child_type_node!(self, arr.element_type);
                 }
             }
             k if k == syntax_kind_ext::OPTIONAL_TYPE
@@ -1371,7 +1387,7 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
             {
                 if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    self.check_type_node(wrapped.type_node);
+                    check_child_type_node!(self, wrapped.type_node);
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
@@ -1379,7 +1395,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(type_arguments) = &type_ref.type_arguments
                 {
                     for &arg_idx in &type_arguments.nodes {
-                        self.check_type_node(arg_idx);
+                        check_child_type_node!(self, arg_idx);
                     }
                 }
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
@@ -1391,7 +1407,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let _ = if self.type_node_is_nested_in_type_literal(node_idx) {
+                let _ = if nested_in_type_literal {
                     self.get_type_from_type_node_in_type_literal(node_idx)
                 } else {
                     self.get_type_from_type_node(node_idx)
@@ -1405,7 +1421,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         if member_node.kind == syntax_kind_ext::MAPPED_TYPE {
-                            self.check_type_node(member_idx);
+                            check_child_type_node!(self, member_idx);
                             continue;
                         }
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
@@ -1418,19 +1434,19 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.arena.get_parameter(param_node)
                                         && param.type_annotation != NodeIndex::NONE
                                     {
-                                        self.check_type_node(param.type_annotation);
+                                        check_child_type_node!(self, param.type_annotation);
                                     }
                                 }
                             }
                             if sig.type_annotation != NodeIndex::NONE {
-                                self.check_type_node(sig.type_annotation);
+                                check_child_type_node!(self, sig.type_annotation);
                             }
                             self.pop_type_parameters(type_param_updates);
                             continue;
                         }
                         if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
                             if index_sig.type_annotation != NodeIndex::NONE {
-                                self.check_type_node(index_sig.type_annotation);
+                                check_child_type_node!(self, index_sig.type_annotation);
                             }
                             // TS1337: Check index signature parameter type for
                             // generic type parameters or literal types.
@@ -1439,7 +1455,7 @@ impl<'a> CheckerState<'a> {
                         }
                         if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                             if accessor.type_annotation != NodeIndex::NONE {
-                                self.check_type_node(accessor.type_annotation);
+                                check_child_type_node!(self, accessor.type_annotation);
                             }
                             // Also check set accessor parameter type annotations
                             // for constraint validation (TS2344).
@@ -1450,7 +1466,7 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.arena.get_parameter(param_node)
                                         && param.type_annotation != NodeIndex::NONE
                                     {
-                                        self.check_type_node(param.type_annotation);
+                                        check_child_type_node!(self, param.type_annotation);
                                     }
                                 }
                             }
@@ -1461,7 +1477,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(prop) = self.ctx.arena.get_property_decl(member_node)
                             && prop.type_annotation != NodeIndex::NONE
                         {
-                            self.check_type_node(prop.type_annotation);
+                            check_child_type_node!(self, prop.type_annotation);
                         }
                     }
 
@@ -1524,7 +1540,7 @@ impl<'a> CheckerState<'a> {
                         if !check_is_type_param {
                             let infer_pushes =
                                 self.push_infer_bindings_from_extends(cond.extends_type);
-                            self.check_type_node(cond.true_type);
+                            check_child_type_node!(self, cond.true_type);
                             self.pop_infer_bindings(infer_pushes);
                         }
                     }
@@ -1534,7 +1550,7 @@ impl<'a> CheckerState<'a> {
                         .get(cond.false_type)
                         .is_some_and(|n| n.kind == syntax_kind_ext::MAPPED_TYPE);
                     if false_is_mapped {
-                        self.check_type_node(cond.false_type);
+                        check_child_type_node!(self, cond.false_type);
                     }
                     if self.ctx.compiler_options.no_unused_parameters {
                         self.check_unused_infer_type_params_in_conditional(cond);
@@ -1580,12 +1596,12 @@ impl<'a> CheckerState<'a> {
                         pushed_name = Some((name, previous));
                     }
                     if mapped.type_node != NodeIndex::NONE {
-                        self.check_type_node(mapped.type_node);
+                        check_child_type_node!(self, mapped.type_node);
                     }
                     // Also recurse into the name_type (the `as` clause) which may
                     // reference the mapped type parameter.
                     if mapped.name_type != NodeIndex::NONE {
-                        self.check_type_node(mapped.name_type);
+                        check_child_type_node!(self, mapped.name_type);
                     }
                     if let Some((name, previous)) = pushed_name {
                         if let Some(prev_type) = previous {
@@ -1605,7 +1621,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
                     let elements = tuple.elements.nodes.clone();
                     for &element_idx in &elements {
-                        self.check_type_node(element_idx);
+                        check_child_type_node!(self, element_idx);
                     }
                 }
             }
@@ -1639,11 +1655,11 @@ impl<'a> CheckerState<'a> {
                                 .then_some(param.type_annotation)
                         })();
                         if let Some(param_type_annotation) = param_type_annotation {
-                            self.check_type_node(param_type_annotation);
+                            check_child_type_node!(self, param_type_annotation);
                         }
                     }
                     if type_annotation.is_some() {
-                        self.check_type_node(type_annotation);
+                        check_child_type_node!(self, type_annotation);
                     }
                     self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
@@ -1656,7 +1672,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let args_nodes = args.nodes.clone();
                     for &arg_idx in &args_nodes {
-                        self.check_type_node(arg_idx);
+                        check_child_type_node!(self, arg_idx);
                     }
                     let expr_name = type_query.expr_name;
                     let expr_type = if self
