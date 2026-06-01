@@ -102,6 +102,8 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["allowlist_cap"], 2)
         self.assertEqual(report["remaining_allowlist_capacity"], 1)
         self.assertEqual(report["allowlist_budget_status"], "available")
+        self.assertEqual(report["exhausted_category_count"], 0)
+        self.assertEqual(report["exhausted_categories"], [])
         self.assertEqual(report["unallowlisted_calls"], 1)
         self.assertEqual(report["over_allowlist_files"], 0)
         self.assertEqual(report["over_allowlist_excess_calls"], 0)
@@ -217,6 +219,8 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "remaining_allowlist_capacity=0, "
             "allowlist_budget_status=exhausted, "
             "category_budgets=semantic-output-surgery=2/2:exhausted, "
+            "exhausted_category_count=1, "
+            "exhausted_categories=semantic-output-surgery, "
             "unallowlisted_calls=0, "
             "over_allowlist_files=0, "
             "over_allowlist_excess_calls=0, "
@@ -258,6 +262,40 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "category_budgets=UNALLOWLISTED=unallowlisted:4,"
             "dts-output-surgery=2/3:available,"
             "ir-output-surgery=1/1:exhausted",
+        )
+
+    def test_exhausted_category_metrics_name_only_zero_capacity_categories(self):
+        file_summaries = [
+            {
+                "path": "a.rs",
+                "count": 2,
+                "category": "dts-output-surgery",
+                "max_count": 3,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            },
+            {
+                "path": "b.rs",
+                "count": 1,
+                "category": "ir-output-surgery",
+                "max_count": 1,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            },
+            {
+                "path": "c.rs",
+                "count": 4,
+                "category": "UNALLOWLISTED",
+                "max_count": None,
+                "reason": None,
+                "status": "unallowlisted",
+            },
+        ]
+
+        self.assertEqual(self.audit.exhausted_category_names(file_summaries), ["ir-output-surgery"])
+        self.assertEqual(
+            self.audit.format_exhausted_category_metrics(file_summaries),
+            "exhausted_category_count=1, exhausted_categories=ir-output-surgery",
         )
 
     def test_budget_status_classifies_budget_edges(self):
