@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `object_literal_computed_key`, `contextual_symbol_index_value` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -154,6 +154,19 @@ Variable initializer diagnostics build
 failure before object-literal/property elaboration or generic TS2322 fallback.
 The checker owns variable-declaration anchoring and elaboration order while the
 request names the relation role.
+
+Object-literal computed-key routing builds
+`RelationRequest::object_literal_computed_key` through
+`object_literal_computed_key_relation_outcome` when deciding whether a computed
+property key flows into the inferred number, symbol, or string index-signature
+bucket. The checker owns bucket selection while the request names the relation
+role.
+
+Contextual symbol-index diagnostics build
+`RelationRequest::contextual_symbol_index_value` through
+`contextual_symbol_index_value_relation_outcome` when checking a computed
+property value against a contextual symbol index signature. The checker owns
+the computed-name diagnostic anchor while the request names the relation role.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

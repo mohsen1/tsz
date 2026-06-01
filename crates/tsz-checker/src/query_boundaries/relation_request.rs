@@ -45,6 +45,10 @@ pub(crate) enum RelationKind {
     DuplicateIdentifier,
     /// Variable initializer compatibility probes for TS2322 elaboration paths.
     VariableInitializer,
+    /// Object-literal computed-key routing probes for index-signature buckets.
+    ObjectLiteralComputedKey,
+    /// Contextual symbol-index value compatibility for object-literal diagnostics.
+    ContextualSymbolIndexValue,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -179,6 +183,14 @@ impl RelationRequest {
 
     pub(crate) const fn variable_initializer(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::VariableInitializer)
+    }
+
+    pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ObjectLiteralComputedKey)
+    }
+
+    pub(crate) const fn contextual_symbol_index_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ContextualSymbolIndexValue)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

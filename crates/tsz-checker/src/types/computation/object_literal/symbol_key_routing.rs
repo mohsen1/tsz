@@ -41,12 +41,12 @@ impl<'a> CheckerState<'a> {
         symbol_index_types: &mut Vec<TypeId>,
     ) {
         if self
-            .assign_relation_outcome(prop_name_type, TypeId::NUMBER)
+            .object_literal_computed_key_relation_outcome(prop_name_type, TypeId::NUMBER)
             .related
         {
             number_index_types.push(value_type);
         } else if self
-            .assign_relation_outcome(prop_name_type, TypeId::SYMBOL)
+            .object_literal_computed_key_relation_outcome(prop_name_type, TypeId::SYMBOL)
             .related
         {
             symbol_index_types.push(value_type);
@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if self
-            .assign_relation_outcome(source_value_type, target_value_type)
+            .contextual_symbol_index_value_relation_outcome(source_value_type, target_value_type)
             .related
         {
             return false;

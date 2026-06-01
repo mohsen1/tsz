@@ -138,6 +138,14 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn variable_initializer",
             "RelationKind::VariableInitializer",
         ),
+        (
+            "fn object_literal_computed_key",
+            "RelationKind::ObjectLiteralComputedKey",
+        ),
+        (
+            "fn contextual_symbol_index_value",
+            "RelationKind::ContextualSymbolIndexValue",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

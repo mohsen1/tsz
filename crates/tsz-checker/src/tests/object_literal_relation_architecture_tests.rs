@@ -209,9 +209,14 @@ fn test_contextual_symbol_index_value_mismatch_uses_relation_outcome_boundary() 
         .expect("failed to locate contextual symbol index diagnostic helper");
 
     assert!(
-        helper.contains("assign_relation_outcome(source_value_type, target_value_type)")
-            && helper.contains(".related"),
-        "contextual symbol-index diagnostics must route value compatibility through relation outcomes"
+        helper.contains(
+            "contextual_symbol_index_value_relation_outcome(source_value_type, target_value_type)"
+        ) && helper.contains(".related"),
+        "contextual symbol-index diagnostics must route value compatibility through the dedicated relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "contextual symbol-index diagnostics must not use the generic assign relation outcome"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard(source_value_type, target_value_type)"),
@@ -233,15 +238,38 @@ fn test_computed_key_index_signature_routing_uses_relation_outcome_boundary() {
         .expect("failed to locate computed-key index-signature routing helper");
 
     assert!(
-        helper.contains("assign_relation_outcome(prop_name_type, TypeId::NUMBER)")
-            && helper.contains("assign_relation_outcome(prop_name_type, TypeId::SYMBOL)")
-            && helper.contains(".related"),
-        "computed-key index-signature routing must route key-space checks through relation outcomes"
+        helper.contains(
+            "object_literal_computed_key_relation_outcome(prop_name_type, TypeId::NUMBER)"
+        ) && helper.contains(
+            "object_literal_computed_key_relation_outcome(prop_name_type, TypeId::SYMBOL)"
+        ) && helper.contains(".related"),
+        "computed-key index-signature routing must route key-space checks through the dedicated relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "computed-key index-signature routing must not use the generic assign relation outcome"
     );
     assert!(
         !helper.contains("is_assignable_to(prop_name_type, TypeId::NUMBER)")
             && !helper.contains("is_assignable_to(prop_name_type, TypeId::SYMBOL)"),
         "computed-key index-signature routing must not regress to raw boolean assignability"
+    );
+}
+
+#[test]
+fn test_object_literal_symbol_key_helpers_use_dedicated_requests() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn object_literal_computed_key_relation_outcome(")
+            && source.contains("RelationRequest::object_literal_computed_key("),
+        "computed-key routing should have a dedicated RelationRequest helper"
+    );
+    assert!(
+        source.contains("fn contextual_symbol_index_value_relation_outcome(")
+            && source.contains("RelationRequest::contextual_symbol_index_value("),
+        "contextual symbol-index diagnostics should have a dedicated RelationRequest helper"
     );
 }
 
