@@ -340,11 +340,11 @@ Class/interface heritage diagnostics build
 `RelationRequest::jsdoc_heritage_constraint` through dedicated relation outcome
 helpers when probing class-extends index-signature values, namespace-merged
 static-side compatibility, inherited-base index conflicts, whole
-class-implements surfaces, generic method specialization, type-alias property
-compatibility with inherited string indexes, or JSDoc heritage object
-constraints. The checker owns
-heritage diagnostic anchoring and suppression order while the requests name the
-relation roles.
+class-implements surfaces, generic method specialization and fresh generic
+trailing-overload retries, type-alias property compatibility with inherited
+string indexes, or JSDoc heritage object constraints. The checker owns heritage
+diagnostic anchoring, retry eligibility, and suppression order while the
+requests name the relation roles.
 
 Assignability reporter presentation builds
 `RelationRequest::missing_property_read`,

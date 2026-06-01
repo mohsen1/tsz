@@ -17,13 +17,19 @@ fn class_member_fallback_relations_use_relation_outcome_boundary() {
         })
         .expect("failed to isolate interface overload fallback helper");
     assert!(
-        overload_helper.contains("checker.assign_relation_outcome(source, target).related"),
-        "interface overload fallback should route standard relation truth through assign_relation_outcome"
+        overload_helper
+            .contains("interface_heritage_generic_method_relation_outcome(source, target)")
+            && overload_helper.contains(".related"),
+        "interface overload fallback should route standard relation truth through the interface-heritage generic-method RelationRequest"
     );
     assert!(
         overload_helper.contains("no_erase_generics_relation_outcome(source, target)")
             && overload_helper.contains(".related"),
         "interface overload strict generic compatibility should route through an outcome-shaped no-erase boundary"
+    );
+    assert!(
+        !overload_helper.contains("checker.assign_relation_outcome(source, target).related"),
+        "interface overload fallback should not use generic assignment request routing"
     );
     assert!(
         !overload_helper.contains("diagnostic_relation_boolean_guard(source, target)"),

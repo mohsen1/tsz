@@ -462,7 +462,10 @@ pub(crate) fn interface_overload_trailing_signature_assignable(
     checker
         .no_erase_generics_relation_outcome(source, target)
         .related
-        || (allow_fresh_generic_retry && checker.assign_relation_outcome(source, target).related)
+        || (allow_fresh_generic_retry
+            && checker
+                .interface_heritage_generic_method_relation_outcome(source, target)
+                .related)
 }
 
 fn call_signature_function_type(
