@@ -221,6 +221,45 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_property_name_text(name_idx))
     }
 
+    pub(in crate::declaration_emitter) fn emittable_computed_property_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.arena.get_computed_property(name_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                let is_unique_symbol_key = self
+                    .value_reference_symbol(expr_idx)
+                    .is_some_and(|sym_id| self.symbol_has_unique_symbol_type(sym_id));
+                let is_usable_property_name = self
+                    .type_interner
+                    .zip(self.get_node_type_or_names(&[expr_idx, name_idx]))
+                    .is_some_and(|(interner, type_id)| {
+                        tsz_solver::visitor::unique_symbol_ref(interner, type_id).is_some()
+                            || tsz_solver::type_queries::is_type_usable_as_property_name(
+                                interner, type_id,
+                            )
+                    });
+                if !is_unique_symbol_key && !is_usable_property_name {
+                    return None;
+                }
+                self.get_source_slice(name_node.pos, name_node.end)
+                    .map(|text| text.trim().to_string())
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::declaration_emitter) fn resolved_computed_property_name_text(
         &self,
         name_idx: NodeIndex,
@@ -548,6 +587,7 @@ impl<'a> DeclarationEmitter<'a> {
         // member are reproducible (`[E.A]`, `[SOME_CONST]`, unique symbols).
         if self
             .resolved_computed_property_name_text(name_idx)
+            .or_else(|| self.emittable_computed_property_name_text(name_idx))
             .is_some()
         {
             return false;
