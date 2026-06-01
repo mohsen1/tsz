@@ -16,8 +16,8 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 8,
-        "top-level assignability diagnostics should use RelationOutcome for TS2322-family probes"
+        source.matches("assign_relation_outcome(").count() <= 7,
+        "remaining generic assignability diagnostics relation probes should keep shrinking"
     );
     let generic_start = argument_reports
         .find("pub(crate) fn check_assignable_or_report_generic_at")
@@ -43,6 +43,22 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
         !source
             .contains("assign_relation_outcome(source, target).related && !checker_only_mismatch"),
         "argument diagnostics should not use the generic assign request for the initial TS2345 probe"
+    );
+    let jsx_callback_start = root_source
+        .find("pub(crate) fn check_assignable_or_report_jsx_callback_prop_at")
+        .expect("missing JSX callback prop assignability reporter");
+    let jsx_callback_end = jsx_callback_start
+        + root_source[jsx_callback_start..]
+            .find("fn check_assignable_or_report_at_with_options")
+            .expect("missing next assignability diagnostics helper");
+    let jsx_callback_reporter = &root_source[jsx_callback_start..jsx_callback_end];
+    assert!(
+        jsx_callback_reporter.contains("jsx_props_relation_outcome(source, target)"),
+        "JSX callback prop reporter should use the JSX props RelationOutcome"
+    );
+    assert!(
+        !jsx_callback_reporter.contains("assign_relation_outcome(source, target)"),
+        "JSX callback prop reporter should not use the generic assign request"
     );
     assert!(
         !source.contains("assign_relation_outcome(target, source).related"),

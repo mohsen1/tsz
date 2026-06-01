@@ -504,7 +504,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.assign_relation_outcome(source, target).related {
+        if self.jsx_props_relation_outcome(source, target).related {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
