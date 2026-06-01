@@ -201,6 +201,11 @@ impl<'a> CheckerState<'a> {
                 .register_def_auto_params_in_envs(def_id, direct_type, params.clone());
         }
         let lazy_type = self.ctx.types.lazy(def_id);
+        self.ctx.symbol_types.insert(sym_id, lazy_type);
+        self.ctx
+            .lib_delegation_cache
+            .insert_symbol_type(sym_id, (lazy_type, params.clone()));
+        self.cache_shared_actual_lib_delegation(&name, lazy_type);
         Some((lazy_type, params))
     }
 }

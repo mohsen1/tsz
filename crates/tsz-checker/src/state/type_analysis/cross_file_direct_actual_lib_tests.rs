@@ -411,6 +411,16 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         crate::query_boundaries::common::lazy_def_id(state.ctx.types, validity_state).is_some(),
         "value-merged DOM interfaces should return a type-position Lazy ref",
     );
+    let (cached_validity, cached_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(validity_sym_id)
+        .expect("admitted value-merged DOM interfaces should populate the delegation cache");
+    assert_eq!(cached_validity, validity_state);
+    assert!(
+        cached_params.is_empty(),
+        "ValidityState should cache without generic params",
+    );
 
     let document_sym_id = state
         .ctx
