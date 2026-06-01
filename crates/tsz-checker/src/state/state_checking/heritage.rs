@@ -4,15 +4,29 @@ use crate::query_boundaries::class_type as class_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
+    fn symbol_is_import_equals_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.has_any_flags(symbol_flags::ALIAS)
+            && symbol.all_declarations().iter().any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            })
+    }
+
     fn import_equals_module_base_without_export_equals(&self, sym_id: SymbolId) -> Option<String> {
-        let alias = self.local_import_alias(sym_id)?;
-        if !self.local_import_alias_is_import_equals(alias) {
+        let alias = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        if !self.symbol_is_import_equals_alias(alias) {
             return None;
         }
 

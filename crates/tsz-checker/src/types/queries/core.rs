@@ -1074,13 +1074,7 @@ impl<'a> CheckerState<'a> {
                     type_idx
                 };
             let base_sym_id = self.resolve_heritage_symbol(expr_idx)?;
-            let base_idx = self.get_class_declaration_from_symbol(base_sym_id)?;
-            if let Some(expected_name) = self.heritage_name_text(expr_idx)
-                && !self.declaration_name_matches(base_idx, &expected_name)
-            {
-                return None;
-            }
-            return Some(base_idx);
+            return self.get_class_declaration_from_symbol(base_sym_id);
         }
 
         None

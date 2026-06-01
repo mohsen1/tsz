@@ -43,18 +43,10 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
-        let import_target =
-            self.extract_declared_type_params_for_local_import_alias(sym_id, expected_name);
-        if !import_target.is_empty() {
-            return import_target;
-        }
         let declared =
             self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
         if !declared.is_empty() {
             return declared;
-        }
-        if self.current_reference_symbol_has_no_type_params(sym_id, expected_name) {
-            return Vec::new();
         }
         self.get_display_type_params_for_symbol(sym_id)
     }
@@ -64,14 +56,6 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> usize {
-        let import_target =
-            self.extract_declared_type_params_for_local_import_alias(sym_id, expected_name);
-        if !import_target.is_empty() {
-            return import_target
-                .iter()
-                .filter(|param| param.default.is_none())
-                .count();
-        }
         let declared =
             self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
         if !declared.is_empty() {
@@ -80,65 +64,7 @@ impl<'a> CheckerState<'a> {
                 .filter(|param| param.default.is_none())
                 .count();
         }
-        if self.current_reference_symbol_has_no_type_params(sym_id, expected_name) {
-            return 0;
-        }
         self.count_required_type_params(sym_id)
-    }
-
-    fn current_reference_symbol_has_no_type_params(
-        &self,
-        sym_id: SymbolId,
-        expected_name: &str,
-    ) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        if symbol.has_any_flags(symbol_flags::ALIAS) || symbol.escaped_name != expected_name {
-            return false;
-        }
-
-        let mut found_matching_declaration = false;
-        for decl_idx in symbol.all_declarations() {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-
-            let type_parameters = if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                if !self.declaration_name_matches(decl_idx, expected_name) {
-                    continue;
-                }
-                &type_alias.type_parameters
-            } else if let Some(class) = self.ctx.arena.get_class(node) {
-                if !self.declaration_name_matches(decl_idx, expected_name) {
-                    continue;
-                }
-                &class.type_parameters
-            } else if let Some(interface) = self.ctx.arena.get_interface(node) {
-                if !self.declaration_name_matches(decl_idx, expected_name) {
-                    continue;
-                }
-                &interface.type_parameters
-            } else if self.ctx.arena.get_enum(node).is_some() {
-                if !self.declaration_name_matches(decl_idx, expected_name) {
-                    continue;
-                }
-                found_matching_declaration = true;
-                continue;
-            } else {
-                continue;
-            };
-
-            found_matching_declaration = true;
-            if type_parameters
-                .as_ref()
-                .is_some_and(|params| !params.nodes.is_empty())
-            {
-                return false;
-            }
-        }
-
-        found_matching_declaration
     }
 
     pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
@@ -664,58 +590,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             Some(params)
                         }
-                    } else if let Some(type_parameters) = class.type_parameters.as_ref() {
-                        let type_resolver = |node_idx: NodeIndex| {
-                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
-                                    .then(|| {
-                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
-                                    })
-                                    .flatten()
-                                    .or_else(|| {
-                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
-                                    })
-                                    .and_then(|def_id| {
-                                        self.ctx.def_to_symbol_id_with_fallback(def_id)
-                                    })
-                                    .map(|sym_id| sym_id.0)
-                            })
-                        };
-                        let def_id_resolver = |node_idx: NodeIndex| {
-                            decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
-                                    .then(|| {
-                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
-                                    })
-                                    .flatten()
-                                    .or_else(|| {
-                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
-                                    })
-                            })
-                        };
-                        let value_resolver =
-                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                        let name_resolver = |type_name: &str| {
-                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
-                                .then(|| {
-                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
-                                })
-                                .flatten()
-                                .or_else(|| {
-                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
-                                })
-                        };
-                        let params = tsz_lowering::TypeLowering::with_hybrid_resolver(
-                            decl_arena,
-                            self.ctx.types,
-                            &type_resolver,
-                            &def_id_resolver,
-                            &value_resolver,
-                        )
-                        .with_name_def_id_resolver(&name_resolver)
-                        .prefer_name_def_id_resolution()
-                        .collect_type_parameters(type_parameters);
-                        Some(params)
                     } else {
                         None
                     }
@@ -1139,48 +1013,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        if let Some(result) = self.class_instance_type_with_params_from_local_import_alias(sym_id) {
-            return Some(result);
-        }
-
-        let mut effective_sym_id = sym_id;
-        let raw_symbol = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .or_else(|| self.get_cross_file_symbol(sym_id))?;
-        if raw_symbol.has_any_flags(symbol_flags::ALIAS)
-            || !raw_symbol.has_any_flags(symbol_flags::CLASS)
-        {
-            let mut visited_aliases = AliasCycleTracker::new();
-            if let Some(target_sym_id) = self
-                .ctx
-                .resolve_import_alias_and_register(sym_id)
-                .or_else(|| self.resolve_alias_symbol(sym_id, &mut visited_aliases))
-                && target_sym_id != sym_id
-                && self
-                    .ctx
-                    .binder
-                    .get_symbol(target_sym_id)
-                    .or_else(|| self.get_cross_file_symbol(target_sym_id))
-                    .is_some_and(|target| target.has_any_flags(symbol_flags::CLASS))
-            {
-                effective_sym_id = target_sym_id;
-            }
-        }
-
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol(effective_sym_id)
-            .or_else(|| self.get_cross_file_symbol(effective_sym_id))?;
-        if self
-            .ctx
-            .resolve_symbol_file_index(effective_sym_id)
-            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-        {
-            return self.delegate_cross_arena_class_instance_type(effective_sym_id);
-        }
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         // When the primary declaration doesn't resolve to a class in the current
         // arena (e.g., class+interface merged symbol where value_declaration was
@@ -1217,10 +1050,7 @@ impl<'a> CheckerState<'a> {
             // the partial instance type via class_instance_type_cache; after
             // building completes it resolves to the final type via
             // symbol_instance_types.
-            if self
-                .ctx
-                .class_instance_resolution_set
-                .contains(&effective_sym_id)
+            if self.ctx.class_instance_resolution_set.contains(&sym_id)
                 || canonical_sym
                     .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym))
             {
@@ -1241,9 +1071,8 @@ impl<'a> CheckerState<'a> {
             if let Some(&instance_type) = self
                 .ctx
                 .symbol_instance_types
-                .get(&effective_sym_id)
+                .get(&sym_id)
                 .or_else(|| self.ctx.symbol_instance_types.get(&active_class_sym))
-                .or_else(|| self.ctx.symbol_instance_types.get(&sym_id))
             {
                 // Don't return ERROR from the cache — it may have been temporarily
                 // stored by another code path (e.g., constructor type building's
@@ -1279,12 +1108,7 @@ impl<'a> CheckerState<'a> {
             // preserve any previously computed valid instance type rather
             // than overwriting it with ERROR.
             if instance_type != TypeId::ERROR {
-                self.ctx
-                    .symbol_instance_types
-                    .insert(effective_sym_id, instance_type);
-                if effective_sym_id != sym_id {
-                    self.ctx.symbol_instance_types.insert(sym_id, instance_type);
-                }
+                self.ctx.symbol_instance_types.insert(sym_id, instance_type);
                 if active_class_sym != sym_id {
                     self.ctx
                         .symbol_instance_types

@@ -321,9 +321,7 @@ impl<'a> CheckerState<'a> {
         skip_sym: tsz_binder::SymbolId,
     ) {
         for &id in &parent.ctx.class_instance_resolution_set {
-            if id != skip_sym {
-                self.ctx.class_instance_resolution_set.insert(id);
-            }
+            self.ctx.class_instance_resolution_set.insert(id);
         }
         for &id in &parent.ctx.symbol_resolution_set {
             if id != skip_sym {

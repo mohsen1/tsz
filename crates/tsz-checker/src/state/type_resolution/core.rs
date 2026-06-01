@@ -679,20 +679,6 @@ impl<'a> CheckerState<'a> {
             let is_known_global = self.is_well_known_lib_type_name(name);
 
             if has_type_args {
-                let type_only_import_type_args =
-                    type_ref.type_arguments.as_ref().and_then(|args| {
-                        let alias_sym_id = self.ctx.binder.file_locals.get(name)?;
-                        let alias_symbol = self.ctx.binder.get_symbol(alias_sym_id)?;
-                        (alias_symbol.has_any_flags(symbol_flags::ALIAS)
-                            && alias_symbol.is_type_only
-                            && alias_symbol.import_module.is_some())
-                        .then(|| {
-                            args.nodes
-                                .iter()
-                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                .collect::<Vec<_>>()
-                        })
-                    });
                 let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
@@ -861,51 +847,19 @@ impl<'a> CheckerState<'a> {
                         .map(|symbol| symbol.escaped_name.clone())
                         .unwrap_or_else(|| name.to_string());
                     self.ensure_def_ready_for_lowering(target_sym_id, &target_name);
-                    let _ = self.type_reference_symbol_type(target_sym_id);
-                    if type_only_import_type_args.is_none() {
-                        for &arg_idx in &args.nodes {
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node(arg_idx);
                     }
                     if !self.is_inside_type_parameter_declaration(idx)
                         && self.validate_type_reference_type_arguments(target_sym_id, args, idx)
                     {
                         return TypeId::ERROR;
                     }
-                    let type_args = type_only_import_type_args.unwrap_or_else(|| {
-                        args.nodes
-                            .iter()
-                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                            .collect::<Vec<_>>()
-                    });
-                    if let Some((instance_type, params)) =
-                        self.class_instance_type_with_params_from_symbol(target_sym_id)
-                    {
-                        let def_id = self
-                            .ctx
-                            .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);
-                        if self.ctx.get_def_type_params(def_id).is_none() {
-                            self.ctx.insert_def_type_params(def_id, params.clone());
-                        }
-                        self.ctx
-                            .register_class_instance_in_envs(def_id, instance_type);
-                        let base = self.ctx.types.factory().lazy(def_id);
-                        let application = self
-                            .ctx
-                            .types
-                            .factory()
-                            .application(base, type_args.clone());
-                        let instantiated = query::instantiate_generic(
-                            self.ctx.types,
-                            instance_type,
-                            &params,
-                            &type_args,
-                        );
-                        self.ctx
-                            .types
-                            .store_display_alias(instantiated, application);
-                        return instantiated;
-                    }
+                    let type_args = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect::<Vec<_>>();
                     let def_id = self
                         .ctx
                         .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);

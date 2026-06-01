@@ -1247,7 +1247,6 @@ impl<'a> CheckerState<'a> {
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.current_file_idx = query_file_idx
             .or(delegate_file_idx)
