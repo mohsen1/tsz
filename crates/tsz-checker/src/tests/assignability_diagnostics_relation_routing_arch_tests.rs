@@ -16,7 +16,7 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() <= 7,
+        source.matches("assign_relation_outcome(").count() <= 3,
         "remaining generic assignability diagnostics relation probes should keep shrinking"
     );
     let generic_start = argument_reports
@@ -63,6 +63,41 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     assert!(
         !source.contains("assign_relation_outcome(target, source).related"),
         "argument diagnostics should not use the generic assign request for reverse callback suppression probes"
+    );
+    let default_reporter_start = root_source
+        .find("fn check_assignable_or_report_at_with_options")
+        .expect("missing default assignability reporter");
+    let default_reporter_end = root_source[default_reporter_start..]
+        .find("pub(crate) fn check_assignable_or_report_at_exact_anchor")
+        .map(|offset| default_reporter_start + offset)
+        .expect("missing exact-anchor assignability reporter");
+    let default_reporter = &root_source[default_reporter_start..default_reporter_end];
+    assert!(
+        default_reporter.contains("assignability_reason_relation_outcome(source, target)"),
+        "default TS2322 reporter should use the assignability-reason RelationOutcome"
+    );
+    assert!(
+        !default_reporter.contains("assign_relation_outcome(source, target)"),
+        "default TS2322 reporter should not use the generic assign request"
+    );
+    let exact_anchor_start = root_source
+        .find("pub(crate) fn check_assignable_or_report_at_exact_anchor")
+        .expect("missing exact-anchor assignability reporter");
+    let exact_anchor_end = root_source[exact_anchor_start..]
+        .find("pub(crate) fn analyze_assignability_failure")
+        .map(|offset| exact_anchor_start + offset)
+        .expect("missing next assignability diagnostics helper");
+    let exact_anchor_reporters = &root_source[exact_anchor_start..exact_anchor_end];
+    assert_eq!(
+        exact_anchor_reporters
+            .matches("assignability_reason_relation_outcome(source, target)")
+            .count(),
+        3,
+        "exact-anchor TS2322 reporters should use the assignability-reason RelationOutcome"
+    );
+    assert!(
+        !exact_anchor_reporters.contains("assign_relation_outcome(source, target)"),
+        "exact-anchor TS2322 reporters should not use the generic assign request"
     );
     let suggest_call_start = source
         .find("pub(crate) fn should_suggest_calling_for_weak_type")

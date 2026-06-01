@@ -605,7 +605,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .relation_overflow
             .set(crate::context::RelationOverflowFlags::default());
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         let assignable = outcome.related;
         // tsc emits TS2859 ("Excessive complexity") for all relation-checker
         // overflows regardless of whether it was depth or iteration that fired.
@@ -867,7 +867,7 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
         }
@@ -929,7 +929,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
         }
@@ -967,7 +967,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
         }
