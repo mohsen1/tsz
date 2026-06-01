@@ -126,8 +126,9 @@ decorator type is structurally assignable to the global `Function` interface.
 JSDoc generic constraint diagnostics build
 `RelationRequest::jsdoc_type_constraint` through
 `jsdoc_type_constraint_relation_outcome` for direct JSDoc type references and
-import-type member references, where checker code owns comment anchoring and
-TS2344-style constraint diagnostic text.
+import-type member references, including type-reference argument checks and
+their base/indexed-access fallback probes, where checker code owns comment
+anchoring and TS2344-style constraint diagnostic text.
 
 Explicit alias generic constraint diagnostics build
 `RelationRequest::explicit_alias_constraint` through

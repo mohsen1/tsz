@@ -1084,7 +1084,7 @@ impl<'a> CheckerState<'a> {
                     evaluated_constraint
                 };
             if self
-                .assign_relation_outcome(type_arg, constraint_for_check)
+                .jsdoc_type_constraint_relation_outcome(type_arg, constraint_for_check)
                 .related
             {
                 continue;
@@ -1094,7 +1094,7 @@ impl<'a> CheckerState<'a> {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
                 if self
-                    .assign_relation_outcome(base, constraint_for_check)
+                    .jsdoc_type_constraint_relation_outcome(base, constraint_for_check)
                     .related
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
@@ -1108,7 +1108,7 @@ impl<'a> CheckerState<'a> {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
                 if self
-                    .assign_relation_outcome(base, constraint_for_check)
+                    .jsdoc_type_constraint_relation_outcome(base, constraint_for_check)
                     .related
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {

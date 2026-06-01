@@ -40,7 +40,14 @@ fn generic_checker_constraint_paths_use_relation_outcome_boundary() {
         "type argument constraint checks should not use raw boolean relation guards"
     );
     assert!(
-        args_helper.matches("assign_relation_outcome(").count() >= 3,
-        "type argument constraint checks should route relation probes through RelationOutcome"
+        !args_helper.contains("assign_relation_outcome("),
+        "JSDoc type argument constraint checks should route relation probes through named RelationRequests"
+    );
+    assert_eq!(
+        args_helper
+            .matches("jsdoc_type_constraint_relation_outcome(")
+            .count(),
+        3,
+        "JSDoc type argument constraint checks should route direct, base, and indexed-access fallback probes through the JSDoc constraint request helper"
     );
 }
