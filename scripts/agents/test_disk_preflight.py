@@ -145,6 +145,8 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertGreater(report["disk_pressure"]["free_mb"], 0)
             self.assertGreater(report["disk_pressure"]["min_free_mb"], 0)
             self.assertEqual(0, report["disk_pressure"]["shortfall_mb"])
+            self.assertEqual(0, report["disk_pressure"]["sister_reuse_candidate_count"])
+            self.assertEqual([], report["disk_pressure"]["sister_reuse_candidates"])
             self.assertEqual([], report["disk_pressure"]["cleanup_ladder"])
 
     def test_json_report_marks_low_disk_guard_not_ok(self):
@@ -180,6 +182,43 @@ class DiskPreflightTests(unittest.TestCase):
             self.assertIn(
                 "Use scripts/setup/clean.sh --full only as a deliberate last resort.",
                 report["disk_pressure"]["cleanup_ladder"],
+            )
+
+    def test_json_report_records_sister_reuse_candidates(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            temp_root = pathlib.Path(temp_dir).resolve()
+            fake_repo, fake_script = self.make_fake_repo(temp_root)
+            fake_guard = fake_repo / "scripts" / "setup" / "disk-worktree-guard.sh"
+            fake_guard.unlink()
+            candidate_path = temp_root / "tsz-candidate"
+            fake_guard.write_text(
+                "#!/usr/bin/env bash\n"
+                "echo 'disk_free_gb=42 path=/tmp'\n"
+                "echo 'disk_free_mb=43008'\n"
+                "echo 'disk_status=ok min_free_gb=1'\n"
+                "echo 'sister_worktree_reuse_candidates:'\n"
+                f"echo '  {candidate_path} branch=refs/heads/candidate inactive_hours>=4'\n",
+                encoding="utf-8",
+            )
+            fake_guard.chmod(0o755)
+            report_path = temp_root / "preflight.json"
+
+            self.run_preflight(
+                fake_repo,
+                fake_script,
+                "--json-report",
+                str(report_path),
+            )
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(1, report["disk_pressure"]["sister_reuse_candidate_count"])
+            self.assertEqual(
+                {
+                    "path": str(candidate_path),
+                    "branch": "refs/heads/candidate",
+                    "inactive_hours_min": 4,
+                },
+                report["disk_pressure"]["sister_reuse_candidates"][0],
             )
 
     def test_worktree_without_typescript_points_to_link_helper(self):
