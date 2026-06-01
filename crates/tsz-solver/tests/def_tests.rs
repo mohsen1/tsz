@@ -1886,7 +1886,7 @@ fn test_all_definition_names_qualifies_namespace_exports() {
 // display for e.g. multiple interface declarations that merge into one type.
 // =============================================================================
 
-/// TypeAlias registered AFTER a non-alias (Interface) wins — the alias
+/// `TypeAlias` registered AFTER a non-alias (`Interface`) wins — the alias
 /// should displace the earlier-registered interface.
 #[test]
 fn register_type_to_def_alias_displaces_earlier_interface() {
@@ -1919,7 +1919,7 @@ fn register_type_to_def_alias_displaces_earlier_interface() {
     );
 }
 
-/// TypeAlias registered BEFORE a non-alias (Interface) is protected — the
+/// `TypeAlias` registered BEFORE a non-alias (`Interface`) is protected — the
 /// alias must not be overwritten by a later-registered interface.
 #[test]
 fn register_type_to_def_alias_holds_against_later_interface() {
@@ -1952,8 +1952,8 @@ fn register_type_to_def_alias_holds_against_later_interface() {
     );
 }
 
-/// TypeAlias registered AFTER a Class (non-alias) wins — class instance types
-/// that share a structural TypeId with a user alias must show the alias name.
+/// `TypeAlias` registered AFTER a `Class` (non-alias) wins — class instance
+/// types that share a structural `TypeId` with a user alias must show the alias name.
 #[test]
 fn register_type_to_def_alias_displaces_class_def() {
     let interner = create_test_interner();
@@ -2013,7 +2013,7 @@ fn register_type_to_def_interface_vs_interface_earlier_position_wins() {
     );
 }
 
-/// Two TypeAlias defs: the one with the earlier source position wins.
+/// Two `TypeAlias` defs: the one with the earlier source position wins.
 #[test]
 fn register_type_to_def_alias_vs_alias_earlier_position_wins() {
     let interner = create_test_interner();
