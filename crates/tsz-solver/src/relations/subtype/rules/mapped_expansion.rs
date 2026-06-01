@@ -1,7 +1,10 @@
 //! Concrete mapped-type expansion helpers for subtype relations.
 
 use super::super::{SubtypeChecker, TypeResolver};
-use crate::types::{MappedModifier, MappedTypeId, SymbolRef, TypeData, TypeId, Visibility};
+use crate::types::{
+    IndexSignature, MappedModifier, MappedTypeId, ObjectFlags, ObjectShape, SymbolRef, TypeData,
+    TypeId, Visibility,
+};
 use crate::visitor::{
     index_access_parts, keyof_inner_type, lazy_def_id, literal_value, object_shape_id,
     object_with_index_shape_id, type_param_info, union_list_id,
@@ -39,6 +42,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // and must remain unexpandable.
         if self.evaluate_type(mapped.constraint) == TypeId::NEVER {
             return Some(self.interner.object(Vec::new()));
+        }
+
+        // When the key constraint is `any` and there is no `as` remapping clause,
+        // the mapped type `{ [P in any]: V }` is a universal index-signature type:
+        // it accepts every string and number key with value type V. This is structurally
+        // equivalent to `{ [key: string]: V; [key: number]: V }`. Any object type whose
+        // property values are all assignable to V satisfies this constraint.
+        //
+        // This handles `Record<any, V>` and similar patterns. tsc accepts plain objects,
+        // index-signature types, and empty objects against such constraints without error.
+        if (mapped.constraint == TypeId::ANY || mapped.constraint == TypeId::STRICT_ANY)
+            && mapped.name_type.is_none()
+        {
+            let value_type = mapped.template;
+            let readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
+            return Some(self.interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type,
+                    readonly,
+                    param_name: None,
+                }),
+                number_index: Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type,
+                    readonly,
+                    param_name: None,
+                }),
+                symbol: None,
+            }));
         }
 
         // Get concrete keys from the constraint.

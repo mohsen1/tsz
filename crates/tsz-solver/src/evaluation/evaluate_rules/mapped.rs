@@ -227,7 +227,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // string/number index signature.
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
-        // If we can't determine concrete keys, keep it as a mapped type (deferred)
+        // If we can't determine concrete keys, keep it as a mapped type (deferred).
+        // The any-constraint case (`{ [P in any]: never }`) is intentionally kept as a
+        // special path only for the `never` template to avoid changing the evaluated
+        // representation of `{ [P in any]: V }` for non-never V (which would alter
+        // type display in error messages and cause conformance regressions).
+        // Subtype checking against `{ [P in any]: V }` is handled by `try_expand_mapped`.
         let mut key_set = if constraint == TypeId::ANY
             && mapped.name_type.is_none()
             && mapped.template == TypeId::NEVER
