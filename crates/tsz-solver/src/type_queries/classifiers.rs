@@ -245,6 +245,37 @@ pub fn get_conditional_type_id(
     }
 }
 
+/// Returns true if `type_id` is a distributive `Conditional` whose
+/// `check_type` defers into another type (`Lazy`, `Application`,
+/// `IndexAccess`, or `KeyOf`).
+///
+/// Callers (currently the checker's non-generic conditional eager-eval gates)
+/// use this to recognise alias bodies whose true-branch snapshot would freeze
+/// the deferred union before it has been materialized on the resolver,
+/// collapsing per-member distribution at the next consumer (e.g.
+/// `Extract<V, P>`). Skipping eager evaluation in that shape keeps the body in
+/// its raw `Conditional` form so the regular evaluator path with a fully
+/// populated resolver drives distribution correctly.
+pub fn is_distributive_conditional_with_deferred_check(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some(cond_id) = get_conditional_type_id(db, type_id) else {
+        return false;
+    };
+    let cond = db.get_conditional(cond_id);
+    cond.is_distributive
+        && matches!(
+            db.lookup(cond.check_type),
+            Some(
+                TypeData::Lazy(_)
+                    | TypeData::Application(_)
+                    | TypeData::IndexAccess(_, _)
+                    | TypeData::KeyOf(_)
+            )
+        )
+}
+
 /// Returns true if `type_id` is an `IndexAccess(_, _)` type.
 pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {

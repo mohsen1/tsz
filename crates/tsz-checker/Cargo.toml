@@ -1831,6 +1831,10 @@ name = "distributive_conditional_default_tests"
 path = "tests/distributive_conditional_default_tests.rs"
 
 [[test]]
+name = "distributive_alias_wrapped_conditional_tests"
+path = "tests/distributive_alias_wrapped_conditional_tests.rs"
+
+[[test]]
 name = "track8_debt_contract_tests"
 path = "tests/track8_debt_contract_tests.rs"
 

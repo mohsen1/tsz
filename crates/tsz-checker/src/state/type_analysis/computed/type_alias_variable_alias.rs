@@ -200,6 +200,9 @@ impl<'a> CheckerState<'a> {
                         && !crate::query_boundaries::common::contains_type_parameters(
                             db, alias_type,
                         )
+                        && !tsz_solver::type_queries::is_distributive_conditional_with_deferred_check(
+                            db, alias_type,
+                        )
                     {
                         let evaluated = self.evaluate_type_with_env(alias_type);
                         if evaluated != alias_type {
