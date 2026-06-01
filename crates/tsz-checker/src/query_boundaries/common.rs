@@ -1011,35 +1011,6 @@ pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
         || is_keyof_type(db, type_id)
 }
 
-/// Whether `type_id` is a distributive conditional whose check side defers
-/// into another type (`Lazy`, `Application`, `IndexAccess`, or `KeyOf`).
-///
-/// Eager evaluation of such an alias body at the declaration seam (see the
-/// non-generic conditional eager-eval gates in `state/type_analysis` and
-/// `types/type_checking`) can snapshot the true branch before the deferred
-/// union has been materialized, freezing per-member distribution into a
-/// single object that later consumers like `Extract<V, P>` then substitute
-/// against. Skipping the eager evaluation keeps the body in its raw
-/// `Conditional` form so the next consumer drives distribution through the
-/// regular evaluator path with a fully populated resolver.
-pub(crate) fn conditional_check_defers_into_alias(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    use tsz_solver::types::TypeData;
-    let Some(cond_id) = tsz_solver::type_queries::get_conditional_type_id(db, type_id) else {
-        return false;
-    };
-    let cond = db.get_conditional(cond_id);
-    cond.is_distributive
-        && matches!(
-            db.lookup(cond.check_type),
-            Some(
-                TypeData::Lazy(_)
-                    | TypeData::Application(_)
-                    | TypeData::IndexAccess(_, _)
-                    | TypeData::KeyOf(_)
-            )
-        )
-}
-
 // ── Type parameter constraint query ──
 
 pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
