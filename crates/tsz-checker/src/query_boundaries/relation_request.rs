@@ -53,6 +53,10 @@ pub(crate) enum RelationKind {
     InOperatorKey,
     /// `in`-operator RHS primitive-constraint compatibility for TS2638.
     InOperatorPrimitiveConstraint,
+    /// Compound-assignment RHS compatibility against the widened LHS type.
+    CompoundAssignment,
+    /// Deferred generic element-write compatibility against the write target.
+    GenericElementWrite,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -203,6 +207,14 @@ impl RelationRequest {
 
     pub(crate) const fn in_operator_primitive_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::InOperatorPrimitiveConstraint)
+    }
+
+    pub(crate) const fn compound_assignment(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::CompoundAssignment)
+    }
+
+    pub(crate) const fn generic_element_write(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::GenericElementWrite)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

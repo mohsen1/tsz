@@ -268,6 +268,35 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing compound-assignment relation for raw
+    /// checker types, preserving the canonical assignment-operation request shape.
+    pub(crate) fn compound_assignment_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::compound_assignment(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing generic element-write relation for raw
+    /// checker types, preserving the canonical deferred write-target request shape.
+    pub(crate) fn generic_element_write_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::generic_element_write(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

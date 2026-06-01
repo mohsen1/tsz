@@ -1006,7 +1006,7 @@ impl<'a> CheckerState<'a> {
 
                         if is_compound_like
                             && self
-                                .assign_relation_outcome(right_type, widened_left)
+                                .compound_assignment_relation_outcome(right_type, widened_left)
                                 .related
                         {
                             check_assignability = false;
@@ -1739,7 +1739,7 @@ impl<'a> CheckerState<'a> {
         {
             if (source_type != generic_target
                 && !self
-                    .assign_relation_outcome(source_type, generic_target)
+                    .generic_element_write_relation_outcome(source_type, generic_target)
                     .related)
                 || (source_type != generic_target
                     && !crate::query_boundaries::common::contains_type_parameters(

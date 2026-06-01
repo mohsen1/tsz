@@ -151,6 +151,11 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn in_operator_primitive_constraint",
             "RelationKind::InOperatorPrimitiveConstraint",
         ),
+        ("fn compound_assignment", "RelationKind::CompoundAssignment"),
+        (
+            "fn generic_element_write",
+            "RelationKind::GenericElementWrite",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
