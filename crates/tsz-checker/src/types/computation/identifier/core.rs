@@ -259,30 +259,6 @@ impl<'a> CheckerState<'a> {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
 
-    /// Returns true when the symbol's value declaration is a variable
-    /// declaration with an explicit type annotation (e.g. `const x: AB = ...`).
-    /// Used by class-property-initializer evaluation to decide whether the
-    /// declared type should override flow narrowing.
-    fn symbol_value_decl_has_explicit_type_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        let decl = symbol.value_declaration;
-        if decl.is_none() {
-            return false;
-        }
-        let Some(decl_node) = self.ctx.arena.get(decl) else {
-            return false;
-        };
-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
-        }
-        self.ctx
-            .arena
-            .get_variable_declaration(decl_node)
-            .is_some_and(|var| var.type_annotation.is_some())
-    }
-
     /// Get the type of an identifier expression.
     ///
     /// This function resolves the type of an identifier by:
@@ -1679,7 +1655,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
-            let declared_type = if self.ctx.is_js_file()
+            let mut declared_type = if self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && (flags
                     & (symbol_flags::FUNCTION_SCOPED_VARIABLE
@@ -1692,6 +1668,17 @@ impl<'a> CheckerState<'a> {
             } else {
                 declared_type
             };
+            if matches!(declared_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                && value_decl.is_some()
+                && let Some(annotated) = self.explicit_value_declared_type_for_symbol(
+                    sym_id,
+                    value_decl,
+                    &symbol_declarations,
+                )
+            {
+                self.ctx.symbol_types.insert(sym_id, annotated);
+                declared_type = annotated;
+            }
             // In JS files, prefer non-JS cross-file global value types for
             // variables that don't have an explicit JSDoc @type annotation.
             // When a JSDoc @type annotation is present, it takes precedence

@@ -43,6 +43,75 @@ fn format_diagnostics(source: &str, diagnostics: &[Diagnostic]) -> Vec<String> {
 }
 
 #[test]
+fn imported_select_callback_alias_contextually_types_array_expression_factory() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "expression-builder.ts",
+            r#"
+export interface ExpressionBuilder<T> {
+  ref<K extends keyof T & string>(key: K): T[K];
+}
+"#,
+        ),
+        (
+            "select-parser.ts",
+            r#"
+import type { ExpressionBuilder } from "./expression-builder.js";
+
+export type SelectExpression<T> =
+  | keyof T & string
+  | ((eb: ExpressionBuilder<T>) => unknown);
+
+export type SelectCallback<T> = (
+  eb: ExpressionBuilder<T>,
+) => ReadonlyArray<SelectExpression<T>>;
+"#,
+        ),
+        (
+            "query-builder.ts",
+            r#"
+import type { SelectCallback, SelectExpression } from "./select-parser.js";
+
+export interface Builder<T> {
+  select<SE extends SelectExpression<T>>(selections: ReadonlyArray<SE>): void;
+  select<CB extends SelectCallback<T>>(callback: CB): void;
+}
+"#,
+        ),
+        (
+            "main.ts",
+            r#"
+import type { Builder } from "./query-builder.js";
+
+declare const builder: Builder<{ kind: "table" }>;
+
+builder.select([
+  "kind",
+  (eb) => eb.ref("kind"),
+]);
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[7006, 2347, 2693]),
+        "imported callback aliases should contextually type selection factories. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn kysely_join_if_chain_preserves_select_callback_context() {
     let source = r#"
 type SelectType<T> = T;
