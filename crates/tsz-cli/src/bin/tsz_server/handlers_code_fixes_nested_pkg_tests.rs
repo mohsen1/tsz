@@ -376,3 +376,76 @@ fn import_fix_with_package_json_in_nested_subpackage() {
         "expected import fix for 'useMemo' from 'preact/hooks', got: {descriptions:?}"
     );
 }
+
+/// Mirrors the exact `importFixesWithPackageJsonInSideAnotherPackage` fourslash
+/// call pattern: `verify.importFixAtPosition` calls `getCodeFixes` at each
+/// diagnostic's own span, not at the file start. `useMemo` starts at byte offset
+/// 14 (0-indexed) in `"const state = useMemo(...)"`, so the 1-indexed request is
+/// `startOffset: 15, endOffset: 22`.
+#[test]
+fn import_fix_at_diagnostic_span_not_file_start() {
+    let mut server = make_server();
+
+    let app_tsx = "/project/app.tsx";
+    let app_content = "const state = useMemo(() => 'Hello', []);";
+
+    server
+        .open_files
+        .insert(app_tsx.to_string(), app_content.to_string());
+    server.open_files.insert(
+        "/project/tsconfig.json".to_string(),
+        r#"{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/component.tsx".to_string(),
+        r#"import { useEffect } from "preact/hooks";"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/package.json".to_string(),
+        r#"{ "name": "preact", "version": "10.3.4", "types": "src/index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/package.json".to_string(),
+        r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+        "export declare function useEffect(effect: () => void): void;\nexport declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": app_tsx,
+            "startLine": 1,
+            "startOffset": 15,
+            "endLine": 1,
+            "endOffset": 22,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let descriptions: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("description").and_then(serde_json::Value::as_str))
+        .collect();
+
+    let has_preact_import = descriptions
+        .iter()
+        .any(|d| d.contains("preact/hooks") && d.contains("useMemo"));
+
+    assert!(
+        has_preact_import,
+        "expected import fix for 'useMemo' from 'preact/hooks' at diagnostic span (1,15)-(1,22), got: {descriptions:?}"
+    );
+}

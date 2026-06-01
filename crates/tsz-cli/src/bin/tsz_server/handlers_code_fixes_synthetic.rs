@@ -375,6 +375,42 @@ impl Server {
                     }
                     search_from = colon_idx + 1;
                 }
+
+                // Detect `const/let/var x = identifier(...)` — the initializer is a
+                // call expression whose callee is an unbound identifier.  Scan the
+                // RHS of the first assignment operator on the declaration line and
+                // emit CANNOT_FIND_NAME if the leading identifier is not in scope.
+                //
+                // This covers `const state = useMemo(() => …)` where the real
+                // checker may not yet produce TS2304, and the bare-identifier /
+                // standalone-call-expression scanners only match lines that START
+                // with the identifier.
+                if (trimmed.starts_with("const ")
+                    || trimmed.starts_with("let ")
+                    || trimmed.starts_with("var "))
+                    && let Some(eq_pos) = trimmed.find(" = ")
+                {
+                    let rhs = trimmed[eq_pos + 3..].trim_start();
+                    let rhs_leading = trimmed[eq_pos + 3..].len() - rhs.len();
+                    if let Some((col_in_rhs, name)) = parse_identifier_call_expression(rhs)
+                        && binder.file_locals.get(name).is_none()
+                        && !jsdoc_imported_names.contains(name)
+                        && self.has_potential_auto_import_symbol(file_path, name)
+                    {
+                        let abs_col = leading_ws + eq_pos + 3 + rhs_leading + col_in_rhs;
+                        if seen_spans.insert((offset + abs_col, name.len())) {
+                            diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                                category: DiagnosticCategory::Error,
+                                code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                file: file_path.to_string(),
+                                start: (offset + abs_col) as u32,
+                                length: name.len() as u32,
+                                message_text: format!("Cannot find name '{name}'."),
+                                related_information: Vec::new(),
+                            });
+                        }
+                    }
+                }
             }
 
             if trimmed.starts_with('[') && trimmed.contains('=') {
