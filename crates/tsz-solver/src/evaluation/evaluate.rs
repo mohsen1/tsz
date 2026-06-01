@@ -721,24 +721,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // defining `DefId` stay opaque so later passes with a richer
         // resolver can expand them.
         let Some(def_id) = self.resolve_application_def_id(app.base) else {
-            // Callable-base instantiation: `Application(Callable, [Args])`
-            // arises when the checker wraps a value-position generic function
-            // (`typeof f<Args>`) and the resolver lacks a `DefId` for the
-            // bare expression type. Instantiate the callable signatures
-            // (both call and construct) directly so downstream
-            // `ReturnType`/`Parameters`/`infer` patterns see the substituted
-            // function shape rather than an opaque application.
-            if !app.args.is_empty()
-                && matches!(self.interner.lookup(app.base), Some(TypeData::Callable(_)))
-            {
-                let args = app.args.clone();
-                if let Some(specialized) =
-                    self.try_instantiate_callable_type_params(app.base, &args)
-                {
-                    return self.evaluate(specialized);
-                }
-            }
-            return original_type_id;
+            return self.evaluate_application_no_def_id(app_id, original_type_id);
         };
 
         tracing::trace!(

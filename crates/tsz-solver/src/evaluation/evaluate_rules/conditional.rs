@@ -1282,6 +1282,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(self.interner().callable(new_shape))
     }
 
+    /// Fallback for `evaluate_application` when the base has no `DefId`.
+    ///
+    /// `Application(Callable, [Args])` arises when the checker wraps a
+    /// value-position generic function (`typeof f<Args>`) and the resolver
+    /// lacks a `DefId` for the bare expression type. Instantiate the callable
+    /// signatures (both call and construct) directly so downstream
+    /// `ReturnType`/`Parameters`/`infer` patterns see the substituted
+    /// function shape rather than an opaque application; other base shapes
+    /// stay opaque.
+    pub(in crate::evaluation) fn evaluate_application_no_def_id(
+        &mut self,
+        app_id: crate::types::TypeApplicationId,
+        original_type_id: TypeId,
+    ) -> TypeId {
+        let app = self.interner().type_application(app_id);
+        if app.args.is_empty()
+            || !matches!(
+                self.interner().lookup(app.base),
+                Some(TypeData::Callable(_))
+            )
+        {
+            return original_type_id;
+        }
+        let base = app.base;
+        let args = app.args.clone();
+        let Some(specialized) = self.try_instantiate_callable_type_params(base, &args) else {
+            return original_type_id;
+        };
+        self.evaluate(specialized)
+    }
+
     /// Check if this is a primitive type vs Function/callable target.
     ///
     /// Primitive types (string, number, boolean, bigint, symbol) are never
