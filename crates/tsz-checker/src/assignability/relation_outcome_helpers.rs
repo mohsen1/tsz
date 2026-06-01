@@ -464,6 +464,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing union excess-property fallback relation for
+    /// raw checker types, preserving the canonical union excess request shape.
+    pub(crate) fn union_excess_required_property_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::union_excess_required_property(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing JSX render-fallback relation for raw
     /// checker types, preserving the canonical JSX fallback request shape.
     pub(crate) fn jsx_render_fallback_relation_outcome(
