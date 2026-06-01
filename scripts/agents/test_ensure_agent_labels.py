@@ -123,6 +123,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_ready_prs_intentionally_unassigned=0", output)
         self.assertIn("open_draft_prs_intentionally_unassigned=1", output)
         self.assertIn("agent_label_audit_findings=0", output)
+        self.assertIn("agent_label_audit_warnings=0", output)
         self.assertIn("agent_label_audit_status=pass", output)
         self.assertIn("Open PRs Intentionally Unassigned", output)
         self.assertIn("Open Draft PRs Intentionally Unassigned", output)
@@ -148,6 +149,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_prs_missing_agent_label=1", output)
         self.assertIn("open_prs_intentionally_unassigned=0", output)
         self.assertIn("agent_label_audit_findings=1", output)
+        self.assertIn("agent_label_audit_warnings=0", output)
         self.assertIn("agent_label_audit_status=fail", output)
         self.assertIn(
             "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
@@ -195,6 +197,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_ready_prs_intentionally_unassigned=1", result.stdout)
         self.assertIn("open_draft_prs_intentionally_unassigned=0", result.stdout)
         self.assertIn("agent_label_audit_findings=0", result.stdout)
+        self.assertIn("agent_label_audit_warnings=1", result.stdout)
         self.assertIn("agent_label_audit_status=pass", result.stdout)
 
     def test_json_report_splits_ready_and_draft_intentionally_unassigned_prs(self):
@@ -231,6 +234,9 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             1,
             report["metrics"]["open_ready_prs_intentionally_unassigned"],
         )
+        self.assertEqual(1, report["metrics"]["agent_label_audit_warnings"])
+        self.assertEqual(1, report["warning_count"])
+        self.assertEqual("warn", report["warning_status"])
         self.assertEqual(
             1,
             report["metrics"]["open_draft_prs_intentionally_unassigned"],
@@ -364,6 +370,9 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIsInstance(report["git_context"]["detached"], bool)
         self.assertIn("upstream", report["git_context"])
         self.assertEqual(2, report["metrics"]["agent_label_audit_findings"])
+        self.assertEqual(0, report["metrics"]["agent_label_audit_warnings"])
+        self.assertEqual(0, report["warning_count"])
+        self.assertEqual("clear", report["warning_status"])
         self.assertEqual(1, report["metrics"]["open_prs_missing_agent_label"])
         self.assertEqual(1, report["metrics"]["open_prs_noncanonical_agent_label"])
         self.assertEqual(
@@ -411,8 +420,11 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual("pass", report["status"])
         self.assertEqual("pass", report["agent_label_audit_status"])
+        self.assertEqual(0, report["warning_count"])
+        self.assertEqual("clear", report["warning_status"])
         self.assertIn("git_context", report)
         self.assertEqual(0, report["metrics"]["agent_label_audit_findings"])
+        self.assertEqual(0, report["metrics"]["agent_label_audit_warnings"])
 
     def test_json_report_requires_audit_mode(self):
         result = self.run_audit_result(
