@@ -18,9 +18,10 @@ pub(crate) use paths::{
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
-    DirectActualLibIntlInterfaceOutcome, DirectCrossFileInterfaceLoweringOutcome,
-    DirectSourceFileTypeAliasLoweringOutcome, record_direct_actual_lib_alias_body_outcome,
-    record_direct_actual_lib_intl_interface_outcome,
+    DirectActualLibIntlInterfaceOutcome, DirectCrossFileInterfaceComplexReason,
+    DirectCrossFileInterfaceLoweringOutcome, DirectSourceFileTypeAliasLoweringOutcome,
+    record_direct_actual_lib_alias_body_outcome, record_direct_actual_lib_intl_interface_outcome,
+    record_direct_cross_file_interface_complex_reason,
     record_direct_source_file_type_alias_lowering_outcome,
 };
 use tsz_lowering::TypeLowering;

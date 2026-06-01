@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).with_name("query-perf-counters.py")
 
 def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "mode": "attribution",
         "enabled": True,
         "delegate": {

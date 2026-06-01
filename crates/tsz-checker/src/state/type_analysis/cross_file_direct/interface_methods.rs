@@ -49,19 +49,35 @@ impl<'a> CheckerState<'a> {
         };
         let has_heritage = Self::interface_declarations_have_heritage(&declarations);
         let has_computed_names = Self::interface_declarations_have_computed_names(&declarations);
+        let record_complex_reason = |reason: DirectCrossFileInterfaceComplexReason| {
+            record_direct_cross_file_interface_complex_reason(reason);
+        };
+        let heritage_or_computed_reason = || {
+            let reason = match (has_heritage, has_computed_names) {
+                (true, true) => DirectCrossFileInterfaceComplexReason::HeritageAndComputedName,
+                (true, false) => DirectCrossFileInterfaceComplexReason::Heritage,
+                (false, true) => DirectCrossFileInterfaceComplexReason::ComputedName,
+                (false, false) => DirectCrossFileInterfaceComplexReason::SourceFileShape,
+            };
+            record_complex_reason(reason);
+        };
         if direct_source_file_arena {
-            if has_heritage
-                || has_computed_names
-                || !Self::source_file_interface_declarations_are_direct_lowerable(
-                    &declarations,
-                    delegate_binder,
-                )
-            {
+            if has_heritage || has_computed_names {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                heritage_or_computed_reason();
+                return None;
+            }
+            if !Self::source_file_interface_declarations_are_direct_lowerable(
+                &declarations,
+                delegate_binder,
+            ) {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                record_complex_reason(DirectCrossFileInterfaceComplexReason::SourceFileShape);
                 return None;
             }
         } else if !allow_complex_declarations && (has_heritage || has_computed_names) {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+            heritage_or_computed_reason();
             return None;
         }
 

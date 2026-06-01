@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 5;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 6;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -171,6 +171,12 @@ pub struct PerfCounterSnapshot {
     /// path from firing — the target list for "widen the direct
     /// lowering" follow-ups.
     pub direct_interface_lowering_outcomes: Vec<NamedCount>,
+    /// Structural reason buckets for
+    /// `direct_interface_lowering_outcomes.complex_declaration`.
+    ///
+    /// Always `DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT` long, in
+    /// `DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES` order.
+    pub direct_interface_complex_reasons: Vec<NamedCount>,
     /// Outcome buckets for direct actual-lib alias-body attempts.
     ///
     /// Always `DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT` long, in
@@ -660,6 +666,13 @@ impl PerfCounters {
                 .map(|i| NamedCount {
                     name: DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES[i],
                     count: load(&c.direct_cross_file_interface_lowering_outcome[i]),
+                })
+                .collect(),
+            direct_interface_complex_reasons: (0
+                ..DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_CROSS_FILE_INTERFACE_COMPLEX_REASON_NAMES[i],
+                    count: load(&c.direct_cross_file_interface_complex_reason[i]),
                 })
                 .collect(),
             direct_actual_lib_alias_body_outcomes: (0..DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT)
