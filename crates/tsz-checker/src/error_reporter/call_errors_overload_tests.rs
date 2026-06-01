@@ -506,6 +506,156 @@ wm.delete(s);
 }
 
 #[test]
+fn ts2769_pipe_like_single_arity_overload_emits_ts2345_at_argument() {
+    // When only ONE overload is arity-compatible and it fails by type, tsc emits
+    // TS2345 directly at the failing argument (not TS2769). Verify tsz does the same.
+    let source = r#"
+interface PipeOp<A, B> {
+    tag: [A, B];
+}
+interface Obs<T> {
+    pipe<A>(op1: PipeOp<T, A>): A;
+    pipe<A, B>(op1: PipeOp<T, A>, op2: PipeOp<A, B>): B;
+    pipe<A, B, C>(op1: PipeOp<T, A>, op2: PipeOp<A, B>, op3: PipeOp<B, C>): C;
+}
+declare function mapOp(fn: (x: number) => string): PipeOp<number, string>;
+declare function wrongOp(): PipeOp<number, number>;
+declare var obs: Obs<number>;
+obs.pipe(mapOp(x => x.toString()), wrongOp());
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    // Only one arity-compatible overload → TS2345, not TS2769
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345 (single arity-compatible overload path), got: {diagnostics:?}"
+    );
+    let diag = &ts2345[0];
+    let failing_arg_start = source.rfind("wrongOp()").expect("wrongOp() not found") as u32;
+    assert_eq!(
+        diag.start, failing_arg_start,
+        "TS2345 should anchor at wrongOp(), got start={}, length={}",
+        diag.start, diag.length
+    );
+}
+
+#[test]
+fn ts2769_pipe_like_multi_arity_overload_anchors_failing_argument() {
+    // When MULTIPLE overloads are arity-compatible and ALL fail on the SAME
+    // argument, tsc emits TS2769 anchored at the failing argument — not the callee.
+    // This models the rxjs `pipe(map(...), wrongOp())` pattern.
+    //
+    // Structural rule: when all overload failures share the same argument as
+    // the mismatching node (same `actual_type`), anchor TS2769 at that argument.
+    let source = r#"
+interface PipeOp<A, B> {
+    tag: [A, B];
+}
+interface Obs<T> {
+    pipe<A>(op1: PipeOp<T, A>, op2: PipeOp<A, A>): A;
+    pipe<A, B>(op1: PipeOp<T, A>, op2: PipeOp<A, B>): B;
+}
+declare function mapOp(fn: (x: number) => string): PipeOp<number, string>;
+declare function wrongOp(): PipeOp<number, number>;
+declare var obs: Obs<number>;
+obs.pipe(mapOp(x => x.toString()), wrongOp());
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    // Multiple arity-compatible overloads → TS2769
+    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(
+        ts2769.len(),
+        1,
+        "expected exactly one TS2769 (multiple arity-compatible overloads fail), got: {diagnostics:?}"
+    );
+    let diag = &ts2769[0];
+    let failing_arg_start = source.rfind("wrongOp()").expect("wrongOp() not found") as u32;
+    assert_eq!(
+        diag.start, failing_arg_start,
+        "TS2769 should anchor at wrongOp() (the shared failing argument), not at the callee. got start={}, length={}",
+        diag.start, diag.length
+    );
+
+    // Name-variation witness: the same structural rule holds regardless of
+    // what the interface, method, and function names are.
+    let source2 = r#"
+interface Op<X, Y> { tag: [X, Y]; }
+interface Stream<T> {
+    transform<X>(t1: Op<T, X>, t2: Op<X, X>): X;
+    transform<X, Y>(t1: Op<T, X>, t2: Op<X, Y>): Y;
+}
+declare function buildOp(fn: (n: number) => string): Op<number, string>;
+declare function badOp(): Op<number, number>;
+declare var s: Stream<number>;
+s.transform(buildOp(n => n.toString()), badOp());
+"#;
+    let diagnostics2 = check_source_with_strict_null(source2);
+    let ts2769_2: Vec<_> = diagnostics2.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(
+        ts2769_2.len(),
+        1,
+        "name-variation: expected TS2769 anchored at badOp(), got: {diagnostics2:?}"
+    );
+    let failing2 = source2.rfind("badOp()").expect("badOp() not found") as u32;
+    assert_eq!(
+        ts2769_2[0].start, failing2,
+        "name-variation: TS2769 should anchor at badOp(), got start={}",
+        ts2769_2[0].start
+    );
+}
+
+#[test]
+fn ts2769_property_call_anchors_callee_when_different_args_fail_different_overloads() {
+    // When each overload fails because a DISTINCT argument doesn't match that
+    // overload's parameter — overload 1 rejects arg 0, overload 2 rejects arg 1
+    // — there is no shared failing argument, so tsc anchors TS2769 at the
+    // property callee rather than at any argument.
+    //
+    // Structural rule: `shared_overload_argument_anchor` returns `None` when
+    // the set of type-mismatching arguments differs across overloads, causing
+    // the anchor to fall back to the callee.
+    let source = r#"
+interface Obs {
+    pipe(op1: string, op2: number): void;
+    pipe(op1: number, op2: string): void;
+}
+declare var obs: Obs;
+obs.pipe(42, 42);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(
+        ts2769.len(),
+        1,
+        "expected exactly one TS2769 for cross-overload argument failure, got: {diagnostics:?}"
+    );
+    let diag = &ts2769[0];
+    // The callee in `obs.pipe(42, 42)` is `pipe` (a property access).
+    let pipe_token_start = source.rfind("pipe(42").expect("pipe(42") as u32;
+    let first_arg_start = source.rfind("42, 42)").expect("42, 42)") as u32;
+    let second_arg_start = first_arg_start + "42, ".len() as u32;
+    // TS2769 must NOT anchor at either argument.
+    assert_ne!(
+        diag.start, first_arg_start,
+        "should not anchor at first arg when overloads fail on different arguments, got: {diag:?}"
+    );
+    assert_ne!(
+        diag.start, second_arg_start,
+        "should not anchor at second arg when overloads fail on different arguments, got: {diag:?}"
+    );
+    // TS2769 should anchor at or before the end of the `pipe` token.
+    assert!(
+        diag.start <= pipe_token_start + "pipe".len() as u32,
+        "TS2769 should anchor at callee when failures diverge across args, got start={}",
+        diag.start
+    );
+}
+
+#[test]
 fn ts2769_array_best_common_type_keeps_nullable_member() {
     let source = r#"
 class Box {

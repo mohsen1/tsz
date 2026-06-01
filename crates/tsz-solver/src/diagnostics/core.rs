@@ -390,6 +390,15 @@ impl PendingDiagnostic {
         self.related.push(related);
         self
     }
+
+    /// Attach `span` when present; no-op when `None`.
+    pub fn with_optional_span(self, span: Option<SourceSpan>) -> Self {
+        if let Some(s) = span {
+            self.with_span(s)
+        } else {
+            self
+        }
+    }
 }
 
 /// A source location span.
