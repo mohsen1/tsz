@@ -1160,27 +1160,9 @@ impl ParserState {
 
             let member = self.parse_class_member();
             if member.is_some() {
-                // Don't consume trailing semicolon if the member itself is a
-                // SemicolonClassElement — that would eat the next standalone `;`.
-                let is_semi_element = self
-                    .arena
-                    .get(member)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
-                let consumed_semicolon =
-                    !is_semi_element && self.parse_optional(SyntaxKind::SemicolonToken);
+                let consumed_semicolon = self.parse_optional_class_member_semicolon(member);
                 members.push(member);
-
-                if !consumed_semicolon
-                    && !self.scanner.has_preceding_line_break()
-                    && self.is_property_name()
-                    && self
-                        .arena
-                        .get(member)
-                        .and_then(|node| self.arena.get_property_decl(node))
-                        .is_some()
-                {
-                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-                }
+                self.recover_missing_semicolon_between_property_members(member, consumed_semicolon);
 
                 if self.is_token(SyntaxKind::OpenBraceToken)
                     && !self.scanner.has_preceding_line_break()
