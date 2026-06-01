@@ -113,6 +113,8 @@ pub(crate) enum RelationKind {
     ExactOptionalSourceFilter,
     /// Union excess-property fallback required-property compatibility probes.
     UnionExcessRequiredProperty,
+    /// Array-literal contextual collapse override compatibility probes.
+    ArrayLiteralContextualCollapse,
     /// JSX construct-return render fallback required-property compatibility probes.
     JsxRenderFallback,
     /// Object-literal mapped contextual property key compatibility probes.
@@ -441,6 +443,10 @@ impl RelationRequest {
 
     pub(crate) const fn union_excess_required_property(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::UnionExcessRequiredProperty)
+    }
+
+    pub(crate) const fn array_literal_contextual_collapse(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ArrayLiteralContextualCollapse)
     }
 
     pub(crate) const fn jsx_render_fallback(source: TypeId, target: TypeId) -> Self {

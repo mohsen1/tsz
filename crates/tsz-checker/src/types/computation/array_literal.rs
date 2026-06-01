@@ -1178,8 +1178,11 @@ impl<'a> CheckerState<'a> {
                     if elem_requires_assignability_overrides
                         || context_requires_assignability_overrides
                     {
-                        self.assign_relation_outcome(elem_type, context_element_type)
-                            .related
+                        self.array_literal_contextual_collapse_relation_outcome(
+                            elem_type,
+                            context_element_type,
+                        )
+                        .related
                     } else {
                         self.is_subtype_of(elem_type, context_element_type)
                     }

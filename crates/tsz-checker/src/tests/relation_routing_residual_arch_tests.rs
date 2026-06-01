@@ -10,6 +10,8 @@ const RAW_RELATION_PATTERNS: &[&str] = &[
     ".is_assignable_to_strict_null(",
     ".is_assignable_to_with_env(",
     ".is_subtype_of(",
+    ".assign_relation_outcome(",
+    ".assign_relation_outcome_with_env(",
 ];
 
 fn rust_sources_under(dir: &Path) -> Vec<PathBuf> {
@@ -34,6 +36,12 @@ fn collect_rust_sources(dir: &Path, sources: &mut Vec<PathBuf>) {
 
 fn allowed_raw_relation(relative_path: &str, line: &str) -> bool {
     if relative_path.starts_with("src/assignability/") {
+        return true;
+    }
+
+    if relative_path.starts_with("src/query_boundaries/")
+        && line.contains(".assign_relation_outcome(")
+    {
         return true;
     }
 
