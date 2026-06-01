@@ -40,12 +40,22 @@ fn mapped_key_constraint_checks_use_relation_outcome_boundary() {
     let invalid_block = &source[invalid_start..next_section];
 
     assert!(
-        deferred_block.contains("assign_relation_outcome(") && deferred_block.contains(".related"),
-        "deferred mapped key constraint checks should route through RelationOutcome"
+        deferred_block.contains("mapped_key_constraint_relation_outcome(")
+            && deferred_block.contains(".related"),
+        "deferred mapped key constraint checks should route through the mapped-key RelationRequest"
     );
     assert!(
-        invalid_block.contains("assign_relation_outcome(") && invalid_block.contains(".related"),
-        "pre-evaluation mapped key constraint checks should route through RelationOutcome"
+        invalid_block.contains("mapped_key_constraint_relation_outcome(")
+            && invalid_block.contains(".related"),
+        "pre-evaluation mapped key constraint checks should route through the mapped-key RelationRequest"
+    );
+    assert!(
+        !deferred_block.contains("assign_relation_outcome("),
+        "deferred mapped key constraint checks should not use the generic assignment request"
+    );
+    assert!(
+        !invalid_block.contains("assign_relation_outcome("),
+        "pre-evaluation mapped key constraint checks should not use the generic assignment request"
     );
     assert!(
         !deferred_block.contains("diagnostic_relation_boolean_guard"),
