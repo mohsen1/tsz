@@ -18,8 +18,7 @@ use tsz_parser::{
 };
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    FunctionShape, ParamInfo, TypeData, TypeId, TypePredicateTarget, apparent_intrinsic_kind,
-    visitor,
+    FunctionShape, ParamInfo, TypeId, TypePredicateTarget, apparent_intrinsic_kind, visitor,
 };
 
 use crate::intrinsic_params::{
