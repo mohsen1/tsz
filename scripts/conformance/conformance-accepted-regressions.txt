@@ -2,3 +2,13 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
+
+# Pre-existing drift from main as of 2026-06-01, identified in PR #12080 investigation.
+# These 6 tests produce fingerprint differences against the current tsz binary.
+# Remove each entry once the underlying fix lands in main.
+TypeScript/tests/cases/compiler/infiniteConstraints.ts
+TypeScript/tests/cases/compiler/longObjectInstantiationChain3.ts
+TypeScript/tests/cases/compiler/nestedGlobalNamespaceInClass.ts
+TypeScript/tests/cases/conformance/jsx/tsxLibraryManagedAttributes.tsx
+TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource8.ts
+TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts

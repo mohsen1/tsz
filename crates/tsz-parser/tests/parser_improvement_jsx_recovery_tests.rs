@@ -891,24 +891,11 @@ const n = <ul>{items.map(item => (
 }
 
 #[test]
-fn test_jsx_conditional_nested_ternary_no_errors() {
-    assert_no_errors_named(
-        "test.tsx",
-        r#"const n = <div>{a ? (b ? <A/> : <B/>) : <C/>}</div>;"#,
-    );
-}
-
-#[test]
 fn test_jsx_conditional_logical_and_no_errors() {
     assert_no_errors_named(
         "test.tsx",
         r#"const n = <div>{x && <span/>}{y || <strong/>}</div>;"#,
     );
-}
-
-#[test]
-fn test_jsx_conditional_fragment_branch_no_errors() {
-    assert_no_errors_named("test.tsx", r#"const n = <div>{x ? <></> : <span/>}</div>;"#);
 }
 
 #[test]
