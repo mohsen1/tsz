@@ -73,8 +73,9 @@ recomputing weak-union and property-classification analysis.
 Checker type-overlap diagnostics build `RelationRequest::type_comparability`
 through `type_comparability_relation_outcome` for bidirectional comparability
 fast paths, union/intersection member overlap probes, and common-property
-comparability. The checker owns apparent-type selection and diagnostic
-orchestration while the request names the relation role.
+comparability. Type-parameter comparability uses the same request when probing
+constraint-chain overlap. The checker owns apparent-type selection and
+diagnostic orchestration while the request names the relation role.
 
 Call diagnostic display/recovery helpers use the env-aware call-argument
 request for contextual-signature, generator callback, variadic tuple parameter,

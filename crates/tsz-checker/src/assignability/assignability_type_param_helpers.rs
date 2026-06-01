@@ -54,7 +54,10 @@ impl<'a> CheckerState<'a> {
         if let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, source)
             && let Some(constraint) = info.constraint
         {
-            if self.assign_relation_outcome(constraint, target).related {
+            if self
+                .type_comparability_relation_outcome(constraint, target)
+                .related
+            {
                 return true;
             }
             // Decompose union constraints: if any member is comparable/assignable to target
@@ -62,7 +65,11 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::dispatch::union_members(self.ctx.types, constraint)
             {
                 for member in &members {
-                    if *member == target || self.assign_relation_outcome(*member, target).related {
+                    if *member == target
+                        || self
+                            .type_comparability_relation_outcome(*member, target)
+                            .related
+                    {
                         return true;
                     }
                 }
@@ -72,7 +79,10 @@ impl<'a> CheckerState<'a> {
         if let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, target)
             && let Some(constraint) = info.constraint
         {
-            if self.assign_relation_outcome(source, constraint).related {
+            if self
+                .type_comparability_relation_outcome(source, constraint)
+                .related
+            {
                 return true;
             }
             // Decompose union constraints for target
@@ -80,7 +90,11 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::dispatch::union_members(self.ctx.types, constraint)
             {
                 for member in &members {
-                    if *member == source || self.assign_relation_outcome(source, *member).related {
+                    if *member == source
+                        || self
+                            .type_comparability_relation_outcome(source, *member)
+                            .related
+                    {
                         return true;
                     }
                 }

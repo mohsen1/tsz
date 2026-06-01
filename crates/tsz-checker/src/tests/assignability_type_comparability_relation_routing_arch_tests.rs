@@ -28,11 +28,15 @@ fn assignability_type_comparability_uses_relation_outcome_boundary() {
         "comparability probes should not use generic assign requests"
     );
     assert!(
+        type_param_helpers.contains("type_comparability_relation_outcome("),
+        "type-parameter comparability constraint probes should use the type-comparability RelationOutcome boundary"
+    );
+    assert_eq!(
         type_param_helpers
             .matches("assign_relation_outcome(")
-            .count()
-            >= 4,
-        "type-parameter comparability constraint probes should route through RelationOutcome"
+            .count(),
+        0,
+        "type-parameter comparability constraint probes should not use generic assign requests"
     );
     assert!(
         !comparability.contains("diagnostic_relation_boolean_guard("),
