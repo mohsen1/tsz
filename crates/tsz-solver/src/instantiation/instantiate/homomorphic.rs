@@ -8,9 +8,10 @@ impl<'a> TypeInstantiator<'a> {
         &mut self,
         mapped: &MappedType,
         resolved_source: TypeId,
-        has_identity_name_type: bool,
     ) -> Option<TypeId> {
-        if self.preserve_meta_types || !(mapped.name_type.is_none() || has_identity_name_type) {
+        if self.preserve_meta_types
+            || !crate::type_queries::mapped::is_identity_name_mapping(self.interner, mapped)
+        {
             return None;
         }
 

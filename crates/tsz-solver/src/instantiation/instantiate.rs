@@ -1293,12 +1293,6 @@ impl<'a> TypeInstantiator<'a> {
 
                 // Homomorphic array/tuple handling must run before standard
                 // instantiation collapses `keyof T` to a flat union.
-                let has_identity_name_type = mapped.name_type.is_some_and(|name_type| {
-                    matches!(
-                        self.interner.lookup(name_type),
-                        Some(TypeData::TypeParameter(info)) if info.name == mapped.type_param.name
-                    )
-                });
 
                 // HOMOMORPHIC UNION DISTRIBUTION (tsc: instantiateMappedType → mapTypeWithAlias)
                 // Excluded: array/tuple-like unions are handled by the blocks below.
@@ -1364,7 +1358,7 @@ impl<'a> TypeInstantiator<'a> {
                 // template references T[K]. Templates that DO reference T[K]
                 // are still handled by the main array-preservation block below
                 // (which mirrors tsc's full instantiateMappedArrayType path).
-                if (mapped.name_type.is_none() || has_identity_name_type)
+                if crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
                     && let Some(TypeData::KeyOf(keyof_source)) =
                         self.interner.lookup(mapped.constraint)
                     && let Some(TypeData::TypeParameter(tp_info)) =
@@ -1416,7 +1410,7 @@ impl<'a> TypeInstantiator<'a> {
                     };
                 }
 
-                if (mapped.name_type.is_none() || has_identity_name_type)
+                if crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
                     && let Some(TypeData::KeyOf(keyof_source)) =
                         self.interner.lookup(mapped.constraint)
                     && let Some(TypeData::TypeParameter(tp_info)) =
@@ -1606,7 +1600,6 @@ impl<'a> TypeInstantiator<'a> {
                     if let Some(result) = self.try_expand_substituted_homomorphic_object_mapped(
                         &mapped,
                         resolved,
-                        has_identity_name_type,
                     ) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return result;
