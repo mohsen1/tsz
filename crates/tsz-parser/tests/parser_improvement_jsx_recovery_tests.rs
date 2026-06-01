@@ -924,6 +924,12 @@ function Comp<T>(props: P<T>) {
 Comp({ value: 1 });
 "#,
         r#"
+function Comp<K>(props: { value: K }) {
+  return <div {...props} />;
+}
+const s = Comp<string>({ value: "x" });
+"#,
+        r#"
 type Payload<T> = { label: T };
 const Widget = function View<T>(payload: Payload<T>) {
   return <article {...payload} />;

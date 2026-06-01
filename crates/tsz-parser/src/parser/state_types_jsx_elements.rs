@@ -1146,7 +1146,10 @@ impl ParserState {
         // are isolated from any enclosing CONTEXT_FLAG_DISALLOW_IN context.
         let saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
+        let was_in_initializer = self.in_jsx_attribute_initializer_element;
+        self.in_jsx_attribute_initializer_element = true;
         let expression = self.parse_expression();
+        self.in_jsx_attribute_initializer_element = was_in_initializer;
         self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
