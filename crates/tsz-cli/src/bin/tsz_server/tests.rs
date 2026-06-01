@@ -4,6 +4,8 @@ use super::*;
 mod completions;
 #[path = "tests_navigation.rs"]
 mod navigation;
+#[path = "tests_navigation_2.rs"]
+mod navigation_2;
 #[path = "tests_response_taxonomy.rs"]
 mod response_taxonomy;
 #[path = "tests_support.rs"]

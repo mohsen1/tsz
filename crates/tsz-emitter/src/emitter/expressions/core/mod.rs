@@ -969,4 +969,31 @@ mod tests {
             "Must NOT have double parens.\nOutput:\n{output}"
         );
     }
+
+    #[test]
+    fn binary_missing_rhs_no_spurious_indent() {
+        // Source: `[#abc]=` — private identifier in array destructuring context followed by
+        // `=` with no RHS (parse error, TS1109). A trailing newline after `=` makes the
+        // binary emitter detect `has_newline_after_op`. The missing RHS must NOT cause the
+        // statement-level `;` to be indented. Matches tsc baseline output.
+        let (parser, root) = parse_test_source("[#abc]=\n");
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text("[#abc]=\n");
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("[#abc] =\n;"),
+            "Missing RHS after `=` must not produce spurious indent before `;`.\nOutput:\n{output}"
+        );
+        // Also verify with a different spelling to ensure the fix is structural, not name-based
+        let (parser2, root2) = parse_test_source("[#xyz]=\n");
+        let mut printer2 = Printer::new(&parser2.arena, PrintOptions::default());
+        printer2.set_source_text("[#xyz]=\n");
+        printer2.print(root2);
+        let output2 = printer2.finish().code;
+        assert!(
+            output2.contains("[#xyz] =\n;"),
+            "Missing RHS with different name must also have no spurious indent.\nOutput:\n{output2}"
+        );
+    }
 }
