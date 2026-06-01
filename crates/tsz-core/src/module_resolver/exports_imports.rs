@@ -348,16 +348,25 @@ impl ModuleResolver {
     }
 
     fn condition_key_matches(&self, key: &str, conditions: &[String]) -> bool {
-        let (base_condition, version_range) = parse_condition_key(key);
+        // Exact-key fast path FIRST: a user-supplied `customConditions` entry
+        // can legally contain an `@` (e.g. `"custom@edge"`) and is meant to
+        // match its literal spelling, not be parsed as `<base>@<range>`.
+        // Falling straight into `parse_condition_key` would split such a key
+        // and only match if its base (without `@<rest>`) appears in
+        // `conditions`, regressing the pre-PR behavior for any condition
+        // whose user-supplied name happens to include `@`.
+        if conditions.iter().any(|condition| condition == key) {
+            return true;
+        }
+        let (base_condition, Some(version_range)) = parse_condition_key(key) else {
+            return false;
+        };
         if !conditions
             .iter()
             .any(|condition| condition == base_condition)
         {
             return false;
         }
-        let Some(version_range) = version_range else {
-            return true;
-        };
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
         types_versions_range_matches(version_range, compiler_version)

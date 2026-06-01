@@ -177,3 +177,51 @@ fn versioned_non_types_branch_falls_through_to_default() {
         resolved.display(),
     );
 }
+
+/// Regression for the exact-key fast path in `condition_key_matches`. A
+/// user-supplied `customConditions` entry can legally contain `@` (for
+/// example, an ENV-tag spelling like `"custom@edge"`) and is meant to
+/// match its LITERAL spelling, not be parsed as `<base>@<range>`. The
+/// shared `parse_condition_key` helper would otherwise split such a key
+/// and only match if its base (`"custom"`) was in `conditions`, which
+/// silently regresses any package whose subpath uses an exact custom
+/// condition spelling.
+#[test]
+fn custom_condition_with_at_sign_matches_literally() {
+    let fx = TempFixture::new();
+    fx.write(
+        "node_modules/pkg/package.json",
+        r#"{
+          "name": "pkg",
+          "exports": {
+            "./api": {
+              "custom@edge": "./edge/api.d.ts",
+              "default": "./dist/api.js"
+            }
+          }
+        }"#,
+    );
+    fx.write(
+        "node_modules/pkg/edge/api.d.ts",
+        "export declare const api: 'edge';",
+    );
+    fx.write("node_modules/pkg/dist/api.js", "module.exports = {};");
+    fx.write("src/app.ts", "import { api } from 'pkg/api';");
+
+    let options = ResolvedCompilerOptions {
+        custom_conditions: vec!["custom@edge".to_string()],
+        ..node16_options()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("pkg/api", &fx.join("src/app.ts"), Span::new(0, 9))
+        .expect("pkg/api must resolve")
+        .resolved_path;
+
+    assert!(
+        resolved.ends_with("edge/api.d.ts"),
+        "exact custom condition `custom@edge` must match literally even \
+         though it contains `@` — got {}",
+        resolved.display(),
+    );
+}
