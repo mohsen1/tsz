@@ -317,19 +317,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // tsc treats `{ [K in keyof T]: ... }` (no as-clause or identity as K) as
-        // homomorphic for modifier inheritance — the source T's optional/readonly flags
-        // propagate to the output even when the template is NOT `T[K]`. For example:
+        // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
+        // inheritance — the source T's optional/readonly flags propagate to the
+        // output even when the template is NOT `T[K]`. For example:
         //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
-        // inherits optionality from Partial<M0>'s properties.
-        //
-        // A non-identity as-clause (`as Uppercase<K>`, `as K extends string ? K : never`,
-        // etc.) breaks homomorphism: tsc's `isHomomorphicMappedType` returns undefined for
-        // any nameType that isn't the plain iteration variable. source_object may still be
-        // Some (needed for array/tuple structural preservation), so we must check name_type
-        // here independently of that.
-        let is_homomorphic = source_object.is_some()
-            && crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped);
+        // inherits optionality from Partial<M0>'s properties, even though the
+        // template is `M0[K]`, not `Partial<M0>[K]`. Key remapping still breaks
+        // array/tuple shape preservation below, but it does not strip source
+        // property modifiers from emitted object properties.
+        let is_homomorphic = source_object.is_some();
 
         // A filtering/remapping `as` clause can still use the original source
         // property template (`T[K]`). In that case, preserved optional source
@@ -1764,11 +1760,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // to a union of string literals. The template still has the original structure
         // `T[P]` with the concrete object. Verify by computing `keyof obj` and
         // comparing with the constraint.
-        // Method 2 is only valid without key remapping or with identity remapping;
-        // non-identity `as` clauses can still use Method 1's explicit `keyof T`
-        // source but must not infer a source from an already-flattened key union.
-        if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped)
-            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+        // Key remapping does not change the source used for property modifier
+        // preservation. Array/tuple shape preservation is guarded separately.
+        if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
             && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
             && param.name == mapped.type_param.name
         {
