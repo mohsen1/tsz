@@ -48,8 +48,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Useful in checker locations that need type comparability/equivalence-like checks.
     pub(crate) fn are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.assign_relation_outcome(left, right).related
-            && self.assign_relation_outcome(right, left).related
+        self.type_comparability_relation_outcome(left, right)
+            .related
+            && self
+                .type_comparability_relation_outcome(right, left)
+                .related
     }
 
     /// Check if two object types with call/construct signatures are comparable
@@ -247,10 +250,16 @@ impl<'a> CheckerState<'a> {
                     (None, None) => {
                         // Neither is a function type — check normal comparability
                         let prop_comparable = self
-                            .assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+                            .type_comparability_relation_outcome(
+                                source_prop.type_id,
+                                target_prop.type_id,
+                            )
                             .related
                             || self
-                                .assign_relation_outcome(target_prop.type_id, source_prop.type_id)
+                                .type_comparability_relation_outcome(
+                                    target_prop.type_id,
+                                    source_prop.type_id,
+                                )
                                 .related;
                         if !prop_comparable {
                             return false;
@@ -319,10 +328,10 @@ impl<'a> CheckerState<'a> {
         // checks are stricter than general object assignability there.
         if !skip_signature_only_fast_path
             && (self
-                .assign_relation_outcome(source_apparent, target_apparent)
+                .type_comparability_relation_outcome(source_apparent, target_apparent)
                 .related
                 || self
-                    .assign_relation_outcome(target_apparent, source_apparent)
+                    .type_comparability_relation_outcome(target_apparent, source_apparent)
                     .related)
         {
             return true;
@@ -337,10 +346,10 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, source_apparent) {
             for member in &members {
                 if self
-                    .assign_relation_outcome(*member, target_apparent)
+                    .type_comparability_relation_outcome(*member, target_apparent)
                     .related
                     || self
-                        .assign_relation_outcome(target_apparent, *member)
+                        .type_comparability_relation_outcome(target_apparent, *member)
                         .related
                 {
                     return true;
@@ -352,10 +361,10 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, target_apparent) {
             for member in &members {
                 if self
-                    .assign_relation_outcome(source_apparent, *member)
+                    .type_comparability_relation_outcome(source_apparent, *member)
                     .related
                     || self
-                        .assign_relation_outcome(*member, source_apparent)
+                        .type_comparability_relation_outcome(*member, source_apparent)
                         .related
                 {
                     return true;
@@ -369,10 +378,10 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::intersection_members(self.ctx.types, source_apparent) {
             for member in &members {
                 if self
-                    .assign_relation_outcome(*member, target_apparent)
+                    .type_comparability_relation_outcome(*member, target_apparent)
                     .related
                     || self
-                        .assign_relation_outcome(target_apparent, *member)
+                        .type_comparability_relation_outcome(target_apparent, *member)
                         .related
                 {
                     return true;
@@ -382,10 +391,10 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::intersection_members(self.ctx.types, target_apparent) {
             for member in &members {
                 if self
-                    .assign_relation_outcome(source_apparent, *member)
+                    .type_comparability_relation_outcome(source_apparent, *member)
                     .related
                     || self
-                        .assign_relation_outcome(*member, source_apparent)
+                        .type_comparability_relation_outcome(*member, source_apparent)
                         .related
                 {
                     return true;
@@ -510,10 +519,13 @@ impl<'a> CheckerState<'a> {
                 found_common = true;
                 // Property types must be comparable (assignable in at least one direction)
                 let prop_comparable = self
-                    .assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+                    .type_comparability_relation_outcome(source_prop.type_id, target_prop.type_id)
                     .related
                     || self
-                        .assign_relation_outcome(target_prop.type_id, source_prop.type_id)
+                        .type_comparability_relation_outcome(
+                            target_prop.type_id,
+                            source_prop.type_id,
+                        )
                         .related;
                 if !prop_comparable {
                     return false;

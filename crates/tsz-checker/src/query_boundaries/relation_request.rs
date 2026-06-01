@@ -15,6 +15,8 @@ pub(crate) enum RelationKind {
     Assign,
     /// TS2322 reason-entrypoint relation truth before detailed elaboration.
     AssignabilityReason,
+    /// Checker type-overlap/comparability diagnostic probe.
+    TypeComparability,
     /// `for...in` initializer target: key type stored into the LHS.
     ForInLhs,
     /// Function call argument: `fn(expr)` where param expects T
@@ -238,6 +240,9 @@ impl RelationRequest {
     }
     pub(crate) const fn assignability_reason(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::AssignabilityReason)
+    }
+    pub(crate) const fn type_comparability(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::TypeComparability)
     }
     pub(crate) const fn for_in_lhs(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ForInLhs)

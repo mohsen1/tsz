@@ -49,7 +49,8 @@ shapes suppress EPC now lives in the assignability boundary.
 
 Additional active request builders are tracked as they land. The checker-only
 `iterator_result_value` request names the `IteratorResult` value-property probe
-used by TS2322 failure analysis.
+used by TS2322 failure analysis. The checker type-overlap helpers use
+`type_comparability` for bidirectional comparability probes.
 
 ## Current Call Sites
 
@@ -68,6 +69,13 @@ including polymorphic-`this` object-literal property probes, and the return
 request when drilling into callback return expressions or return-source
 conditional branches. These callers reuse `RelationOutcome` to avoid separately
 recomputing weak-union and property-classification analysis.
+
+Checker type-overlap diagnostics build `RelationRequest::type_comparability`
+through `type_comparability_relation_outcome` for bidirectional comparability
+fast paths, union/intersection member overlap probes, and common-property
+comparability. The checker owns apparent-type selection and diagnostic
+orchestration while the request names the relation role.
+
 Call diagnostic display/recovery helpers use the env-aware call-argument
 request for contextual-signature, generator callback, variadic tuple parameter,
 polymorphic-`this` rest-target, and aggregate/fresh/rest argument recovery

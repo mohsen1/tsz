@@ -19,8 +19,13 @@ fn assignability_type_comparability_uses_relation_outcome_boundary() {
         "bivariant method-compatibility diagnostics should use the shared bivariant RelationOutcome"
     );
     assert!(
-        comparability.matches("assign_relation_outcome(").count() >= 12,
-        "comparability probes should route bidirectional assignability through RelationOutcome"
+        comparability.contains("type_comparability_relation_outcome("),
+        "comparability probes should use the type-comparability RelationOutcome boundary"
+    );
+    assert_eq!(
+        comparability.matches("assign_relation_outcome(").count(),
+        0,
+        "comparability probes should not use generic assign requests"
     );
     assert!(
         type_param_helpers
