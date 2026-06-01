@@ -67,6 +67,9 @@ pub(crate) mod test_fixture;
 // without grepping a single monolithic file. Each shard imports only the
 // `test_fixture` helpers it actually uses; tests share no per-shard helpers.
 #[cfg(test)]
+#[path = "../../tests/parser_async_arrow_context_tests.rs"]
+mod parser_async_arrow_context_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_improvement_arrow_recovery_tests.rs"]
 mod parser_improvement_arrow_recovery_tests;
 #[cfg(test)]
