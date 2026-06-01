@@ -13,18 +13,34 @@ fn call_elaboration_mutual_assignability_uses_relation_outcome_boundary() {
             .expect("missing next call elaboration helper");
     let helper = &source[start..end];
 
-    assert_eq!(
-        helper.matches("assign_relation_outcome(").count(),
-        2,
-        "mutual assignability display helper should route both relation directions through assign_relation_outcome"
+    assert!(
+        helper.contains("call_elaboration_mutual_relation_outcome(left, right)")
+            && helper.contains("call_elaboration_mutual_relation_outcome(right, left)"),
+        "mutual assignability display helper should route both directions through dedicated relation outcomes"
     );
     assert!(
         helper.matches(".related").count() >= 2,
         "mutual assignability display helper should use relation outcome decisions"
     );
     assert!(
+        !helper.contains("assign_relation_outcome("),
+        "mutual assignability display helper should not use generic assign relation outcomes"
+    );
+    assert!(
         !helper.contains("diagnostic_relation_boolean_guard("),
         "mutual assignability display helper should not regress to raw boolean relation guards"
+    );
+}
+
+#[test]
+fn call_elaboration_mutual_relation_outcome_uses_dedicated_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn call_elaboration_mutual_relation_outcome(")
+            && source.contains("RelationRequest::call_elaboration_mutual("),
+        "call elaboration mutual probes should have a dedicated RelationRequest helper"
     );
 }
 

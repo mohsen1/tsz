@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion`, `call_elaboration_mutual` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -198,6 +198,11 @@ outcome helpers when probing declared receiver element displays, declared index
 value displays, TS7015 numeric index compatibility, or `get`/`set` method
 suggestion parameters. The checker owns receiver syntax, display selection, and
 diagnostic anchoring while the requests name the relation roles.
+
+Call diagnostic elaboration builds `RelationRequest::call_elaboration_mutual`
+through `call_elaboration_mutual_relation_outcome` when probing whether two
+types share the same key space for richer contextual `keyof` display. The
+checker owns display selection while the request names the relation role.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

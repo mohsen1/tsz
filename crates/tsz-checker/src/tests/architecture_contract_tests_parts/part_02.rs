@@ -172,6 +172,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn element_access_method_suggestion",
             "RelationKind::ElementAccessMethodSuggestion",
         ),
+        (
+            "fn call_elaboration_mutual",
+            "RelationKind::CallElaborationMutual",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

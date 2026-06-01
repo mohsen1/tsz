@@ -102,8 +102,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.assign_relation_outcome(left, right).related
-            && self.assign_relation_outcome(right, left).related
+        self.call_elaboration_mutual_relation_outcome(left, right)
+            .related
+            && self
+                .call_elaboration_mutual_relation_outcome(right, left)
+                .related
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
