@@ -395,8 +395,22 @@ impl<'a> TypeFormatter<'a> {
 
                 let previous_skip_application_display_alias_chase =
                     self.skip_application_display_alias_chase;
-                if self.skip_application_alias_names && base_str.as_ref() == "Omit" {
+                let previous_skip_object_display_alias = self.skip_object_display_alias;
+                let base_has_mapped_body = if let Some(TypeData::Lazy(def_id)) = base_key {
+                    self.def_store
+                        .and_then(|ds| ds.get(def_id))
+                        .and_then(|def| def.body)
+                        .is_some_and(|body| {
+                            matches!(self.interner.lookup(body), Some(TypeData::Mapped(_)))
+                        })
+                } else {
+                    false
+                };
+                if (self.skip_application_alias_names && base_str.as_ref() == "Omit")
+                    || base_has_mapped_body
+                {
                     self.skip_application_display_alias_chase = true;
+                    self.skip_object_display_alias = true;
                 }
                 let previous_preserve_application_arg_index_alias_surface =
                     self.preserve_application_arg_index_alias_surface;
@@ -410,6 +424,7 @@ impl<'a> TypeFormatter<'a> {
                     previous_preserve_application_arg_index_alias_surface;
                 self.skip_application_display_alias_chase =
                     previous_skip_application_display_alias_chase;
+                self.skip_object_display_alias = previous_skip_object_display_alias;
                 if base_str.as_ref() == "Defaultize"
                     && args.first().is_some_and(|arg| arg.len() > 120)
                 {

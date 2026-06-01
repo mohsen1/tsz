@@ -1140,7 +1140,8 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if !self
-            .get_cross_file_symbol(sym_id)?
+            .get_symbol_from_registered_file_target(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?
             .has_any_flags(symbol_flags::CLASS)
         {
             return None;
@@ -1188,6 +1189,9 @@ impl<'a> CheckerState<'a> {
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
+        if self.query_file_is_declaration_file(query_file_idx) {
+            return None;
+        }
         if let Some(file_idx) = query_file_idx
             && let Some((cached_type, cached_params)) = self
                 .ctx
@@ -1225,13 +1229,10 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_arena(symbol_arena)
                 .unwrap_or(self.ctx.binder)
         };
+        if self.delegated_symbol_parent_is_namespace(delegate_binder, sym_id) {
+            return None;
+        }
 
-        // PERF: count cross-arena delegation calls and track recursion depth.
-        // Matches the symbol-resolution path; without this the per-reason
-        // child-checker construction counters covered the class-instance path
-        // but the aggregate `delegate_cross_arena_calls`/`max_recursion_depth`
-        // counters did not.
-        //
         // Cache check above returned None → about to do real work, so this
         // entry is a miss. Counts toward the `misses` denominator for
         // cache-hit-rate metrics.
@@ -1251,7 +1252,23 @@ impl<'a> CheckerState<'a> {
         checker.ctx.current_file_idx = query_file_idx
             .or(delegate_file_idx)
             .unwrap_or(self.ctx.current_file_idx);
+        let delegated_class_is_ambient = delegate_binder
+            .get_symbol(sym_id)
+            .and_then(tsz_binder::Symbol::primary_declaration)
+            .is_some_and(|decl_idx| checker.is_ambient_class_declaration(decl_idx));
+        if !delegated_class_is_ambient {
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            checker.ctx.current_file_idx = query_file_idx
+                .or(delegate_file_idx)
+                .unwrap_or(self.ctx.current_file_idx);
+            checker.ctx.symbol_types.remove(&sym_id);
+            checker.ctx.symbol_instance_types.remove(&sym_id);
+            checker.ctx.symbol_to_def.borrow_mut().remove(&sym_id);
+        }
         checker.propagate_class_delegation_setup(self, sym_id);
+        if !delegated_class_is_ambient {
+            self.clear_delegated_symbol_cache_collisions(&mut checker, delegate_binder);
+        }
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results

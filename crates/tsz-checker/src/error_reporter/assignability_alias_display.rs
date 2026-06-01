@@ -185,6 +185,12 @@ impl<'a> CheckerState<'a> {
         ) {
             return Some((source_display, target_display.to_string()));
         }
+        if self
+            .static_schema_array_structural_display(source_fact, target)
+            .is_some()
+        {
+            return None;
+        }
 
         let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)

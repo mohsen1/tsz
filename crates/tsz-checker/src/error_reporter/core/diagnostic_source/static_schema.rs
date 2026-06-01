@@ -7,11 +7,18 @@ impl<'a> CheckerState<'a> {
         array_type: TypeId,
         other: TypeId,
     ) -> Option<String> {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, array_type) {
+            return None;
+        }
         let element_type =
             crate::query_boundaries::common::array_element_type(self.ctx.types, array_type)?;
         let array_display = self.format_type_diagnostic(array_type);
-        if let Some(display) = self.type_query_static_array_structural_display(&array_display) {
-            return Some(display);
+        if let Some(query_display) = self.type_query_static_array_structural_display(&array_display)
+        {
+            return Some(query_display);
+        }
+        if let Some(static_type) = self.static_schema_alias_element_structural_type(element_type) {
+            return Some(self.format_static_schema_array_structural_type(static_type, other));
         }
         if !self.is_static_schema_application(element_type) {
             return None;
@@ -19,19 +26,58 @@ impl<'a> CheckerState<'a> {
         if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
             let schema_type = self.evaluate_type_for_assignability(schema_type);
             if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
-                let static_type = self.evaluate_type_for_assignability(static_type);
-                let static_type = self.widen_type_for_display(static_type);
-                let static_type = self.normalize_assignability_display_type(static_type);
-                let rebuilt = self.ctx.types.array(static_type);
-                let display = self.format_assignability_type_for_message(rebuilt, other);
-                return Some(display);
+                return Some(self.format_static_schema_array_structural_type(static_type, other));
             }
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
-        let widened_element = self
-            .normalize_assignability_display_type(self.widen_type_for_display(evaluated_element));
-        let rebuilt = self.ctx.types.array(widened_element);
-        Some(self.format_assignability_type_for_message(rebuilt, other))
+        Some(self.format_static_schema_array_structural_type(evaluated_element, other))
+    }
+
+    fn static_schema_alias_element_structural_type(
+        &mut self,
+        element_type: TypeId,
+    ) -> Option<TypeId> {
+        if let Some(static_type) = self.static_schema_alias_def_structural_type(
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, element_type),
+        ) {
+            return Some(static_type);
+        }
+        if let Some(static_type) = self.static_schema_alias_def_structural_type(
+            self.ctx.definition_store.find_def_for_type(element_type),
+        ) {
+            return Some(static_type);
+        }
+        if let Some(alias) = self.ctx.types.get_display_alias(element_type) {
+            if self.is_static_schema_application(alias) {
+                return self.static_schema_element_structural_type(alias);
+            }
+            if let Some(static_type) = self.static_schema_alias_def_structural_type(
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias),
+            ) {
+                return Some(static_type);
+            }
+            if let Some(static_type) = self.static_schema_alias_def_structural_type(
+                self.ctx.definition_store.find_def_for_type(alias),
+            ) {
+                return Some(static_type);
+            }
+        }
+        None
+    }
+
+    fn static_schema_alias_def_structural_type(
+        &mut self,
+        def_id: Option<tsz_solver::def::DefId>,
+    ) -> Option<TypeId> {
+        let def_id = def_id?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        self.is_static_schema_application(body)
+            .then_some(body)
+            .and_then(|body| self.static_schema_element_structural_type(body))
     }
 
     fn is_static_schema_application(&self, type_id: TypeId) -> bool {
@@ -245,5 +291,17 @@ impl<'a> CheckerState<'a> {
         let static_type = self.normalize_assignability_display_type(static_type);
         let rebuilt = self.ctx.types.array(static_type);
         Some(self.format_type_diagnostic(rebuilt))
+    }
+
+    fn format_static_schema_array_structural_type(
+        &mut self,
+        static_type: TypeId,
+        other: TypeId,
+    ) -> String {
+        let static_type = self.evaluate_type_for_assignability(static_type);
+        let static_type = self.widen_type_for_display(static_type);
+        let static_type = self.normalize_assignability_display_type(static_type);
+        let rebuilt = self.ctx.types.array(static_type);
+        self.format_assignability_type_for_message(rebuilt, other)
     }
 }

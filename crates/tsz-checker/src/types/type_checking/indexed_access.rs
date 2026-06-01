@@ -543,6 +543,10 @@ impl<'a> CheckerState<'a> {
                 .map(|nested| self.get_type_from_type_node(nested.object_type));
             if let Some(base_type) = nested_base_type
                 && self.indexed_access_constraint_values_allow_index(base_type, index_type)
+                && !self.ast_index_constraint_keyof_targets_foreign_indexed_object(
+                    data.object_type,
+                    data.index_type,
+                )
             {
                 return;
             }
@@ -888,6 +892,32 @@ impl<'a> CheckerState<'a> {
             index_type_for_check,
         ) {
             let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+        let foreign_keyof_indexed_constraint =
+            self.index_constraint_keyof_targets_foreign_indexed_object(
+                object_type,
+                object_type_for_check,
+                index_type,
+                index_constraint,
+            ) || self.ast_index_constraint_keyof_targets_foreign_indexed_object(
+                data.object_type,
+                data.index_type,
+            );
+        if foreign_keyof_indexed_constraint {
+            let obj_type_str = self
+                .node_text(data.object_type)
+                .unwrap_or_else(|| self.format_type(object_type));
             let index_type_str = self.format_type(index_type);
             let message_2536 = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
@@ -1282,7 +1312,8 @@ impl<'a> CheckerState<'a> {
             };
             // Suppress TS2536 for deferred types (conditional, application, keyof,
             // error, index-access). tsc defers these checks to instantiation time.
-            if is_deferred_index_type(index_type_for_check)
+            if !foreign_keyof_indexed_constraint
+                && (is_deferred_index_type(index_type_for_check)
                 || is_deferred_index_type(index_type)
                 || (is_deferred_object_type(object_type_for_check)
                     && key_space_is_unresolved(keyof_object)
@@ -1301,7 +1332,7 @@ impl<'a> CheckerState<'a> {
                     && key_space_is_unresolved(keyof_object)
                     && !index_is_concrete_literal)
                 || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type_for_check)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
+                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type))
             {
                 return;
             }

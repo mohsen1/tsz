@@ -13,13 +13,13 @@
 use crate::operations::iterators::get_iterator_info;
 use crate::type_queries::get_return_type;
 use crate::types::{
-    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TypeId,
-    Visibility,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef,
+    TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::{
-    application_id, lazy_def_id, object_shape_id, object_with_index_shape_id, template_literal_id,
-    union_list_id,
+    application_id, lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id,
+    template_literal_id, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -744,14 +744,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        let conditional_relation_base =
+            self.same_conditional_display_alias_base(source_read, target_read);
+        if let Some(base) = conditional_relation_base {
+            let next_depth = self
+                .conditional_display_relation_depth
+                .get(&base)
+                .copied()
+                .unwrap_or(0)
+                + 1;
+            if next_depth >= 3 {
+                return self.cycle_result();
+            }
+            self.conditional_display_relation_depth
+                .insert(base, next_depth);
+        }
+
         // Rule #26: Split Accessors - Covariant reads
         // Source read type must be subtype of target read type
-        if source_read != target_read
+        let read_result = if source_read != target_read
             && !self
                 .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
                 .is_true()
         {
-            return SubtypeResult::False;
+            SubtypeResult::False
+        } else {
+            SubtypeResult::True
+        };
+        if let Some(base) = conditional_relation_base {
+            self.leave_conditional_display_relation(base);
+        }
+        if read_result.is_false() {
+            return read_result;
         }
 
         // Rule #26: Split Accessors - Contravariant writes
@@ -795,6 +819,65 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
+    }
+
+    fn same_conditional_display_alias_base(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        let (source_base, source_args) = self.conditional_display_alias_application(source)?;
+        let (target_base, target_args) = self.conditional_display_alias_application(target)?;
+        if source_base != target_base {
+            return None;
+        }
+        self.conditional_display_relation_has_path_arg(&source_args, &target_args)
+            .then_some(source_base)
+    }
+
+    fn conditional_display_alias_application(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        let app_id = application_id(self.interner, type_id).or_else(|| {
+            self.interner
+                .get_display_alias(type_id)
+                .and_then(|alias| application_id(self.interner, alias))
+        })?;
+        let app = self.interner.type_application(app_id);
+        self.is_conditional_alias_base_inline(app.base)
+            .then_some((app.base, app.args.clone()))
+    }
+
+    fn conditional_display_relation_has_path_arg(
+        &self,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> bool {
+        source_args.len() == target_args.len()
+            && source_args
+                .iter()
+                .zip(target_args)
+                .any(|(&source_arg, &target_arg)| {
+                    source_arg == target_arg && self.is_dot_path_string_literal(source_arg)
+                })
+    }
+
+    fn is_dot_path_string_literal(&self, type_id: TypeId) -> bool {
+        let Some(LiteralValue::String(atom)) = literal_value(self.interner, type_id) else {
+            return false;
+        };
+        self.interner.resolve_atom_ref(atom).contains('.')
+    }
+
+    fn leave_conditional_display_relation(&mut self, base: TypeId) {
+        let Some(depth) = self.conditional_display_relation_depth.get_mut(&base) else {
+            return;
+        };
+        *depth = depth.saturating_sub(1);
+        if *depth == 0 {
+            self.conditional_display_relation_depth.remove(&base);
+        }
     }
 
     fn receiver_type_from_shape_symbol(&self, shape: &ObjectShape) -> Option<TypeId> {

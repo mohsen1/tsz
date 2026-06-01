@@ -885,7 +885,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Fallback alias resolution for cross-file imports when `resolve_alias_symbol` can't find the target.
-    fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
+    pub(crate) fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let lib_binders: Vec<_> = self
             .ctx
             .lib_contexts
@@ -1207,11 +1207,15 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let mut visited = AliasCycleTracker::new();
-                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
-                    && target_sym_id != sym_id
-                {
+                let resolved_alias = self.resolve_alias_symbol(sym_id, &mut visited);
+                let alias_target = match resolved_alias {
+                    Some(target_sym_id) if target_sym_id != sym_id => Some(target_sym_id),
+                    _ => self.resolve_import_alias_cross_file(sym_id),
+                };
+                if let Some(target_sym_id) = alias_target {
                     let target_flags = self
-                        .get_cross_file_symbol(target_sym_id)
+                        .get_symbol_from_registered_file_target(target_sym_id)
+                        .or_else(|| self.get_cross_file_symbol(target_sym_id))
                         .map(|s| s.flags)
                         .unwrap_or(0);
                     if target_flags
@@ -1232,42 +1236,18 @@ impl<'a> CheckerState<'a> {
                         {
                             return result;
                         }
-                        return self.type_reference_symbol_type_with_params(target_sym_id);
-                    }
-                } else if let Some(target_sym_id) = self.resolve_import_alias_cross_file(sym_id) {
-                    let target_flags = self
-                        .get_cross_file_symbol(target_sym_id)
-                        .map(|s| s.flags)
-                        .unwrap_or(0);
-                    if target_flags
-                        & (symbol_flags::CLASS
-                            | symbol_flags::INTERFACE
-                            | symbol_flags::TYPE_ALIAS
-                            | symbol_flags::ENUM
-                            | symbol_flags::TYPE_PARAMETER)
-                        != 0
-                    {
-                        if target_flags & symbol_flags::CLASS != 0
-                            && self
-                                .ctx
-                                .resolve_symbol_file_index(target_sym_id)
-                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-                            && let Some(result) =
-                                self.delegate_cross_arena_class_instance_type(target_sym_id)
-                        {
-                            return result;
+                        if target_sym_id != sym_id {
+                            return self.type_reference_symbol_type_with_params(target_sym_id);
                         }
-                        if target_sym_id == sym_id
-                            && self
-                                .ctx
-                                .resolve_symbol_file_index(target_sym_id)
-                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                        if self
+                            .ctx
+                            .resolve_symbol_file_index(target_sym_id)
+                            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
                             && let Some(result) =
                                 self.delegate_cross_arena_symbol_resolution(target_sym_id)
                         {
                             return result;
                         }
-                        return self.type_reference_symbol_type_with_params(target_sym_id);
                     }
                 }
             }
