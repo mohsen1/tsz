@@ -85,10 +85,10 @@ fn binding_pattern_default_inference_uses_relation_outcomes() {
 
     assert_eq!(
         compact_source
-            .matches("assign_relation_outcome(init_type,element_type).related")
+            .matches("destructuring_relation_outcome(init_type,element_type).related")
             .count(),
         2,
-        "object and array binding default inference should route element/default compatibility through relation outcomes"
+        "object and array binding default inference should route element/default compatibility through destructuring relation outcomes"
     );
     assert!(
         !compact_source.contains("is_assignable_to(init_type,element_type)"),
@@ -103,8 +103,8 @@ fn state_destructuring_default_inference_uses_relation_outcome() {
     let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        compact_source.contains("assign_relation_outcome(init_type,element_type).related"),
-        "state destructuring default inference should route element/default compatibility through relation outcomes"
+        compact_source.contains("destructuring_relation_outcome(init_type,element_type).related"),
+        "state destructuring default inference should route element/default compatibility through destructuring relation outcomes"
     );
     assert!(
         !compact_source.contains("is_assignable_to(init_type,element_type)"),
