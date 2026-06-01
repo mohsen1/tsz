@@ -505,7 +505,8 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                     // For concrete constraints, check if a primitive is assignable.
-                    self.assign_relation_outcome(TypeId::STRING, c).related
+                    self.in_operator_primitive_constraint_relation_outcome(TypeId::STRING, c)
+                        .related
                 }
             };
         }
@@ -1466,7 +1467,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .types
             .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
-        if self.assign_relation_outcome(key_type, target).related {
+        if self
+            .in_operator_key_relation_outcome(key_type, target)
+            .related
+        {
             return;
         }
         // Source uses the widened diagnostic form so a fresh literal operand shows its

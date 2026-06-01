@@ -239,6 +239,35 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing `in`-operator key relation for raw
+    /// checker types, preserving the canonical key request shape.
+    pub(crate) fn in_operator_key_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::in_operator_key(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing `in`-operator primitive-constraint
+    /// relation for raw checker types, preserving the canonical TS2638 request shape.
+    pub(crate) fn in_operator_primitive_constraint_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::in_operator_primitive_constraint(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

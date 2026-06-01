@@ -31,13 +31,18 @@ fn in_operator_lhs_key_diagnostic_uses_relation_outcome_boundary() {
         "fn check_in_operator_lhs_key_type(",
         "\n    /// Check the `in` operator.",
     );
+    let compact_body = compact(body);
 
     assert!(
-        body.contains("self.assign_relation_outcome(key_type, target).related"),
-        "`in` operator TS2322 key check should route through relation outcome boundary"
+        compact_body.contains("self.in_operator_key_relation_outcome(key_type,target).related"),
+        "`in` operator TS2322 key check should route through the dedicated relation outcome"
     );
     assert!(
-        !body.contains("self.is_assignable_to(key_type, target)"),
+        !compact_body.contains("self.assign_relation_outcome(key_type,target)"),
+        "`in` operator TS2322 key check should not use the generic assign relation outcome"
+    );
+    assert!(
+        !compact_body.contains("self.is_assignable_to(key_type,target)"),
         "`in` operator TS2322 key check should not use a raw boolean assignability gate"
     );
 }
@@ -53,12 +58,34 @@ fn in_operator_rhs_primitive_constraint_uses_relation_outcome_boundary() {
     );
 
     assert!(
-        body.contains("self.assign_relation_outcome(TypeId::STRING, c).related"),
-        "`in` operator TS2638 primitive constraint check should route through relation outcome boundary"
+        body.contains("self.in_operator_primitive_constraint_relation_outcome(TypeId::STRING, c)")
+            && body.contains(".related"),
+        "`in` operator TS2638 primitive constraint check should route through the dedicated relation outcome"
+    );
+    assert!(
+        !body.contains("self.assign_relation_outcome(TypeId::STRING, c)"),
+        "`in` operator TS2638 primitive constraint check should not use the generic assign relation outcome"
     );
     assert!(
         !body.contains("ctx.types.is_assignable_to(TypeId::STRING, c)"),
         "`in` operator TS2638 primitive constraint check should not use a raw solver relation gate"
+    );
+}
+
+#[test]
+fn in_operator_relation_outcomes_use_dedicated_requests() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn in_operator_key_relation_outcome(")
+            && source.contains("RelationRequest::in_operator_key("),
+        "`in` operator key diagnostics should have a dedicated RelationRequest helper"
+    );
+    assert!(
+        source.contains("fn in_operator_primitive_constraint_relation_outcome(")
+            && source.contains("RelationRequest::in_operator_primitive_constraint("),
+        "`in` operator primitive-constraint diagnostics should have a dedicated RelationRequest helper"
     );
 }
 

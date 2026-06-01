@@ -49,6 +49,10 @@ pub(crate) enum RelationKind {
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
     ContextualSymbolIndexValue,
+    /// `in`-operator left key compatibility against the property-key space.
+    InOperatorKey,
+    /// `in`-operator RHS primitive-constraint compatibility for TS2638.
+    InOperatorPrimitiveConstraint,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -191,6 +195,14 @@ impl RelationRequest {
 
     pub(crate) const fn contextual_symbol_index_value(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ContextualSymbolIndexValue)
+    }
+
+    pub(crate) const fn in_operator_key(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InOperatorKey)
+    }
+
+    pub(crate) const fn in_operator_primitive_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InOperatorPrimitiveConstraint)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
