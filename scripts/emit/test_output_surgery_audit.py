@@ -95,6 +95,8 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["output_surgery_status"], "failed")
+        self.assertEqual(report["warning_count"], 0)
+        self.assertEqual(report["warning_status"], "clear")
         self.assertEqual(report["git_context"], git_context)
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
@@ -166,6 +168,10 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["output_surgery_status"], "passed")
+        self.assertEqual(report["warning_count"], 1)
+        self.assertEqual(report["warning_status"], "warn")
+        self.assertEqual(report["exhausted_category_count"], 1)
+        self.assertEqual(report["exhausted_categories"], ["semantic-output-surgery"])
         self.assertEqual(report["failures"], [])
 
     def test_git_context_records_branch_upstream_and_dirty_count(self):

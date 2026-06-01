@@ -401,10 +401,13 @@ def build_json_report(
         for summary in category_summaries
         if summary["max_count"] is not None and summary["budget_status"] == "exhausted"
     ]
+    warning_count = len(exhausted_categories)
     return {
         "ok": not failures,
         "status": "failed" if failures else "passed",
         "output_surgery_status": "failed" if failures else "passed",
+        "warning_count": warning_count,
+        "warning_status": "warn" if warning_count else "clear",
         "git_context": git_context if git_context is not None else build_git_context(),
         "total_findings": len(findings),
         "files_with_findings": len(counts),
@@ -412,7 +415,7 @@ def build_json_report(
         "allowlist_cap": budget.allowlist_cap,
         "remaining_allowlist_capacity": budget.remaining_allowlist_capacity,
         "allowlist_budget_status": budget.budget_status,
-        "exhausted_category_count": len(exhausted_categories),
+        "exhausted_category_count": warning_count,
         "exhausted_categories": exhausted_categories,
         "unallowlisted_calls": summary.unallowlisted,
         "over_allowlist_files": summary.over_allowlist_files,
