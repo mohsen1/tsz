@@ -380,6 +380,16 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute an infer-result constraint fallback relation while preserving
+    /// the `isTypeAssignableTo`-style no-weak policy used by this TS2344 path.
+    pub(crate) fn infer_result_constraint_no_weak_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.no_weak_relation_outcome(source, target)
+    }
+
     /// Execute a diagnostic-bearing generic constraint property relation for
     /// raw checker types, preserving the canonical generic-constraint request
     /// shape.

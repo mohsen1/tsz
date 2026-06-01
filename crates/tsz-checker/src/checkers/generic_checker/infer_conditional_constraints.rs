@@ -271,7 +271,7 @@ impl<'a> CheckerState<'a> {
         };
 
         candidates.into_iter().any(|candidate| {
-            self.no_weak_relation_outcome(candidate, inst_constraint)
+            self.infer_result_constraint_no_weak_relation_outcome(candidate, inst_constraint)
                 .related
                 || self.base_union_members_satisfy_constraint(candidate, inst_constraint)
                 || self.conditional_array_element_infer_satisfies_constraint(
@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
             .filter_map(|candidate| self.array_like_element_type(candidate))
             .collect::<Vec<_>>();
         elements.into_iter().any(|element| {
-            self.no_weak_relation_outcome(element, inst_constraint)
+            self.infer_result_constraint_no_weak_relation_outcome(element, inst_constraint)
                 .related
                 || self.base_union_members_satisfy_constraint(element, inst_constraint)
         })

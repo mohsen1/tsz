@@ -103,7 +103,7 @@ fn hidden_infer_constraints_use_relation_outcome_boundary() {
 }
 
 #[test]
-fn infer_conditional_alias_element_constraints_use_no_weak_relation_outcome_boundary() {
+fn infer_conditional_alias_element_constraints_use_named_no_weak_relation_outcome_boundary() {
     let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/checkers/generic_checker/infer_conditional_constraints.rs");
     let source =
@@ -118,13 +118,15 @@ fn infer_conditional_alias_element_constraints_use_no_weak_relation_outcome_boun
         .expect("find next alias helper");
     let alias_helper = &alias_rest[..alias_end];
     assert!(
-        alias_helper.contains("no_weak_relation_outcome(candidate, inst_constraint)")
-            && alias_helper.contains(".related"),
-        "alias element infer constraints should route no-weak relation truth through RelationOutcome"
+        alias_helper.contains(
+            "infer_result_constraint_no_weak_relation_outcome(candidate, inst_constraint)"
+        ) && alias_helper.contains(".related"),
+        "alias element infer constraints should route no-weak relation truth through the named infer-result constraint fallback"
     );
     assert!(
-        !alias_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
-        "alias element infer constraints should not use the raw no-weak boolean guard"
+        !alias_helper.contains("self.no_weak_relation_outcome(")
+            && !alias_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
+        "alias element infer constraints should not use the raw no-weak relation helpers"
     );
 
     let array_start = source
@@ -136,12 +138,14 @@ fn infer_conditional_alias_element_constraints_use_no_weak_relation_outcome_boun
         .expect("find next array helper");
     let array_helper = &array_rest[..array_end];
     assert!(
-        array_helper.contains("no_weak_relation_outcome(element, inst_constraint)")
+        array_helper
+            .contains("infer_result_constraint_no_weak_relation_outcome(element, inst_constraint)")
             && array_helper.contains(".related"),
-        "conditional array element infer constraints should route no-weak relation truth through RelationOutcome"
+        "conditional array element infer constraints should route no-weak relation truth through the named infer-result constraint fallback"
     );
     assert!(
-        !array_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
-        "conditional array element infer constraints should not use the raw no-weak boolean guard"
+        !array_helper.contains("self.no_weak_relation_outcome(")
+            && !array_helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
+        "conditional array element infer constraints should not use the raw no-weak relation helpers"
     );
 }
