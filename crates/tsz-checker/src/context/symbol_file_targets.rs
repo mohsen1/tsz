@@ -101,6 +101,15 @@ impl SymbolFileTargetsOverlay {
         self.delta.is_empty() && self.parent.is_none()
     }
 
+    /// Number of locally-registered (delta) entries. Used by the export
+    /// resolution table to detect whether an alias walk added any new
+    /// symbol→file registrations; a walk that registered nothing new is
+    /// side-effect-free for this overlay and therefore safe to memoize.
+    #[must_use]
+    pub fn delta_len(&self) -> usize {
+        self.delta.len()
+    }
+
     /// Freeze this overlay's current delta and return the immutable snapshot
     /// a child checker should use as its parent layer.
     pub(super) fn snapshot_for_child(&mut self) -> Option<Arc<SymbolFileTargetsNode>> {

@@ -411,6 +411,13 @@ pub struct CheckerContext<'a> {
     /// Misses are cached only for lookups that enter without alias-cycle state.
     pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
 
+    /// Precomputed per-module export resolution table: `(owning_file, alias)` →
+    /// `(resolved_symbol, resolved_owning_file)`. Collapses the per-reference
+    /// re-export / `export =` / alias chain walk into one lookup. Populated
+    /// lazily on the first cycle-free resolution of each alias whose owning
+    /// file is known. See [`AliasResolutionTable`].
+    pub alias_resolution_table: RefCell<AliasResolutionTable>,
+
     /// Per-checker cache for nested namespace candidates found through namespace exports.
     /// Keyed by `namespace_name` and stores the candidate nested namespace symbols with
     /// their owning file index. This avoids rescanning every binder when resolving many

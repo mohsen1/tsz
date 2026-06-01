@@ -23,6 +23,15 @@ const MAX_ALIAS_RESOLUTION_DEPTH: u32 = 128;
 
 pub(crate) struct AliasCycleTracker {
     guard: RecursionGuard<SymbolId>,
+    /// Monotonic count of cycle / depth-cap aborts observed during this walk.
+    ///
+    /// Memoization of an alias result is only sound when the sub-resolution
+    /// that produced it never truncated a cycle: a truncated answer depends on
+    /// which symbols were already on the stack (the outer chain position), so
+    /// it must not be cached as a position-independent fact. Callers snapshot
+    /// this counter before resolving a sub-alias and compare it afterwards; an
+    /// unchanged counter proves the subtree resolved cycle-free.
+    cycle_aborts: u64,
 }
 
 impl AliasCycleTracker {
@@ -32,6 +41,7 @@ impl AliasCycleTracker {
                 max_depth: MAX_ALIAS_RESOLUTION_DEPTH,
                 max_iterations: 100_000,
             }),
+            cycle_aborts: 0,
         }
     }
 
@@ -40,13 +50,34 @@ impl AliasCycleTracker {
         self.guard.is_visiting(sym)
     }
 
+    /// Snapshot of the cycle-abort counter for cache-cleanliness checks.
+    #[inline]
+    pub(crate) const fn cycle_abort_epoch(&self) -> u64 {
+        self.cycle_aborts
+    }
+
+    /// Record that a cycle / depth-cap truncation occurred. Callers invoke this
+    /// whenever they bail out of an alias chain because the symbol was already
+    /// being visited or a depth/iteration cap was hit, so any result computed
+    /// while this counter is in flight is excluded from memoization.
+    #[inline]
+    pub(crate) const fn note_cycle_abort(&mut self) {
+        self.cycle_aborts = self.cycle_aborts.saturating_add(1);
+    }
+
     /// Record `sym` as visited.  Returns `true` if the enter succeeded, `false`
     /// if the depth/iteration cap was hit or the symbol was already tracked.
     /// Callers that previously ignored `Vec::push` may ignore the result;
     /// depth is already gated by [`Self::len`].
     #[inline]
     pub(crate) fn push(&mut self, sym: SymbolId) -> bool {
-        matches!(self.guard.enter(sym), RecursionResult::Entered)
+        match self.guard.enter(sym) {
+            RecursionResult::Entered => true,
+            _ => {
+                self.cycle_aborts = self.cycle_aborts.saturating_add(1);
+                false
+            }
+        }
     }
 
     /// Remove `sym` from the visiting set, mirroring the old `Vec::pop` call
@@ -347,6 +378,55 @@ mod tests {
         for &s in &chain {
             assert!(!t.contains(&s));
         }
+    }
+
+    // ---------- cycle-abort epoch (memoization cleanliness) ------------------
+
+    #[test]
+    fn fresh_tracker_has_zero_cycle_abort_epoch() {
+        let t = AliasCycleTracker::new();
+        assert_eq!(t.cycle_abort_epoch(), 0);
+    }
+
+    #[test]
+    fn clean_pushes_do_not_advance_cycle_abort_epoch() {
+        let mut t = AliasCycleTracker::new();
+        let before = t.cycle_abort_epoch();
+        assert!(t.push(sym(1)));
+        assert!(t.push(sym(2)));
+        assert!(t.push(sym(3)));
+        assert_eq!(
+            t.cycle_abort_epoch(),
+            before,
+            "successful (cycle-free) pushes must not taint the epoch",
+        );
+    }
+
+    #[test]
+    fn repeated_push_advances_cycle_abort_epoch() {
+        let mut t = AliasCycleTracker::new();
+        assert!(t.push(sym(5)));
+        let before = t.cycle_abort_epoch();
+        // A second push of the same symbol is a cycle; the epoch must advance.
+        assert!(!t.push(sym(5)));
+        assert!(
+            t.cycle_abort_epoch() > before,
+            "a cycle-truncating push must advance the abort epoch",
+        );
+    }
+
+    #[test]
+    fn note_cycle_abort_advances_epoch_monotonically() {
+        let mut t = AliasCycleTracker::new();
+        let e0 = t.cycle_abort_epoch();
+        t.note_cycle_abort();
+        let e1 = t.cycle_abort_epoch();
+        t.note_cycle_abort();
+        let e2 = t.cycle_abort_epoch();
+        assert!(
+            e1 > e0 && e2 > e1,
+            "epoch must strictly increase: {e0} {e1} {e2}"
+        );
     }
 
     #[test]

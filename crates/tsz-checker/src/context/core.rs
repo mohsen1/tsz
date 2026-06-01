@@ -141,6 +141,15 @@ impl<'a> CheckerContext<'a> {
             .register(sym_id, file_idx);
     }
 
+    /// Number of locally-registered symbol→file entries in the overlay delta.
+    /// The export resolution table snapshots this before/after an alias walk to
+    /// detect whether the walk had any symbol→file side effects; only
+    /// side-effect-free walks are memoized.
+    #[must_use]
+    pub fn symbol_file_target_delta_len(&self) -> usize {
+        self.cross_file_symbol_targets.borrow().delta_len()
+    }
+
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
         self.register_symbol_file_target(sym_id, file_idx);
     }

@@ -5,6 +5,37 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::syntax_kind_ext;
 
+/// Feature gate for the precomputed export resolution table (Goal 4).
+///
+/// The table is **disabled by default** and only enabled when
+/// `TSZ_ENABLE_EXPORT_TABLE` is set to a non-empty, non-`0` value. It is opt-in
+/// research infrastructure, not yet a shipped optimization, because endpoint
+/// memoization of `resolve_alias_symbol` is not provably diagnostic-preserving:
+/// a cross-file `import`/`export type *` binding's *type-only provenance* is
+/// path-sensitive, so caching the resolved underlying symbol can flip TS1362 /
+/// TS2693 for type-only re-exports (see `externalModules/typeOnly/exportNamespace*`).
+///
+/// Keeping the gate (default-off) lets a follow-up make the table sound — by
+/// memoizing binding *provenance* (type-only flag, value/type meaning) rather
+/// than the bare endpoint `SymbolId` — without a second build-out. The default
+/// path is byte-identical to the full chain walk. `TSZ_DISABLE_EXPORT_TABLE`
+/// remains honored as an explicit force-off for A/B verification harnesses.
+fn export_table_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let force_off = std::env::var("TSZ_DISABLE_EXPORT_TABLE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
+        if force_off {
+            return false;
+        }
+        std::env::var("TSZ_ENABLE_EXPORT_TABLE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerState<'a> {
     /// Resolve an alias symbol to its target symbol.
     ///
@@ -45,9 +76,81 @@ impl<'a> CheckerState<'a> {
             crate::checkers_domain::trip_stack_overflow();
             return None;
         }
-        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+
+        // Goal 4: precomputed export resolution table. Resolving an alias /
+        // re-export / `export =` chain is otherwise a deep per-reference walk;
+        // memoizing the chain endpoint turns repeat references into one lookup.
+        //
+        // The table is keyed by `(current_file_idx, alias_sym_id)`, mirroring
+        // `export_equals_named_cache`. Both components are required:
+        //  * `alias_sym_id` alone is ambiguous because a raw `SymbolId` decodes
+        //    against different binders to unrelated symbols, and
+        //  * the underlying walk reads `current_file_idx`-scoped facts (e.g.
+        //    `file_is_esm`, require/interop, ESM-vs-CJS resolution of relative
+        //    specifiers), so the consuming file is part of the key.
+        //
+        // Memoization soundness is conservative — we only cache a result when
+        // ALL of the following hold, so a cache hit is observationally
+        // identical to re-walking:
+        //  1. it is a *top-level* call (`visited_aliases` empty): a mid-chain
+        //     endpoint can depend on which aliases are already on the walk,
+        //  2. the walk was *cycle-clean* (no cycle/depth-cap truncation),
+        //  3. the walk added *no new* symbol→file registrations: such side
+        //     effects feed downstream value/type-meaning checks, so replaying
+        //     them from a cache hit is fragile; we simply never cache walks
+        //     that produced them,
+        //  4. neither the input alias nor the resolved symbol is `type-only`:
+        //     type-only provenance is path-sensitive (it distinguishes TS1361
+        //     `import type` from TS1362 `export type`), so type-only chains are
+        //     excluded from the table entirely.
+        let table_enabled = export_table_enabled() && visited_aliases.len() == 0;
+        let table_key = (self.ctx.current_file_idx, sym_id);
+
+        if table_enabled
+            && let Some(&resolved) = self.ctx.alias_resolution_table.borrow().get(&table_key)
+        {
+            return Some(resolved);
+        }
+
+        let input_is_type_only = self.alias_symbol_is_type_only(sym_id);
+        let delta_before = self.ctx.symbol_file_target_delta_len();
+        let epoch_before = visited_aliases.cycle_abort_epoch();
+        let result = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
             self.resolve_alias_symbol_inner(sym_id, visited_aliases)
-        })
+        });
+
+        if table_enabled
+            && !input_is_type_only
+            && let Some(resolved) = result
+            && visited_aliases.cycle_abort_epoch() == epoch_before
+            && self.ctx.symbol_file_target_delta_len() == delta_before
+            && !self.alias_symbol_is_type_only(resolved)
+        {
+            self.ctx
+                .alias_resolution_table
+                .borrow_mut()
+                .insert(table_key, resolved);
+        }
+
+        result
+    }
+
+    /// Whether the symbol (resolved against the current binder or its owning
+    /// cross-file binder, including lib binders) is a `type-only` import/export.
+    /// The export resolution table never memoizes resolutions touching
+    /// type-only symbols because their provenance is path-sensitive.
+    fn alias_symbol_is_type_only(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            return symbol.is_type_only;
+        }
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(symbol) = binder.get_symbol(sym_id)
+        {
+            return symbol.is_type_only;
+        }
+        false
     }
 
     /// Look up the `export =` target for a require-style consumer of a module,
@@ -78,6 +181,9 @@ impl<'a> CheckerState<'a> {
         // Prevent stack overflow from long alias chains
         const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
         if visited_aliases.len() >= MAX_ALIAS_RESOLUTION_DEPTH {
+            // Depth-cap truncation: the answer is position-dependent, so taint
+            // the cycle epoch to keep this subtree out of the memo table.
+            visited_aliases.note_cycle_abort();
             return None;
         }
 
@@ -90,6 +196,8 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
         if visited_aliases.contains(&sym_id) {
+            // Re-export cycle hit: position-dependent truncation.
+            visited_aliases.note_cycle_abort();
             return None;
         }
         visited_aliases.push(sym_id);
@@ -101,7 +209,11 @@ impl<'a> CheckerState<'a> {
         // c.ts exports { x }
         if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
             // Prevent infinite loops in re-export chains
-            if !visited_aliases.contains(&resolved_sym_id) {
+            if visited_aliases.contains(&resolved_sym_id) {
+                // Cycle: skip recursion and fall through to the fallback paths.
+                // Mark the epoch so this position-dependent answer is not cached.
+                visited_aliases.note_cycle_abort();
+            } else {
                 let mut preferred_target = resolved_sym_id;
                 if let Some(module_name) = symbol.import_module.as_ref() {
                     let export_name = symbol
@@ -410,6 +522,8 @@ impl<'a> CheckerState<'a> {
             // Track resolution depth to prevent stack overflow
             let depth = visited_aliases.len();
             if depth >= 128 {
+                // Depth-cap truncation: keep this subtree out of the memo table.
+                visited_aliases.note_cycle_abort();
                 return None; // Prevent stack overflow
             }
             if let Some(target) =

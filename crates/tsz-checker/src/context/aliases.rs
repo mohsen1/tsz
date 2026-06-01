@@ -73,6 +73,36 @@ pub(crate) fn namespace_exports_cache_estimated_size_bytes(cache: &NamespaceExpo
 /// Keyed by `(current_file_idx, module_specifier, export_name)`.
 pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<SymbolId>>;
 
+/// Precomputed per-module export resolution table (Goal 4 resolution
+/// wall-breaker).
+///
+/// Memoizes the *fully resolved* final symbol for an alias / re-export /
+/// `export =` chain so that resolving a cross-file export becomes one lookup
+/// instead of re-walking the chain on every type reference.
+///
+/// Key: `(current_file_idx, alias_sym_id)` — the consuming file paired with the
+/// raw `SymbolId`, mirroring [`ExportEqualsNamedCache`]. Both components are
+/// required:
+///  * a bare `SymbolId(u32)` decodes against different binders to unrelated
+///    symbols, so it cannot key a program-wide table alone, and
+///  * the chain walk reads `current_file_idx`-scoped facts (e.g. `file_is_esm`,
+///    require/interop, ESM-vs-CJS resolution of relative specifiers), so two
+///    consumers of the same alias from different files can reach different
+///    endpoints — the consuming file disambiguates them. (A file-only key
+///    would flip `import type … / export =` chains between TS1361 and TS1362.)
+///
+/// Value: the resolved chain-endpoint `SymbolId`. Entries are only inserted for
+/// *side-effect-free* walks (no new symbol→file registrations) over *non
+/// type-only* symbols, so a cache hit needs no side-effect replay and is
+/// observationally identical to re-walking.
+///
+/// Only entries whose resolution completed *cycle-free* (no alias-cycle or
+/// depth-cap truncation) at the *top of the chain* are inserted, so a cached
+/// answer is never a position-dependent truncation. Because `current_file_idx`
+/// is part of the key, entries for different files never collide and the table
+/// survives a `switch_to_file` exactly like `export_equals_named_cache`.
+pub type AliasResolutionTable = FxHashMap<(usize, SymbolId), SymbolId>;
+
 #[must_use]
 pub(crate) fn export_equals_named_cache_entries(cache: &ExportEqualsNamedCache) -> usize {
     cache.len()

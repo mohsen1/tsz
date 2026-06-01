@@ -843,6 +843,10 @@ name = "export_equals_display_order_tests"
 path = "tests/export_equals_display_order_tests.rs"
 
 [[test]]
+name = "export_resolution_table_tests"
+path = "tests/export_resolution_table_tests.rs"
+
+[[test]]
 name = "commonjs_require_value_tests"
 path = "tests/commonjs_require_value_tests.rs"
 
