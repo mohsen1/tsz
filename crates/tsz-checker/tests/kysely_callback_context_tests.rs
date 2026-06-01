@@ -371,6 +371,73 @@ db.selectFrom("sys.tables as tables")
 }
 
 #[test]
+fn kysely_wrapped_instance_field_preserves_inherited_select_callback_context() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "src/query-creator.ts",
+            r#"
+export class QueryCreator<DB> {
+  selectFrom<K extends keyof DB & string>(
+    table: K,
+  ): { select(callback: (row: DB[K]) => unknown): void } {
+    return {} as any;
+  }
+}
+"#,
+        ),
+        (
+            "src/kysely.ts",
+            r#"
+import { QueryCreator } from "./query-creator.js";
+
+export class Kysely<DB> extends QueryCreator<DB> {}
+"#,
+        ),
+        (
+            "src/main.ts",
+            r#"
+import type { Kysely } from "./kysely.js";
+
+type MssqlSysTables = {
+  "sys.tables": { name: string; type: "U" };
+};
+
+class MssqlIntrospector {
+  private readonly db: Kysely<MssqlSysTables>;
+
+  constructor(db: Kysely<any>) {
+    this.db = db;
+  }
+
+  tables() {
+    this.db.selectFrom("sys.tables").select((row) => {
+      const name: string = row.name;
+      return name;
+    });
+  }
+}
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs(&files, "src/main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 7006, 2347]),
+        "wrapped Kysely instance field should keep inherited selectFrom and callback context. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn kysely_freeze_factory_method_preserves_return_literal_kind() {
     let source = r#"
 declare function freeze<T>(obj: T): Readonly<T>;

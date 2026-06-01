@@ -298,6 +298,21 @@ impl<'a> CheckerState<'a> {
         if let TypeSymbolResolution::Type(sym_id) =
             self.resolve_identifier_symbol_in_type_position(name_idx)
         {
+            if self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                !symbol.has_any_flags(symbol_flags::ALIAS) && symbol.escaped_name == name
+            }) && let Some((type_params, type_node, alias_sym_id)) =
+                self.same_file_type_alias_parts_for_name(name)
+                && type_params
+                    .as_ref()
+                    .is_none_or(|params| params.nodes.is_empty())
+            {
+                let body = self.get_type_from_type_node(type_node);
+                if let Some(alias_sym_id) = alias_sym_id {
+                    self.ctx.symbol_types.insert(alias_sym_id, body);
+                }
+                return Some(body);
+            }
+
             // For named imports from export= modules, tsc resolves through
             // getPropertyOfType(getTypeOfSymbol(exportValue), name) and combines
             // the value meaning (property) with the type meaning (namespace member).

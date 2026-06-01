@@ -907,7 +907,16 @@ impl<'a> CheckerState<'a> {
                 return self.cache_base_instance_result(expr_idx, should_cache, Some(lib_base));
             }
 
-            if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
+            let base_class_decl =
+                self.get_class_declaration_from_symbol(base_sym_id)
+                    .filter(|&base_class_idx| {
+                        self.heritage_name_text(expr_idx)
+                            .is_none_or(|expected_name| {
+                                self.declaration_name_matches(base_class_idx, &expected_name)
+                            })
+                    });
+
+            if let Some(base_class_idx) = base_class_decl
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
             {

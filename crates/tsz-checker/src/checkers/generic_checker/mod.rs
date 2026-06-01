@@ -768,7 +768,11 @@ impl<'a> CheckerState<'a> {
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
-            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+            if let Some(target) = self
+                .ctx
+                .resolve_import_alias_and_register(sym_id)
+                .or_else(|| self.resolve_alias_symbol(sym_id, &mut visited_aliases))
+            {
                 sym_id = target;
             }
         }
@@ -805,11 +809,9 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
         let base_name = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-
         // A type alias that circularly references itself collapses to a
         // non-generic error type. Applying type arguments to it is therefore
         // "Type 'X' is not generic" (TS2315), matching tsc's errorType
