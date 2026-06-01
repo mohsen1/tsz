@@ -468,6 +468,20 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing overlap/comparability relation for raw
+    /// checker types, preserving the canonical diagnostic-overlap request shape.
+    pub(crate) fn diagnostic_overlap_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::diagnostic_overlap(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing polymorphic `this` receiver relation for raw
     /// checker types, preserving the canonical receiver request shape.
     pub(crate) fn polymorphic_this_receiver_relation_outcome(

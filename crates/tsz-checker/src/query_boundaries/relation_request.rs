@@ -79,6 +79,8 @@ pub(crate) enum RelationKind {
     KeyofDiagnosticSuppression,
     /// Diagnostic-source narrowing display probes.
     DiagnosticSourceNarrowing,
+    /// Diagnostic overlap/comparability probes.
+    DiagnosticOverlap,
     /// Polymorphic `this` receiver/member compatibility probes for diagnostics.
     PolymorphicThisReceiver,
     /// Class extends index-signature value compatibility probes.
@@ -356,6 +358,10 @@ impl RelationRequest {
 
     pub(crate) const fn diagnostic_source_narrowing(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::DiagnosticSourceNarrowing)
+    }
+
+    pub(crate) const fn diagnostic_overlap(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::DiagnosticOverlap)
     }
 
     pub(crate) const fn polymorphic_this_receiver(source: TypeId, target: TypeId) -> Self {
