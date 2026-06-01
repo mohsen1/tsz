@@ -333,6 +333,81 @@ const bad: typeof strVer = numVer;
     );
 }
 
+#[test]
+fn nested_identity_mapped_type_deep_leaf_mismatch_errors() {
+    let source = r#"
+type Id2<T> = { [P in keyof T]: Id2<Id2<T[P]>> };
+
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>;
+
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+
+type RequiredDeep<T> = { [K in keyof T]-?: RequiredDeep<T[K]> };
+
+type A = { a?: { b: { c: 1 | { d: 2000 } }}}
+type B = { a?: { b: { c: { d: { e: { f: { g: 2 }}}}, x: 1000 }}}
+
+type C = RequiredDeep<A>;
+type D = RequiredDeep<B>;
+
+type Test1 = [C, D] extends [D, C] ? true : false;
+type Test2 = C extends D ? true : false;
+type Test3 = D extends C ? true : false;
+
+type NestedRecord<K extends string, V> = K extends `${infer K0}.${infer KR}` ? { [P in K0]: NestedRecord<KR, V> } : Record<K, V>;
+
+type Bar1 = NestedRecord<"x.y.z.a.b.c", number>;
+type Bar2 = NestedRecord<"x.y.z.a.b.c", string>;
+
+declare const bar1: Bar1;
+const bar2: Bar2 = bar1;
+
+export {};
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Nested Id2<T> with number vs string at leaf must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "Nested Id2<T> 6-levels deep must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn adjacent_recursive_identity_mapped_types_both_error_on_deep_leaf_mismatch() {
+    let source = r#"
+type Id<T> = { [K in keyof T]: Id<T[K]> };
+
+type Foo1 = Id<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo2 = Id<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+
+declare const foo1: Foo1;
+const foo2: Foo2 = foo1;
+
+type Id2<T> = { [K in keyof T]: Id2<Id2<T[K]>> };
+
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+"#;
+    let codes = check_source_codes(source);
+    let ts2322_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert!(
+        ts2322_count >= 2,
+        "Adjacent recursive identity mapped aliases must each produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "Adjacent recursive identity mapped aliases must not produce TS2589. Got: {codes:?}"
+    );
+}
+
 /// tsc rule: a recursive `FindConditions`-style conditional mapped type used
 /// as a variable type annotation must not prevent TS2403 from firing when the
 /// same variable is redeclared with a different type argument.
