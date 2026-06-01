@@ -197,6 +197,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            if let Some(type_text) =
+                self.never_fallback_return_type_text(body_idx, &param_name, &param_type_text)
+            {
+                return Some(type_text);
+            }
+
             let exclusions = self
                 .nullish_exclusions_from_guarded_parameter_return(body_idx, &param_name)
                 .or_else(|| {
@@ -207,6 +213,48 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         None
+    }
+
+    fn never_fallback_return_type_text(
+        &self,
+        body_idx: NodeIndex,
+        param_name: &str,
+        param_type_text: &str,
+    ) -> Option<String> {
+        let return_expr = self.function_body_single_return_expression(body_idx)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(return_expr);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+        if self.get_identifier_text(binary.left).as_deref() != Some(param_name) {
+            return None;
+        }
+        let right_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let right_node = self.arena.get(right_idx)?;
+        if right_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(right_node)?;
+        if call
+            .arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let callee_name = self.get_identifier_text(call.expression)?;
+        let callee_func = self.local_function_declaration_by_name(&callee_name)?;
+        let return_type_text = self.emit_type_node_text(callee_func.type_annotation)?;
+        (return_type_text.trim() == "never").then(|| format!("NonNullable<{param_type_text}>"))
     }
 
     fn nullish_exclusions_from_guarded_parameter_return(
