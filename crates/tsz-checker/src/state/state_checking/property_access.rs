@@ -244,6 +244,17 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_type_query_type(object_type);
         let original_object_type = object_type;
 
+        // Lazy single-member fast path: when the receiver is a bare
+        // `Lazy(DefId)` reference to a simple lib interface, resolve only the
+        // accessed own property instead of materializing the interface's full
+        // member set + heritage closure (e.g. `document.title`). Falls back to
+        // the full path on any miss/ambiguity, so behavior is unchanged there.
+        // Gated by the `TSZ_DISABLE_LAZY_MEMBER_ACCESS` kill-switch inside the
+        // eligibility predicate for byte-identical A/B comparison.
+        if let Some(result) = self.try_lazy_lib_member_property_access(object_type, prop_name) {
+            return result;
+        }
+
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
         // need relation preconditioning here.

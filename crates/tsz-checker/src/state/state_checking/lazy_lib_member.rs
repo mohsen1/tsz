@@ -152,4 +152,48 @@ impl CheckerState<'_> {
         let symbol = self.ctx.binder.get_symbol(interface_sym_id)?;
         symbol.members.as_ref()?.get(prop_name)
     }
+
+    /// Try to resolve `prop_name` on an eligible simple lib-interface receiver by
+    /// lowering only that own property, returning a property-access `Success`
+    /// without materializing the rest of the interface.
+    ///
+    /// Returns `None` (caller takes the full materialization path) when the
+    /// receiver is not an eligible bare-`Lazy` lib interface, when the kill-switch
+    /// is set, when the interface does not declare `prop_name` as an own plain
+    /// property (including all heritage-inherited members), or when single-member
+    /// lowering cannot prove the member shape.
+    pub(crate) fn try_lazy_lib_member_property_access(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
+        let def_id = self.lazy_lib_member_receiver_def_id(object_type)?;
+
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let name = self.ctx.binder.get_symbol(sym_id)?.escaped_name.clone();
+        let member_type = self.resolve_simple_lib_interface_own_property(&name, prop_name)?;
+
+        Some(tsz_solver::operations::property::PropertyAccessResult::simple(member_type))
+    }
+
+    /// Resolve a property-access receiver to its property-access-ready form,
+    /// forcing full materialization of an eligible lib-interface `Lazy` that
+    /// [`Self::resolve_type_for_property_access`] would otherwise leave lazy.
+    ///
+    /// Used on the property-read hot path when the single-member fast path
+    /// missed (e.g. a heritage-inherited member): the structural member lookup
+    /// that follows needs the full shape, so the bare `Lazy` is materialized
+    /// here instead of falling back to `any`.
+    pub(crate) fn resolve_property_access_base_materialized(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        let resolved = self.resolve_type_for_property_access(object_type);
+        if self.lazy_lib_member_receiver_def_id(resolved).is_some() {
+            self.ensure_relation_input_ready(resolved);
+            self.resolve_type_for_property_access_force(resolved)
+        } else {
+            resolved
+        }
+    }
 }

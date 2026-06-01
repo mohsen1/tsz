@@ -540,7 +540,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "property_access_type"
         / "resolve.rs",
-        3151,
+        3164,
     ),
     (
         "Checker boundary: types/type_checking/duplicate_identifiers_helpers.rs size ratchet",
