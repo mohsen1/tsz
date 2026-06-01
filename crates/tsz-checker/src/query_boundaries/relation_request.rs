@@ -153,6 +153,8 @@ pub(crate) enum RelationKind {
     CallDisplayOverlap,
     /// Call checker generator-yield component compatibility probe.
     CallGeneratorYield,
+    /// Checker-only `IteratorResult` value requirement compatibility probe.
+    IteratorResultValue,
     /// Round-2 contextual call inference substitution constraint probe.
     Round2ContextualSubstitution,
     /// Generic constructor inference primitive constraint compatibility probe.
@@ -550,6 +552,10 @@ impl RelationRequest {
 
     pub(crate) const fn call_generator_yield(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallGeneratorYield)
+    }
+
+    pub(crate) const fn iterator_result_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::IteratorResultValue)
     }
 
     pub(crate) const fn round2_contextual_substitution(source: TypeId, target: TypeId) -> Self {

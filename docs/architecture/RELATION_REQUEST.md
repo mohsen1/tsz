@@ -47,6 +47,10 @@ shapes suppress EPC now lives in the assignability boundary.
 | `source_is_fresh` | Defaults to `false`; `with_fresh_source` | No direct `execute_relation` branch today | Advisory request descriptor; fresh object literal EPC is still handled before or around the relation call |
 | `allow_erased_generic_signature_retry` | Defaults to `false`; `with_erased_generic_signature_retry` | `execute_relation` | Semantic relation flag; translated to `RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY` |
 
+Additional active request builders are tracked as they land. The checker-only
+`iterator_result_value` request names the `IteratorResult` value-property probe
+used by TS2322 failure analysis.
+
 ## Current Call Sites
 
 `assignability_diagnostics.rs` builds `RelationRequest::assign` for TS2322
@@ -473,6 +477,14 @@ through `call_generator_yield_relation_outcome` when probing whether actual and
 expected generator yield components are mutually compatible before forcing a
 callback return mismatch diagnostic. The checker owns diagnostic filtering while
 the request names the relation role.
+
+Checker-only `IteratorResult` value diagnostics build
+`RelationRequest::iterator_result_value` through
+`iterator_result_value_relation_outcome` when probing whether `undefined`
+satisfies a required `value` property before choosing an iterator-result
+TS2322 failure reason. The checker owns `IteratorResult` recognition,
+target-shape recovery, and diagnostic reason selection while the request names
+the relation role.
 
 Round-2 contextual call inference builds
 `RelationRequest::round2_contextual_substitution` through

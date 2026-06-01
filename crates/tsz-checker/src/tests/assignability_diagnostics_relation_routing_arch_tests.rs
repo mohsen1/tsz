@@ -16,8 +16,9 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() <= 1,
-        "remaining generic assignability diagnostics relation probes should keep shrinking"
+        source.matches("assign_relation_outcome(").count(),
+        0,
+        "top-level assignability diagnostics should not use generic assign requests"
     );
     let generic_start = argument_reports
         .find("pub(crate) fn check_assignable_or_report_generic_at")
@@ -63,6 +64,23 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     assert!(
         !source.contains("assign_relation_outcome(target, source).related"),
         "argument diagnostics should not use the generic assign request for reverse callback suppression probes"
+    );
+    let checker_only_start = root_source
+        .find("pub(crate) fn checker_only_assignability_failure_reason")
+        .expect("missing checker-only assignability failure helper");
+    let checker_only_end = root_source[checker_only_start..]
+        .find("fn iterator_next_type_display_mismatch")
+        .map(|offset| checker_only_start + offset)
+        .expect("missing next iterator display helper");
+    let checker_only_helper = &root_source[checker_only_start..checker_only_end];
+    assert!(
+        checker_only_helper
+            .contains("iterator_result_value_relation_outcome(TypeId::UNDEFINED, value_type)"),
+        "checker-only IteratorResult value diagnostics should use the iterator-result-value RelationOutcome"
+    );
+    assert!(
+        !checker_only_helper.contains("assign_relation_outcome(TypeId::UNDEFINED, value_type)"),
+        "checker-only IteratorResult value diagnostics should not use the generic assign request"
     );
     let weak_union_skip_start = root_source
         .find("pub(crate) fn should_skip_weak_union_error_with_outcome")

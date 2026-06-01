@@ -1387,7 +1387,7 @@ impl<'a> CheckerState<'a> {
         let value_type = value_prop.type_id;
 
         !self
-            .assign_relation_outcome(TypeId::UNDEFINED, value_type)
+            .iterator_result_value_relation_outcome(TypeId::UNDEFINED, value_type)
             .related
     }
 
