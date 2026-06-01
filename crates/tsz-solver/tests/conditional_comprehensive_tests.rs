@@ -8,6 +8,7 @@
 //! - Conditional type constraint for subtype checking
 
 use super::*;
+use crate::diagnostics::SubtypeFailureReason;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
@@ -22,3 +23,4 @@ use crate::types::{ConditionalType, TypeData, TypeParamInfo};
 include!("conditional_comprehensive_tests_parts/part_00.rs");
 include!("conditional_comprehensive_tests_parts/part_01.rs");
 include!("conditional_comprehensive_tests_parts/part_02.rs");
+include!("conditional_comprehensive_tests_parts/part_03.rs");

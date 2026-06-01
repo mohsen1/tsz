@@ -289,6 +289,48 @@ pub enum SubtypeFailureReason {
         member_type: TypeId,
         nested_reason: Box<Self>,
     },
+    /// A deferred conditional type relation failed because one of its branches
+    /// fails the corresponding branch relation.
+    ///
+    /// Without this variant, `T extends U ? X : Y` relations that cannot be
+    /// resolved at evaluation time collapse to a bare `TypeMismatch` and the
+    /// diagnostic chain stops at the outer
+    /// `Type 'S' is not assignable to type 'T extends U ? X : Y'.` line —
+    /// hiding the actual branch-level reason (for example, `"yes"` not being
+    /// assignable to `"x"` for `T extends string ? "yes" : "no" <: "x"`).
+    ///
+    /// The variant covers the three structural shapes the conditional rules
+    /// distinguish:
+    ///
+    /// 1. Concrete source vs deferred-conditional target: source must be
+    ///    `<:` both branches; `branch_source` is the original source and
+    ///    `branch_target` is the failing branch (`true_type` or `false_type`).
+    /// 2. Deferred-conditional source vs concrete target: both branches must
+    ///    be `<:` target; `branch_source` is the failing branch and
+    ///    `branch_target` is the original target.
+    /// 3. Conditional vs conditional (matching extends shape): branches are
+    ///    compared pairwise (`source.true_type <: target.true_type`, etc.);
+    ///    the variant carries the failing pair.
+    ///
+    /// `nested_reason` explains the failing branch relation and is rendered
+    /// one level deeper, preserving the full chain (a literal mismatch, a
+    /// missing property, a deeper conditional, etc.).
+    ConditionalBranchMismatch {
+        /// The original conditional-shaped source (or its concrete value when
+        /// the conditional is on the target side).
+        source_type: TypeId,
+        /// The original conditional-shaped target (or its concrete value when
+        /// the conditional is on the source side).
+        target_type: TypeId,
+        /// The source half of the failing branch relation.
+        branch_source: TypeId,
+        /// The target half of the failing branch relation. Callers needing to
+        /// distinguish the true vs false branch can compare this against the
+        /// originating conditional's `true_type` / `false_type`.
+        branch_target: TypeId,
+        /// Why the branch's relation failed.
+        nested_reason: Box<Self>,
+    },
 }
 
 /// Diagnostic severity level.
@@ -621,6 +663,7 @@ impl SubtypeFailureReason {
             | Self::IndexAccessTypeParameterMismatch { .. }
             | Self::TypeArgumentMismatch { .. }
             | Self::UnionSourceMismatch { .. }
+            | Self::ConditionalBranchMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
@@ -1024,6 +1067,27 @@ impl SubtypeFailureReason {
                     vec![(*source_type).into(), (*target_type).into()],
                 );
                 diag = diag.with_related(nested_reason.to_diagnostic(*member_type, *target_type));
+                diag
+            }
+            Self::ConditionalBranchMismatch {
+                source_type,
+                target_type,
+                branch_source,
+                branch_target,
+                nested_reason,
+            } => {
+                // Top-level `Type 'S' is not assignable to type 'T extends U ? X : Y'.`,
+                // then the failing branch relation directly beneath it. The
+                // structural conditional-vs-conditional/source/target rule is
+                // surfaced as a relation between the branch endpoints so the
+                // chain looks the same regardless of which side held the
+                // conditional shape.
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![(*source_type).into(), (*target_type).into()],
+                );
+                diag =
+                    diag.with_related(nested_reason.to_diagnostic(*branch_source, *branch_target));
                 diag
             }
         }

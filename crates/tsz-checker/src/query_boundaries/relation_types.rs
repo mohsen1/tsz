@@ -249,6 +249,15 @@ impl RelationFailure {
                 source_type,
                 target_type,
                 ..
+            }
+            // A deferred-conditional relation failure: the checker-facing
+            // classification keeps the outer conditional/concrete pair; the
+            // failing branch and its nested reason are rendered from the
+            // solver reason's structured chain via `render_failure_reason`.
+            | SubtypeFailureReason::ConditionalBranchMismatch {
+                source_type,
+                target_type,
+                ..
             } => Self::TypeMismatch {
                 source_type,
                 target_type,

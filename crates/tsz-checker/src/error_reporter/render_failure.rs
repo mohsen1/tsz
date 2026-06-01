@@ -576,6 +576,20 @@ impl<'a> CheckerState<'a> {
                 *member_type,
                 nested_reason.as_ref(),
             ),
+            SubtypeFailureReason::ConditionalBranchMismatch {
+                source_type,
+                target_type,
+                branch_source,
+                branch_target,
+                nested_reason,
+            } => self.render_conditional_branch_mismatch(
+                &rctx,
+                *source_type,
+                *target_type,
+                *branch_source,
+                *branch_target,
+                nested_reason.as_ref(),
+            ),
             SubtypeFailureReason::TooManyParameters {
                 source_count,
                 target_count,
