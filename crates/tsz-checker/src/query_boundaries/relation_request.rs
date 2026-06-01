@@ -111,6 +111,8 @@ pub(crate) enum RelationKind {
     BinaryArithmeticNumber,
     /// Private member access object/declaration compatibility probe.
     PrivateMemberAccess,
+    /// Function type contextual/recovery compatibility probe.
+    FunctionTypeCompatibility,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -394,6 +396,10 @@ impl RelationRequest {
 
     pub(crate) const fn private_member_access(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::PrivateMemberAccess)
+    }
+
+    pub(crate) const fn function_type_compatibility(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::FunctionTypeCompatibility)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

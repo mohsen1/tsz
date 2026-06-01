@@ -562,7 +562,6 @@ impl<'a> CheckerState<'a> {
                                     has_callable && has_non_callable
                                 })
                         });
-
                     if let Some(extracted) = direct {
                         if let Some(from_expected) = expected_contextual_type {
                             let direct_is_placeholderish = extracted == TypeId::ANY
@@ -581,7 +580,7 @@ impl<'a> CheckerState<'a> {
                                         self.evaluate_type_with_env(constraint);
                                     evaluated_constraint == from_expected
                                         || self
-                                            .assign_relation_outcome(
+                                            .function_type_compatibility_relation_outcome(
                                                 from_expected,
                                                 evaluated_constraint,
                                             )
@@ -1583,7 +1582,6 @@ impl<'a> CheckerState<'a> {
                     self.infer_return_type_from_body(idx, body, inference_return_context);
                 self.ctx.in_const_assertion = prev_const_assertion;
                 return_type = jsdoc_return_context.unwrap_or(inferred);
-
                 // TS 5.5+ inferred type predicates: when a function expression
                 // or arrow has no explicit predicate, no return-type annotation,
                 // and an inferred boolean-like return type, see whether its body
@@ -1604,13 +1602,11 @@ impl<'a> CheckerState<'a> {
                         type_predicate = Some(pred);
                     }
                 }
-
                 if let Some(instance_type) = js_constructor_instance_type
                     && (return_type == TypeId::UNDEFINED || return_type == TypeId::VOID)
                 {
                     return_type = instance_type;
                 }
-
                 if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
                         crate::query_boundaries::common::union_members(self.ctx.types, return_type)
@@ -1618,14 +1614,17 @@ impl<'a> CheckerState<'a> {
                     && union_members.contains(&TypeId::UNDEFINED)
                     && union_members.iter().copied().any(|member| {
                         member != TypeId::UNDEFINED
-                            && self.assign_relation_outcome(member, instance_type).related
-                            && self.assign_relation_outcome(instance_type, member).related
+                            && self
+                                .function_type_compatibility_relation_outcome(member, instance_type)
+                                .related
+                            && self
+                                .function_type_compatibility_relation_outcome(instance_type, member)
+                                .related
                     })
                 {
                     return_type = instance_type;
                 }
             }
-
             // TS7010/TS7011 (implicit any return) is emitted for functions without
             // return type annotations when noImplicitAny is enabled and the return
             // type cannot be inferred (e.g., is 'any' or only returns undefined)

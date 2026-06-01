@@ -7,16 +7,26 @@ fn function_type_relation_probes_use_relation_outcome_boundary() {
     let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        compact.contains("assign_relation_outcome(from_expected,evaluated_constraint,).related"),
-        "contextual constrained type-parameter extraction should use relation outcomes"
+        compact.contains(
+            "function_type_compatibility_relation_outcome(from_expected,evaluated_constraint,).related"
+        ),
+        "contextual constrained type-parameter extraction should use function-type relation outcomes"
     );
     assert!(
-        compact.contains("assign_relation_outcome(member,instance_type).related"),
-        "JS constructor return union member collapse should use relation outcomes"
+        compact
+            .contains("function_type_compatibility_relation_outcome(member,instance_type).related"),
+        "JS constructor return union member collapse should use function-type relation outcomes"
     );
     assert!(
-        compact.contains("assign_relation_outcome(instance_type,member).related"),
-        "JS constructor return instance/member reverse probe should use relation outcomes"
+        compact
+            .contains("function_type_compatibility_relation_outcome(instance_type,member).related"),
+        "JS constructor return instance/member reverse probe should use function-type relation outcomes"
+    );
+    assert!(
+        !compact.contains("assign_relation_outcome(from_expected,evaluated_constraint,).related")
+            && !compact.contains("assign_relation_outcome(member,instance_type).related")
+            && !compact.contains("assign_relation_outcome(instance_type,member).related"),
+        "function-type diagnostic probes should not use generic assignment relation outcomes"
     );
     assert!(
         compact.contains("diagnostic_subtype_outcome(extracted,from_expected).related")
