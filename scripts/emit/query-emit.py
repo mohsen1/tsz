@@ -212,7 +212,9 @@ def emit_freshness_note(detail_summary, public_summary):
         f"DTS {public_summary['dtsPass']:,}/{public_summary['dtsTotal']:,} vs "
         f"{detail_summary['dtsPass']:,}/{detail_summary['dtsTotal']:,}). "
         f"Pass delta: JS +{status['jsPassDelta']:,}, DTS +{status['dtsPassDelta']:,}. "
-        "Failure-family rows below still use checked-in per-test detail."
+        "Failure-family rows below are historical checked-detail triage only; "
+        "do not cite them as the current public remaining set until "
+        "emit-detail.json is refreshed."
     )
 
 
@@ -308,7 +310,7 @@ def failure_family_surface_heading(surface, title, detail_total, detail_summary,
         return f"{title} checked-detail: {detail_total} failures/timeouts"
 
     return (
-        f"{title} checked-detail: {detail_total} failures/timeouts "
+        f"{title} STALE checked-detail triage: {detail_total} failures/timeouts "
         f"(public aggregate remaining: {public_remaining:,}; "
         f"detail aggregate remaining: {detail_remaining:,})"
     )
