@@ -149,31 +149,43 @@ fn indexed_access_ts2536_key_space_checks_use_relation_outcome_boundary() {
         "indexed-access TS2536 key-space checks should not use raw diagnostic boolean relation guards"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(constraint_eval,keyof_object).related"),
+        !source.contains("assign_relation_outcome("),
+        "indexed-access TS2536 key-space checks should use named RelationRequests"
+    );
+    assert!(
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(constraint_eval,keyof_object).related"
+        ),
         "constraint/keyof acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(check_index_eval,keyof_type).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(check_index_eval,keyof_type).related"
+        ),
         "type-literal fast-path index/keyof acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(index_type_for_check,keyof_object).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,keyof_object).related"
+        ),
         "raw indexed-access key-space acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(next_evaluated,keyof_object).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(next_evaluated,keyof_object).related"
+        ),
         "transitive constraint-chain key-space acceptance should route through RelationOutcome"
     );
     assert!(
         compact_source.contains(
-            "assign_relation_outcome(nested_index_for_check,constrained_base_keyof).related"
+            "indexed_access_key_space_relation_outcome(nested_index_for_check,constrained_base_keyof,).related"
         ),
         "nested indexed-access key-space acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(index_type_for_check,keyof_values).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,keyof_values,).related"
+        ),
         "value-union keyof fallback checks should route through RelationOutcome"
     );
 }
