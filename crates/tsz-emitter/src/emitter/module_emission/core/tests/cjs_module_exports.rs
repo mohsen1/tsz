@@ -392,6 +392,62 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
 }
 
 #[test]
+fn type_only_star_reexports_elide_in_es_module_emit() {
+    let source = r#"export type * from "./types";
+export type * as Types from "./types";
+export namespace N {
+    export type X = number;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim(),
+        "export {};",
+        "Type-only star re-exports and type-only namespace bodies should erase to the module marker.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn type_only_star_reexports_elide_in_commonjs_emit() {
+    let source = r#"export type * from "./types";
+export type * as Types from "./types";
+export namespace N {
+    export type X = number;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim(),
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });",
+        "Type-only star re-exports and type-only namespace bodies should erase to the CommonJS module marker.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_export_star_does_not_emit_commonjs_reexport_helpers() {
     let source = r#"class Aaa {
 }
