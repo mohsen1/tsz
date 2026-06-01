@@ -44,6 +44,7 @@ exec "$@"
         self.assertIn("owned_pr_count=0", result.stdout)
         self.assertIn("owned_ready_pr_count=0", result.stdout)
         self.assertIn("owned_draft_pr_count=0", result.stdout)
+        self.assertIn("owned_merge_queue_pr_count=0", result.stdout)
         self.assertIn("owned_issue_count=0", result.stdout)
         self.assertIn("owned_work_status=clear", result.stdout)
 
@@ -51,8 +52,8 @@ exec "$@"
         result = self.run_list_owned_work(
             ["Studio-F"],
             prs=(
-                "#1 ready first PR https://github.com/mohsen1/tsz/pull/1\n"
-                "#2 draft second PR https://github.com/mohsen1/tsz/pull/2\n"
+                "#1 ready mergeQueue=on first PR https://github.com/mohsen1/tsz/pull/1\n"
+                "#2 draft mergeQueue=off second PR https://github.com/mohsen1/tsz/pull/2\n"
             ),
             issues="#3 issue https://github.com/mohsen1/tsz/issues/3\n",
         )
@@ -60,6 +61,7 @@ exec "$@"
         self.assertIn("owned_pr_count=2", result.stdout)
         self.assertIn("owned_ready_pr_count=1", result.stdout)
         self.assertIn("owned_draft_pr_count=1", result.stdout)
+        self.assertIn("owned_merge_queue_pr_count=1", result.stdout)
         self.assertIn("owned_issue_count=1", result.stdout)
         self.assertIn("owned_work_status=active", result.stdout)
 
@@ -69,7 +71,7 @@ exec "$@"
 
             result = self.run_list_owned_work(
                 ["Studio-F", "--json-report", str(report_path)],
-                prs="#1 ready first PR https://github.com/mohsen1/tsz/pull/1\n",
+                prs="#1 ready mergeQueue=on first PR https://github.com/mohsen1/tsz/pull/1\n",
                 issues="#2 issue https://github.com/mohsen1/tsz/issues/2\n",
             )
 
@@ -85,6 +87,7 @@ exec "$@"
             self.assertEqual(1, report["total_pr_count"])
             self.assertEqual(1, report["total_ready_pr_count"])
             self.assertEqual(0, report["total_draft_pr_count"])
+            self.assertEqual(1, report["total_merge_queue_pr_count"])
             self.assertEqual(1, report["total_issue_count"])
             self.assertEqual(2, report["total_owned_count"])
             self.assertEqual(1, len(report["agents"]))
@@ -94,11 +97,12 @@ exec "$@"
             self.assertEqual(1, row["pr_count"])
             self.assertEqual(1, row["ready_pr_count"])
             self.assertEqual(0, row["draft_pr_count"])
+            self.assertEqual(1, row["merge_queue_pr_count"])
             self.assertEqual(1, row["issue_count"])
             self.assertFalse(row["owned_work_clear"])
             self.assertEqual("active", row["owned_work_status"])
             self.assertEqual(
-                ["#1 ready first PR https://github.com/mohsen1/tsz/pull/1"],
+                ["#1 ready mergeQueue=on first PR https://github.com/mohsen1/tsz/pull/1"],
                 row["prs"],
             )
             self.assertEqual(
@@ -120,6 +124,7 @@ exec "$@"
             self.assertEqual(0, report["total_pr_count"])
             self.assertEqual(0, report["total_ready_pr_count"])
             self.assertEqual(0, report["total_draft_pr_count"])
+            self.assertEqual(0, report["total_merge_queue_pr_count"])
             self.assertEqual(0, report["total_issue_count"])
             self.assertEqual(0, report["total_owned_count"])
             self.assertTrue(report["agents"][0]["owned_work_clear"])
