@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::assignability::is_callable_type(self.ctx.types, source)
             && crate::query_boundaries::assignability::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
-            && self.assign_relation_outcome(target, source).related
+            && self.call_arg_relation_outcome(target, source).related
             && self.callable_params_contain_type_param_intersection(source)
         {
             return true;

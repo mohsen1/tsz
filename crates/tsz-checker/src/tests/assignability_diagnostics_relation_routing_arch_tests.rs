@@ -16,7 +16,7 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 10,
+        source.matches("assign_relation_outcome(").count() >= 9,
         "top-level assignability diagnostics should use RelationOutcome for TS2322-family probes"
     );
     assert!(
@@ -27,6 +27,10 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
         !source
             .contains("assign_relation_outcome(source, target).related && !checker_only_mismatch"),
         "argument diagnostics should not use the generic assign request for the initial TS2345 probe"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(target, source).related"),
+        "argument diagnostics should not use the generic assign request for reverse callback suppression probes"
     );
     let suggest_call_start = source
         .find("pub(crate) fn should_suggest_calling_for_weak_type")
