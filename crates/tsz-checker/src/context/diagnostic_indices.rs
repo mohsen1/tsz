@@ -56,9 +56,12 @@ impl DiagnosticIndices {
     pub(crate) fn has_overlapping_ts2322(&self, message: &str, start: u32, end: u32) -> bool {
         let hash = Self::ts2322_message_hash(message);
         self.ts2322_msg_spans.get(&hash).is_some_and(|spans| {
-            spans
-                .iter()
-                .any(|&(s, e)| (s <= start && e >= end) || (start <= s && end >= e))
+            spans.iter().any(|&(s, e)| {
+                // Dedupe only repeated TS2322 diagnostics at the exact same
+                // source span; different spans are distinct failures and should
+                // not be collapsed even if the message text is the same.
+                s == start && e == end
+            })
         })
     }
 
