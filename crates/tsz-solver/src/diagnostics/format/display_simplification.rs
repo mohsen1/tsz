@@ -41,40 +41,4 @@ impl<'a> TypeFormatter<'a> {
             self.interner.intersection(retained)
         }
     }
-
-    pub(super) fn simplify_mapped_application_arg_for_display(&self, arg: TypeId) -> TypeId {
-        let arg = self.simplify_application_arg_for_display(arg);
-        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(arg) else {
-            return arg;
-        };
-        let Some(def_store) = self.def_store else {
-            return arg;
-        };
-        let Some(def) = def_store.get(def_id) else {
-            return arg;
-        };
-        if def.kind != crate::def::DefKind::TypeAlias {
-            return arg;
-        }
-        let Some(body) = def.body else {
-            return arg;
-        };
-        if !matches!(
-            self.interner.lookup(body),
-            Some(
-                TypeData::Application(_)
-                    | TypeData::Conditional(_)
-                    | TypeData::IndexAccess(_, _)
-                    | TypeData::Mapped(_)
-            )
-        ) {
-            return arg;
-        }
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, body);
-        if evaluated == TypeId::ERROR {
-            arg
-        } else {
-            evaluated
-        }
-    }
 }
