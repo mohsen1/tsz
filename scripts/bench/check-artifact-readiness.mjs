@@ -5,8 +5,9 @@
  * Exit codes:
  *   0 — artifact present, all required rows included
  *   1 — artifact present, one or more required rows are missing, the
- *       --require-green release gate found non-green required rows, or the
- *       --require-clean-metadata gate found artifact metadata warnings
+ *       --require-green release gate found non-green required rows, the
+ *       --require-clean-metadata gate found artifact metadata warnings, or the
+ *       --require-source-current gate found a stale artifact source commit
  *   2 — artifact file absent or unparseable
  *
  * Without --json: writes a markdown report to stdout (and GITHUB_STEP_SUMMARY
@@ -17,7 +18,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -32,10 +33,48 @@ import {
 } from "./row-utils.mjs";
 
 const args = process.argv.slice(2);
-const jsonOutput = args.includes("--json");
-const requireGreen = args.includes("--require-green");
-const requireCleanMetadata = args.includes("--require-clean-metadata");
-const filePath = args.find((a) => !a.startsWith("-")) ?? null;
+
+function parseArgs(rawArgs) {
+  const options = {
+    jsonOutput: false,
+    requireGreen: false,
+    requireCleanMetadata: false,
+    requireSourceCurrent: false,
+    expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
+    filePath: null,
+  };
+
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === "--json") {
+      options.jsonOutput = true;
+    } else if (arg === "--require-green") {
+      options.requireGreen = true;
+    } else if (arg === "--require-clean-metadata") {
+      options.requireCleanMetadata = true;
+    } else if (arg === "--require-source-current") {
+      options.requireSourceCurrent = true;
+    } else if (arg === "--expect-source-commit") {
+      options.expectedSourceCommit = rawArgs[i + 1] ?? "";
+      i += 1;
+    } else if (arg.startsWith("--expect-source-commit=")) {
+      options.expectedSourceCommit = arg.slice("--expect-source-commit=".length);
+    } else if (!arg.startsWith("-") && !options.filePath) {
+      options.filePath = arg;
+    }
+  }
+
+  return options;
+}
+
+const {
+  jsonOutput,
+  requireGreen,
+  requireCleanMetadata,
+  requireSourceCurrent,
+  expectedSourceCommit,
+  filePath,
+} = parseArgs(args);
 
 function loadArtifact() {
   if (!filePath) {
@@ -149,7 +188,59 @@ function analyzeValidationWarnings(artifact) {
   };
 }
 
-function analyzeArtifact(artifact) {
+function normalizedCommit(value) {
+  const commit = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(commit) ? commit : null;
+}
+
+function commitsMatch(left, right) {
+  const a = normalizedCommit(left);
+  const b = normalizedCommit(right);
+  if (!a || !b) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+function shortCommit(value) {
+  const commit = String(value || "").trim();
+  return commit && commit !== "local" ? commit.slice(0, 12) : commit || null;
+}
+
+function analyzeSourceFreshness(artifact, expectedCommit) {
+  const expected = normalizedCommit(expectedCommit);
+  const source = normalizedCommit(artifact?.source_commit);
+  if (!expected) {
+    return {
+      expected_source_commit: null,
+      source_commit: artifact?.source_commit ?? null,
+      current: null,
+      warning: null,
+    };
+  }
+  if (!source) {
+    return {
+      expected_source_commit: expected,
+      source_commit: artifact?.source_commit ?? null,
+      current: false,
+      warning: `source_commit missing; expected ${shortCommit(expected)}`,
+    };
+  }
+  if (commitsMatch(source, expected)) {
+    return {
+      expected_source_commit: expected,
+      source_commit: source,
+      current: true,
+      warning: null,
+    };
+  }
+  return {
+    expected_source_commit: expected,
+    source_commit: source,
+    current: false,
+    warning: `source ${shortCommit(source)} differs from expected ${shortCommit(expected)}`,
+  };
+}
+
+function analyzeArtifact(artifact, expectedCommit) {
   const byName = new Map();
   const duplicateCounts = new Map();
   for (const row of Array.isArray(artifact?.results) ? artifact.results : []) {
@@ -200,6 +291,7 @@ function analyzeArtifact(artifact) {
   return {
     measurementProfile: analyzeMeasurementProfile(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
+    sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
     rows,
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
@@ -219,7 +311,7 @@ function uniqueRowsByName(rows) {
   return [...byName.values()];
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   const metadataWarningsList = metadataWarnings(measurementProfile, validationWarnings);
   const nonGreenRows = rows
@@ -238,6 +330,12 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, v
     generated_at: artifact?.generated_at ?? null,
     workflow_run_url: artifact?.workflow_run_url ?? null,
     measurement_profile: measurementProfile ?? null,
+    source_freshness: sourceFreshness ?? {
+      expected_source_commit: normalizedCommit(expectedSourceCommit),
+      source_commit: artifact?.source_commit ?? null,
+      current: null,
+      warning: null,
+    },
     validation_warnings: validationWarnings ?? {
       runner_environment: [],
       measurement_profile: [],
@@ -354,7 +452,7 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildReport({ artifact, measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
@@ -363,6 +461,11 @@ function buildReport({ artifact, measurementProfile, validationWarnings, rows, m
     ? `${profile.mode ?? "unknown"}${profile.warning ? ` (${profile.warning})` : ""}`
     : profile.warning;
   const measurementWarnings = measurementProfileReportWarnings(profile, validationWarnings);
+  const sourceFreshnessLabel = sourceFreshness?.expected_source_commit
+    ? sourceFreshness.current === true
+      ? `current for ${shortCommit(sourceFreshness.expected_source_commit)}`
+      : sourceFreshness.warning
+    : "not checked";
 
   const lines = [
     `## Benchmark artifact readiness — ${new Date().toUTCString()}`,
@@ -370,6 +473,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, rows, m
     "| Field | Value |",
     "|-------|-------|",
     `| Artifact SHA | \`${sourceCommit}\` |`,
+    `| Source freshness | ${sourceFreshnessLabel ?? "not checked"} |`,
     `| Generated | ${generatedAt ?? "—"} (${artifactAge(generatedAt)}) |`,
     `| Workflow run | ${workflowUrl ? `[link](${workflowUrl})` : "—"} |`,
     `| Measurement profile | ${profileLabel} |`,
@@ -470,6 +574,7 @@ if (artifactAbsent || parseError) {
         parseError,
         artifact: null,
         measurementProfile: null,
+        sourceFreshness: null,
         rows: null,
         missing: null,
         red: null,
@@ -483,8 +588,8 @@ if (artifactAbsent || parseError) {
   process.exit(2);
 }
 
-const analysis = analyzeArtifact(artifact);
-const { measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates } = analysis;
+const analysis = analyzeArtifact(artifact, expectedSourceCommit);
+const { measurementProfile, validationWarnings, sourceFreshness, rows, missing, red, yellow, gray, green, duplicates } = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
@@ -496,6 +601,7 @@ if (jsonOutput) {
       artifact,
       measurementProfile,
       validationWarnings,
+      sourceFreshness,
       rows,
       missing,
       red,
@@ -541,6 +647,13 @@ if (requireCleanMetadata) {
     );
     process.exit(1);
   }
+}
+
+if (requireSourceCurrent && sourceFreshness.current !== true) {
+  process.stderr.write(
+    `bench-artifact-readiness: source freshness failed: ${sourceFreshness.warning ?? "no expected source commit provided"}\n`,
+  );
+  process.exit(1);
 }
 
 process.exit(0);
