@@ -180,6 +180,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn call_display_overlap",
             "RelationKind::CallDisplayOverlap",
         ),
+        (
+            "fn call_generator_yield",
+            "RelationKind::CallGeneratorYield",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

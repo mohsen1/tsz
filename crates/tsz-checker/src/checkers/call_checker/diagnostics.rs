@@ -589,10 +589,16 @@ impl<'a> CheckerState<'a> {
                             .zip(self.get_generator_yield_type_argument(expected_return))
                             .is_some_and(|(actual_yield, expected_yield)| {
                                 !self
-                                    .assign_relation_outcome(actual_yield, expected_yield)
+                                    .call_generator_yield_relation_outcome(
+                                        actual_yield,
+                                        expected_yield,
+                                    )
                                     .related
                                     && !self
-                                        .assign_relation_outcome(expected_yield, actual_yield)
+                                        .call_generator_yield_relation_outcome(
+                                            expected_yield,
+                                            actual_yield,
+                                        )
                                         .related
                             })
                             || self
