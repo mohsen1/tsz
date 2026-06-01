@@ -182,7 +182,7 @@ impl ParserState {
         }
         if !is_catch_clause
             && initializer.is_none()
-            && (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
+            && !self.in_ambient_context()
             && let Some(name_node) = self.arena.get(name)
             && name_node.is_binding_pattern()
         {
@@ -245,7 +245,7 @@ impl ParserState {
         // TS1040: 'async' modifier cannot be used in an ambient context
         let _async_token_pos = self.token_pos();
         let is_async = if !is_async && self.is_token(SyntaxKind::AsyncKeyword) {
-            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+            if self.in_ambient_context() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "'async' modifier cannot be used in an ambient context.",

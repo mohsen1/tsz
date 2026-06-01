@@ -1060,6 +1060,13 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_IN_BLOCK) != 0
     }
 
+    /// Check if we're inside an ambient declaration context (`declare namespace`, `declare module`, etc.).
+    /// In ambient contexts, `<` is never a JSX opener — only type arguments or comparison operators.
+    #[inline]
+    pub(crate) const fn in_ambient_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_AMBIENT) != 0
+    }
+
     /// Check if we're currently parsing inside a parenthesized expression.
     #[inline]
     pub(crate) const fn in_parenthesized_expression_context(&self) -> bool {

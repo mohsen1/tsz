@@ -1179,3 +1179,170 @@ fn test_jsx_conditional_inside_template_span_inside_jsx_no_errors() {
         r#"const n = <div>{`${cond ? <A/> : <B/>}`}</div>;"#,
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Regression tests: compound `>>` / `>>>` tokens in generic arrow function
+// lookahead (`look_ahead_is_generic_arrow_function` depth counter).
+//
+// When a type parameter constraint itself is generic (e.g. `T extends Map<K,V>`)
+// the scanner emits a `GreaterThanGreaterThanToken` (`>>`) for the adjacent
+// closing brackets. The old depth counter only handled bare `>`, so it never
+// detected the end of the parameter list and fell through to JSX parsing.
+//
+// Rule: when `<T extends Generic<…>>(…) =>` appears in a `.tsx` file, the
+// parser must recognise it as a generic arrow function regardless of the
+// type-parameter name (T, K, X, A, B, …) and nesting depth (2 or 3 levels).
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_generic_arrow_with_double_close_param_t_no_errors() {
+    // `>>` produced by `Map<string, number>>`  — type parameter named T
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <T extends Map<string, number>>(x: T): T => x;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_with_double_close_param_k_no_errors() {
+    // Same structural rule; different type-parameter name (K).
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <K extends Map<string, number>>(x: K): K => x;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_with_double_close_param_x_no_errors() {
+    // Same structural rule; different type-parameter name (X).
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <X extends Map<string, number>>(x: X): X => x;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_record_constraint_t_no_errors() {
+    // `Record<string, unknown>` — single-level nesting, `>>` at close.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <T extends Record<string, unknown>>(x: T) => x;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_record_constraint_a_no_errors() {
+    // Same as above with type-parameter name A.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <A extends Record<string, unknown>>(x: A) => A;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_multi_param_with_nested_no_errors() {
+    // Two type parameters, second has a nested generic constraint.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <T, K extends Record<string, T>>(x: T, y: K) => y;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_triple_nesting_produces_three_greater_t_no_errors() {
+    // Triple nesting: `ReadonlyArray<Set<T>>` closes with `>>>`.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <T extends ReadonlyArray<Set<T>>>(x: T) => x;"#,
+    );
+}
+
+#[test]
+fn test_generic_arrow_triple_nesting_produces_three_greater_b_no_errors() {
+    // Same triple-nesting rule with type-parameter name B.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"const f = <B extends ReadonlyArray<Set<B>>>(x: B) => x;"#,
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Regression tests: JSX not parsed inside ambient declaration contexts.
+//
+// Inside `declare namespace / module / class`, `<` is a type argument or
+// relational operator — JSX elements are never valid there. The old parser
+// entered JSX parsing unconditionally in `.tsx` files, causing false-positive
+// TS1005 / TS1003 errors for valid ambient declarations that use angle-bracket
+// operators or complex generic types.
+//
+// Rule: when the ambient-declaration context flag is set, `<` in expression
+// position must not be treated as a JSX opener, regardless of file extension.
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_ambient_namespace_interface_key_remapping_no_errors() {
+    // This is the canonical repro from issue #10930.
+    // `[K in keyof T as T[K] extends string ? K : never]` uses `<` inside
+    // a declare namespace; the old code incorrectly entered JSX parsing.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace Lib {
+    type StringKeys<T> = {
+        [K in keyof T as T[K] extends string ? K : never]: T[K];
+    };
+}
+"#,
+    );
+}
+
+#[test]
+fn test_ambient_module_conditional_type_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare module "lib" {
+    type IsString<T> = T extends string ? true : false;
+}
+"#,
+    );
+}
+
+#[test]
+fn test_ambient_namespace_deeply_nested_generic_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace Deep {
+    type Nested<A> = Map<string, Set<A>>;
+}
+"#,
+    );
+}
+
+#[test]
+fn test_ambient_class_method_generic_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare class Container {
+    get<T extends Record<string, unknown>>(key: string): T;
+}
+"#,
+    );
+}
+
+#[test]
+fn test_ambient_namespace_relational_operator_no_errors() {
+    // `extends` conditional with `<` operator inside ambient namespace
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace Util {
+    type NonEmptyArray<T> = T extends Array<infer U>
+        ? [U, ...U[]]
+        : never;
+}
+"#,
+    );
+}

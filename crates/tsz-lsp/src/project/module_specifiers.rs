@@ -2355,14 +2355,17 @@ fn collect_exports_targets_inner(
         }
         serde_json::Value::Object(map) => {
             for (key, item) in map {
-                let key_is_types = key == "types";
-                let include_default_branch = match key.as_str() {
-                    "types" => false,
-                    "import" => mode != ExportsResolutionMode::Require,
-                    "require" => mode != ExportsResolutionMode::Import,
-                    // Preserve fallback behavior for `default`, subpath maps, and
-                    // unknown conditions by treating them as available.
-                    _ => true,
+                let key_is_types = key == "types" || key.starts_with("types@");
+                let include_default_branch = if key_is_types {
+                    false
+                } else {
+                    match key.as_str() {
+                        "import" => mode != ExportsResolutionMode::Require,
+                        "require" => mode != ExportsResolutionMode::Import,
+                        // Preserve fallback behavior for `default`, subpath maps, and
+                        // unknown conditions by treating them as available.
+                        _ => true,
+                    }
                 };
                 if !key_is_types && !include_default_branch {
                     continue;

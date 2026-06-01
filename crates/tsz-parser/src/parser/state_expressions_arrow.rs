@@ -78,7 +78,7 @@ impl ParserState {
         let mut bracket_depth = 0u32;
 
         // Skip type parameters until we find >
-        let mut depth = 1;
+        let mut depth: u32 = 1;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             let token = self.token();
             let at_type_parameter_top_level =
@@ -136,6 +136,15 @@ impl ParserState {
                 SyntaxKind::GreaterThanToken => {
                     depth -= 1;
                 }
+                // `>>` and `>>>` are compound tokens the scanner produces when `>` characters
+                // appear without whitespace (e.g. `Foo<Bar<T>>` → `…T>>`). Each compound token
+                // counts as multiple closing `>` brackets in the type-parameter depth counter.
+                SyntaxKind::GreaterThanGreaterThanToken => {
+                    depth = depth.saturating_sub(2);
+                }
+                SyntaxKind::GreaterThanGreaterThanGreaterThanToken => {
+                    depth = depth.saturating_sub(3);
+                }
                 SyntaxKind::OpenParenToken => {
                     paren_depth += 1;
                 }
@@ -164,6 +173,7 @@ impl ParserState {
         // - multiple/trailing parameters (`<T,>()`, `<T, U>()`)
         // - a constraint/default (`<T extends X>()`, `<T = X>()`)
         if self.is_jsx_file()
+            && !self.in_ambient_context()
             && type_parameter_count == 1
             && !saw_top_level_type_parameter_delimiter
             && !saw_top_level_constraint_or_default
@@ -427,6 +437,14 @@ impl ParserState {
             } else if token == SyntaxKind::GreaterThanToken && angle_bracket_depth > 0 {
                 angle_bracket_depth -= 1;
                 at_param_start = false;
+            } else if token == SyntaxKind::GreaterThanGreaterThanToken && angle_bracket_depth > 0 {
+                angle_bracket_depth = angle_bracket_depth.saturating_sub(2);
+                at_param_start = false;
+            } else if token == SyntaxKind::GreaterThanGreaterThanGreaterThanToken
+                && angle_bracket_depth > 0
+            {
+                angle_bracket_depth = angle_bracket_depth.saturating_sub(3);
+                at_param_start = false;
             } else if token == SyntaxKind::CloseParenToken {
                 depth -= 1;
                 at_param_start = false;
@@ -608,6 +626,12 @@ impl ParserState {
                     }
                     SyntaxKind::GreaterThanToken if angle_depth > 0 => {
                         angle_depth -= 1;
+                    }
+                    SyntaxKind::GreaterThanGreaterThanToken if angle_depth > 0 => {
+                        angle_depth = angle_depth.saturating_sub(2);
+                    }
+                    SyntaxKind::GreaterThanGreaterThanGreaterThanToken if angle_depth > 0 => {
+                        angle_depth = angle_depth.saturating_sub(3);
                     }
                     _ => {}
                 }

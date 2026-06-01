@@ -12,9 +12,13 @@ impl ParserState {
     /// Determine if we should parse a type assertion or JSX element.
     /// Type assertions use <Type>expr syntax, JSX uses <Element>.
     pub(crate) fn parse_jsx_element_or_type_assertion(&mut self) -> NodeIndex {
-        // In .tsx/.jsx files, all <...> syntax is JSX (use "as Type" for type assertions)
-        // In .ts files, we need to distinguish type assertions from JSX
-        if self.is_jsx_file() || (self.is_js_file() && self.look_ahead_is_jsx_fragment_start()) {
+        // In .tsx/.jsx files, all <...> syntax is JSX (use "as Type" for type assertions),
+        // EXCEPT when we are inside an ambient declaration (`declare namespace/module/class`).
+        // Ambient bodies have no expression statements, so `<` in this context is a type
+        // argument or relational operator, never a JSX opener.
+        if (self.is_jsx_file() && !self.in_ambient_context())
+            || (self.is_js_file() && self.look_ahead_is_jsx_fragment_start())
+        {
             return self.parse_jsx_element_or_self_closing_or_fragment(true);
         }
 

@@ -351,7 +351,11 @@ impl ParserState {
                 NodeIndex::NONE
             }
             SyntaxKind::LessThanToken => {
-                if self.is_jsx_file() {
+                // Inside an ambient declaration (`declare namespace/module/class`), `<` is never
+                // a JSX opener — it can only be a type argument or comparison operator. Ambient
+                // bodies have no expression statements, so routing through type-assertion parsing
+                // is the correct fallback for any recovery path that reaches this branch.
+                if self.is_jsx_file() && !self.in_ambient_context() {
                     let (
                         next_token_is_numeric_literal,
                         next_token_is_open_brace,
