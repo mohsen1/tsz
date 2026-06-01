@@ -550,13 +550,26 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        Diagnostic::error(
+        let mut diagnostic = Diagnostic::error(
             file_name,
             start,
             length,
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        )
+        );
+        if depth == 0
+            && let Some(related) = self.unrelated_type_parameter_target_related_info(
+                source,
+                target,
+                &source_str,
+                &target_str,
+                start,
+                length,
+            )
+        {
+            diagnostic.related_information.push(related);
+        }
+        diagnostic
     }
 
     pub(in crate::error_reporter) fn ts2739_alias_target_display(

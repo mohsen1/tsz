@@ -1246,6 +1246,41 @@ impl<'a> CheckerState<'a> {
         (source_str, target_str)
     }
 
+    pub(in crate::error_reporter) fn unrelated_type_parameter_target_related_info(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_display: &str,
+        target_display: &str,
+        start: u32,
+        length: u32,
+    ) -> Option<DiagnosticRelatedInformation> {
+        if !self.target_is_bare_type_parameter(target) {
+            return None;
+        }
+        let constraint =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, target)?;
+        if constraint == TypeId::ANY
+            || constraint == TypeId::UNKNOWN
+            || self.diagnostic_relation_boolean_guard(source, constraint)
+        {
+            return None;
+        }
+        let message = format_message(
+            diagnostic_messages::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
+            &[target_display, source_display],
+        );
+        Some(DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            message_text: message,
+            depth: 0,
+        })
+    }
+
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
         &mut self,
         source: TypeId,
@@ -1957,10 +1992,30 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             };
-            self.emit_render_request_at_anchor(
-                anchor,
-                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
-            );
+            if let Some(related) = self.unrelated_type_parameter_target_related_info(
+                source,
+                target,
+                &src_str,
+                &tgt_str,
+                anchor.start,
+                anchor.length,
+            ) {
+                self.emit_render_request_at_anchor(
+                    anchor,
+                    DiagnosticRenderRequest::with_related(
+                        DiagnosticAnchorKind::Exact,
+                        code,
+                        message,
+                        vec![related],
+                        RelatedInformationPolicy::ELABORATION,
+                    ),
+                );
+            } else {
+                self.emit_render_request_at_anchor(
+                    anchor,
+                    DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+                );
+            }
         }
     }
 }

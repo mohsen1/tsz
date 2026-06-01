@@ -247,3 +247,35 @@ const target: TargetWrap = source;
         "TS2322 should preserve recursive alias application args independent of binder names, got: {diag:?}"
     );
 }
+
+#[test]
+fn array_return_to_bare_type_parameter_keeps_target_surface() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Input = { level1: { level2: { foo: string } } };
+type Output = { level1: { level2: { foo: string; bar: string } } };
+function convert<Result extends Output[]>(ors: Input[]): Result {
+    return ors;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for array return to bare type parameter");
+    assert!(
+        diag.message_text
+            .contains("is not assignable to type 'Result'")
+            && !diag.message_text.contains("Output[]"),
+        "TS2322 should keep the bare type-parameter target instead of repainting its constraint, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information.iter().any(|related| {
+            related.code == crate::diagnostics::diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO
+                && related.message_text.contains("'Result' could be instantiated with an arbitrary type")
+                && related.message_text.contains("Input[]")
+        }),
+        "TS2322 should include the arbitrary-type elaboration for the bare target parameter, got: {diag:?}"
+    );
+}

@@ -7,9 +7,12 @@ impl<'a> CheckerState<'a> {
         array_type: TypeId,
         other: TypeId,
     ) -> Option<String> {
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, array_type) {
+        if crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, array_type) {
             return None;
         }
+        let format_peer =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, other)
+                .unwrap_or(other);
         let element_type =
             crate::query_boundaries::common::array_element_type(self.ctx.types, array_type)?;
         let array_display = self.format_type_diagnostic(array_type);
@@ -18,7 +21,10 @@ impl<'a> CheckerState<'a> {
             return Some(query_display);
         }
         if let Some(static_type) = self.static_schema_alias_element_structural_type(element_type) {
-            return Some(self.format_static_schema_array_structural_type(static_type, other));
+            return Some(self.format_static_schema_array_structural_type(
+                static_type,
+                format_peer,
+            ));
         }
         if !self.is_static_schema_application(element_type) {
             return None;
@@ -26,11 +32,17 @@ impl<'a> CheckerState<'a> {
         if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
             let schema_type = self.evaluate_type_for_assignability(schema_type);
             if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
-                return Some(self.format_static_schema_array_structural_type(static_type, other));
+                return Some(self.format_static_schema_array_structural_type(
+                    static_type,
+                    format_peer,
+                ));
             }
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
-        Some(self.format_static_schema_array_structural_type(evaluated_element, other))
+        Some(self.format_static_schema_array_structural_type(
+            evaluated_element,
+            format_peer,
+        ))
     }
 
     fn static_schema_alias_element_structural_type(
@@ -277,12 +289,14 @@ impl<'a> CheckerState<'a> {
             .strip_prefix("(typeof ")?
             .strip_suffix(".static)[]")?;
         let sym_id = self.ctx.binder.file_locals.get(schema_name)?;
-        let value_decl = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .map(|symbol| symbol.value_declaration)
-            .unwrap_or(tsz_parser::NodeIndex::NONE);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration.into_option().or_else(|| {
+            symbol.declarations.iter().copied().find(|decl| {
+                self.ctx.arena.get(*decl).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION
+                })
+            })
+        })?;
         let schema_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
         let schema_type = self.evaluate_type_for_assignability(schema_type);
         let static_type = self.typebox_schema_static_type(schema_type, 0)?;
