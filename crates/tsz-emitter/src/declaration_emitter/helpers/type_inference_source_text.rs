@@ -229,6 +229,169 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    pub(in crate::declaration_emitter) fn parenthesize_first_generic_function_type_argument_text(
+        type_text: &str,
+    ) -> String {
+        let mut output = String::with_capacity(type_text.len());
+        let mut emitted_until = 0usize;
+        let mut search_from = 0usize;
+        while let Some(rel) = type_text[search_from..].find('<') {
+            let lt = search_from + rel;
+            let Some((arg_start, arg_content_start, arg_content_end, arg_end)) =
+                Self::first_unparenthesized_generic_function_type_argument_span(type_text, lt)
+            else {
+                search_from = lt + 1;
+                continue;
+            };
+            output.push_str(&type_text[emitted_until..arg_start]);
+            output.push('(');
+            output.push_str(&type_text[arg_content_start..arg_content_end]);
+            output.push(')');
+            emitted_until = arg_end;
+            search_from = arg_end;
+        }
+        if emitted_until == 0 {
+            type_text.to_string()
+        } else {
+            output.push_str(&type_text[emitted_until..]);
+            output
+        }
+    }
+
+    fn first_unparenthesized_generic_function_type_argument_span(
+        text: &str,
+        outer_lt: usize,
+    ) -> Option<(usize, usize, usize, usize)> {
+        let bytes = text.as_bytes();
+        let arg_start = outer_lt.checked_add(1)?;
+        let arg_content_start = Self::skip_type_text_ws(bytes, arg_start);
+        if bytes.get(arg_content_start) == Some(&b'(') {
+            return None;
+        }
+        if bytes.get(arg_content_start) != Some(&b'<') {
+            return None;
+        }
+
+        let type_params_end =
+            Self::matching_type_text_delimiter(text, arg_content_start, b'<', b'>')?;
+        let params_after = Self::skip_type_text_ws(bytes, type_params_end + 1);
+        if bytes.get(params_after) != Some(&b'(') {
+            return None;
+        }
+        let params_end = Self::matching_type_text_delimiter(text, params_after, b'(', b')')?;
+        let arrow_start = Self::skip_type_text_ws(bytes, params_end + 1);
+        if bytes.get(arrow_start..arrow_start + 2) != Some(b"=>") {
+            return None;
+        }
+
+        let arg_end = Self::first_type_argument_end(text, arg_start)?;
+        let arg_content_end = Self::trim_type_text_ws_end(bytes, arg_content_start, arg_end);
+        Some((arg_start, arg_content_start, arg_content_end, arg_end))
+    }
+
+    fn first_type_argument_end(text: &str, start: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut i = start;
+        let mut angle_depth = 1i32;
+        let mut paren_depth = 0i32;
+        let mut bracket_depth = 0i32;
+        let mut brace_depth = 0i32;
+        while i < bytes.len() {
+            i = Self::skip_type_text_quoted(bytes, i);
+            let b = *bytes.get(i)?;
+            match b {
+                b'<' => angle_depth += 1,
+                b'>' if i > 0 && bytes[i - 1] == b'=' => {}
+                b'>' => {
+                    if angle_depth == 1
+                        && paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                    {
+                        return Some(i);
+                    }
+                    angle_depth -= 1;
+                }
+                b',' if angle_depth == 1
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0 =>
+                {
+                    return Some(i);
+                }
+                b'(' => paren_depth += 1,
+                b')' => paren_depth -= 1,
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth -= 1,
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth -= 1,
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn matching_type_text_delimiter(
+        text: &str,
+        open_at: usize,
+        open: u8,
+        close: u8,
+    ) -> Option<usize> {
+        let bytes = text.as_bytes();
+        if bytes.get(open_at) != Some(&open) {
+            return None;
+        }
+        let mut depth = 1i32;
+        let mut i = open_at + 1;
+        while i < bytes.len() {
+            i = Self::skip_type_text_quoted(bytes, i);
+            match bytes[i] {
+                b if b == open => depth += 1,
+                b if b == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_type_text_ws(bytes: &[u8], mut i: usize) -> usize {
+        while bytes.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        }
+        i
+    }
+
+    fn trim_type_text_ws_end(bytes: &[u8], start: usize, mut end: usize) -> usize {
+        while end > start && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        end
+    }
+
+    fn skip_type_text_quoted(bytes: &[u8], i: usize) -> usize {
+        let Some(&quote @ (b'"' | b'\'' | b'`')) = bytes.get(i) else {
+            return i;
+        };
+        let mut j = i + 1;
+        while j < bytes.len() {
+            if bytes[j] == b'\\' {
+                j += 2;
+            } else if bytes[j] == quote {
+                return j;
+            } else {
+                j += 1;
+            }
+        }
+        i
+    }
+
     pub(in crate::declaration_emitter) fn declaration_constructor_expression_text(
         &self,
         expr_idx: NodeIndex,

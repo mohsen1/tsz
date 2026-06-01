@@ -1168,3 +1168,19 @@ fn test_empty_namespace_inside_declare_namespace_uses_single_line_format() {
         "empty namespace (different name) inside declare namespace must use single-line format: {output}"
     );
 }
+
+#[test]
+fn type_text_parenthesizes_first_generic_function_type_argument() {
+    assert_eq!(
+        DeclarationEmitter::parenthesize_first_generic_function_type_argument_text(
+            "X< <Tany>() => Tany >"
+        ),
+        "X<(<Tany>() => Tany)>"
+    );
+    assert_eq!(
+        DeclarationEmitter::parenthesize_first_generic_function_type_argument_text(
+            "Y<string[], <Tany>() => Tany>"
+        ),
+        "Y<string[], <Tany>() => Tany>"
+    );
+}
