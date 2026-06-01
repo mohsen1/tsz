@@ -59,6 +59,12 @@ pub(crate) enum RelationKind {
     InterfaceHeritagePropertyIndex,
     /// JSDoc heritage object constraint property compatibility probes.
     JsdocHeritageConstraint,
+    /// Missing-property read compatibility probes for assignability diagnostics.
+    MissingPropertyRead,
+    /// Missing-property write compatibility probes for assignability diagnostics.
+    MissingPropertyWrite,
+    /// Exact-optional source-member filtering probes for assignability diagnostics.
+    ExactOptionalSourceFilter,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
@@ -251,6 +257,18 @@ impl RelationRequest {
 
     pub(crate) const fn jsdoc_heritage_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsdocHeritageConstraint)
+    }
+
+    pub(crate) const fn missing_property_read(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::MissingPropertyRead)
+    }
+
+    pub(crate) const fn missing_property_write(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::MissingPropertyWrite)
+    }
+
+    pub(crate) const fn exact_optional_source_filter(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ExactOptionalSourceFilter)
     }
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {

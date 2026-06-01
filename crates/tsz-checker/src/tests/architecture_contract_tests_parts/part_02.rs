@@ -167,6 +167,18 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "RelationKind::JsdocHeritageConstraint",
         ),
         (
+            "fn missing_property_read",
+            "RelationKind::MissingPropertyRead",
+        ),
+        (
+            "fn missing_property_write",
+            "RelationKind::MissingPropertyWrite",
+        ),
+        (
+            "fn exact_optional_source_filter",
+            "RelationKind::ExactOptionalSourceFilter",
+        ),
+        (
             "fn object_literal_computed_key",
             "RelationKind::ObjectLiteralComputedKey",
         ),

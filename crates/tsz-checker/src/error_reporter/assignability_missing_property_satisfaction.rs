@@ -86,12 +86,15 @@ impl<'a> CheckerState<'a> {
             self.bivariant_callbacks_relation_outcome(source_prop.type_id, target_prop.type_id)
                 .related
         } else {
-            self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+            self.missing_property_read_relation_outcome(source_prop.type_id, target_prop.type_id)
                 .related
         };
         let write_ok = target_prop.readonly
             || self
-                .assign_relation_outcome(target_prop.write_type, source_prop.write_type)
+                .missing_property_write_relation_outcome(
+                    target_prop.write_type,
+                    source_prop.write_type,
+                )
                 .related;
 
         read_ok && write_ok

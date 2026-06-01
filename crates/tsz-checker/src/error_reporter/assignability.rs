@@ -826,7 +826,11 @@ impl<'a> CheckerState<'a> {
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|&m| !self.assign_relation_outcome(m, target_eval).related)
+            .filter(|&m| {
+                !self
+                    .exact_optional_source_filter_relation_outcome(m, target_eval)
+                    .related
+            })
             .collect();
         if mismatched.len() == members.len()
             && members.len() == 2
