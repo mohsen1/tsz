@@ -354,12 +354,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         props_type: TypeId,
     ) -> Option<String> {
-        let raw_display = self.format_type(props_type);
-        if !raw_display.contains("propTypes: infer") && !raw_display.contains("defaultProps: infer")
-        {
+        if !crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            props_type,
+        ) {
             return None;
         }
 
+        let raw_display = self.format_type(props_type);
         if let Some(display) =
             Self::jsx_library_managed_application_simplified_display(&raw_display)
         {

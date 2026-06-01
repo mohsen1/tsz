@@ -226,6 +226,63 @@ pub(crate) fn type_has_declaration_name(
         .is_some_and(|name| db.resolve_atom_ref(name).as_ref() == expected)
 }
 
+pub(crate) fn library_managed_attributes_infer_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    if type_has_declaration_name(db, def_store, type_id, "LibraryManagedAttributes")
+        && crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+            db, def_store, type_id,
+        )
+    {
+        return true;
+    }
+
+    library_managed_attributes_infer_conditional_surface(db, type_id, &mut Vec::new())
+}
+
+fn library_managed_attributes_infer_conditional_surface(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if type_id.is_intrinsic() || visited.contains(&type_id) {
+        return false;
+    }
+    visited.push(type_id);
+
+    if let Some(cond_id) = crate::query_boundaries::common::get_conditional_type_id(db, type_id) {
+        let cond = db.get_conditional(cond_id);
+        if object_shape_has_jsx_infer_metadata(db, cond.extends_type) {
+            return true;
+        }
+        return library_managed_attributes_infer_conditional_surface(db, cond.false_type, visited);
+    }
+
+    crate::query_boundaries::common::union_members(db, type_id)
+        .into_iter()
+        .flatten()
+        .chain(
+            crate::query_boundaries::common::intersection_members(db, type_id)
+                .into_iter()
+                .flatten(),
+        )
+        .any(|member| library_managed_attributes_infer_conditional_surface(db, member, visited))
+}
+
+fn object_shape_has_jsx_infer_metadata(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id) else {
+        return false;
+    };
+    shape.properties.iter().any(|prop| {
+        matches!(
+            db.resolve_atom_ref(prop.name).as_ref(),
+            "defaultProps" | "propTypes"
+        ) && crate::query_boundaries::common::contains_infer_types(db, prop.type_id)
+    })
+}
+
 pub(crate) fn contains_anonymous_object_surface(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,

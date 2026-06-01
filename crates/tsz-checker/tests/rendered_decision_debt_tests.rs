@@ -264,6 +264,29 @@ fn jsx_props_intersection_member_display_is_not_a_decision_gate() {
 }
 
 #[test]
+fn jsx_library_managed_infer_display_uses_structural_surface() {
+    let diagnostics = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/jsx/diagnostics.rs"
+    ))
+    .expect("JSX diagnostics source should be readable");
+    assert!(
+        !diagnostics.contains("raw_display.contains(\"propTypes: infer\")"),
+        "JSX LibraryManagedAttributes display should not detect infer metadata from rendered text"
+    );
+
+    let boundary = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/query_boundaries/checkers/jsx.rs"
+    ))
+    .expect("JSX query boundary source should be readable");
+    assert!(
+        boundary.contains("library_managed_attributes_infer_surface"),
+        "JSX LibraryManagedAttributes infer detection should live in the query boundary"
+    );
+}
+
+#[test]
 fn preferred_constructor_display_uses_structural_identity() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
