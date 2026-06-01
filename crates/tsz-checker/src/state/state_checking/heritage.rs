@@ -4,11 +4,63 @@ use crate::query_boundaries::class_type as class_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
+    fn symbol_is_import_equals_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.has_any_flags(symbol_flags::ALIAS)
+            && symbol.all_declarations().iter().any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            })
+    }
+
+    fn import_equals_module_base_without_export_equals(&self, sym_id: SymbolId) -> Option<String> {
+        let alias = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        if !self.symbol_is_import_equals_alias(alias) {
+            return None;
+        }
+
+        let module_specifier = alias.import_module.as_deref()?;
+        let exports = self.resolve_effective_module_exports_from_file(
+            module_specifier,
+            Some(self.ctx.current_file_idx),
+        )?;
+        let has_require_target = exports.has("export=")
+            || (exports.has("module.exports")
+                && self.current_file_uses_module_exports_require_interop(module_specifier));
+        (!has_require_target).then(|| module_specifier.to_string())
+    }
+
+    fn report_import_equals_module_base_not_constructor(
+        &mut self,
+        expr_idx: NodeIndex,
+        module_specifier: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let display_module = self.imported_namespace_display_module_name(module_specifier);
+        let type_name = format!("typeof import(\"{display_module}\")");
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+            &[&type_name],
+        );
+        self.error_at_node(
+            expr_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+        );
+    }
+
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
     /// Emits TS2689 when a class extends an interface.
@@ -218,6 +270,23 @@ impl<'a> CheckerState<'a> {
                                 .and_then(|expr_node| self.ctx.arena.get_call_expr(expr_node))
                                 .and_then(|call| call.type_arguments.as_ref())
                         });
+
+                    if is_extends_clause
+                        && is_class_declaration
+                        && let Some(module_specifier) =
+                            self.import_equals_module_base_without_export_equals(heritage_sym)
+                    {
+                        self.report_import_equals_module_base_not_constructor(
+                            expr_idx,
+                            &module_specifier,
+                        );
+                        if let Some(type_args) = type_args {
+                            for &arg_idx in &type_args.nodes {
+                                self.get_type_of_node(arg_idx);
+                            }
+                        }
+                        continue;
+                    }
 
                     let required_count = self.count_required_type_params(heritage_sym);
                     let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();

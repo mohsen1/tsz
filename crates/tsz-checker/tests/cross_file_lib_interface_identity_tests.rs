@@ -407,3 +407,36 @@ const n: Node = widget;
     );
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
+
+#[test]
+fn import_equals_module_object_is_not_same_named_base_class() {
+    let leaf = "export class Greeter { greet() { return 'greet'; } }";
+    let consumer = r#"
+import Greeter = require("./component");
+class Hello extends Greeter {}
+"#;
+
+    let codes = compile_codes(&[("component.ts", leaf), ("main.ts", consumer)], "main.ts");
+    assert!(
+        codes.contains(&2507),
+        "import-equals module object should not be treated as the same-named exported class. Diagnostics: {codes:?}"
+    );
+}
+
+#[test]
+fn import_equals_export_equals_class_remains_valid_base_class() {
+    let leaf = r#"
+class Greeter { greet() { return 'greet'; } }
+export = Greeter;
+"#;
+    let consumer = r#"
+import Greeter = require("./component");
+class Hello extends Greeter {}
+"#;
+
+    let codes = compile_codes(&[("component.ts", leaf), ("main.ts", consumer)], "main.ts");
+    assert!(
+        !codes.contains(&2507),
+        "import-equals aliases to export= classes should remain constructable. Diagnostics: {codes:?}"
+    );
+}
