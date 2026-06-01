@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
         }

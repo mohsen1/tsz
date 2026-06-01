@@ -16,8 +16,24 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 9,
+        source.matches("assign_relation_outcome(").count() >= 8,
         "top-level assignability diagnostics should use RelationOutcome for TS2322-family probes"
+    );
+    let generic_start = argument_reports
+        .find("pub(crate) fn check_assignable_or_report_generic_at")
+        .expect("missing generic assignability reporter");
+    let generic_end = generic_start
+        + argument_reports[generic_start..]
+            .find("pub(crate) fn check_argument_assignable_or_report")
+            .expect("missing argument assignability reporter");
+    let generic_reporter = &argument_reports[generic_start..generic_end];
+    assert!(
+        generic_reporter.contains("assignability_reason_relation_outcome(source, target)"),
+        "generic TS2322-style reporter should use the assignability-reason RelationOutcome"
+    );
+    assert!(
+        !generic_reporter.contains("assign_relation_outcome(source, target)"),
+        "generic TS2322-style reporter should not use the generic assign request"
     );
     assert!(
         source.contains("call_arg_relation_outcome(source, target)"),
