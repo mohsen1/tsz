@@ -1737,12 +1737,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// eagerly evaluated to a union of string literals during `instantiate_type`.
     /// In that case, we verify that `template = obj[P]` and `keyof obj == constraint`.
     fn homomorphic_mapped_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
-        // Non-identity as-clause breaks homomorphism; bail out early so that
-        // neither Method 1 nor Method 2 returns a false-positive source.
-        if !crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
-            return None;
-        }
-
         // Method 1: Constraint is explicitly `keyof T` (pre-evaluation form)
         if let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) {
             // Check if template is an IndexAccess type T[K]
@@ -1770,9 +1764,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // to a union of string literals. The template still has the original structure
         // `T[P]` with the concrete object. Verify by computing `keyof obj` and
         // comparing with the constraint.
-        // Identity check already done above — this branch only runs when name_type
-        // is None or is the identity mapping.
-        if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+        // Method 2 is only valid without key remapping or with identity remapping;
+        // non-identity `as` clauses can still use Method 1's explicit `keyof T`
+        // source but must not infer a source from an already-flattened key union.
+        if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped)
+            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
             && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
             && param.name == mapped.type_param.name
         {
