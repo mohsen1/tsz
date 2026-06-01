@@ -23,6 +23,31 @@ pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
     key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
 }
 
+/// Splits a conditional key on its first `@` into `(base, range)`. Range is
+/// `None` for unversioned keys (`"types"`, `"node"`). Centralizing this lets
+/// the classifier and [`super::ModuleResolver::condition_key_matches`] share
+/// one grammar for `<base>@<range>` keys; either parser drifting from the
+/// other was the failure mode this fix forecloses.
+pub(super) fn parse_condition_key(key: &str) -> (&str, Option<&str>) {
+    match key.split_once('@') {
+        Some((base, range)) => (base, Some(range)),
+        None => (key, None),
+    }
+}
+
+/// Returns true when a conditional `exports`/`imports` key represents a
+/// TypeScript types lookup. Matched-key targets in types-flavored branches
+/// must go through declaration-aware probing (`try_types_entry`) instead of
+/// the runtime probe (`try_export_target`), which under Node16/NodeNext
+/// intentionally refuses to add an extension to an extensionless target.
+///
+/// Recognized: `"types"` and its versioned variant `"types@<range>"`.
+/// `"typings"` is **not** a tsc-recognized exports condition (it's a
+/// top-level `package.json` field), so it is not classified here.
+pub(super) fn is_types_condition_key(key: &str) -> bool {
+    parse_condition_key(key).0 == "types"
+}
+
 fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
     if !is_valid_relative_package_target(target) {
         return None;
@@ -235,7 +260,18 @@ impl ModuleResolver {
         match value {
             PackageExports::String(s) => vec![s.clone()],
             PackageExports::Conditional(cond_entries) => {
-                // Iterate condition map entries in JSON key order
+                // Iterate condition map entries in JSON key order.
+                //
+                // Unlike `resolve_package_exports_with_conditions`, the
+                // imports path does not thread `is_types_condition` through
+                // the recursion because [`resolve_package_imports`] resolves
+                // every collected target via `try_file_or_directory`, which
+                // already probes declaration extensions for any target —
+                // types-flavored or not. If a future change tightens the
+                // imports-side probe (analogous to `try_export_target`'s
+                // Node16/NodeNext extensionless-runtime guard), thread the
+                // flavor here so versioned-types branches keep declaration-
+                // aware probing.
                 let mut results = Vec::new();
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
@@ -312,23 +348,16 @@ impl ModuleResolver {
     }
 
     fn condition_key_matches(&self, key: &str, conditions: &[String]) -> bool {
-        if conditions.iter().any(|condition| condition == key) {
-            return true;
-        }
-
-        let Some(at_pos) = key.find('@') else {
-            return false;
-        };
-
-        let base_condition = &key[..at_pos];
-        let version_range = &key[at_pos + 1..];
+        let (base_condition, version_range) = parse_condition_key(key);
         if !conditions
             .iter()
             .any(|condition| condition == base_condition)
         {
             return false;
         }
-
+        let Some(version_range) = version_range else {
+            return true;
+        };
         let compiler_version =
             types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
         types_versions_range_matches(version_range, compiler_version)
@@ -416,7 +445,7 @@ impl ModuleResolver {
                 // Iterate condition map entries in JSON key order (not our conditions order)
                 for (key, value) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
-                        let is_types = is_types_condition || key == "types";
+                        let is_types = is_types_condition || is_types_condition_key(key);
                         // null means explicitly blocked - stop here
                         if matches!(value, PackageExports::Null) {
                             return None;
@@ -481,7 +510,7 @@ impl ModuleResolver {
                 // Iterate condition map entries in JSON key order
                 for (key, nested) in cond_entries {
                     if self.condition_key_matches(key, conditions) {
-                        let is_types = is_types_condition || key == "types";
+                        let is_types = is_types_condition || is_types_condition_key(key);
                         // null means explicitly blocked - stop here
                         if matches!(nested, PackageExports::Null) {
                             return None;
