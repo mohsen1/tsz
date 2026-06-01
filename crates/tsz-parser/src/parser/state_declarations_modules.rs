@@ -611,7 +611,7 @@ impl ParserState {
         };
 
         // Parse optional import attributes: with { ... } or assert { ... }
-        let attributes = self.parse_import_attributes();
+        let attributes = self.parse_import_declaration_attributes();
         let recover_as_statement_boundary = (import_clause_had_errors
             && module_specifier.is_none()
             && matches!(
@@ -639,15 +639,32 @@ impl ParserState {
         )
     }
 
+    /// Parse optional import attributes after an `import` declaration's module
+    /// specifier. Static imports accept `with` attributes across a line break,
+    /// while legacy `assert` still requires the same line.
+    pub(crate) fn parse_import_declaration_attributes(&mut self) -> NodeIndex {
+        self.parse_import_attributes_allowing_newline_with(true)
+    }
+
+    /// Parse optional import attributes after an `export` declaration's module
+    /// specifier. Exports require `with`/`assert` to stay on the module
+    /// specifier's line.
+    pub(crate) fn parse_import_attributes(&mut self) -> NodeIndex {
+        self.parse_import_attributes_allowing_newline_with(false)
+    }
+
     /// Parse optional import attributes: `with { type: "json" }` or `assert { type: "json" }`
     /// Returns `NodeIndex::NONE` if no attributes are present.
-    pub(crate) fn parse_import_attributes(&mut self) -> NodeIndex {
+    fn parse_import_attributes_allowing_newline_with(
+        &mut self,
+        allow_newline_with: bool,
+    ) -> NodeIndex {
         if !self.is_token(SyntaxKind::WithKeyword) && !self.is_token(SyntaxKind::AssertKeyword) {
             return NodeIndex::NONE;
         }
-        // ASI: 'with'/'assert' on a new line starts a new statement, not import attributes.
-        // Matches tsc's `!scanner.hasPrecedingLineBreak()` check before parseImportAttributes.
-        if self.scanner.has_preceding_line_break() {
+        if self.scanner.has_preceding_line_break()
+            && (!allow_newline_with || self.is_token(SyntaxKind::AssertKeyword))
+        {
             return NodeIndex::NONE;
         }
 

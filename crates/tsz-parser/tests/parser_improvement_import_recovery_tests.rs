@@ -639,7 +639,7 @@ fn test_import_type_from_equals_still_routes_to_import_equals() {
 }
 
 // =============================================================================
-// ASI guard for import attributes (with/assert on new line = new statement)
+// Import attribute line-break handling
 // =============================================================================
 
 // Helpers shared across the ASI tests below.
@@ -705,13 +705,12 @@ fn test_import_attributes_same_line_extensionless_parsed() {
 }
 
 #[test]
-fn test_import_attributes_newline_extensionless_not_parsed_as_attributes() {
-    // When 'with' appears on a new line after the module specifier, ASI applies:
-    // the import declaration ends and 'with' starts a new statement (tsc behavior).
-    // The fix: `has_preceding_line_break()` guard in `parse_import_attributes`.
+fn test_import_attributes_newline_extensionless_parsed_as_attributes() {
+    // Static import declarations parse `with` attributes even when `with` starts
+    // on the next line after the module specifier.
     assert!(
-        !parse_first_import_has_attributes("import './foo'\nwith { type: 'json' };"),
-        "newline before 'with' must not be parsed as import attributes (ASI rule)"
+        parse_first_import_has_attributes("import './foo'\nwith { type: 'json' };"),
+        "newline before 'with' must still be parsed as import attributes"
     );
 }
 
@@ -725,11 +724,35 @@ fn test_import_attributes_same_line_with_extension_parsed() {
 }
 
 #[test]
-fn test_import_attributes_newline_with_extension_not_parsed_as_attributes() {
-    // New-line guard applies regardless of whether the path has an extension.
+fn test_import_attributes_newline_with_extension_parsed_as_attributes() {
     assert!(
-        !parse_first_import_has_attributes("import './data.json'\nwith { type: 'json' };"),
-        "newline before 'with' must not be parsed as import attributes (extension-bearing path)"
+        parse_first_import_has_attributes("import './data.json'\nwith { type: 'json' };"),
+        "newline before 'with' must still be parsed as import attributes (extension-bearing path)"
+    );
+}
+
+#[test]
+fn test_import_attributes_default_import_newline_from_and_with_parsed() {
+    let source = "import data\n  from './data.json'\n  with { type: 'json' };";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt_node = arena.get(sf.statements.nodes[0]).unwrap();
+
+    assert!(
+        arena
+            .get_import_decl(stmt_node)
+            .is_some_and(|i| i.attributes.is_some()),
+        "default import with multiline module specifier and 'with' must parse attributes"
+    );
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for multiline import attributes, got {parse_errors:?}"
     );
 }
 
@@ -744,7 +767,7 @@ fn test_import_assert_same_line_parsed() {
 
 #[test]
 fn test_import_assert_newline_not_parsed_as_attributes() {
-    // 'assert' on a new line must not be parsed as import attributes.
+    // Legacy `assert` still has the no-line-break guard.
     assert!(
         !parse_first_import_has_attributes("import './data.json'\nassert { type: 'json' };"),
         "newline before 'assert' must not be parsed as import attributes"
@@ -815,11 +838,8 @@ fn test_import_attributes_named_import_extensionless_same_line() {
 
 #[test]
 fn test_import_attributes_named_import_extensionless_newline() {
-    // Named import with extensionless path and new-line 'with' — ASI applies.
     assert!(
-        !parse_first_import_has_attributes(
-            "import { foo } from './module'\nwith { type: 'json' };"
-        ),
-        "named import with extensionless path: newline 'with' must not be attributes"
+        parse_first_import_has_attributes("import { foo } from './module'\nwith { type: 'json' };"),
+        "named import with extensionless path: newline 'with' must be attributes"
     );
 }
