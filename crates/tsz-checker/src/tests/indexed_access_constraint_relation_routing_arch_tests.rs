@@ -50,9 +50,15 @@ fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
         "indexed-access key-space diagnostics must use the shared relation outcome boundary"
     );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("indexed_access_key_space_relation_outcome(")
+            .count(),
         3,
-        "string-index, constrained-keyof, and union-member key-space checks should route through RelationOutcome"
+        "string-index, constrained-keyof, and union-member key-space checks should route through the named RelationRequest"
+    );
+    assert!(
+        !function.contains("assign_relation_outcome("),
+        "indexed-access access-helper key-space checks must not regress to raw relation probes"
     );
 }
 

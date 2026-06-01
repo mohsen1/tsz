@@ -180,9 +180,9 @@ Indexed-access key-space diagnostics build
 `indexed_access_key_space_relation_outcome` when probing whether an effective
 index, constraint, or union member is accepted by a computed key space before
 choosing a fallback result or suppressing TS2536. The checker owns
-indexed-access normalization, type-literal fallback ordering, string-index
-coercion checks, and mapped-value recovery while the request names the relation
-role.
+indexed-access normalization, access-computation object-shape recovery,
+type-literal fallback ordering, string-index coercion checks, and mapped-value
+recovery while the request names the relation role.
 
 Conditional generic constraint diagnostics build
 `RelationRequest::conditional_constraint_component` through
