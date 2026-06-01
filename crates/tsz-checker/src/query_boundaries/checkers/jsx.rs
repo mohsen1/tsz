@@ -156,6 +156,14 @@ pub(crate) fn types_are_assignable(
     checker.assign_relation_outcome(source, target).related
 }
 
+pub(crate) fn props_are_assignable(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    checker.jsx_props_relation_outcome(source, target).related
+}
+
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::query_boundaries::common::object_shape_for_type(db, type_id).is_some()
 }
@@ -482,6 +490,17 @@ mod tests {
             !source.contains(legacy),
             "JSX assignability boundary should not use raw diagnostic relation \
              boolean guards"
+        );
+    }
+
+    #[test]
+    fn props_are_assignable_uses_jsx_props_relation_outcome_boundary() {
+        let source = include_str!("jsx.rs");
+
+        assert!(
+            source.contains("checker.jsx_props_relation_outcome(source, target).related"),
+            "JSX props assignability boundary should route relation decisions \
+             through the JSX props relation outcome boundary"
         );
     }
 }

@@ -1014,7 +1014,7 @@ impl<'a> CheckerState<'a> {
         outcome: &JsxAttrComparisonOutcome,
     ) -> bool {
         let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
-        if !crate::query_boundaries::checkers::jsx::types_are_assignable(
+        if !crate::query_boundaries::checkers::jsx::props_are_assignable(
             self,
             attrs_type,
             ctx.raw_props_type,

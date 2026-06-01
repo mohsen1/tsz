@@ -110,8 +110,9 @@ call or construct result would satisfy the weak target.
 JSX props and attribute validation paths build `RelationRequest::jsx_props`
 through `jsx_props_relation_outcome` in the JSX props resolution, validation,
 spread, overload, generic-spread, union-props, and intrinsic tag-resolution
-checkers, plus React props display-alias storage when checking whether the
-candidate alias and props surface are mutually compatible.
+checkers, generic managed-attributes final assignability, plus React props
+display-alias storage when checking whether the candidate alias and props
+surface are mutually compatible.
 
 JSX children and text-child validation paths build
 `RelationRequest::jsx_children` through `jsx_children_relation_outcome` in the
