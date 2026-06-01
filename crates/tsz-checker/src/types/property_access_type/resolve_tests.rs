@@ -196,3 +196,37 @@ NS.I = function() {};
          assignments to type-only namespace members, got: {codes:?}"
     );
 }
+
+#[test]
+fn imported_array_to_enum_recovers_property_from_re_export_rename() {
+    let codes = diagnostics_for_files(
+        &[
+            (
+                "/array-lib.ts",
+                r#"
+const arrayToEnum = <T extends string[]>(value: T) => value;
+export const colors = arrayToEnum(["red", "green"]);
+export const shades = arrayToEnum(["dark", "light"]);
+"#,
+            ),
+            (
+                "/mod.ts",
+                r#"export { colors as EnumColors, shades as EnumShades } from "./array-lib";"#,
+            ),
+            (
+                "/entry.ts",
+                r#"
+import { EnumColors as Colors, EnumShades as Shades } from "./mod";
+Colors.red;
+Shades.dark;
+"#,
+            ),
+        ],
+        "/entry.ts",
+    );
+
+    assert!(
+        !codes.contains(&2339),
+        "Imported arrayToEnum member access should recover through re-export + rename, got: {codes:?}"
+    );
+}

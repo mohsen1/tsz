@@ -982,6 +982,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a value-position import-like name to its concrete value symbol.
+    ///
+    /// This mirrors name-resolution for value positions, then follows alias
+    /// links so the returned symbol is the effective imported target.
+    /// The returned tuple includes the resolved symbol, the symbol's owning
+    /// file index, and whether the resolved symbol is type-only.
+    ///
+    /// No diagnostic is emitted; callers may apply additional caller-facing
+    /// filtering on `is_type_only`.
+    pub(crate) fn resolve_value_import_target(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Option<(tsz_binder::SymbolId, usize, bool)> {
+        let resolved = self
+            .resolve_name_structured(&NameResolutionRequest::value(name, idx))
+            .ok()?;
+        if resolved.is_type_only {
+            return None;
+        }
+
+        let mut symbol_id = resolved.symbol_id;
+        let mut symbol = self
+            .get_cross_file_symbol(symbol_id)
+            .or_else(|| self.ctx.binder.get_symbol(symbol_id))?;
+        let mut file_idx = self.ctx.resolve_symbol_file_index(symbol_id)?;
+
+        let mut seen = 0u8;
+        while (symbol.flags & symbol_flags::ALIAS) != 0 {
+            seen += 1;
+            if seen > 64 {
+                return None;
+            }
+
+            symbol_id = self.ctx.resolve_import_alias_and_register(symbol_id)?;
+            symbol = self
+                .get_cross_file_symbol(symbol_id)
+                .or_else(|| self.ctx.binder.get_symbol(symbol_id))?;
+            file_idx = self.ctx.resolve_symbol_file_index(symbol_id)?;
+        }
+
+        Some((symbol_id, file_idx, symbol.is_type_only))
+    }
+
     /// Report a "not found" diagnostic with suggestion collection at the boundary.
     ///
     /// Collects spelling suggestions via `collect_spelling_suggestions` (which
