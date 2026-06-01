@@ -15,6 +15,38 @@ use tsz_solver::is_compiler_managed_type;
 
 use super::type_node::TypeNodeChecker;
 
+thread_local! {
+    /// Depth and active-set guards for recursive type-alias resolution chains
+    /// (see `ensure_type_alias_resolved`). Module-scoped rather than
+    /// function-scoped so they can be reset at independent-compilation
+    /// boundaries: the push/pop around `ensure_type_alias_resolved_inner` is
+    /// manual (non-RAII), so a panic unwinding through that call — caught
+    /// upstream by the batch driver — would otherwise leave a stale `DefId` in
+    /// the active set, wrongly short-circuiting that alias in the next project.
+    static ALIAS_RESOLVE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static ALIAS_RESOLVE_STACK: std::cell::RefCell<Vec<tsz_solver::def::DefId>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Reset the type-alias resolution depth counter and active-set stack.
+/// Called from `clear_all_thread_local_state` at batch row boundaries.
+pub(crate) fn reset_alias_resolve_state() {
+    ALIAS_RESOLVE_DEPTH.with(|c| c.set(0));
+    ALIAS_RESOLVE_STACK.with(|stack| stack.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn dirty_alias_resolve_state_for_test() {
+    ALIAS_RESOLVE_DEPTH.with(|c| c.set(7));
+    ALIAS_RESOLVE_STACK.with(|stack| stack.borrow_mut().push(tsz_solver::def::DefId::INVALID));
+}
+
+#[cfg(test)]
+pub(crate) fn alias_resolve_state_is_clear_for_test() -> bool {
+    ALIAS_RESOLVE_DEPTH.with(std::cell::Cell::get) == 0
+        && ALIAS_RESOLVE_STACK.with(|stack| stack.borrow().is_empty())
+}
+
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(super) fn resolve_import_alias_type_target_symbol(
         &self,
@@ -814,12 +846,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Depth guard for recursive type alias resolution chains.
         // ts-toolbelt has type aliases like `type Merge<...> = ...Patch<...Diff<...>>`
         // where each referenced alias recursively triggers lowering of its body,
-        // creating unbounded stack growth. Cap at 100 levels.
-        thread_local! {
-            static ALIAS_RESOLVE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            static ALIAS_RESOLVE_STACK: std::cell::RefCell<Vec<tsz_solver::def::DefId>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
+        // creating unbounded stack growth. Cap at 100 levels. The depth/active-set
+        // guards are module-scoped (defined at the top of this file) so they can
+        // be cleared between independent compilations via `reset_alias_resolve_state`.
         let depth = ALIAS_RESOLVE_DEPTH.get();
         if depth >= 100 {
             return;

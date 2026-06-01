@@ -33,3 +33,19 @@ mod type_alias_depth_helpers;
 mod type_alias_missing_name_coverage;
 mod type_alias_recursion_patterns;
 mod unused;
+
+/// Release the type-alias resolution scratch pool owned by this module tree.
+/// Called at independent-compilation boundaries (batch mode).
+pub(crate) fn reset_alias_resolution_pools() {
+    type_alias_checking::reset_alias_defid_visited_pool();
+}
+
+#[cfg(test)]
+pub(crate) fn dirty_alias_resolution_pools_for_test() {
+    type_alias_checking::set_alias_defid_visited_pool_dirty_for_test();
+}
+
+#[cfg(test)]
+pub(crate) fn alias_resolution_pools_clear_for_test() -> bool {
+    type_alias_checking::alias_defid_visited_pool_is_released_for_test()
+}
