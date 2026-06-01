@@ -747,11 +747,11 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                         );
                     } else {
-                        self.error_at_node(
-                            impl_node_idx,
-                            diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                            diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                        );
+                        // Cross-file declaration metadata without source-file context
+                        // cannot be anchored to the overload site. tsc reports TS2394
+                        // only at overload declarations, so suppress this compatibility
+                        // diagnostic to avoid implementation-site mis-anchoring.
+                        continue;
                     }
                 }
                 // TSC only reports the first incompatible overload per function.
