@@ -450,61 +450,60 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // mapping (as K where K is the iteration variable). Identity `as` clauses
         // don't change keys so the mapped type is still homomorphic.
         // Example: { [K in keyof T as K]: T[K] } is equivalent to { [K in keyof T]: T[K] }
-        if let Some(source) = source_object {
-            if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
-                // Resolve the source to check if it's an Array or Tuple
-                // Use evaluate() to resolve Lazy types (interfaces/classes)
-                let resolved = self.evaluate(source);
+        if let Some(source) = source_object
+            && crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped)
+        {
+            // Resolve the source to check if it's an Array or Tuple
+            // Use evaluate() to resolve Lazy types (interfaces/classes)
+            let resolved = self.evaluate(source);
 
-                match self.interner().lookup(resolved) {
-                    // Array type: map the element type
-                    Some(TypeData::Array(element_type)) => {
-                        return self.evaluate_mapped_array(mapped, element_type);
-                    }
+            match self.interner().lookup(resolved) {
+                // Array type: map the element type
+                Some(TypeData::Array(element_type)) => {
+                    return self.evaluate_mapped_array(mapped, element_type);
+                }
 
-                    // Tuple type: map each element. Source is mutable, so the
-                    // result is readonly only if the modifier adds `+readonly`.
-                    Some(TypeData::Tuple(tuple_id)) => {
+                // Tuple type: map each element. Source is mutable, so the
+                // result is readonly only if the modifier adds `+readonly`.
+                Some(TypeData::Tuple(tuple_id)) => {
+                    return self
+                        .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                }
+
+                // `readonly [a, b]`: map each element and preserve readonly
+                // unless the modifier strips it (`-readonly`).
+                Some(TypeData::ReadonlyType(inner)) => {
+                    if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
                         return self
-                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true);
                     }
+                }
 
-                    // `readonly [a, b]`: map each element and preserve readonly
-                    // unless the modifier strips it (`-readonly`).
-                    Some(TypeData::ReadonlyType(inner)) => {
-                        if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                            return self.evaluate_mapped_tuple_with_readonly(
-                                mapped, tuple_id, source, true,
+                // ReadonlyArray: map the element type and preserve readonly
+                Some(TypeData::ObjectWithIndex(shape_id)) => {
+                    // Check if this is a ReadonlyArray (has readonly numeric index)
+                    // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
+                    // has methods like length, map, filter, etc. We only care about the index signature.
+                    let shape = self.interner().object_shape(shape_id);
+                    let has_readonly_index = shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+
+                    if has_readonly_index {
+                        // This is ReadonlyArray<T> - map element type
+                        // Extract the element type from the number index signature
+                        if let Some(index) = &shape.number_index {
+                            return self.evaluate_mapped_array_with_readonly(
+                                mapped,
+                                index.value_type,
+                                true,
                             );
                         }
                     }
-
-                    // ReadonlyArray: map the element type and preserve readonly
-                    Some(TypeData::ObjectWithIndex(shape_id)) => {
-                        // Check if this is a ReadonlyArray (has readonly numeric index)
-                        // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
-                        // has methods like length, map, filter, etc. We only care about the index signature.
-                        let shape = self.interner().object_shape(shape_id);
-                        let has_readonly_index = shape
-                            .number_index
-                            .as_ref()
-                            .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
-
-                        if has_readonly_index {
-                            // This is ReadonlyArray<T> - map element type
-                            // Extract the element type from the number index signature
-                            if let Some(index) = &shape.number_index {
-                                return self.evaluate_mapped_array_with_readonly(
-                                    mapped,
-                                    index.value_type,
-                                    true,
-                                );
-                            }
-                        }
-                    }
-
-                    _ => {}
                 }
+
+                _ => {}
             }
         }
 
