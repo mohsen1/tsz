@@ -117,6 +117,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["allowlist_cap"], 2)
         self.assertEqual(report["remaining_allowlist_capacity"], 1)
         self.assertEqual(report["allowlist_budget_status"], "available")
+        self.assertEqual(report["allowlist_pressure_status"], "available")
         self.assertEqual(report["exhausted_category_count"], 0)
         self.assertEqual(report["exhausted_categories"], [])
         self.assertEqual(report["unallowlisted_calls"], 1)
@@ -183,6 +184,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["output_surgery_status"], "passed")
         self.assertEqual(report["warning_count"], 1)
         self.assertEqual(report["warning_status"], "warn")
+        self.assertEqual(report["allowlist_pressure_status"], "blocked")
         self.assertEqual(report["exhausted_category_count"], 1)
         self.assertEqual(report["exhausted_categories"], ["semantic-output-surgery"])
         self.assertEqual(report["failures"], [])
@@ -240,6 +242,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "category_budgets=semantic-output-surgery=2/2:exhausted, "
             "exhausted_category_count=1, "
             "exhausted_categories=semantic-output-surgery, "
+            "allowlist_pressure_status=blocked, "
             "warning_count=1, "
             "warning_status=warn, "
             "unallowlisted_calls=0, "
@@ -328,6 +331,31 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(self.audit.classify_budget_status(1, 2), "available")
         self.assertEqual(self.audit.classify_budget_status(2, 2), "exhausted")
         self.assertEqual(self.audit.classify_budget_status(3, 2), "over_cap")
+
+    def test_allowlist_pressure_distinguishes_global_and_category_blocks(self):
+        budget = self.audit.BudgetSummary(
+            allowlisted_calls=3,
+            allowlist_cap=4,
+            remaining_allowlist_capacity=1,
+            allowlisted_files=2,
+            budget_status="available",
+        )
+        self.assertEqual(
+            self.audit.classify_allowlist_pressure(budget, ["dts-output-surgery"]),
+            "category_blocked",
+        )
+
+        budget = self.audit.BudgetSummary(
+            allowlisted_calls=4,
+            allowlist_cap=4,
+            remaining_allowlist_capacity=0,
+            allowlisted_files=2,
+            budget_status="exhausted",
+        )
+        self.assertEqual(
+            self.audit.classify_allowlist_pressure(budget, ["dts-output-surgery"]),
+            "blocked",
+        )
 
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

@@ -334,6 +334,21 @@ def classify_budget_status(allowlisted_calls: int, allowlist_cap: int) -> str:
     return "available"
 
 
+def classify_allowlist_pressure(
+    budget: BudgetSummary,
+    exhausted_categories: list[str],
+) -> str:
+    if budget.budget_status == "over_cap":
+        return "over_cap"
+    if budget.budget_status == "no_allowlist":
+        return "no_allowlist"
+    if exhausted_categories and budget.remaining_allowlist_capacity == 0:
+        return "blocked"
+    if exhausted_categories:
+        return "category_blocked"
+    return "available"
+
+
 def _run_git(root: pathlib.Path, args: list[str]) -> Optional[str]:
     try:
         result = subprocess.run(
@@ -401,6 +416,15 @@ def format_warning_metrics(file_summaries: list[dict[str, object]]) -> str:
     return f"warning_count={warning_count}, warning_status={warning_status}"
 
 
+def format_allowlist_pressure_metrics(file_summaries: list[dict[str, object]]) -> str:
+    budget = summarize_budget(file_summaries)
+    exhausted_categories = exhausted_category_names(file_summaries)
+    return "allowlist_pressure_status=" + classify_allowlist_pressure(
+        budget,
+        exhausted_categories,
+    )
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -418,6 +442,7 @@ def build_json_report(
         if summary["max_count"] is not None and summary["budget_status"] == "exhausted"
     ]
     warning_count = len(exhausted_categories)
+    allowlist_pressure_status = classify_allowlist_pressure(budget, exhausted_categories)
     return {
         "ok": not failures,
         "status": "failed" if failures else "passed",
@@ -431,6 +456,7 @@ def build_json_report(
         "allowlist_cap": budget.allowlist_cap,
         "remaining_allowlist_capacity": budget.remaining_allowlist_capacity,
         "allowlist_budget_status": budget.budget_status,
+        "allowlist_pressure_status": allowlist_pressure_status,
         "exhausted_category_count": warning_count,
         "exhausted_categories": exhausted_categories,
         "unallowlisted_calls": summary.unallowlisted,
@@ -492,6 +518,7 @@ def format_pass_summary(
         f"{format_budget_metrics(budget)}, "
         f"{format_category_budget_metrics(file_summaries)}, "
         f"{format_exhausted_category_metrics(file_summaries)}, "
+        f"{format_allowlist_pressure_metrics(file_summaries)}, "
         f"{format_warning_metrics(file_summaries)}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
