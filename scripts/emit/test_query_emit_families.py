@@ -8,6 +8,7 @@ cases confirm that unsupported shapes still fall through to "other".
 import importlib.util
 import contextlib
 import io
+import json
 import pathlib
 import sys
 import unittest
@@ -106,6 +107,59 @@ after
         self.assertEqual(status["state"], "stale")
         self.assertEqual(status["jsPassDelta"], 365)
         self.assertEqual(status["dtsPassDelta"], 38)
+
+    def test_freshness_report_preserves_stale_detail_payload(self):
+        report = self.mod.emit_freshness_report(
+            {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            {
+                "jsPass": 13459,
+                "jsTotal": 13530,
+                "dtsPass": 1644,
+                "dtsTotal": 1669,
+            },
+        )
+
+        self.assertEqual(report["state"], "stale")
+        self.assertFalse(report["detailIsCurrent"])
+        self.assertEqual(report["jsPassDelta"], 365)
+        self.assertEqual(report["dtsPassDelta"], 38)
+        self.assertEqual(report["detailSummary"]["jsPass"], 13094)
+        self.assertEqual(report["publicSummary"]["jsPass"], 13459)
+        self.assertIn("README/public ahead", report["message"])
+
+    def test_print_freshness_json_outputs_machine_readable_status(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            }
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.print_emit_freshness_json(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        parsed = json.loads(out.getvalue())
+        self.assertEqual(parsed["state"], "stale")
+        self.assertFalse(parsed["detailIsCurrent"])
+        self.assertEqual(parsed["jsPassDelta"], 365)
+        self.assertEqual(parsed["dtsPassDelta"], 38)
 
     def test_freshness_note_ignores_different_emit_domains(self):
         note = self.mod.emit_freshness_note(
