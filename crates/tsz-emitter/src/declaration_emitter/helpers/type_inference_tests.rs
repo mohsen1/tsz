@@ -881,6 +881,26 @@ const ts1 = ff2("foo", "bar");
 }
 
 #[test]
+fn returned_intrinsic_call_preserves_outer_type_parameter() {
+    let source = r#"
+declare function foo3<T extends string>(x: Uppercase<T>): T;
+function foo4<U extends string>(x: Uppercase<U>) {
+    return foo3(x);
+}
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("declare function foo4<U extends string>(x: Uppercase<U>): U;"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("declare function foo4<U extends string>(x: Uppercase<U>): string;"),
+        "{output}"
+    );
+}
+
+#[test]
 fn higher_order_type_parameter_parameter_blocks_direct_literal_initializer_reuse() {
     let source = r#"
 declare function direct<A>(value: A, callback: (value: A) => void): A;

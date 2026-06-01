@@ -479,6 +479,13 @@ impl<'a> DeclarationEmitter<'a> {
                                     call,
                                     type_text.trim(),
                                 );
+                            let simple_source_substitution = self
+                                .simple_type_parameter_argument_substitution(
+                                    source_arena,
+                                    func,
+                                    call,
+                                    type_text.trim(),
+                                );
                             let has_higher_order_type_param_param = self
                                 .function_has_higher_order_type_parameter_parameter(
                                     source_arena,
@@ -486,6 +493,7 @@ impl<'a> DeclarationEmitter<'a> {
                                     type_text.trim(),
                                 );
                             if (literal_direct_substitution.is_none()
+                                && simple_source_substitution.is_none()
                                 || has_higher_order_type_param_param)
                                 && let Some(canonical_text) =
                                     self.fully_resolved_call_canonical_type_text(expr_idx)

@@ -335,6 +335,48 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn simple_type_parameter_argument_substitution(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_param_name: &str,
+    ) -> Option<String> {
+        let args = call.arguments.as_ref()?;
+        for (&param_idx, &arg_idx) in func.parameters.nodes.iter().zip(args.nodes.iter()) {
+            let param_node = source_arena.get(param_idx)?;
+            let param = source_arena.get_parameter(param_node)?;
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            let param_type_text = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))?;
+            let Some((param_wrapper, param_inner)) =
+                Self::single_generic_type_argument_text(param_type_text.trim())
+            else {
+                continue;
+            };
+            if param_inner != type_param_name {
+                continue;
+            }
+            let arg_type_text = self
+                .lexical_parameter_declared_type_annotation_text(arg_idx)
+                .or_else(|| self.referenced_parameter_declared_type_annotation_text(arg_idx))
+                .or_else(|| self.reference_declared_source_type_annotation_text(arg_idx))
+                .or_else(|| self.reference_declared_type_annotation_text(arg_idx))?;
+            let Some((arg_wrapper, arg_inner)) =
+                Self::single_generic_type_argument_text(arg_type_text.trim())
+            else {
+                continue;
+            };
+            if param_wrapper == arg_wrapper && Self::type_text_is_simple_reference(arg_inner) {
+                return Some(arg_inner.to_string());
+            }
+        }
+        None
+    }
+
     fn replace_or_push_substitution(
         substitutions: &mut Vec<(String, String)>,
         name: &str,

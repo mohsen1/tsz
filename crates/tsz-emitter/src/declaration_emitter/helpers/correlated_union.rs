@@ -1490,7 +1490,9 @@ impl<'a> DeclarationEmitter<'a> {
         Some((param_type.to_string(), constraint.to_string()))
     }
 
-    fn single_generic_type_argument_text(type_text: &str) -> Option<(&str, &str)> {
+    pub(in crate::declaration_emitter) fn single_generic_type_argument_text(
+        type_text: &str,
+    ) -> Option<(&str, &str)> {
         let type_text = type_text.trim();
         let open = type_text.find('<')?;
         if !type_text.ends_with('>') {
@@ -1850,7 +1852,7 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten()
     }
 
-    fn referenced_parameter_declared_type_annotation_text(
+    pub(super) fn referenced_parameter_declared_type_annotation_text(
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
