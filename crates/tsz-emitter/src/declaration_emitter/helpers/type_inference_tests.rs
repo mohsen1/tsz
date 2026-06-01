@@ -901,6 +901,29 @@ function foo4<U extends string>(x: Uppercase<U>) {
 }
 
 #[test]
+fn generic_return_parameter_or_never_call_uses_nonnullable_surface() {
+    let source = r#"
+function error(): never {
+    throw new Error();
+}
+
+function present<T>(value: T) {
+    return value || error();
+}
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("declare function present<T>(value: T): NonNullable<T>;"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("declare function present<T>(value: T): T;"),
+        "{output}"
+    );
+}
+
+#[test]
 fn higher_order_type_parameter_parameter_blocks_direct_literal_initializer_reuse() {
     let source = r#"
 declare function direct<A>(value: A, callback: (value: A) => void): A;
