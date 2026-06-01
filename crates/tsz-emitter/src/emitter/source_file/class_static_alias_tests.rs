@@ -79,6 +79,24 @@ fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
 }
 
 #[test]
+fn es2022_static_block_field_initializer_captures_nested_class_computed_names() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES2022);
+
+    assert!(
+        output.contains("static { this.bar = (_c = () => { _a = this.c, _b = this.c; },"),
+        "Native static field block should capture nested class computed names against the enclosing `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor() {")
+            && output.contains("this[_b] = 456;")
+            && output.contains("static { _c(); }")
+            && output.contains("static { this[_a] = 123; }"),
+        "Nested class fields should consume the captured keys in instance and static initializers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es2015_static_async_arrow_declares_class_alias_once() {
     let source = "class Test {\n    static member = async (x: string) => { };\n}\n";
     let output = emit(source, ScriptTarget::ES2015);
