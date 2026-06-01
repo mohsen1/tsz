@@ -99,7 +99,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn get_mapped_modifiers(
         &mut self,
         mapped: &MappedType,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         key_name: Atom,
     ) -> (bool, bool) {
@@ -125,7 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Delegate to centralized modifier computation in type_queries.
         crate::type_queries::compute_mapped_modifiers(
             mapped,
-            is_homomorphic,
+            inherits_modifiers,
             source_mods.0,
             source_mods.1,
         )
@@ -295,8 +295,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This handles both pre-evaluation form (constraint is `keyof T`) and
         // post-instantiation form (constraint eagerly evaluated to literal union).
         let homomorphic_source = self.homomorphic_mapped_source(mapped);
-        // True identity homomorphic: template is T[K] and constraint is keyof T.
-        // Used for declared-type substitution (avoid double-encoding optionality).
+        // True when the constraint is `keyof T` (Method 1 matched). Used for two things:
+        // 1. Declared-type substitution (avoid double-encoding optionality).
+        // 2. Modifier inheritance: tsc inherits readonly/optional from the source whenever
+        //    the constraint is `keyof T`, even for non-identity `as` clauses.
         let is_identity_homomorphic = homomorphic_source.is_some();
 
         // For homomorphic types, source comes from the homomorphic check.
@@ -576,7 +578,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -708,7 +710,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -802,7 +804,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::STRING,
-                        is_homomorphic,
+                        is_identity_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -823,7 +825,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::NUMBER,
-                        is_homomorphic,
+                        is_identity_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -841,7 +843,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(self.build_index_signature_for_mapped(
                 *mapped,
                 key_type,
-                is_homomorphic,
+                is_identity_homomorphic,
                 source_object,
                 empty_atom,
             ))
@@ -866,7 +868,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &mut self,
         mapped: MappedType,
         key_type: TypeId,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         empty_atom: Atom,
     ) -> IndexSignature {
@@ -874,7 +876,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
-            self.get_mapped_modifiers(&mapped, is_homomorphic, source_object, empty_atom);
+            self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, empty_atom);
         if idx_optional {
             value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
         }
