@@ -51,3 +51,34 @@ fn call_parameter_array_display_normalization_is_not_gated_by_rendered_text() {
         "call argument target display should always route through the idempotent display normalizer"
     );
 }
+
+#[test]
+fn mapped_target_type_parameter_containment_is_structural() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/assignability/assignability_diagnostics/argument_reports.rs"
+    ))
+    .expect("assignability diagnostics source should be readable");
+
+    let start = source
+        .find("pub(crate) fn should_suppress_self_referential_mapped_constraint_arg_mismatch")
+        .expect("self-referential mapped constraint helper should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n    fn self_referential_mapped_intersection_accepts_object_literal")
+        .expect("self-referential mapped constraint helper should end before next helper");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("format_type_for_assignability_message"),
+        "mapped target type-parameter containment must not inspect rendered target text"
+    );
+    assert!(
+        !helper_body.contains(".contains(name.as_ref())"),
+        "mapped target type-parameter containment must not string-match user-chosen parameter names"
+    );
+    assert!(
+        helper_body.contains("contains_type_parameter_named("),
+        "mapped target type-parameter containment should route through the structural query boundary"
+    );
+}
