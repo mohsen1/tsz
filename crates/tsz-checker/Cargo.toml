@@ -1966,5 +1966,9 @@ path = "tests/overload_modifier_tests.rs"
 name = "class_interface_namespace_merge_tests"
 path = "tests/class_interface_namespace_merge_tests.rs"
 
+[[test]]
+name = "order_independent_alias_resolution_tests"
+path = "tests/order_independent_alias_resolution_tests.rs"
+
 [lints]
 workspace = true

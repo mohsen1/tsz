@@ -1410,7 +1410,7 @@ impl<'a> CheckerState<'a> {
         };
         let nested_target_idx = nested_exports
             .iter()
-            .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id))
+            .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index_stable(sym_id))
             .or_else(|| {
                 self.ctx
                     .resolve_import_target_from_file(decl_file_idx, &module_specifier)

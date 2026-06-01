@@ -1074,6 +1074,79 @@ pub fn check_multi_file(
     checker.ctx.diagnostics.clone()
 }
 
+/// Parse, bind, and type-check a multi-file project with the production
+/// `global_symbol_file_index` wired up, exactly like the CLI driver.
+///
+/// [`check_multi_file`] leaves `global_symbol_file_index` empty, so cross-file
+/// alias pinning falls back to the dynamic overlay. This variant builds the
+/// immutable declaring-file index (`SymbolId -> file_idx`) the same way the
+/// driver does (`build_global_symbol_file_index` from `symbol_arenas`), so
+/// order-independent alias resolution is exercised on the real path. Used by
+/// the order-independence regression tests (refs #7574, #12148).
+pub fn check_multi_file_with_global_index(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        crate::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+
+    // Build the immutable declaring-file index (SymbolId -> file_idx), matching
+    // the driver's `build_global_symbol_file_index`. First binder owning a raw
+    // SymbolId wins, deterministic by file index.
+    let mut symbol_file_index = rustc_hash::FxHashMap::default();
+    for (file_idx, binder) in all_binders.iter().enumerate() {
+        for symbol in binder.symbols.iter() {
+            symbol_file_index.entry(symbol.id).or_insert(file_idx);
+        }
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker
+        .ctx
+        .set_global_symbol_file_index(Arc::new(symbol_file_index));
+
+    checker.check_source_file(roots[entry_idx]);
+    checker.ctx.diagnostics.clone()
+}
+
 /// Parse, bind, and type-check a multi-file project with lib contexts loaded.
 ///
 /// This is the lib-aware counterpart to [`check_multi_file`]. Each project
