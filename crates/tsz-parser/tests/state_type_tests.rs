@@ -1040,7 +1040,7 @@ type FlattenRows<T extends readonly unknown[]> =
 "#;
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "{:?}", diags);
+    assert!(diags.is_empty(), "{diags:?}");
 
     // Every REST_TYPE node must start with `...` and not overshoot into trailing
     // whitespace — a two-sided bound on span correctness for all nodes at once.
