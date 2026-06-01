@@ -286,6 +286,7 @@ mod type_inference;
 mod type_inference_accessor_property;
 mod type_inference_class_expression;
 mod type_inference_const_assertions;
+mod type_inference_declared_call;
 mod type_inference_enum_access;
 mod type_inference_expression_literals;
 mod type_inference_fallback_types;
