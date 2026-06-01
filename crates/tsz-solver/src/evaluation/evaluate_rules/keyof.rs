@@ -3,7 +3,7 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::construction::TypeDatabase;
-use crate::instantiation::instantiate::instantiate_generic;
+use crate::instantiation::instantiate::instantiate_generic_cached;
 use crate::objects::PropertyCollectionResult;
 use crate::objects::apparent::literal_value_intrinsic_kind;
 use crate::relations::subtype::TypeResolver;
@@ -742,8 +742,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if mapped.name_type.is_some() {
                     return None;
                 }
-                let instantiated = instantiate_generic(
+                let instantiated = instantiate_generic_cached(
                     self.interner(),
+                    self.query_db(),
                     mapped.constraint,
                     &type_params,
                     &app.args,
@@ -810,11 +811,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let matches_by_arg = |ty: TypeId| {
             ty == source_arg || source_arg_name.is_some_and(|n| self.is_type_param_named(ty, n))
         };
-        let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
+        let inst_true = instantiate_generic_cached(
+            self.interner(),
+            self.query_db(),
+            cond.true_type,
+            type_params,
+            args,
+        );
         if !self.branch_matches_keyof_source(inst_true, &matches_by_arg) {
             return None;
         }
-        let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
+        let inst_false = instantiate_generic_cached(
+            self.interner(),
+            self.query_db(),
+            cond.false_type,
+            type_params,
+            args,
+        );
         if !self.branch_matches_keyof_source(inst_false, &matches_by_arg) {
             return None;
         }

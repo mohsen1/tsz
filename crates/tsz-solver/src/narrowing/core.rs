@@ -721,12 +721,14 @@ impl<'a> NarrowingContext<'a> {
                                 // structural forms (e.g. Union) for distribution.
                                 let resolved_args: Vec<TypeId> =
                                     app.args.iter().map(|&arg| self.resolve_type(arg)).collect();
-                                type_id = crate::instantiation::instantiate::instantiate_generic(
-                                    self.db.as_type_database(),
-                                    body,
-                                    &params,
-                                    &resolved_args,
-                                );
+                                type_id =
+                                    crate::instantiation::instantiate::instantiate_generic_cached(
+                                        self.db.as_type_database(),
+                                        Some(self.db),
+                                        body,
+                                        &params,
+                                        &resolved_args,
+                                    );
                                 continue;
                             }
                         }

@@ -484,20 +484,30 @@ pub fn instantiate_generic(
     type_params: &[TypeParamInfo],
     type_args: &[TypeId],
 ) -> TypeId {
-    if type_params.is_empty() || type_args.is_empty() {
+    instantiate_generic_cached(interner, None, type_id, type_params, type_args)
+}
+
+/// Cache-aware variant of [`instantiate_generic`]. Shares cache slots with
+/// [`instantiate_type_cached`] via the same `(body, canonical_subst)` key, so
+/// recursive utility expansion that re-applies the same body/substitution
+/// pair reuses memoized walks instead of re-traversing the body each step.
+pub fn instantiate_generic_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    type_params: &[TypeParamInfo],
+    type_args: &[TypeId],
+) -> TypeId {
+    // Hoisted before substitution-building so intrinsic bodies skip the
+    // FxHashMap allocation and default-resolution passes in `from_args`.
+    if type_id.is_intrinsic() || type_params.is_empty() || type_args.is_empty() {
         return type_id;
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
-    if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
+    if substitution.is_identity_for(interner, type_params) {
         return type_id;
     }
-    let mut instantiator = TypeInstantiator::new(interner, &substitution);
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_type_cached(interner, query_db, type_id, &substitution)
 }
 
 /// Substitute `ThisType` with a concrete type throughout a type.

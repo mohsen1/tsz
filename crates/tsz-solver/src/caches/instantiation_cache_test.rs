@@ -22,21 +22,25 @@
 
 use crate::caches::query_cache::QueryCache;
 use crate::instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_type_cached,
+    MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_generic_cached, instantiate_type_cached,
     instantiate_type_preserving_cached, substitute_this_type_at_return_position,
     substitute_this_type_cached,
 };
 use crate::intern::TypeInterner;
 use crate::types::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
-fn type_param(interner: &TypeInterner, name: &str) -> (tsz_common::interner::Atom, TypeId) {
-    let atom = interner.intern_string(name);
-    let id = interner.type_param(TypeParamInfo {
+fn param_info(atom: tsz_common::interner::Atom) -> TypeParamInfo {
+    TypeParamInfo {
         name: atom,
         constraint: None,
         default: None,
         is_const: false,
-    });
+    }
+}
+
+fn type_param(interner: &TypeInterner, name: &str) -> (tsz_common::interner::Atom, TypeId) {
+    let atom = interner.intern_string(name);
+    let id = interner.type_param(param_info(atom));
     (atom, id)
 }
 
@@ -428,6 +432,208 @@ fn depth_exceeded_result_is_not_cached() {
         stats1.instantiation_cache_misses,
         stats0.instantiation_cache_misses + 2,
         "both depth-overflow requests should probe and miss independently"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_hits_cache_on_repeat() {
+    // Mirrors `cache_hit_after_first_instantiate_type` but exercises the
+    // substitution-building entry that recursive utility expansion uses.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = object_with(&interner, t_id);
+    let param = param_info(t_atom);
+
+    let stats0 = db.statistics();
+
+    let r1 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
+    let r2 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
+
+    assert_eq!(r1, r2, "cached generic instantiation must equal recomputed");
+
+    let stats1 = db.statistics();
+    assert!(
+        stats1.instantiation_cache_misses > stats0.instantiation_cache_misses,
+        "first call must record at least one miss"
+    );
+    assert!(
+        stats1.instantiation_cache_hits > stats0.instantiation_cache_hits,
+        "second call must record a hit (got {} hits)",
+        stats1.instantiation_cache_hits
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_shares_slot_with_instantiate_type_cached() {
+    // The two entry points share the canonical-substitution cache slot, so
+    // recursive utility expansion benefits from the cache regardless of which
+    // entry point the calling site uses.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = object_with(&interner, t_id);
+    let param = param_info(t_atom);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_atom, TypeId::STRING);
+
+    let stats0 = db.statistics();
+
+    let r_type = instantiate_type_cached(&interner, Some(&db), body, &subst);
+    let r_generic =
+        instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
+
+    assert_eq!(
+        r_type, r_generic,
+        "both entry points must produce the same result"
+    );
+
+    let stats1 = db.statistics();
+    assert!(
+        stats1.instantiation_cache_hits > stats0.instantiation_cache_hits,
+        "instantiate_generic_cached must hit the slot populated by instantiate_type_cached"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_identity_short_circuits() {
+    // `is_identity_for` returns the body untouched without probing the cache.
+    // This preserves the pre-existing fast path that the uncached
+    // `instantiate_generic` had and keeps the cache cheap for no-op
+    // substitutions.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = object_with(&interner, t_id);
+    let param = param_info(t_atom);
+
+    let stats0 = db.statistics();
+
+    // Identity substitution: T -> T.
+    let r = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[t_id]);
+    assert_eq!(r, body);
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "identity substitution must not populate the cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses, stats0.instantiation_cache_misses,
+        "identity substitution must not probe the cache"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_no_query_db_disables_cache() {
+    // Backwards compat: calling with query_db=None preserves the existing
+    // semantics — the result is correct but the cache is never consulted.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let body = object_with(&interner, t_id);
+    let param = param_info(t_atom);
+
+    let stats0 = db.statistics();
+
+    let r1 = instantiate_generic_cached(&interner, None, body, &[param], &[TypeId::STRING]);
+    let r2 = instantiate_generic_cached(&interner, None, body, &[param], &[TypeId::STRING]);
+    assert_eq!(r1, r2);
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "calls with query_db=None must not populate the cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
+        "calls with query_db=None must not register hits"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_depth_overflow_not_cached() {
+    // A depth-overflow walk returns TypeId::ERROR but must not poison the
+    // cache: re-requesting the same (body, args) must miss again. Otherwise a
+    // single spurious overflow would lock the alias to ERROR for the lifetime
+    // of the QueryCache.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let param = param_info(t_atom);
+
+    let depth = (MAX_INSTANTIATION_DEPTH as usize) + 2;
+    let mut body = t_id;
+    for _ in 0..depth {
+        body = interner.array(body);
+    }
+
+    let stats0 = db.statistics();
+
+    let r1 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
+    let r2 = instantiate_generic_cached(&interner, Some(&db), body, &[param], &[TypeId::STRING]);
+
+    assert_eq!(r1, TypeId::ERROR);
+    assert_eq!(r2, TypeId::ERROR);
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "depth-overflow results must not populate the cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
+        "a repeated depth-overflow request must not hit a cached ERROR"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses,
+        stats0.instantiation_cache_misses + 2,
+        "both depth-overflow requests should probe and miss independently"
+    );
+}
+
+#[test]
+fn instantiate_generic_cached_is_invariant_to_type_param_renaming() {
+    // The cache key uses canonical (Atom, TypeId) pairs, so two callers whose
+    // `TypeParamInfo` differ only in non-name metadata (constraint, default)
+    // must hit the same cache slot.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    // Body uses a TypeParameter atom shared with the param we'll instantiate
+    // with. (Same atom => same substitution payload.)
+    let (shared_atom, t_id) = type_param(&interner, "T");
+    let body = object_with(&interner, t_id);
+
+    // Two callers, two different `TypeParamInfo` values but the same name atom.
+    // Different constraint metadata must not perturb the cache key.
+    let param_a = param_info(shared_atom);
+    let param_b = TypeParamInfo {
+        name: shared_atom,
+        constraint: Some(TypeId::UNKNOWN),
+        default: None,
+        is_const: false,
+    };
+
+    let stats0 = db.statistics();
+    let r_a = instantiate_generic_cached(&interner, Some(&db), body, &[param_a], &[TypeId::STRING]);
+    let r_b = instantiate_generic_cached(&interner, Some(&db), body, &[param_b], &[TypeId::STRING]);
+
+    assert_eq!(
+        r_a, r_b,
+        "same substitution payload must produce the same result"
+    );
+
+    let stats1 = db.statistics();
+    assert!(
+        stats1.instantiation_cache_hits > stats0.instantiation_cache_hits,
+        "second caller must reuse the cache slot populated by the first"
     );
 }
 

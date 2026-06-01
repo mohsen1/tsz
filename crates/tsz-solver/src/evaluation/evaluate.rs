@@ -23,6 +23,11 @@ use crate::diagnostics::display_provenance::{
 };
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationResult;
+use crate::instantiation::instantiate::instantiate_generic_cached;
+// Re-imported so `tests/evaluate_tests_parts/*` (mounted via `#[path]` below)
+// resolve it through `use super::*;`.
+#[cfg(test)]
+#[allow(unused_imports)]
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -1450,8 +1455,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 {
                     return None;
                 }
-                Some(instantiate_generic(
+                Some(instantiate_generic_cached(
                     self.interner,
+                    self.query_db,
                     shape.return_type,
                     &shape.type_params,
                     type_args,
@@ -1462,8 +1468,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let signature = shape.call_signatures.iter().find(|sig| {
                     !sig.type_params.is_empty() && sig.type_params.len() == type_args.len()
                 })?;
-                Some(instantiate_generic(
+                Some(instantiate_generic_cached(
                     self.interner,
+                    self.query_db,
                     signature.return_type,
                     &signature.type_params,
                     type_args,
@@ -1504,8 +1511,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             let mut member_args = expanded_args.to_vec();
             member_args[idx] = member;
-            let instantiated =
-                instantiate_generic(self.interner, effective_body, type_params, &member_args);
+            let instantiated = instantiate_generic_cached(
+                self.interner,
+                self.query_db,
+                effective_body,
+                type_params,
+                &member_args,
+            );
             distributed.push(self.evaluate(instantiated));
         }
         let evaluated = self.interner.union(distributed);
@@ -1544,7 +1556,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         record_structural_back_reference: bool,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
-        let mut instantiated = instantiate_generic(self.interner, body, type_params, expanded_args);
+        let mut instantiated = instantiate_generic_cached(
+            self.interner,
+            self.query_db,
+            body,
+            type_params,
+            expanded_args,
+        );
         // Rebind polymorphic `this` to the concrete application so
         // interface bodies like `constraint: Constraint<this>` preserve
         // their receiver-specific invariance.

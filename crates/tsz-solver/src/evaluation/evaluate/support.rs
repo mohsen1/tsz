@@ -1167,7 +1167,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .iter()
                         .map(|p| p.default.unwrap_or(TypeId::ERROR))
                         .collect();
-                    instantiate_generic(self.interner, resolved, &type_params, &default_args)
+                    instantiate_generic_cached(
+                        self.interner,
+                        self.query_db,
+                        resolved,
+                        &type_params,
+                        &default_args,
+                    )
                 } else {
                     resolved
                 }
