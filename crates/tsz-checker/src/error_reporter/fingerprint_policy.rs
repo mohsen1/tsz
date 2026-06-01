@@ -764,7 +764,8 @@ impl<'a> CheckerState<'a> {
                                     depth: 0,
                 }]
             }
-            SubtypeFailureReason::UnionSourceMismatch { .. } => {
+            SubtypeFailureReason::UnionSourceMismatch { .. }
+            | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
                 match self.union_member_related_line(Some(reason), start, length) {
                     Some(line) => vec![line],
                     None => return None,
@@ -776,29 +777,35 @@ impl<'a> CheckerState<'a> {
         Some(self.normalize_related_information(related, RelatedInformationPolicy::ELABORATION))
     }
 
-    /// Build the failing-member relation line for a [`UnionSourceMismatch`]
-    /// reason (`Type 'M' is not assignable to type 'T'.`), used to surface the
-    /// root mismatch beneath a union-typed property/argument failure.
+    /// Build the child-relation elaboration line (`Type 'C' is not assignable
+    /// to type 'T'.`) for a [`UnionSourceMismatch`] or
+    /// [`ConditionalBranchMismatch`] reason. Used to surface the root mismatch
+    /// one level beneath a union-typed or conditional-typed failure.
     fn union_member_related_line(
         &mut self,
         reason: Option<&tsz_solver::SubtypeFailureReason>,
         start: u32,
         length: u32,
     ) -> Option<DiagnosticRelatedInformation> {
-        let tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
-            member_type,
-            target_type,
-            ..
-        } = reason?
-        else {
-            return None;
+        let (child_source, child_target) = match reason? {
+            tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
+                member_type,
+                target_type,
+                ..
+            } => (*member_type, *target_type),
+            tsz_solver::SubtypeFailureReason::ConditionalBranchMismatch {
+                branch_source,
+                branch_target,
+                ..
+            } => (*branch_source, *branch_target),
+            _ => return None,
         };
         let member_str = self.format_type_for_diagnostic_role(
-            *member_type,
+            child_source,
             DiagnosticTypeDisplayRole::DefaultDiagnostic,
         );
         let target_str = self.format_type_for_diagnostic_role(
-            *target_type,
+            child_target,
             DiagnosticTypeDisplayRole::DefaultDiagnostic,
         );
         Some(DiagnosticRelatedInformation {
