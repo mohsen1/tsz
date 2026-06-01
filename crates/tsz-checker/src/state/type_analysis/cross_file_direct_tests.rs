@@ -1174,8 +1174,8 @@ fn resolves_intl_namespace_exported_lib_interface_directly() {
 }
 
 #[test]
-fn direct_actual_lib_delegation_cache_preserves_type_params() {
-    let lib_files = load_lib_files(&["es2015.iterable.d.ts"]);
+fn direct_actual_lib_delegation_cache_stays_file_local() {
+    let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -1191,6 +1191,7 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
         CheckerOptions::default(),
     );
     let mut state = CheckerState { ctx };
+    state.ctx.shared_lib_type_cache = Some(Arc::new(dashmap::DashMap::new()));
     let lib_contexts: Vec<LibContext> = lib_files
         .iter()
         .map(|lib| LibContext {
@@ -1237,6 +1238,44 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
         cached_params.len(),
         params.len(),
         "cache hits must preserve generic application metadata",
+    );
+    assert!(
+        state
+            .cached_shared_actual_lib_delegation(sym_id, "ArrayIterator")
+            .is_none(),
+        "generic direct actual-lib results need provenance beyond a bare shared TypeId",
+    );
+
+    let date_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("Date")
+        .expect("Date should resolve to a lib symbol");
+    let date_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&date_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (date_ty, date_params) = state
+        .direct_actual_lib_symbol_type(
+            date_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            date_arena,
+            false,
+        )
+        .expect("Date should lower through the direct lib path");
+    assert_ne!(date_ty, TypeId::UNKNOWN);
+    assert_ne!(date_ty, TypeId::ERROR);
+    assert!(date_params.is_empty());
+    state.ctx.lib_delegation_cache.clear_file_local();
+    state.ctx.symbol_types.remove(&date_sym_id);
+    assert!(
+        state
+            .cached_shared_actual_lib_delegation(date_sym_id, "Date")
+            .is_none(),
+        "direct actual-lib results stay file-local until child delegation proves shared-cache provenance",
     );
 }
 
