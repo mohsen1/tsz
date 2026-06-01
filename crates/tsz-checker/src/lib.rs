@@ -759,6 +759,9 @@ mod indexed_access_constraint_relation_routing_arch_tests;
 #[path = "tests/infer_conditional_relation_routing_arch_tests.rs"]
 mod infer_conditional_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/initializer_relation_routing_arch_tests.rs"]
+mod initializer_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]

@@ -94,6 +94,8 @@ generic call retry and callback-return retyping use the env-aware return request
 when comparing inferred or callback returns to contextual return targets.
 Method/accessor and property decorator return validation uses the return request
 when comparing decorator function returns to the decorator ABI return target.
+Async JSDoc return suppression uses the return request when comparing a
+promise-unwrapped initializer return to the declared function return type.
 Weak-type TS2560 suggestions also use the return request when probing whether a
 call or construct result would satisfy the weak target.
 
