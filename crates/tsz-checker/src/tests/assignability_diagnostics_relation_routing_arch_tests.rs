@@ -16,7 +16,7 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() <= 3,
+        source.matches("assign_relation_outcome(").count() <= 2,
         "remaining generic assignability diagnostics relation probes should keep shrinking"
     );
     let generic_start = argument_reports
@@ -63,6 +63,22 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     assert!(
         !source.contains("assign_relation_outcome(target, source).related"),
         "argument diagnostics should not use the generic assign request for reverse callback suppression probes"
+    );
+    let weak_union_skip_start = root_source
+        .find("pub(crate) fn should_skip_weak_union_error_with_outcome")
+        .expect("missing weak-union skip helper");
+    let weak_union_skip_end = root_source[weak_union_skip_start..]
+        .find("fn check_excess_properties_for_fresh_source")
+        .map(|offset| weak_union_skip_start + offset)
+        .expect("missing next assignability diagnostics helper");
+    let weak_union_skip_helper = &root_source[weak_union_skip_start..weak_union_skip_end];
+    assert!(
+        weak_union_skip_helper.contains("assignability_reason_relation_outcome(source, target)"),
+        "weak-union/excess-property fallback should build its RelationOutcome through the assignability-reason request"
+    );
+    assert!(
+        !weak_union_skip_helper.contains("assign_relation_outcome(source, target)"),
+        "weak-union/excess-property fallback should not use the generic assign request"
     );
     let default_reporter_start = root_source
         .find("fn check_assignable_or_report_at_with_options")

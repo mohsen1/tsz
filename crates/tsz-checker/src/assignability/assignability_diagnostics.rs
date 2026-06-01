@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        let built_outcome = self.assign_relation_outcome(source, target);
+        let built_outcome = self.assignability_reason_relation_outcome(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
