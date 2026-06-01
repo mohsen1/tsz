@@ -95,6 +95,21 @@ is_canonical_agent_label() {
   esac
 }
 
+collect_git_context() {
+  GIT_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  GIT_BRANCH="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  GIT_DETACHED=false
+  if [[ -z "$GIT_BRANCH" ]]; then
+    GIT_DETACHED=true
+    if [[ "$GIT_HEAD" == "unknown" ]]; then
+      GIT_BRANCH="detached:unknown"
+    else
+      GIT_BRANCH="detached:${GIT_HEAD:0:12}"
+    fi
+  fi
+  GIT_UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+}
+
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
 
 if [[ "$AUDIT" == true ]]; then
@@ -106,7 +121,20 @@ if [[ "$AUDIT" == true ]]; then
       process.stdout.write(JSON.stringify(fs.readFileSync(0, "utf8").trim().split(/\n/).filter(Boolean)));
     '
   )"
-  AGENTS_JSON="$agents_json" LABELS_TEXT="$existing" PRS_JSON="$prs_json" ISSUES_JSON="$issues_json" STRICT_AUDIT="$STRICT_AUDIT" JSON_REPORT="$JSON_REPORT" node <<'NODE'
+  if [[ -n "$JSON_REPORT" ]]; then
+    collect_git_context
+  fi
+  AGENTS_JSON="$agents_json" \
+  LABELS_TEXT="$existing" \
+  PRS_JSON="$prs_json" \
+  ISSUES_JSON="$issues_json" \
+  STRICT_AUDIT="$STRICT_AUDIT" \
+  JSON_REPORT="$JSON_REPORT" \
+  GIT_HEAD="${GIT_HEAD:-}" \
+  GIT_BRANCH="${GIT_BRANCH:-}" \
+  GIT_DETACHED="${GIT_DETACHED:-false}" \
+  GIT_UPSTREAM="${GIT_UPSTREAM:-}" \
+  node <<'NODE'
 const fs = require("fs");
 const path = require("path");
 const canonical = new Set(JSON.parse(process.env.AGENTS_JSON).map((agent) => `agent:${agent}`));
@@ -231,6 +259,12 @@ if (process.env.JSON_REPORT) {
     ok,
     status: ok ? "pass" : "fail",
     agent_label_audit_status: ok ? "pass" : "fail",
+    git_context: {
+      head: process.env.GIT_HEAD,
+      branch: process.env.GIT_BRANCH,
+      detached: process.env.GIT_DETACHED === "true",
+      upstream: process.env.GIT_UPSTREAM || null,
+    },
     metrics,
     missing_canonical_labels: missingCanonicalLabels,
     noncanonical_agent_labels: noncanonicalLabels,
