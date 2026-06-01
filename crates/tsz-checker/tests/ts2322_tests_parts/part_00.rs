@@ -65,10 +65,12 @@ interface MyIteratorYieldResult<TYield> {
     done?: false;
     value: TYield;
 }
+
 interface MyIteratorReturnResult<TReturn> {
     done: true;
     value: TReturn;
 }
+
 type MyIteratorResult<T, TReturn = any> =
     | MyIteratorYieldResult<T>
     | MyIteratorReturnResult<TReturn>;
@@ -94,6 +96,69 @@ const r: Next<number> = result;
         "Renamed IteratorResult-like aliases should still reject through normal structural assignability, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn dom_call_assignments_do_not_drop_ts2322_diagnostics() {
+    let diagnostics = compile_with_libs_for_ts(
+        r#"
+declare const d: Document;
+const a1: number = d.createElement("div");
+const a2: number = d.createElement("span");
+const a3: number = d.createElement("a");
+const a4: number = d.createElement("p");
+const a5: number = d.createElement("img");
+const a6: number = d.querySelector("x");
+const a7: number = d.getElementById("y");
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+    let diagnostic_positions = with_lib_contexts_and_positions_with_libs(
+        r#"
+declare const d: Document;
+const a1: number = d.createElement("div");
+const a2: number = d.createElement("span");
+const a3: number = d.createElement("a");
+const a4: number = d.createElement("p");
+const a5: number = d.createElement("img");
+const a6: number = d.querySelector("x");
+const a7: number = d.getElementById("y");
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    )
+    .into_iter()
+    .filter(|(code, _, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+    .collect::<Vec<_>>();
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+
+    assert_eq!(
+        ts2322_count,
+        7,
+        "DOM-heavy assignability checks must emit all TS2322 errors; got {ts2322_count}: {diagnostics:?}",
+    );
+    assert_eq!(
+        diagnostic_positions.iter().map(|(_, start, _)| start).collect::<Vec<_>>().len(),
+        7,
+        "Expected seven unique TS2322 start positions for DOM call assignments; got {diagnostic_positions:?}",
+    );
+}
+
+
 
 #[test]
 fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
@@ -1759,4 +1824,3 @@ fnUnion(value);
         "uncorrelated concrete union calls should still be rejected, got: {diagnostics:?}"
     );
 }
-

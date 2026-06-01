@@ -121,6 +121,52 @@ fn with_lib_contexts_and_positions(
         .collect()
 }
 
+fn with_lib_contexts_and_positions_with_libs(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
+
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
 /// Helper function to check if a diagnostic with a specific code was emitted
 fn has_error_with_code(source: &str, code: u32) -> bool {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
