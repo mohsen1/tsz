@@ -741,6 +741,23 @@ impl<'a> DeclarationEmitter<'a> {
             &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> String {
+        self.print_type_id_with_policy_and_setter_parameter_names(
+            type_id,
+            preserve_named_application,
+            None,
+        )
+    }
+
+    fn print_type_id_with_policy_and_setter_parameter_names(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        preserve_named_application: fn(
+            &Self,
+            tsz_solver::types::TypeId,
+            &tsz_solver::construction::TypeInterner,
+        ) -> bool,
+        setter_parameter_names: Option<&FxHashMap<String, String>>,
+    ) -> String {
         if let Some(interner) = self.type_interner {
             let type_id =
                 self.display_alias_for_policy(type_id, interner, preserve_named_application);
@@ -801,6 +818,8 @@ impl<'a> DeclarationEmitter<'a> {
                     false
                 }
             };
+            let setter_parameter_name_resolver =
+                |name: &str| setter_parameter_names.and_then(|names| names.get(name).cloned());
             let mut printer = TypePrinter::new(interner)
                 .with_indent_level(self.indent_level)
                 .with_node_arena(self.arena)
@@ -809,6 +828,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .with_import_equals_alias_resolver(&import_equals_alias_resolver)
                 .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
                 .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
+                .with_setter_parameter_name_resolver(&setter_parameter_name_resolver)
                 .with_strict_null_checks(self.strict_null_checks);
 
             // Add symbol arena if available for visibility checking
@@ -845,6 +865,25 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_id: tsz_solver::types::TypeId,
     ) -> String {
+        self.print_type_id_for_inferred_declaration_with_optional_setter_names(type_id, None)
+    }
+
+    pub(crate) fn print_type_id_for_inferred_declaration_with_setter_parameter_names(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        setter_parameter_names: &FxHashMap<String, String>,
+    ) -> String {
+        self.print_type_id_for_inferred_declaration_with_optional_setter_names(
+            type_id,
+            Some(setter_parameter_names),
+        )
+    }
+
+    fn print_type_id_for_inferred_declaration_with_optional_setter_names(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        setter_parameter_names: Option<&FxHashMap<String, String>>,
+    ) -> String {
         let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let type_id = if let Some(interner) = self.type_interner {
             let type_id = self
@@ -859,9 +898,10 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         };
         let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
-        let printed = self.print_type_id_with_policy(
+        let printed = self.print_type_id_with_policy_and_setter_parameter_names(
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,
+            setter_parameter_names,
         );
         let printed = if elided_alias_names.is_empty() {
             printed

@@ -331,8 +331,12 @@ impl<'a> TypePrinter<'a> {
             ));
         }
         if !property.readonly && property.write_type != TypeId::UNDEFINED {
+            let param_name = self
+                .setter_parameter_name_resolver
+                .and_then(|resolve| resolve(&printed_name))
+                .unwrap_or_else(|| "arg".to_string());
             members.push(format!(
-                "set {printed_name}(arg: {})",
+                "set {printed_name}({param_name}: {})",
                 self.print_type(property.write_type)
             ));
         }

@@ -1026,7 +1026,20 @@ impl<'a> DeclarationEmitter<'a> {
                             type_id, 0,
                         ))
                 {
-                    let printed = self.print_type_id_for_inferred_declaration(type_id);
+                    let printed = if let Some(source_type_text) = reused_type_text.as_deref() {
+                        let setter_names =
+                            self.source_type_setter_parameter_names(self.arena, source_type_text);
+                        if setter_names.is_empty() {
+                            self.print_type_id_for_inferred_declaration(type_id)
+                        } else {
+                            self.print_type_id_for_inferred_declaration_with_setter_parameter_names(
+                                type_id,
+                                &setter_names,
+                            )
+                        }
+                    } else {
+                        self.print_type_id_for_inferred_declaration(type_id)
+                    };
                     if let Some(call) = self.arena.get_call_expr(expr_node) {
                         if let Some((alias_name, module_specifier)) =
                             self.call_receiver_default_import_alias(call.expression)

@@ -538,7 +538,21 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(call_type_id) = self.get_node_type_or_names(&[expr_idx])
                     && !matches!(call_type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
                 {
-                    let type_text = self.print_type_id_for_inferred_declaration(call_type_id);
+                    let setter_names = if std::ptr::eq(source_arena, self.arena)
+                        && let Some(source_type_text) = self.source_function_return_type_text(func)
+                    {
+                        self.source_type_setter_parameter_names(source_arena, &source_type_text)
+                    } else {
+                        FxHashMap::default()
+                    };
+                    let type_text = if setter_names.is_empty() {
+                        self.print_type_id_for_inferred_declaration(call_type_id)
+                    } else {
+                        self.print_type_id_for_inferred_declaration_with_setter_parameter_names(
+                            call_type_id,
+                            &setter_names,
+                        )
+                    };
                     if !type_text.is_empty() && !matches!(type_text.as_str(), "any" | "unknown") {
                         let type_text = if source_is_foreign {
                             self.qualify_foreign_imported_names_in_text(source_arena, &type_text)
