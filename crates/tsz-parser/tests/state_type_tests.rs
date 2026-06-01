@@ -921,12 +921,143 @@ fn mapped_type_plain_as_clause_after_regular_member_no_errors() {
 }
 
 /// The same bracket-scanning fix applies inside an `interface` body.  Interfaces
-/// cannot legally hold mapped type entries (the checker emits TS7061), but the
+/// cannot legally hold mapped type entries (the checker emits `TS7061`), but the
 /// parser must still recognise `[K in …]` on a new line as a type member
 /// boundary, not an array-access suffix of the preceding property type.
 #[test]
 fn mapped_type_as_template_literal_in_interface_body_no_parser_errors() {
     assert_no_errors(
         "interface I {\n  extra: string\n  [K in keyof I as K extends `${infer P}:${infer N}` ? N : never]: I[K]\n}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Template-literal constrained extends branches — issue #10925
+//
+// The underlying rule: any syntactically valid TypeScript type expression that
+// uses template literal types in conditional `extends` branches or as type
+// parameter constraints must parse without cascading errors. These tests pin
+// the structural shapes that appear frequently in ts-essentials and similar
+// utility-type libraries.
+// ---------------------------------------------------------------------------
+
+/// Template literal as the extends arm of a conditional type (minimal).
+#[test]
+fn template_literal_extends_branch_minimal() {
+    assert_no_errors("type T<U> = U extends `${infer A}` ? A : never;");
+}
+
+/// Template literal as a type parameter constraint.
+#[test]
+fn template_literal_type_parameter_constraint() {
+    assert_no_errors("type T<U extends `${string}_${string}`> = U;");
+}
+
+/// Template literal as a constraint with infer in the extends branch (CamelCase-like).
+#[test]
+fn template_literal_extends_infer_recursive() {
+    assert_no_errors(
+        "type CamelCase<S extends string> = S extends `${infer P}_${infer Q}${infer R}` \
+         ? `${S}${S}${CamelCase<S>}` : S;",
+    );
+}
+
+/// Template literal with separator in conditional (Split-like pattern).
+#[test]
+fn template_literal_extends_separator_infer() {
+    assert_no_errors(
+        "type Split<S extends string, D extends string> = \
+         S extends `${infer T}${D}${infer U}` ? [T, ...Split<U, D>] : [S];",
+    );
+}
+
+/// `IsStringLiteral` pattern: template literal in the false branch of a chain.
+#[test]
+fn template_literal_extends_is_string_literal_pattern() {
+    assert_no_errors(
+        "type IsStringLiteral<T> = string extends T ? false : T extends `${infer _}` ? true : false;",
+    );
+}
+
+/// Template literal in the false branch of a conditional type.
+#[test]
+fn template_literal_false_branch_construction() {
+    assert_no_errors(
+        "type T<S extends string> = S extends `prefix_${string}` ? S : `prefix_${S}`;",
+    );
+}
+
+/// Complex chained conditional with multiple template literal extends arms.
+#[test]
+fn template_literal_extends_chained_dotted_path() {
+    assert_no_errors(
+        "type X<T extends string> = \
+         T extends `${infer A}.${infer B}.${infer C}` ? [A, B, C] : \
+         T extends `${infer A}.${infer B}` ? [A, B] : [T];",
+    );
+}
+
+/// Template literal extends with differently-named infer variables (structural, not spelling).
+#[test]
+fn template_literal_extends_renamed_infer_vars() {
+    assert_no_errors(
+        "type RouteOf<T extends string> = T extends `${infer Method} ${infer Path}` ? Path : never;\n\
+         type MethodOf<T extends string> = T extends `${infer M} ${infer P}` ? M : never;",
+    );
+}
+
+/// Arrow function with template literal type parameter constraint.
+#[test]
+fn template_literal_constraint_arrow_function() {
+    assert_no_errors("const f = <T extends `signal:${string}`>(x: T): T => x;");
+}
+
+/// Deeply nested template literal with multiple constraints.
+#[test]
+fn template_literal_deeply_nested_extends() {
+    assert_no_errors(
+        "type T<A extends string, B extends string> = \
+         A extends `${infer X}_${B}` ? X extends `${infer Y}_${string}` ? Y : X : A;",
+    );
+}
+
+/// Template literal key remapping combined with template literal value construction.
+#[test]
+fn template_literal_as_clause_and_value_template() {
+    assert_no_errors(
+        "type R<T> = { [K in keyof T as K extends `${infer P}:${infer N}` ? N : never]: \
+         K extends `${infer P}:${infer N}` ? N : K };",
+    );
+}
+
+/// Template literal in a function generic with readonly array constraint.
+#[test]
+fn template_literal_constraint_readonly_array_generic() {
+    assert_no_errors(
+        "declare function f<const T extends readonly `${string}:${string}`[]>(x: T): T;",
+    );
+}
+
+/// Template literal in the extends check position combined with union.
+#[test]
+fn template_literal_extends_union_check() {
+    assert_no_errors(
+        "type T<S extends string> = (S extends `${string}_${string}` ? true : false) | boolean;",
+    );
+}
+
+/// Template literal intersection constraint.
+#[test]
+fn template_literal_intersection_constraint() {
+    assert_no_errors("type T<U extends `${string}` & `${number}`> = U;");
+}
+
+/// Multiple template literal types in the same declaration file (token-boundary isolation).
+#[test]
+fn template_literal_multiple_declarations_token_isolation() {
+    assert_no_errors(
+        "type A<T extends string> = T extends `${infer X}_${string}` ? X : T;\n\
+         type B<T extends string> = T extends `${string}_${infer Y}` ? Y : T;\n\
+         type C<T extends string> = A<T> extends B<T> ? true : false;",
     );
 }

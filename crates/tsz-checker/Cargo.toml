@@ -1027,6 +1027,10 @@ name = "ts2344_generic_ref_scoped_param_concrete_constraint"
 path = "tests/ts2344_generic_ref_scoped_param_concrete_constraint.rs"
 
 [[test]]
+name = "ts2344_any_key_mapped_constraint_tests"
+path = "tests/ts2344_any_key_mapped_constraint_tests.rs"
+
+[[test]]
 name = "mapped_type_errors_conformance_tests"
 path = "tests/mapped_type_errors_conformance_tests.rs"
 
