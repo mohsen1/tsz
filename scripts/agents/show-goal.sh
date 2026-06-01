@@ -92,8 +92,24 @@ FETCH_ATTEMPTED=false
 PRINTED_SOURCE=""
 BRANCH_LOCAL_DIFFERS=false
 
+collect_git_context() {
+  GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  GIT_BRANCH="$(git -C "$ROOT" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  GIT_DETACHED=false
+  if [[ -z "$GIT_BRANCH" ]]; then
+    GIT_DETACHED=true
+    if [[ "$GIT_HEAD" == "unknown" ]]; then
+      GIT_BRANCH="detached:unknown"
+    else
+      GIT_BRANCH="detached:${GIT_HEAD:0:12}"
+    fi
+  fi
+  GIT_UPSTREAM="$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+}
+
 write_json_report() {
   [[ -n "$JSON_REPORT" ]] || return 0
+  collect_git_context
   AGENT="$AGENT" \
   ROOT="$ROOT" \
   GOAL_PATH="$GOAL_PATH" \
@@ -102,6 +118,10 @@ write_json_report() {
   LOCAL_ONLY="$LOCAL_ONLY" \
   NO_FETCH="$NO_FETCH" \
   BRANCH_LOCAL_DIFFERS="$BRANCH_LOCAL_DIFFERS" \
+  GIT_HEAD="$GIT_HEAD" \
+  GIT_BRANCH="$GIT_BRANCH" \
+  GIT_DETACHED="$GIT_DETACHED" \
+  GIT_UPSTREAM="$GIT_UPSTREAM" \
   JSON_REPORT="$JSON_REPORT" \
   node <<'NODE'
 const fs = require("fs");
@@ -121,6 +141,12 @@ const report = {
   local_only: bool(process.env.LOCAL_ONLY),
   no_fetch: bool(process.env.NO_FETCH),
   branch_local_differs: bool(process.env.BRANCH_LOCAL_DIFFERS),
+  git_context: {
+    head: process.env.GIT_HEAD,
+    branch: process.env.GIT_BRANCH,
+    detached: bool(process.env.GIT_DETACHED),
+    upstream: process.env.GIT_UPSTREAM || null,
+  },
 };
 
 fs.mkdirSync(path.dirname(process.env.JSON_REPORT), { recursive: true });
