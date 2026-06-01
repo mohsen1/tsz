@@ -509,19 +509,25 @@ impl<'a> DeclarationEmitter<'a> {
                 });
 
             if is_empty_body {
-                // tsc uses single-line `{ }` for empty identifier-namespaces that are
-                // directly nested inside a `declare namespace X` body.
-                // In all other positions — top-level, inside `declare module "..."`, and
-                // non-ambient source namespaces — tsc uses the multi-line `{\n}` form.
+                // tsc uses single-line `{ }` for empty namespaces that are nested inside
+                // another namespace body — whether that outer namespace is ambient
+                // (`declare namespace X`) or non-ambient (`namespace X`).
+                // The emitter sets `inside_declare_namespace = true` on entry to any
+                // namespace body, so the flag covers both ambient and non-ambient nesting.
                 //
-                // `current_ambient_module_specifier` being `Some(_)` indicates we are
-                // inside a string-literal ambient module; that context requires multiline.
-                // `inside_declare_namespace && !use_module_keyword` identifies the
-                // ambient-identifier-namespace nesting case that requires single-line.
-                let in_ambient_identifier_namespace = self.inside_declare_namespace
+                // Exceptions that require multiline `{\n}`:
+                //   - Top-level namespace (`inside_declare_namespace` is false).
+                //   - Inside a string-literal ambient module (`declare module "..."`);
+                //     `current_ambient_module_specifier` is `Some(_)` in that context.
+                //
+                // See also `test_non_ambient_exported_empty_inner_namespace_is_preserved`
+                // (non-ambient nested → single-line) and
+                // `test_empty_namespace_inside_declare_module_uses_multiline_format`
+                // (string-literal ambient module → multiline).
+                let in_identifier_namespace_context = self.inside_declare_namespace
                     && !use_module_keyword
                     && self.current_ambient_module_specifier.is_none();
-                if in_ambient_identifier_namespace {
+                if in_identifier_namespace_context {
                     self.write(" { }");
                     self.write_line();
                 } else {

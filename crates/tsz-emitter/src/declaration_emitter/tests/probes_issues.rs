@@ -1120,8 +1120,8 @@ fn test_conditional_type_in_indexed_access() {
 
 // =============================================================================
 // Empty namespace formatting: tsc emits `namespace X { }` (single-line) only
-// when inside a `declare namespace` body; inside a `declare module "..."` body
-// or at the top level, empty namespaces use the multi-line `{\n}` form.
+// when inside an identifier namespace body; inside a `declare module "..."`
+// body or at the top level, empty namespaces use the multi-line `{\n}` form.
 // =============================================================================
 
 #[test]
@@ -1151,8 +1151,8 @@ fn test_empty_namespace_inside_declare_module_uses_multiline_format() {
 #[test]
 fn test_empty_namespace_inside_declare_namespace_uses_single_line_format() {
     // tsc uses `namespace X { }` (single line) for empty identifier-namespaces
-    // nested inside a `declare namespace` body.  Renaming the iteration
-    // variable must not change this behavior.
+    // nested inside a `declare namespace` body. Renaming the nested namespaces
+    // must not change this behavior.
     let output = emit_dts(
         r#"declare namespace outer {
     namespace innerEmpty {}
