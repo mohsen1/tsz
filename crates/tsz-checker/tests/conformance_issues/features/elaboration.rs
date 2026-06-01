@@ -1191,3 +1191,52 @@ function foo<
         "Expected TS2536 for KnownType[T] where T extends keyof of undefined type.\nGot: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2536_nested_foreign_keyof_constraint_reports_outer_index() {
+    let source = r#"
+declare global {
+    interface ElementTagNameMap {
+        [index: number]: HTMLElement
+    }
+
+    interface HTMLElement {
+        [index: number]: HTMLElement;
+    }
+}
+
+export function assertNodeProperty<
+    T extends keyof ElementTagNameMap,
+    P extends keyof ElementTagNameMap[T],
+    V extends HTMLElementTagNameMap[T][P]>(value: V) {}
+
+export function assertNodePropertyRenamed<
+    Tag extends keyof ElementTagNameMap,
+    Key extends keyof ElementTagNameMap[Tag],
+    Value extends HTMLElementTagNameMap[Tag][Key]>(value: Value) {}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    let ts2536 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        ts2536.iter().any(|message| message
+            .contains("Type 'P' cannot be used to index type 'HTMLElementTagNameMap[T]'")),
+        "Expected outer P diagnostic for nested foreign keyof constraint.\nGot: {diagnostics:#?}"
+    );
+    assert!(
+        ts2536.iter().any(|message| message
+            .contains("Type 'Key' cannot be used to index type 'HTMLElementTagNameMap[Tag]'")),
+        "Expected renamed outer Key diagnostic for nested foreign keyof constraint.\nGot: {diagnostics:#?}"
+    );
+}
