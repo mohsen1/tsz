@@ -575,7 +575,10 @@ impl<'a> CheckerState<'a> {
             let ready_type_arg_constraint =
                 self.evaluate_type_for_assignability(ready_type_arg_constraint);
             if self
-                .no_weak_relation_outcome(ready_type_arg_constraint, ready_constraint)
+                .type_arg_constraint_no_weak_relation_outcome(
+                    ready_type_arg_constraint,
+                    ready_constraint,
+                )
                 .related
             {
                 return;

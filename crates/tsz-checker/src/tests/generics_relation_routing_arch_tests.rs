@@ -17,14 +17,18 @@ fn generic_constraint_diagnostic_suppression_uses_no_weak_relation_outcome_bound
         + helper_start;
     let helper = &source[helper_start..helper_end];
 
-    assert!(
-        helper.contains("no_weak_relation_outcome(ready_type_arg_constraint, ready_constraint)")
-            && helper.contains(".related"),
-        "generic constraint diagnostic suppression should route no-weak relation truth through RelationOutcome"
+    assert_eq!(
+        helper
+            .matches("type_arg_constraint_no_weak_relation_outcome(")
+            .count(),
+        1,
+        "generic constraint diagnostic suppression should route no-weak relation truth through the named type-argument constraint fallback"
     );
+    assert!(helper.contains(".related"));
     assert!(
-        !helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
-        "generic constraint diagnostic suppression should not use the raw no-weak boolean guard"
+        !helper.contains("self.no_weak_relation_outcome(")
+            && !helper.contains("diagnostic_relation_boolean_guard_no_weak_checks"),
+        "generic constraint diagnostic suppression should not use the raw no-weak relation helpers"
     );
 }
 
