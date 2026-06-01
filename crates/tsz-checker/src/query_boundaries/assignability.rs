@@ -8,6 +8,9 @@ use tsz_solver::{
 };
 
 use crate::state::CheckerState;
+use crate::state_domain::type_environment::lazy::{
+    global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
+};
 
 use super::relation_policy;
 
@@ -792,6 +795,8 @@ pub(crate) fn is_relation_cacheable(db: &dyn TypeDatabase, source: TypeId, targe
         // outside of any class body context, causing incorrect False results later.
         && !tsz_solver::contains_this_type(db, source)
         && !tsz_solver::contains_this_type(db, target)
+        && !global_resolution_fuel_exhausted()
+        && !refs_resolution_fuel_exhausted()
 }
 
 pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

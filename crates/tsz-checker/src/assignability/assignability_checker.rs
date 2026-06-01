@@ -1425,9 +1425,11 @@ impl<'a> CheckerState<'a> {
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
         let mut worklist = vec![type_id];
+        let mut fully_resolved = true;
 
         while let Some(current) = worklist.pop() {
-            if refs_resolution_fuel_exhausted() {
+            if refs_resolution_fuel_exhausted() || global_resolution_fuel_exhausted() {
+                fully_resolved = false;
                 break;
             }
 
@@ -1450,7 +1452,8 @@ impl<'a> CheckerState<'a> {
             }
 
             for def_id in collect_lazy_def_ids(self.ctx.types, current) {
-                if refs_resolution_fuel_exhausted() {
+                if refs_resolution_fuel_exhausted() || global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
                     break;
                 }
                 if !visited_def_ids.insert(def_id) {
@@ -1459,6 +1462,7 @@ impl<'a> CheckerState<'a> {
                 increment_refs_resolution_fuel();
                 increment_global_resolution_fuel();
                 if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
                     break;
                 }
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
@@ -1469,7 +1473,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        self.ctx.refs_resolved.insert(type_id);
+        if fully_resolved {
+            self.ctx.refs_resolved.insert(type_id);
+        }
 
         if is_outermost {
             exit_refs_resolution_scope();
