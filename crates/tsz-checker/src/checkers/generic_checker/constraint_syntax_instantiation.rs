@@ -72,12 +72,18 @@ impl<'a> CheckerState<'a> {
             return query::is_callable_type(db, syntax_instantiated_type_arg)
                 || query::callable_shape_for_type(db, syntax_instantiated_type_arg).is_some()
                 || self
-                    .assign_relation_outcome(syntax_instantiated_type_arg, inst_constraint)
+                    .syntax_instantiated_constraint_relation_outcome(
+                        syntax_instantiated_type_arg,
+                        inst_constraint,
+                    )
                     .related;
         }
 
-        self.assign_relation_outcome(syntax_instantiated_type_arg, inst_constraint)
-            .related
+        self.syntax_instantiated_constraint_relation_outcome(
+            syntax_instantiated_type_arg,
+            inst_constraint,
+        )
+        .related
             || self.base_union_members_satisfy_constraint(
                 syntax_instantiated_type_arg,
                 inst_constraint,
