@@ -543,6 +543,19 @@ impl<'a> DeclarationEmitter<'a> {
                 let source_is_foreign = !std::ptr::eq(source_arena, self.arena);
                 if self.type_interner.is_some()
                     && self.type_cache.is_some()
+                    && let Some(type_text) = self.reconstructed_source_callable_return_type_text(
+                        source_arena,
+                        decl_idx,
+                        func,
+                        call,
+                        true,
+                    )
+                {
+                    return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
+                }
+
+                if self.type_interner.is_some()
+                    && self.type_cache.is_some()
                     && let Some(call_type_id) = self.get_node_type_or_names(&[expr_idx])
                     && !matches!(call_type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
                 {
@@ -572,76 +585,12 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 if let Some(type_text) = {
-                    let mut scratch = if std::ptr::eq(source_arena, self.arena)
-                        && let (Some(type_cache), Some(type_interner), Some(binder)) =
-                            (&self.type_cache, self.type_interner, self.binder)
-                    {
-                        DeclarationEmitter::with_type_info(
-                            source_arena,
-                            type_cache.clone(),
-                            type_interner,
-                            binder,
-                        )
-                    } else {
-                        DeclarationEmitter::new(source_arena)
-                    };
-                    let source_file = self.arena_source_file(source_arena)?;
-                    scratch.source_is_declaration_file = source_file.is_declaration_file;
-                    scratch.source_is_js_file = scratch.source_file_is_js(source_file);
-                    scratch.current_source_file_idx = self.current_source_file_idx;
-                    scratch.source_file_text = Some(source_file.text.clone());
-                    scratch.current_file_path = self.current_file_path.clone();
-                    scratch.current_arena = self.current_arena.clone();
-                    scratch.arena_to_path = self.arena_to_path.clone();
-                    scratch.indent_level = self.indent_level;
-                    scratch.strict_null_checks = self.strict_null_checks;
-                    let generic_source_func = func
-                        .type_parameters
-                        .as_ref()
-                        .is_some_and(|params| !params.nodes.is_empty());
-                    let mut type_text =
-                        scratch.source_function_return_type_text(func).or_else(|| {
-                            scratch.source_function_cached_generic_return_type_text(decl_idx, func)
-                        })?;
-                    let source_return_text = scratch
-                        .function_body_returned_parameter_call_return_type_text(source_arena, func);
-                    if generic_source_func && let Some(source_return_text) = source_return_text {
-                        type_text = source_return_text;
-                    } else if type_text.contains("unknown")
-                        && let Some(source_return_text) = source_return_text
-                    {
-                        type_text = source_return_text;
-                    }
-                    let type_text =
-                        scratch.substitute_call_result_parameter_type_queries(func, &type_text);
-                    let (type_text, _) =
-                        scratch.function_return_type_text_for_declaration_scope(func, &type_text);
-                    let type_text = scratch.substitute_source_call_type_parameters(
+                    self.reconstructed_source_callable_return_type_text(
                         source_arena,
+                        decl_idx,
                         func,
                         call,
-                        type_text,
-                    )?;
-                    let source_matches_current_file = scratch
-                        .arena_source_file(source_arena)
-                        .and_then(|source_file| {
-                            scratch.current_file_path.as_deref().map(|current| {
-                                scratch.paths_refer_to_same_source_file(
-                                    current,
-                                    &source_file.file_name,
-                                )
-                            })
-                        })
-                        .unwrap_or(false);
-                    let type_text = if source_matches_current_file {
-                        type_text
-                    } else {
-                        scratch.qualify_foreign_imported_names_in_text(source_arena, &type_text)
-                    };
-                    Some(
-                        scratch
-                            .expand_inexact_optional_alias_reference_text(source_arena, &type_text)
-                            .unwrap_or(type_text),
+                        false,
                     )
                 } {
                     return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
@@ -650,6 +599,84 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn reconstructed_source_callable_return_type_text(
+        &self,
+        source_arena: &NodeArena,
+        decl_idx: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+        require_inexact_optional_expansion: bool,
+    ) -> Option<String> {
+        let mut scratch = if std::ptr::eq(source_arena, self.arena)
+            && let (Some(type_cache), Some(type_interner), Some(binder)) =
+                (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                source_arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(source_arena)
+        };
+        let source_file = self.arena_source_file(source_arena)?;
+        scratch.source_is_declaration_file = source_file.is_declaration_file;
+        scratch.source_is_js_file = scratch.source_file_is_js(source_file);
+        scratch.current_source_file_idx = self.current_source_file_idx;
+        scratch.source_file_text = Some(source_file.text.clone());
+        scratch.current_file_path = self.current_file_path.clone();
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.indent_level = self.indent_level;
+        scratch.strict_null_checks = self.strict_null_checks;
+
+        let generic_source_func = func
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty());
+        if require_inexact_optional_expansion && !generic_source_func {
+            return None;
+        }
+
+        let mut type_text = scratch
+            .source_function_return_type_text(func)
+            .or_else(|| scratch.source_function_cached_generic_return_type_text(decl_idx, func))?;
+        let source_return_text =
+            scratch.function_body_returned_parameter_call_return_type_text(source_arena, func);
+        if generic_source_func && let Some(source_return_text) = source_return_text {
+            type_text = source_return_text;
+        } else if type_text.contains("unknown")
+            && let Some(source_return_text) = source_return_text
+        {
+            type_text = source_return_text;
+        }
+        let type_text = scratch.substitute_call_result_parameter_type_queries(func, &type_text);
+        let (type_text, _) =
+            scratch.function_return_type_text_for_declaration_scope(func, &type_text);
+        let type_text =
+            scratch.substitute_source_call_type_parameters(source_arena, func, call, type_text)?;
+        let source_matches_current_file = scratch
+            .arena_source_file(source_arena)
+            .and_then(|source_file| {
+                scratch.current_file_path.as_deref().map(|current| {
+                    scratch.paths_refer_to_same_source_file(current, &source_file.file_name)
+                })
+            })
+            .unwrap_or(false);
+        let type_text = if source_matches_current_file {
+            type_text
+        } else {
+            scratch.qualify_foreign_imported_names_in_text(source_arena, &type_text)
+        };
+        if let Some(expanded) =
+            scratch.expand_inexact_optional_alias_reference_text(source_arena, &type_text)
+        {
+            return Some(expanded);
+        }
+        (!require_inexact_optional_expansion).then_some(type_text)
     }
 
     pub(in crate::declaration_emitter) fn source_type_annotation_text_for_declaration_reuse(
