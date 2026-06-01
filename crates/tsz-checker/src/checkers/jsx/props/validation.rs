@@ -1585,7 +1585,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn get_normalized_jsx_required_props_shape(
+    pub(in crate::checkers_domain::jsx) fn get_normalized_jsx_required_props_shape(
         &mut self,
         props_type: TypeId,
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
