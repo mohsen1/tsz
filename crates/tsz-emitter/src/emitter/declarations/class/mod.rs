@@ -1,8 +1,15 @@
 mod constructor_temp_estimation;
 mod constructor_using_region;
 mod decorators;
+mod duplicate_private_names;
 mod emit_declaration;
 mod emit_es6;
+mod emit_es6_after_body;
+mod emit_es6_field_inits;
+mod emit_es6_header;
+mod emit_es6_members;
+mod emit_es6_private_accessors;
+mod emit_es6_recovery;
 mod helpers;
 mod private_comma_items;
 mod private_method_defs;

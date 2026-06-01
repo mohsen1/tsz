@@ -19,11 +19,31 @@ use tsz_scanner::SyntaxKind;
 /// `trailing_comments`, `source_order`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>, u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrivateFieldStorageKind {
+    WeakMap,
+    Value,
+}
+
 /// A private field constructor initializer entry:
 /// (`weakmap_name`, `has_initializer`, `initializer_node`, `leading_comments`,
-/// `trailing_comments`, `source_order`).
-pub(crate) type PrivateFieldConstructorInit =
-    (String, bool, NodeIndex, Vec<String>, Vec<String>, u32);
+/// `trailing_comments`, `source_order`, `storage_kind`).
+pub(crate) type PrivateFieldConstructorInit = (
+    String,
+    bool,
+    NodeIndex,
+    Vec<String>,
+    Vec<String>,
+    u32,
+    PrivateFieldStorageKind,
+);
+
+#[derive(Debug, Clone)]
+pub(crate) struct StaticPrivateInit {
+    pub(crate) storage_name: String,
+    pub(crate) initializer: NodeIndex,
+    pub(crate) storage_kind: PrivateFieldStorageKind,
+}
 
 /// A const enum entry scoped to a specific region of the source.
 /// File-level const enums use `(0, u32::MAX)` so they match any position.
@@ -883,9 +903,8 @@ pub struct Printer<'a> {
     /// Each entry is `_ClassName_fieldName = new WeakMap()`.
     pub(crate) pending_weakmap_inits: Vec<String>,
 
-    /// Pending static private field value initializations to emit after the class body.
-    /// Each entry is `(var_name, initializer_idx)` producing `_ClassName_field = { value: <init> };`
-    pub(crate) pending_static_private_inits: Vec<(String, NodeIndex)>,
+    /// Pending static private field initializations to emit after the class body.
+    pub(crate) pending_static_private_inits: Vec<StaticPrivateInit>,
 
     /// Class alias variable name for static private member access (e.g., `_a`).
     /// Emitted as `_a = ClassName;` after the class body.
@@ -910,9 +929,9 @@ pub struct Printer<'a> {
     /// Each entry is (`var_name`, `body_idx`) for `_C_prop_get = function _C_prop_get() { ... }`.
     pub(crate) pending_private_accessor_defs: Vec<PrivateAccessorDef>,
 
-    /// Set of private method/accessor names (without #) that should be skipped
+    /// Set of private method/accessor member nodes that should be skipped
     /// from the class body because they're extracted as standalone functions.
-    pub(crate) private_members_to_skip: FxHashSet<String>,
+    pub(crate) private_members_to_skip: FxHashSet<NodeIndex>,
 
     pub(crate) private_static_class_alias: Option<(String, String)>,
     pub(crate) private_static_class_alias_shadow_depth: u32,
