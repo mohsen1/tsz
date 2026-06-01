@@ -138,6 +138,26 @@ count_pr_state_rows() {
   printf '%s\n' "$rows" | awk -v state="$state" '$2 == state { count++ } END { print count + 0 }'
 }
 
+count_pr_token_rows() {
+  local rows="$1"
+  local token="$2"
+  if [[ -z "$rows" ]]; then
+    echo 0
+    return
+  fi
+  printf '%s\n' "$rows" | awk -v token="$token" '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == token) {
+          count++
+          next
+        }
+      }
+    }
+    END { print count + 0 }
+  '
+}
+
 json_array_from_lines() {
   local rows="$1"
   ROWS="$rows" node <<'NODE'
@@ -159,7 +179,7 @@ for agent in "${SELECTED[@]}"; do
   if [[ "$WITH_PR_STATE" == true ]]; then
     prs="$(
       gh pr list --state open --limit 100 --label "$label" \
-        --json number,title,isDraft,url,mergeStateStatus,mergeable,autoMergeRequest,statusCheckRollup \
+        --json number,title,isDraft,url,mergeStateStatus,mergeable,autoMergeRequest,statusCheckRollup,labels \
         --jq '
           def queue_state:
             ([.statusCheckRollup[]? | select((.__typename == "StatusContext" and .context == "Queue Tested") or .name == "Queue Tested")] | first) as $queue |
@@ -167,12 +187,15 @@ for agent in "${SELECTED[@]}"; do
             elif $queue.__typename == "StatusContext" then "queue=\(($queue.state // "unknown") | ascii_downcase)"
             else "queue=\((($queue.conclusion // $queue.status // "unknown")) | ascii_downcase)"
             end;
+          def merge_queue_label:
+            if any(.labels[]?; .name == "merge-queue") then "mergeQueue=on" else "mergeQueue=off" end;
           .[] |
             "#\(.number) " +
             (if .isDraft then "draft" else "ready" end) +
             " merge=\(.mergeStateStatus // "UNKNOWN")" +
             " mergeable=\(.mergeable // "UNKNOWN")" +
             " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
+            " " + merge_queue_label +
             " " + queue_state +
             " " + .title + " " + .url
         ' \
@@ -181,8 +204,12 @@ for agent in "${SELECTED[@]}"; do
     )"
   else
     prs="$(
-      gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url \
-        --jq '.[] | "#\(.number) " + (if .isDraft then "draft" else "ready" end) + " " + .title + " " + .url' \
+      gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url,labels \
+        --jq '
+          def merge_queue_label:
+            if any(.labels[]?; .name == "merge-queue") then "mergeQueue=on" else "mergeQueue=off" end;
+          .[] | "#\(.number) " + (if .isDraft then "draft" else "ready" end) + " " + merge_queue_label + " " + .title + " " + .url
+        ' \
         2>/dev/null ||
         list_owned_items_rest "$label" pr
     )"
@@ -195,6 +222,7 @@ for agent in "${SELECTED[@]}"; do
   pr_count="$(count_rows "$prs")"
   ready_pr_count="$(count_pr_state_rows "$prs" ready)"
   draft_pr_count="$(count_pr_state_rows "$prs" draft)"
+  merge_queue_pr_count="$(count_pr_token_rows "$prs" "mergeQueue=on")"
   echo ""
   echo "Issues:"
   issues="$(
@@ -219,6 +247,7 @@ for agent in "${SELECTED[@]}"; do
   echo "owned_pr_count=$pr_count"
   echo "owned_ready_pr_count=$ready_pr_count"
   echo "owned_draft_pr_count=$draft_pr_count"
+  echo "owned_merge_queue_pr_count=$merge_queue_pr_count"
   echo "owned_issue_count=$issue_count"
   echo "owned_work_status=$owned_work_status"
   echo ""
@@ -232,6 +261,7 @@ for agent in "${SELECTED[@]}"; do
       ROW_PR_COUNT="$pr_count" \
       ROW_READY_PR_COUNT="$ready_pr_count" \
       ROW_DRAFT_PR_COUNT="$draft_pr_count" \
+      ROW_MERGE_QUEUE_PR_COUNT="$merge_queue_pr_count" \
       ROW_ISSUE_COUNT="$issue_count" \
       ROW_STATUS="$owned_work_status" \
       ROW_PRS="$pr_json" \
@@ -245,6 +275,7 @@ const row = {
   pr_count: Number(process.env.ROW_PR_COUNT ?? 0),
   ready_pr_count: Number(process.env.ROW_READY_PR_COUNT ?? 0),
   draft_pr_count: Number(process.env.ROW_DRAFT_PR_COUNT ?? 0),
+  merge_queue_pr_count: Number(process.env.ROW_MERGE_QUEUE_PR_COUNT ?? 0),
   issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
   owned_work_clear: process.env.ROW_STATUS === "clear",
   owned_work_status: process.env.ROW_STATUS,
@@ -278,6 +309,10 @@ const totalDraftPrCount = agents.reduce(
   (sum, agent) => sum + Number(agent.draft_pr_count ?? 0),
   0,
 );
+const totalMergeQueuePrCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.merge_queue_pr_count ?? 0),
+  0,
+);
 const totalIssueCount = agents.reduce(
   (sum, agent) => sum + Number(agent.issue_count ?? 0),
   0,
@@ -296,6 +331,7 @@ const report = {
   total_pr_count: totalPrCount,
   total_ready_pr_count: totalReadyPrCount,
   total_draft_pr_count: totalDraftPrCount,
+  total_merge_queue_pr_count: totalMergeQueuePrCount,
   total_issue_count: totalIssueCount,
   total_owned_count: totalOwnedCount,
   agents,
