@@ -670,6 +670,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing private member access relation for raw
+    /// checker types, preserving the canonical private member request shape.
+    pub(crate) fn private_member_access_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::private_member_access(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

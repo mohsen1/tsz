@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 if self
-                    .assign_relation_outcome(object_type, declaring_type)
+                    .private_member_access_relation_outcome(object_type, declaring_type)
                     .related
                 {
                     return true;
@@ -109,7 +109,7 @@ impl<'a> CheckerState<'a> {
                 .is_success()
             }
             _ => {
-                self.assign_relation_outcome(object_type, declaring_type)
+                self.private_member_access_relation_outcome(object_type, declaring_type)
                     .related
             }
         }
@@ -741,7 +741,7 @@ impl<'a> CheckerState<'a> {
             )
         } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
             || self
-                .assign_relation_outcome(object_type_for_check, declaring_type)
+                .private_member_access_relation_outcome(object_type_for_check, declaring_type)
                 .related
         {
             true
@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
                         } else if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {
-                            self.assign_relation_outcome(object_type_for_check, ty)
+                            self.private_member_access_relation_outcome(object_type_for_check, ty)
                                 .related
                         }
                     })
