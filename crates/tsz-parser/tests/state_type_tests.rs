@@ -1019,12 +1019,10 @@ fn test_issue_10937_infer_constraint_in_rest_spread() {
     for source in no_error_cases {
         assert_no_errors(source);
     }
-    // Complex feature: infer with `extends` constraint in rest position.
-    // We only assert no panic or hang here.
-    let (parser, _root) = parse_source(
+    // infer with `extends` constraint in rest position (TS 4.7+ variadic infer constraint)
+    assert_no_errors(
         "type T<U> = U extends readonly [infer H extends string, ...infer R extends number[]] ? H : never;",
     );
-    let _ = parser.get_diagnostics();
 }
 
 #[test]
@@ -1112,4 +1110,26 @@ fn rest_type_span_excludes_trailing_whitespace() {
     // full-start position (before leading trivia). With a space before `,` the
     // span must still stop right after `T`, not include the space.
     assert_span("type A = [...T , U];", syntax_kind_ext::REST_TYPE, "...T");
+}
+
+#[test]
+fn test_issue_10937_three_rest_elements_in_tuple() {
+    // Three rest elements at parse level. TypeScript 4.2+ allows rest in
+    // non-final positions; the parser must accept these without diagnostics
+    // regardless of later semantic checks.
+    let cases = [
+        "type T = [...A, ...B, ...C];",
+        "type T<A, B, C> = [...A, ...B, ...C];",
+        "type T = [...string[], ...number[], ...boolean[]];",
+        "type T = [...A, B, ...C];",
+    ];
+    for source in cases {
+        assert_no_errors(source);
+    }
+    // Span check: first and last rest elements in a three-spread tuple.
+    assert_span(
+        "type T = [...A, ...B, ...C];",
+        syntax_kind_ext::REST_TYPE,
+        "...A",
+    );
 }
