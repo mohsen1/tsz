@@ -102,6 +102,7 @@ fn test_relation_request_constructors_encode_relation_kind() {
 
     for (ctor, kind) in [
         ("fn assign", "RelationKind::Assign"),
+        ("fn for_in_lhs", "RelationKind::ForInLhs"),
         ("fn call_arg", "RelationKind::CallArg"),
         ("fn return_stmt", "RelationKind::Return"),
         ("fn jsx_props", "RelationKind::JsxProps"),

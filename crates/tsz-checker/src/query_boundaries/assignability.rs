@@ -579,16 +579,14 @@ fn mapped_templates_structurally_assignable(
         || mapped_template_structurally_assignable(db, source_eval, target_eval)
 }
 
-// ---------------------------------------------------------------------------
-// RelationRequest: unified policy descriptor for relation queries
-// ---------------------------------------------------------------------------
-
 /// The kind of relation being checked. Different kinds imply different
 /// default policies for freshness, excess properties, and diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RelationKind {
     /// Variable/parameter assignment: `const x: T = expr`
     Assign,
+    /// `for...in` initializer target: key type stored into the LHS.
+    ForInLhs,
     /// Function call argument: `fn(expr)` where param expects T
     CallArg,
     /// Return statement: `return expr` where function returns T
@@ -671,7 +669,9 @@ impl RelationRequest {
     pub(crate) const fn assign(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Assign)
     }
-
+    pub(crate) const fn for_in_lhs(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ForInLhs)
+    }
     pub(crate) const fn call_arg(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallArg)
     }

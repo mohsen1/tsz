@@ -13,13 +13,27 @@ fn for_in_lhs_diagnostic_uses_relation_outcome_boundary() {
         .split("// Get the type of the initializer expression")
         .next()
         .expect("missing end of for-in LHS diagnostic branch");
+    let compact_branch: String = branch.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        branch.contains("self.assign_relation_outcome(element_type, var_type).related"),
-        "for-in LHS diagnostic should use the shared relation outcome boundary"
+        compact_branch.contains("self.for_in_lhs_relation_outcome(element_type,var_type).related"),
+        "for-in LHS diagnostic should use the role-specific relation outcome boundary"
     );
     assert!(
-        !branch.contains("diagnostic_relation_boolean_guard(element_type, var_type)"),
+        !compact_branch.contains("diagnostic_relation_boolean_guard(element_type,var_type)")
+            && !compact_branch.contains("assign_relation_outcome(element_type,var_type)"),
         "for-in LHS diagnostic should not use the legacy boolean guard"
+    );
+}
+
+#[test]
+fn for_in_lhs_relation_outcome_uses_for_in_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn for_in_lhs_relation_outcome(")
+            && source.contains("RelationRequest::for_in_lhs(source, target)"),
+        "for-in LHS diagnostics should have a request-shaped RelationKind::ForInLhs helper"
     );
 }
