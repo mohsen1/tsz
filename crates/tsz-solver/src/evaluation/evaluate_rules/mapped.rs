@@ -317,13 +317,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
-        // inheritance — the source T's optional/readonly flags propagate to the
-        // output even when the template is NOT `T[K]`. For example:
+        // tsc treats `{ [K in keyof T]: ... }` (no as-clause or identity as K) as
+        // homomorphic for modifier inheritance — the source T's optional/readonly flags
+        // propagate to the output even when the template is NOT `T[K]`. For example:
         //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
-        // inherits optionality from Partial<M0>'s properties, even though the
-        // template is `M0[K]`, not `Partial<M0>[K]`.
-        let is_homomorphic = source_object.is_some();
+        // inherits optionality from Partial<M0>'s properties.
+        //
+        // A non-identity as-clause (`as Uppercase<K>`, `as K extends string ? K : never`,
+        // etc.) breaks homomorphism: tsc's `isHomomorphicMappedType` returns undefined for
+        // any nameType that isn't the plain iteration variable. source_object may still be
+        // Some (needed for array/tuple structural preservation), so we must check name_type
+        // here independently of that.
+        let is_homomorphic = source_object.is_some()
+            && crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped);
 
         // A filtering/remapping `as` clause can still use the original source
         // property template (`T[K]`). In that case, preserved optional source
@@ -445,14 +451,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // don't change keys so the mapped type is still homomorphic.
         // Example: { [K in keyof T as K]: T[K] } is equivalent to { [K in keyof T]: T[K] }
         if let Some(source) = source_object {
-            let is_identity_or_no_name = mapped.name_type.is_none()
-                || mapped.name_type.is_some_and(|nt| {
-                    matches!(
-                        self.interner().lookup(nt),
-                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
-                    )
-                });
-            if is_identity_or_no_name {
+            if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
                 // Resolve the source to check if it's an Array or Tuple
                 // Use evaluate() to resolve Lazy types (interfaces/classes)
                 let resolved = self.evaluate(source);
@@ -1059,14 +1058,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Only preserve array shape for identity name mappings (no `as` clause
         // or `as K` where K is the iteration variable)
-        let is_identity_or_no_name = mapped.name_type.is_none()
-            || mapped.name_type.is_some_and(|nt| {
-                matches!(
-                    self.interner().lookup(nt),
-                    Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
-                )
-            });
-        if !is_identity_or_no_name {
+        if !crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
             return None;
         }
 
@@ -1746,6 +1738,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// eagerly evaluated to a union of string literals during `instantiate_type`.
     /// In that case, we verify that `template = obj[P]` and `keyof obj == constraint`.
     fn homomorphic_mapped_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        // Non-identity as-clause breaks homomorphism; bail out early so that
+        // neither Method 1 nor Method 2 returns a false-positive source.
+        if !crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
+            return None;
+        }
+
         // Method 1: Constraint is explicitly `keyof T` (pre-evaluation form)
         if let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) {
             // Check if template is an IndexAccess type T[K]
@@ -1773,17 +1771,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // to a union of string literals. The template still has the original structure
         // `T[P]` with the concrete object. Verify by computing `keyof obj` and
         // comparing with the constraint.
-        // Key remapping (`as` clause / name_type) breaks homomorphism,
-        // UNLESS the name type is an identity mapping (as K where K is the param).
-        let is_identity_or_no_name = mapped.name_type.is_none()
-            || mapped.name_type.is_some_and(|nt| {
-                matches!(
-                    self.interner().lookup(nt),
-                    Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
-                )
-            });
-        if is_identity_or_no_name
-            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+        // Identity check already done above — this branch only runs when name_type
+        // is None or is the identity mapping.
+        if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
             && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
             && param.name == mapped.type_param.name
         {
