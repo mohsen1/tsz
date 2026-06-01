@@ -944,6 +944,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing round-2 contextual substitution relation
+    /// for raw checker types, preserving the canonical substitution request shape.
+    pub(crate) fn round2_contextual_substitution_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::round2_contextual_substitution(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing constructor-inference constraint relation
     /// for raw checker types, preserving the canonical constructor-inference
     /// request shape.

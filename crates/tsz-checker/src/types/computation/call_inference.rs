@@ -279,10 +279,16 @@ impl<'a> CheckerState<'a> {
                 );
                 let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
                 if !self
-                    .assign_relation_outcome(widened_current, evaluated_constraint)
+                    .round2_contextual_substitution_relation_outcome(
+                        widened_current,
+                        evaluated_constraint,
+                    )
                     .related
                     && self
-                        .assign_relation_outcome(current, evaluated_constraint)
+                        .round2_contextual_substitution_relation_outcome(
+                            current,
+                            evaluated_constraint,
+                        )
                         .related
                 {
                     current

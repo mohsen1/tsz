@@ -74,9 +74,15 @@ fn round2_contextual_substitution_widening_uses_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome(").count(),
+        helper
+            .matches("round2_contextual_substitution_relation_outcome(")
+            .count(),
         2,
-        "round-2 contextual substitution widening should route relation probes through RelationOutcome"
+        "round-2 contextual substitution widening should route relation probes through its named RelationRequest helper"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "round-2 contextual substitution widening should not use the generic assign relation helper"
     );
     assert!(
         helper.matches(".related").count() >= 2,
