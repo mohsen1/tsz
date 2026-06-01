@@ -4,7 +4,7 @@ use super::super::{ParamTransformPlan, Printer};
 use super::bindings_patterns::ES5RestProp;
 use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node};
+use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -1192,6 +1192,80 @@ impl<'a> Printer<'a> {
     ///     finally { if (e_1) throw e_1.error; }
     /// }
     /// ```
+    /// Decide whether the downlevel for-await-of loop-init temps (loop guard,
+    /// iterator, result) should be hoisted into the enclosing async body's
+    /// `var` group rather than declared inline in `for (var ...)`.
+    ///
+    /// Structural rule (matches `tsc`): when a `for-of` / `for-await-of` loop
+    /// appears earlier in the SAME async function body than `for_await_idx`,
+    /// `tsc` hoists this loop's init temps into the body var group; otherwise it
+    /// keeps them inline in the `for (var _d = true, it = __asyncValues(x),
+    /// res; ...)` head. The earlier loop's own temps reset the per-iteration
+    /// `var` redeclaration, so a following for-await head references the hoisted
+    /// names instead of re-`var`-ing them.
+    ///
+    /// We find the nearest enclosing function-like node (the async body owner)
+    /// by walking parent links, then scan that subtree — without descending into
+    /// nested function-likes — for a `for-of`/`for-await-of` statement that
+    /// starts before `for_await_idx`. A native ES2015 sync `for-of` does not
+    /// bump the ES5 for-of emit counters, so this AST scan (not local emit
+    /// state) is required to distinguish the two cases.
+    fn body_has_for_of_before_for_await(&self, for_await_idx: NodeIndex) -> bool {
+        let Some(for_await_node) = self.arena.get(for_await_idx) else {
+            return false;
+        };
+        let for_await_pos = for_await_node.pos;
+
+        // Walk up to the nearest enclosing function-like node (the async body
+        // owner). That node's subtree is the search scope.
+        let mut owner = self.arena.parent_of(for_await_idx);
+        while let Some(idx) = owner {
+            if idx.is_none() {
+                return false;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            if self.is_function_like_hoist_boundary(node.kind) {
+                break;
+            }
+            owner = self.arena.parent_of(idx);
+        }
+        let Some(root) = owner else {
+            return false;
+        };
+        if root.is_none() {
+            return false;
+        }
+
+        // Scan the owner subtree for a for-of/for-await-of statement that starts
+        // before this for-await. Stop at nested function-like boundaries so we
+        // do not count loops belonging to inner functions.
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+
+            if idx != for_await_idx
+                && node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && node.pos < for_await_pos
+            {
+                return true;
+            }
+
+            if idx != root && self.is_function_like_hoist_boundary(node.kind) {
+                continue;
+            }
+
+            stack.extend(self.arena.get_children(idx));
+        }
+        false
+    }
+
     pub(in crate::emitter) fn emit_for_of_statement_es5_async_iterator(
         &mut self,
         for_of_idx: NodeIndex,
@@ -1273,8 +1347,12 @@ impl<'a> Printer<'a> {
         let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
-        let hoist_loop_init_temps =
-            self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await;
+        // tsc hoists the for-await loop-init temps (guard/iterator/result) into
+        // the enclosing async body's `var` group IFF a preceding `for-of` /
+        // `for-await-of` loop exists earlier in the same async body; otherwise
+        // it keeps them inline in `for (var _d = true, it = __asyncValues(x),
+        // res; ...)`. See `body_has_for_of_before_for_await` for the rule.
+        let hoist_loop_init_temps = self.body_has_for_of_before_for_await(for_of_idx);
 
         // Hoist done/error/return/value temps to the top of the source file scope.
         self.hoisted_for_of_temps.push(loop_done_name.clone());

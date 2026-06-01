@@ -131,21 +131,19 @@ fn for_await_temps_do_not_leak_to_source_scope() {
     let function_start = output.find("function f()").expect("function should emit");
     let source_scope = &output[..function_start];
 
+    // No preceding for-of in this async body, so tsc keeps the loop-init temps
+    // INLINE in the `for (var ...)` head and only hoists done/error/return/value.
     assert!(
-        !source_scope.contains("var _a, e_1, _b, _c, _d, y_1, y_1_1;"),
+        !source_scope.contains("var _a, e_1, _b, _c;"),
         "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function* () {\n        var _a, e_1, _b, _c, _d, y_1, y_1_1;"),
+        output.contains("function* () {\n        var _a, e_1, _b, _c;"),
         "for-await temps should be hoisted inside the generated async body.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("for (_d = true, y_1 = __asyncValues(y);"),
-        "for-await loop init should reuse the hoisted temps instead of redeclaring them inline.\nOutput:\n{output}"
-    );
-    assert!(
-        !output.contains("for (var _d = true, y_1 = __asyncValues(y);"),
-        "generated async bodies should not emit inline `var` for hoisted for-await loop temps.\nOutput:\n{output}"
+        output.contains("for (var _d = true, y_1 = __asyncValues(y), y_1_1;"),
+        "with no preceding for-of, loop-init temps stay inline in the for-head.\nOutput:\n{output}"
     );
 }
 
@@ -170,17 +168,18 @@ fn async_arrow_for_await_temps_are_hoisted_inside_generator() {
     let arrow_start = output.find("const arrow").expect("arrow should emit");
     let source_scope = &output[..arrow_start];
 
+    // No preceding for-of in this async arrow body: loop-init temps stay inline.
     assert!(
-        !source_scope.contains("var _a, e_1, _b, _c, _d, _e, _f;"),
+        !source_scope.contains("var _a, e_1, _b, _c;"),
         "for-await temps from async arrows should not be hoisted outside the arrow.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function* () {\n    var _a, e_1, _b, _c, _d, _e, _f;\n    try {"),
+        output.contains("function* () {\n    var _a, e_1, _b, _c;\n    try {"),
         "for-await temps should be hoisted inside the async arrow generator body.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("for (_d = true, _e = __asyncValues(gen());"),
-        "async arrows should reuse hoisted for-await loop-init temps.\nOutput:\n{output}"
+        output.contains("for (var _d = true, _e = __asyncValues(gen()), _f;"),
+        "with no preceding for-of, async arrows keep loop-init temps inline.\nOutput:\n{output}"
     );
 }
 
@@ -202,13 +201,86 @@ fn async_arrow_for_await_assignment_binding_temps_are_hoisted() {
     printer.emit(root);
     let output = printer.get_output().to_string();
 
+    // No preceding for-of: loop-init temps stay inline in the for-head.
     assert!(
-        output.contains("const arrow = () => __awaiter(void 0, void 0, void 0, function* () {\n    var _a, e_1, _b, _c, _d, _e, _f;\n    try {"),
+        output.contains("const arrow = () => __awaiter(void 0, void 0, void 0, function* () {\n    var _a, e_1, _b, _c;\n    try {"),
         "assignment-target for-await temps should be hoisted in async arrow generator bodies.\nOutput:\n{output}"
     );
     assert!(
         output.contains("_c = _f.value;\n            _d = false;\n            item = _c;"),
         "assignment-target for-await should still bind the yielded value through the hoisted value temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_loop_init_temps_hoist_after_preceding_for_of() {
+    // A preceding sync `for-of` in the same async body resets the per-iteration
+    // `var` redeclaration, so tsc hoists the following for-await's loop-init
+    // temps (guard/iterator/result) into the body var group and references them
+    // inline without `var`. Mirrors operationsAvailableOnPromisedType.
+    let source = "async function f(c: number[], y: any) {\n    for (const s of c) { s; }\n    for await (const x of y) { x; }\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    set_emitter_source(&mut printer, source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    // A preceding for-of in the same async body hoists the loop-init temps into
+    // the body var group, so the for-await head references them without `var`.
+    assert!(
+        output.contains("var _a, e_1, _b, _c, _d, y_1, y_1_1;"),
+        "preceding for-of should hoist loop-init temps (_d, y_1, y_1_1) into the body var group.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (_d = true, y_1 = __asyncValues(y); y_1_1 = yield y_1.next()"),
+        "with a preceding for-of, the for-await head reuses the hoisted temps without inline `var`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("for (var _d = true, y_1 = __asyncValues(y)"),
+        "with a preceding for-of, the for-await head must not redeclare loop-init temps with inline `var`.\nOutput:\n{output}"
+    );
+    // The native ES2015 sync for-of must stay un-lowered (it is what triggers
+    // the hoist via the body scan; emit counters alone cannot see it).
+    assert!(
+        output.contains("for (const s of c) {"),
+        "the preceding native sync for-of should be preserved as-is.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_alone_keeps_loop_init_temps_inline_renamed_binding() {
+    // Same shape as the leak test but with a different loop variable name, to
+    // prove the inline decision is structural (no preceding for-of), not keyed
+    // to a particular identifier spelling.
+    let source =
+        "async function g() {\n    let src: any;\n    for await (const item of src) {\n    }\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    set_emitter_source(&mut printer, source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("for (var _d = true, src_1 = __asyncValues(src), src_1_1;"),
+        "with no preceding for-of, loop-init temps stay inline regardless of binding name.\nOutput:\n{output}"
     );
 }
 
