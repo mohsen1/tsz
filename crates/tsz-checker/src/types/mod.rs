@@ -27,3 +27,27 @@ mod type_node_resolution;
 pub(crate) mod unique_symbol_arena;
 pub(crate) mod utilities;
 pub(crate) mod window_global_this_annotation;
+
+/// Reset every type-resolution recursion-guard and scratch-pool thread-local
+/// owned by this module tree to its empty state.
+///
+/// Called from `clear_all_thread_local_state` at independent-compilation
+/// boundaries (batch mode) so a project that bails out mid alias-resolution
+/// cannot leave a non-zero depth counter, a stale active-set entry, or a
+/// retained scratch pool that would affect the next project on the same worker.
+pub(crate) fn reset_type_resolution_guards() {
+    type_node_resolution::reset_alias_resolve_state();
+    type_checking::reset_alias_resolution_pools();
+}
+
+#[cfg(test)]
+pub(crate) fn dirty_type_resolution_guards_for_test() {
+    type_node_resolution::dirty_alias_resolve_state_for_test();
+    type_checking::dirty_alias_resolution_pools_for_test();
+}
+
+#[cfg(test)]
+pub(crate) fn type_resolution_guards_clear_for_test() -> bool {
+    type_node_resolution::alias_resolve_state_is_clear_for_test()
+        && type_checking::alias_resolution_pools_clear_for_test()
+}

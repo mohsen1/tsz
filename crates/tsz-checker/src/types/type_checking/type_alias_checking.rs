@@ -10,41 +10,13 @@
 //! - `check_type_node` — recursive type node validation (mapped types, conditionals, etc.)
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
+use super::alias_defid_visited_pool::with_alias_defid_visited;
 use crate::state::CheckerState;
-use std::cell::RefCell;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::def::DefId;
-
-// Reusable scratch `FxHashSet<DefId>` for the alias-resolution DFS in this
-// module. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
-thread_local! {
-    static ALIAS_DEFID_VISITED_POOL: RefCell<Option<rustc_hash::FxHashSet<DefId>>> =
-        const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_alias_defid_visited<R>(f: impl FnOnce(&mut rustc_hash::FxHashSet<DefId>) -> R) -> R {
-    let mut visited = ALIAS_DEFID_VISITED_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_default();
-    visited.clear();
-    let r = f(&mut visited);
-    ALIAS_DEFID_VISITED_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some(existing) => visited.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(visited);
-        }
-    });
-    r
-}
 
 #[inline]
 fn record_type_alias_phase_timing(

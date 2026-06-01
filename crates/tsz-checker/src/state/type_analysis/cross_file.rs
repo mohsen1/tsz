@@ -14,23 +14,7 @@ use tsz_solver::TypeId;
 
 pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
-thread_local! {
-    static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
 impl<'a> CheckerState<'a> {
-    pub(crate) fn enter_cross_arena_interface_delegation() {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get() + 1));
-    }
-
-    pub(crate) fn leave_cross_arena_interface_delegation() {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
-    }
-
-    pub(crate) fn in_cross_arena_interface_delegation() -> bool {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
-    }
-
     fn resolve_cross_file_heritage_type_arg(
         &mut self,
         arena: &tsz_parser::NodeArena,

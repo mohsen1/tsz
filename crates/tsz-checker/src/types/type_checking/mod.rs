@@ -10,6 +10,7 @@
 //! - `type_alias_checking` — type alias declaration checking, type node validation
 //! - `unused` — unused variable/parameter detection
 
+mod alias_defid_visited_pool;
 mod commonjs_object_exports;
 mod core;
 mod core_statement_checks;
@@ -33,3 +34,19 @@ mod type_alias_depth_helpers;
 mod type_alias_missing_name_coverage;
 mod type_alias_recursion_patterns;
 mod unused;
+
+/// Release the type-alias resolution scratch pool owned by this module tree.
+/// Called at independent-compilation boundaries (batch mode).
+pub(crate) fn reset_alias_resolution_pools() {
+    alias_defid_visited_pool::reset_alias_defid_visited_pool();
+}
+
+#[cfg(test)]
+pub(crate) fn dirty_alias_resolution_pools_for_test() {
+    alias_defid_visited_pool::set_alias_defid_visited_pool_dirty_for_test();
+}
+
+#[cfg(test)]
+pub(crate) fn alias_resolution_pools_clear_for_test() -> bool {
+    alias_defid_visited_pool::alias_defid_visited_pool_is_released_for_test()
+}

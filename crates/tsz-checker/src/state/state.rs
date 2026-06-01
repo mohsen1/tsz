@@ -39,6 +39,29 @@ thread_local! {
     static CROSS_ARENA_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// Reset the cross-arena delegation depth counter to zero.
+///
+/// `enter_cross_arena_delegation` / `leave_cross_arena_delegation` are a manual
+/// (non-RAII) enter/leave pair, so a compilation that bails out between them
+/// without unwinding — e.g. the stack-overflow breaker tripping or resolution
+/// fuel running out — can leave the counter non-zero. A leftover depth would
+/// then make `enter_cross_arena_delegation` refuse delegation in an unrelated
+/// later compilation. Reset between independent compilations (batch mode) so a
+/// pathological project cannot poison the next one.
+pub(crate) fn reset_cross_arena_depth() {
+    CROSS_ARENA_DEPTH.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn set_cross_arena_depth_for_test(value: u32) {
+    CROSS_ARENA_DEPTH.with(|c| c.set(value));
+}
+
+#[cfg(test)]
+pub(crate) fn cross_arena_depth_for_test() -> u32 {
+    CROSS_ARENA_DEPTH.with(std::cell::Cell::get)
+}
+
 // =============================================================================
 // CheckerState
 // =============================================================================

@@ -24,6 +24,27 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Clear the cross-arena alias-resolution stack.
+///
+/// `CrossArenaAliasGuard` already pops on scope exit (including panic unwind),
+/// so this stack is normally empty between compilations. It is reset anyway at
+/// batch row boundaries to make row isolation total: any leftover entries pin
+/// arena-scoped `DefId`s, so dropping them releases per-row memory and
+/// guarantees a clean DFS even if a future non-unwinding bail-out path is added.
+pub(crate) fn reset_cross_arena_alias_stack() {
+    CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn push_cross_arena_alias_for_test(def_id: DefId) {
+    CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().push(def_id));
+}
+
+#[cfg(test)]
+pub(crate) fn cross_arena_alias_stack_len_for_test() -> usize {
+    CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow().len())
+}
+
 /// RAII guard returned by [`CheckerState::enter_cross_arena_alias`]. Pops the
 /// pushed alias `DefId` on drop — including on panic unwind — so a stale entry
 /// cannot poison later resolutions on a reused worker thread.

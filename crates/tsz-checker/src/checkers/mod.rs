@@ -73,6 +73,15 @@ pub fn reset_stack_overflow_flag() {
 /// affecting subsequent compilations. Thread-local caches use arena-local
 /// indices (`NodeIndex`) as keys, and these indices get reused across
 /// compilations, causing cross-compilation contamination.
+///
+/// This is a hand-maintained reset list: every per-compilation thread-local in
+/// the checker (memo, scratch pool, or recursion-guard depth/stack) must be
+/// reset here. Rust offers no way to enumerate `thread_local!`s, so each owning
+/// module exposes a `reset_*` function and a parent `mod.rs` aggregates them;
+/// this function calls the aggregators. When you add a new per-compilation
+/// thread-local, add its reset here too — the regression test
+/// `clear_all_thread_local_state_resets_cross_arena_and_alias_guards` guards the
+/// recursion-guard subset against drift.
 pub fn clear_all_thread_local_state() {
     // Reset stack overflow breaker
     STACK_STATE.set(0);
@@ -86,6 +95,17 @@ pub fn clear_all_thread_local_state() {
 
     // Reset resolution fuel and depth counters
     crate::state_domain::type_environment::lazy::reset_all_thread_local_state();
+
+    // Reset cross-arena/cross-file recursion-guard depth counters and stacks.
+    // These use manual (non-RAII) enter/leave or push/pop, so a project that
+    // bails out mid-delegation (stack-overflow breaker, fuel exhaustion, or a
+    // panic caught by the batch driver) can leave them dirty and suppress
+    // resolution in the next project on this worker thread.
+    crate::state_domain::state::reset_cross_arena_depth();
+    crate::state_domain::type_analysis::reset_cross_file_recursion_guards();
+
+    // Reset type-alias resolution recursion guards and scratch pools.
+    crate::types_domain::reset_type_resolution_guards();
 }
 
 /// Explicit context for synthesized JSX children, threaded from dispatch
@@ -236,6 +256,53 @@ mod tests {
             STACK_STATE.get(),
             0,
             "clear_all_thread_local_state must zero the entire STACK_STATE"
+        );
+    }
+
+    /// Regression test for issue #10880: batch mode reuses one worker process
+    /// across project rows and relies on `clear_all_thread_local_state` to
+    /// isolate them. Several cross-arena / type-alias recursion guards use
+    /// manual (non-RAII) enter/leave or push/pop, so a row that bails out
+    /// mid-delegation can leave them dirty. Before the fix these guards were
+    /// not part of the reset, leaking state into the next row. This asserts
+    /// every such guard is zero/empty after the canonical reset.
+    #[test]
+    fn clear_all_thread_local_state_resets_cross_arena_and_alias_guards() {
+        use crate::{state_domain, types_domain};
+
+        // Dirty every guard the way an aborted mid-delegation row would.
+        state_domain::state::set_cross_arena_depth_for_test(3);
+        state_domain::type_analysis::dirty_cross_file_recursion_guards_for_test();
+        types_domain::dirty_type_resolution_guards_for_test();
+
+        assert_ne!(
+            state_domain::state::cross_arena_depth_for_test(),
+            0,
+            "precondition: cross-arena depth dirtied"
+        );
+        assert!(
+            !state_domain::type_analysis::cross_file_recursion_guards_clear_for_test(),
+            "precondition: cross-file recursion guards dirtied"
+        );
+        assert!(
+            !types_domain::type_resolution_guards_clear_for_test(),
+            "precondition: type-resolution guards dirtied"
+        );
+
+        clear_all_thread_local_state();
+
+        assert_eq!(
+            state_domain::state::cross_arena_depth_for_test(),
+            0,
+            "clear_all_thread_local_state must reset the cross-arena delegation depth"
+        );
+        assert!(
+            state_domain::type_analysis::cross_file_recursion_guards_clear_for_test(),
+            "clear_all_thread_local_state must reset cross-file interface depth and alias stack"
+        );
+        assert!(
+            types_domain::type_resolution_guards_clear_for_test(),
+            "clear_all_thread_local_state must reset alias-resolution depth, stack, and scratch pool"
         );
     }
 }
