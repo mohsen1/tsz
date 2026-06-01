@@ -365,18 +365,25 @@ impl<'a> CheckerState<'a> {
             result = self.resolve_property_access_via_boundary(pruned_object_type, prop_name);
         }
 
-        // For a TypeParameter whose constraint is a cross-file `Lazy(DefId)` reference
-        // (e.g. `T extends Box` where `Box` is defined in another file), the solver's
-        // `evaluate_type_with_options` cannot resolve the constraint because it uses a
-        // noop `TypeResolver`. Evaluate through the checker's full `TypeEnvironment` and
-        // retry. Non-Lazy constraints are handled by the solver's TypeParameter branch.
+        // For a TypeParameter whose constraint still needs environment-backed
+        // evaluation (for example `T extends Box` where `Box` is cross-file
+        // `Lazy(DefId)`, or `T extends MyPartial<Foo>` where the constraint is a
+        // generic mapped alias), the solver's noop-resolver property evaluator can
+        // only see the unresolved constraint and report a missing property. Evaluate
+        // through the checker's full `TypeEnvironment` and retry the property query.
         if result.is_degenerate()
             && let Some(constraint) =
                 crate::query_boundaries::state::checking::type_parameter_constraint(
                     self.ctx.types,
                     resolved_object_type,
                 )
-            && crate::query_boundaries::common::is_lazy_type(self.ctx.types, constraint)
+            && (crate::query_boundaries::common::is_lazy_type(self.ctx.types, constraint)
+                || crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    constraint,
+                )
+                || query::is_mapped_type(self.ctx.types, constraint)
+                || query::needs_env_eval(self.ctx.types, constraint))
         {
             let evaluated = self.evaluate_type_with_env(constraint);
             if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
