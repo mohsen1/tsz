@@ -1,9 +1,12 @@
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
-use crate::test_utils::{check_source_with_libs, load_compiled_lib_files, load_lib_files};
+use crate::test_utils::{
+    check_multi_file_with_libs, check_source_with_libs, load_compiled_lib_files, load_lib_files,
+};
 use std::sync::Arc;
 use tsz_binder::{BinderState, symbol_flags};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::perf_counters::CrossArenaSymbolMissSource;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
@@ -534,5 +537,85 @@ if (app) {
     assert!(
         diagnostics.is_empty(),
         "expected DOM querySelector type argument to keep inherited members, got: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn cross_file_return_type_property_stays_assignable_to_declared_model() {
+    let lib_files = load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "metrics.ts",
+                r#"
+export interface DataPoint {
+  label: string;
+  value: number;
+}
+
+export interface SeriesSummary {
+  min: number;
+  max: number;
+  mean: number;
+  p95: number;
+}
+
+export function summarizeSeries(points: readonly DataPoint[]): SeriesSummary {
+  const values = points.map((point) => point.value).sort((left, right) => left - right);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return {
+    min: values[0] || 0,
+    max: values[values.length - 1] || 0,
+    mean: values.length === 0 ? 0 : total / values.length,
+    p95: values[values.length - 1] || 0,
+  };
+}
+"#,
+            ),
+            (
+                "view.ts",
+                r#"
+import { summarizeSeries } from "./metrics";
+
+interface LocalHarnessPaddingA {}
+interface LocalHarnessPaddingB {}
+interface LocalHarnessPaddingC {}
+interface LocalHarnessPaddingD {}
+
+export interface DashboardModel {
+  title: string;
+  points: { label: string; value: number }[];
+  summary: ReturnType<typeof summarizeSeries>;
+}
+
+const points = [
+  { label: "sample-1", value: 100 },
+  { label: "sample-2", value: 200 },
+];
+const model: DashboardModel = {
+  title: "ambient module benchmark",
+  points,
+  summary: summarizeSeries(points),
+};
+model.summary.mean.toFixed(2);
+"#,
+            ),
+        ],
+        "view.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::ESNext,
+            module_explicitly_set: true,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected imported ReturnType model property to stay assignable, got: {diagnostics:?}",
     );
 }
