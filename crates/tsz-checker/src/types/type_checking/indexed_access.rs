@@ -19,14 +19,17 @@ impl<'a> CheckerState<'a> {
     /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
     /// (e.g., `DataFetchFns[T]` where `DataFetchFns` is a known type).
     fn is_deferred_indexed_access_object(&self, ty: TypeId) -> bool {
-        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
+        if !crate::query_boundaries::diagnostics::is_index_access_type(self.ctx.types, ty) {
             return false;
         }
         // Decompose the indexed access and check if the base is a type parameter
         if let Some((base, _index)) =
-            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
+            crate::query_boundaries::property_access::index_access_types(self.ctx.types, ty)
         {
-            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
+            return crate::query_boundaries::state::checking::is_type_parameter_like(
+                self.ctx.types,
+                base,
+            );
         }
         false
     }
@@ -609,8 +612,10 @@ impl<'a> CheckerState<'a> {
 
         let mut index_constraint =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type);
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-            && index_constraint.is_none()
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            index_type,
+        ) && index_constraint.is_none()
             && let Some(ast_constraint) =
                 self.resolve_index_constraint_from_declaration(data.index_type, data.object_type)
         {
@@ -618,12 +623,13 @@ impl<'a> CheckerState<'a> {
         }
         let error_anchor = node_idx;
         let concrete_error_anchor = data.index_type;
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
-            && index_constraint.is_some_and(|constraint| {
-                constraint == object_type
-                    || same_type_param_name(self.ctx.types, constraint, object_type)
-            })
-        {
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            object_type,
+        ) && index_constraint.is_some_and(|constraint| {
+            constraint == object_type
+                || same_type_param_name(self.ctx.types, constraint, object_type)
+        }) {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
             let message_2536 = format_message(
@@ -638,8 +644,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
-            && self.generic_index_mentions_transformed_current_type_param(index_type, object_type)
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            object_type,
+        ) && self.generic_index_mentions_transformed_current_type_param(index_type, object_type)
         {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
@@ -654,15 +662,18 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
-            && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-            && index_constraint.is_some_and(|constraint| {
-                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
-                    self.ctx.types,
-                    constraint,
-                )
-            })
-            && !self.is_valid_index_for_type_param(index_type, object_type)
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            object_type,
+        ) && crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            index_type,
+        ) && index_constraint.is_some_and(|constraint| {
+            crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                self.ctx.types,
+                constraint,
+            )
+        }) && !self.is_valid_index_for_type_param(index_type, object_type)
         {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
@@ -682,8 +693,10 @@ impl<'a> CheckerState<'a> {
         // is a type literal, compute keyof from AST property names only (no
         // value-type evaluation needed). This avoids eagerly resolving complex
         // member types (e.g., generic type applications) just to check key validity.
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-            && let Some(keyof_type) = self.type_literal_keyof_from_node(data.object_type)
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            index_type,
+        ) && let Some(keyof_type) = self.type_literal_keyof_from_node(data.object_type)
         {
             let check_index = index_constraint.unwrap_or(index_type);
             let check_index_eval = self.evaluate_type_with_env(check_index);
@@ -708,7 +721,7 @@ impl<'a> CheckerState<'a> {
         )
         .unwrap_or(object_type_for_check);
         if let Some((base_object_type, access_index_type)) =
-            crate::query_boundaries::common::index_access_types(
+            crate::query_boundaries::property_access::index_access_types(
                 self.ctx.types,
                 object_type_for_check,
             )
@@ -748,7 +761,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     object_type_for_check,
                 )
-                || crate::query_boundaries::common::is_index_access_type(
+                || crate::query_boundaries::diagnostics::is_index_access_type(
                     self.ctx.types,
                     object_type_for_check,
                 )
@@ -830,12 +843,12 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.evaluate_keyof(object_type_for_check)
         };
         let is_self_derived_key_space = |candidate: TypeId| {
-            crate::query_boundaries::common::index_access_types(self.ctx.types, candidate)
+            crate::query_boundaries::property_access::index_access_types(self.ctx.types, candidate)
                 .is_some_and(|(derived_object, derived_index)| {
-                    crate::query_boundaries::common::is_type_parameter_like(
+                    crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         index_type,
-                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                    ) && !crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         derived_object,
                     ) && (derived_index == index_type
@@ -845,13 +858,16 @@ impl<'a> CheckerState<'a> {
         let is_self_derived_keyof_space = |candidate: TypeId| {
             crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
                 .and_then(|target| {
-                    crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+                    crate::query_boundaries::property_access::index_access_types(
+                        self.ctx.types,
+                        target,
+                    )
                 })
                 .is_some_and(|(derived_object, derived_index)| {
-                    crate::query_boundaries::common::is_type_parameter_like(
+                    crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         index_type,
-                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                    ) && !crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         derived_object,
                     ) && (derived_index == index_type
@@ -1018,7 +1034,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
             // Continue following if still a type parameter.
-            if !crate::query_boundaries::common::is_type_parameter_like(
+            if !crate::query_boundaries::state::checking::is_type_parameter_like(
                 self.ctx.types,
                 next_evaluated,
             ) {
@@ -1200,14 +1216,14 @@ impl<'a> CheckerState<'a> {
                     // use that for validation. Otherwise, check if the evaluated type
                     // has index signatures or properties that validate the index.
                     let constrained_object_type =
-                        if crate::query_boundaries::common::is_index_access_type(
+                        if crate::query_boundaries::diagnostics::is_index_access_type(
                             self.ctx.types,
                             constrained_object_type,
                         ) {
                             let evaluated =
                                 self.evaluate_type_for_assignability(constrained_object_type);
                             if evaluated != TypeId::ERROR
-                                && !crate::query_boundaries::common::is_index_access_type(
+                                && !crate::query_boundaries::diagnostics::is_index_access_type(
                                     self.ctx.types,
                                     evaluated,
                                 )
@@ -1226,7 +1242,7 @@ impl<'a> CheckerState<'a> {
                         // spuriously succeed. Skip this block so the error is caught
                         // by the deferred-suppression or final error path below.
                         && constrained_object_type != TypeId::ANY
-                        && !crate::query_boundaries::common::is_index_access_type(
+                        && !crate::query_boundaries::diagnostics::is_index_access_type(
                             self.ctx.types,
                             constrained_object_type,
                         )
@@ -1302,7 +1318,10 @@ impl<'a> CheckerState<'a> {
                     || ty == TypeId::ANY
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
-                    || crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+                    || crate::query_boundaries::diagnostics::is_index_access_type(
+                        self.ctx.types,
+                        ty,
+                    )
             };
             let mut is_deferred_index_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
@@ -1327,12 +1346,12 @@ impl<'a> CheckerState<'a> {
                 // Only fall back to checking the pre-resolution object_type when the
                 // resolved type is also still an indexed access. If constraint resolution
                 // produced a concrete type (e.g., T['value'] → number), trust it.
-                || (crate::query_boundaries::common::is_index_access_type(self.ctx.types, object_type_for_check)
+                || (crate::query_boundaries::diagnostics::is_index_access_type(self.ctx.types, object_type_for_check)
                     && self.is_deferred_indexed_access_object(object_type)
                     && key_space_is_unresolved(keyof_object)
                     && !index_is_concrete_literal)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type_for_check)
-                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type))
+                || crate::query_boundaries::diagnostics::is_index_access_type(self.ctx.types, index_type_for_check)
+                || crate::query_boundaries::diagnostics::is_index_access_type(self.ctx.types, index_type))
             {
                 return;
             }
@@ -1375,7 +1394,7 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             object_type_for_check,
-                        ) || crate::query_boundaries::common::is_index_access_type(
+                        ) || crate::query_boundaries::diagnostics::is_index_access_type(
                             self.ctx.types,
                             object_type_for_check,
                         ) || crate::query_boundaries::common::is_conditional_type(
@@ -1383,7 +1402,7 @@ impl<'a> CheckerState<'a> {
                             object_type_for_check,
                         ) || object_type_for_check == TypeId::UNKNOWN
                             || object_type_for_check == TypeId::ERROR
-                            || crate::query_boundaries::common::is_index_access_type(
+                            || crate::query_boundaries::diagnostics::is_index_access_type(
                                 self.ctx.types,
                                 object_type,
                             )
@@ -1427,7 +1446,7 @@ impl<'a> CheckerState<'a> {
                 // Don't trust property access results on deferred types (indexed
                 // access, conditional, generic application) — the solver may
                 // spuriously report success on types it can't fully resolve.
-                if !crate::query_boundaries::common::is_index_access_type(
+                if !crate::query_boundaries::diagnostics::is_index_access_type(
                     self.ctx.types,
                     object_type_for_check,
                 ) && !crate::query_boundaries::common::is_conditional_type(
@@ -1477,7 +1496,7 @@ impl<'a> CheckerState<'a> {
                         ) && !crate::query_boundaries::common::is_generic_application(
                             self.ctx.types,
                             check_eval,
-                        ) && !crate::query_boundaries::common::is_index_access_type(
+                        ) && !crate::query_boundaries::diagnostics::is_index_access_type(
                             self.ctx.types,
                             check_eval,
                         ) && matches!(
@@ -1520,7 +1539,10 @@ impl<'a> CheckerState<'a> {
             // members — emit TS2536 for the type parameter itself. tsc reports
             // "Type 'T' cannot be used to index type 'B'" rather than per-member TS2339.
             let original_index_is_type_param =
-                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type);
+                crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    index_type,
+                );
             if !original_index_is_type_param
                 && self.try_emit_concrete_index_access_error(
                     concrete_error_anchor,
@@ -1557,23 +1579,25 @@ impl<'a> CheckerState<'a> {
             //   { [K in keyof Obj]: Obj[K]['name'] }
             // where Obj has an `as` clause or other constructs that prevent the solver
             // from resolving Obj[K] with a generic K.
-            if let Some((base_obj, _base_idx)) = crate::query_boundaries::common::index_access_types(
-                self.ctx.types,
-                object_type_for_check,
-            ) {
+            if let Some((base_obj, _base_idx)) =
+                crate::query_boundaries::property_access::index_access_types(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+            {
                 if self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
                 {
                     return;
                 }
 
                 let eval_base = self.evaluate_type_with_env(base_obj);
-                let is_concrete = !crate::query_boundaries::common::is_type_parameter_like(
+                let is_concrete = !crate::query_boundaries::state::checking::is_type_parameter_like(
                     self.ctx.types,
                     eval_base,
                 ) && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     eval_base,
-                ) && !crate::query_boundaries::common::is_index_access_type(
+                ) && !crate::query_boundaries::diagnostics::is_index_access_type(
                     self.ctx.types,
                     eval_base,
                 ) && !crate::query_boundaries::common::is_conditional_type(
@@ -1590,7 +1614,7 @@ impl<'a> CheckerState<'a> {
                     );
                     if values_union != TypeId::ERROR
                         && values_union != TypeId::UNDEFINED
-                        && !crate::query_boundaries::common::is_index_access_type(
+                        && !crate::query_boundaries::diagnostics::is_index_access_type(
                             self.ctx.types,
                             values_union,
                         )
@@ -1623,7 +1647,10 @@ impl<'a> CheckerState<'a> {
             }
             if object_type != object_type_for_check
                 && let Some((base_obj, _base_idx)) =
-                    crate::query_boundaries::common::index_access_types(self.ctx.types, object_type)
+                    crate::query_boundaries::property_access::index_access_types(
+                        self.ctx.types,
+                        object_type,
+                    )
                 && self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
             {
                 return;
@@ -1738,10 +1765,10 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             concrete_object_type,
-        ) || crate::query_boundaries::common::is_type_parameter_like(
+        ) || crate::query_boundaries::state::checking::is_type_parameter_like(
             self.ctx.types,
             concrete_object_type,
-        ) || crate::query_boundaries::common::is_index_access_type(
+        ) || crate::query_boundaries::diagnostics::is_index_access_type(
             self.ctx.types,
             concrete_object_type,
         ) || crate::query_boundaries::common::is_conditional_type(
@@ -1851,18 +1878,19 @@ impl<'a> CheckerState<'a> {
             {
                 // Suppress TS2339 for types containing type parameters or deferred types.
                 let type_str_for_check = self.format_type(concrete_object_type);
-                let should_suppress = crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    concrete_object_type,
-                ) || crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types,
-                    concrete_object_type,
-                ) || crate::query_boundaries::common::is_conditional_type(
-                    self.ctx.types,
-                    concrete_object_type,
-                ) || concrete_object_type == TypeId::UNKNOWN
-                    || concrete_object_type == TypeId::ERROR
-                    || type_str_for_check.contains('['); // Index access type like T[K]
+                let should_suppress =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        concrete_object_type,
+                    ) || crate::query_boundaries::diagnostics::is_index_access_type(
+                        self.ctx.types,
+                        concrete_object_type,
+                    ) || crate::query_boundaries::common::is_conditional_type(
+                        self.ctx.types,
+                        concrete_object_type,
+                    ) || concrete_object_type == TypeId::UNKNOWN
+                        || concrete_object_type == TypeId::ERROR
+                        || type_str_for_check.contains('['); // Index access type like T[K]
                 if !should_suppress {
                     let object_type_str = self.format_type(object_type);
                     let message = format_message(

@@ -38,8 +38,8 @@ pub(super) fn generic_constrained_index(
     index_constraint: Option<TypeId>,
 ) -> bool {
     index_constraint.is_some()
-        && crate::query_boundaries::common::is_type_parameter_like(db, object_type)
-        && crate::query_boundaries::common::is_type_parameter_like(db, index_type)
+        && crate::query_boundaries::state::checking::is_type_parameter_like(db, object_type)
+        && crate::query_boundaries::state::checking::is_type_parameter_like(db, index_type)
 }
 
 pub(super) fn same_type_param_name(
@@ -160,13 +160,19 @@ impl<'a> CheckerState<'a> {
         // (if it's a type parameter) or the type-parameter members of a union.
         let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
 
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            object_type,
+        ) {
             type_params_to_check.push(object_type);
         } else if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         {
             for &member in &members {
-                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
+                if crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    member,
+                ) {
                     type_params_to_check.push(member);
                 }
             }
@@ -541,7 +547,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 nested_index_type,
             );
-        if crate::query_boundaries::common::is_type_parameter_like(
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
             self.ctx.types,
             nested_index_type,
         ) && nested_index_constraint.is_none()
@@ -554,8 +560,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             outer_index_type,
         );
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, outer_index_type)
-            && outer_index_constraint.is_none()
+        if crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            outer_index_type,
+        ) && outer_index_constraint.is_none()
         {
             outer_index_constraint = self.resolve_index_constraint_from_declaration(
                 outer_index_node_idx,
@@ -824,7 +832,10 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         index_constraint: Option<TypeId>,
     ) -> bool {
-        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type) {
+        if !crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            index_type,
+        ) {
             return false;
         }
         let Some(index_constraint) = index_constraint else {
@@ -841,7 +852,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             let Some((current_base, current_index)) =
-                crate::query_boundaries::common::index_access_types(self.ctx.types, current_object)
+                crate::query_boundaries::property_access::index_access_types(
+                    self.ctx.types,
+                    current_object,
+                )
             else {
                 continue;
             };
@@ -1008,15 +1022,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if let Some((base, index)) =
-                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+                crate::query_boundaries::property_access::index_access_types(self.ctx.types, target)
             {
                 return Some((target, base, index));
             }
             let evaluated_target = self.evaluate_type_with_env(target);
-            if let Some((base, index)) = crate::query_boundaries::common::index_access_types(
-                self.ctx.types,
-                evaluated_target,
-            ) {
+            if let Some((base, index)) =
+                crate::query_boundaries::property_access::index_access_types(
+                    self.ctx.types,
+                    evaluated_target,
+                )
+            {
                 return Some((evaluated_target, base, index));
             }
         }

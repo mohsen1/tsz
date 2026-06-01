@@ -1520,18 +1520,9 @@ impl TypeInterner {
         {
             return;
         }
-        // Never alias intrinsic types (string, number, any, etc.) — they are
-        // shared sentinels and aliasing them would make ALL occurrences display
-        // as whatever alias happened to be stored last.
         if evaluated.is_intrinsic() {
             return;
         }
-        // Guard against self-referential cycles: if the Application's args
-        // contain the evaluated type itself, storing this alias would create
-        // a formatting cycle (e.g., `Wrap<T> = T | T[]` where evaluating
-        // `Wrap<{x?: "ok"}>` produces a union, and a later re-application
-        // creates `Wrap<union>` whose arg IS the union). Skip storage in
-        // that case to prevent infinite `Wrap<Wrap<Wrap<...>>>` in diagnostics.
         if let Some(TypeData::Application(app_id)) = self.lookup(application) {
             let app = self.type_application(app_id);
             if app.args.contains(&evaluated) {
@@ -1595,12 +1586,6 @@ impl TypeInterner {
         if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
             return;
         }
-        // First-application-wins for pre-existing types: when the evaluated type was
-        // allocated before this application AND already has an Application display alias,
-        // keep the existing alias. This prevents a later concrete instantiation
-        // (e.g., `NestedRecord<"x.y.z.a.b.c", string>`) from overwriting an alias
-        // recorded by an earlier Application (e.g., from evaluating `Id<{x:{...}}>`)
-        // that produced the same interned structural type.
         if evaluated_precedes_application
             && self.get_display_alias(evaluated).is_some_and(|existing| {
                 matches!(self.lookup(existing), Some(TypeData::Application(_)))

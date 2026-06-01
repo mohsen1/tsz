@@ -7,7 +7,8 @@ impl<'a> CheckerState<'a> {
         array_type: TypeId,
         other: TypeId,
     ) -> Option<String> {
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, array_type) {
+        if crate::query_boundaries::diagnostics::is_type_parameter_like(self.ctx.types, array_type)
+        {
             return None;
         }
         let element_type =
@@ -38,7 +39,7 @@ impl<'a> CheckerState<'a> {
         element_type: TypeId,
     ) -> Option<TypeId> {
         if let Some(static_type) = self.static_schema_alias_def_structural_type(
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, element_type),
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, element_type),
         ) {
             return Some(static_type);
         }
@@ -52,7 +53,7 @@ impl<'a> CheckerState<'a> {
                 return self.static_schema_element_structural_type(alias);
             }
             if let Some(static_type) = self.static_schema_alias_def_structural_type(
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias),
+                crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, alias),
             ) {
                 return Some(static_type);
             }
@@ -86,7 +87,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        let Some(def_id) = crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, base)
         else {
             return false;
         };
