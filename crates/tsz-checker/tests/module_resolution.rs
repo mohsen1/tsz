@@ -1504,7 +1504,7 @@ fn test_resolution_priority_ranks_source_before_declaration() {
     assert!(resolution_priority("foo.tsx") < resolution_priority("foo.d.ts"));
     assert!(resolution_priority("foo.mts") < resolution_priority("foo.d.mts"));
     assert!(resolution_priority("foo.cts") < resolution_priority("foo.d.cts"));
-    // TypeScript surfaces outrank JavaScript ones.
+    // TypeScript surfaces outrank JavaScript ones in their own group.
     assert!(resolution_priority("foo.ts") < resolution_priority("foo.js"));
     assert!(resolution_priority("foo.d.ts") < resolution_priority("foo.js"));
     // Unknown extensions sort last.
@@ -1512,6 +1512,84 @@ fn test_resolution_priority_ranks_source_before_declaration() {
         resolution_priority("foo.unknown"),
         RESOLUTION_EXTENSIONS.len()
     );
+}
+
+#[test]
+fn test_resolution_priority_matches_tsc_group_order() {
+    // Mirrors tsc's `allSupportedExtensions`:
+    //   [Ts, Tsx, Dts, Js, Jsx], [Cts, Dcts, Cjs], [Mts, Dmts, Mjs]
+    //
+    // The CJS-tagged group precedes the ESM-tagged group, so `.cts`/`.cjs`
+    // outrank `.mts`/`.mjs`. The universal first group puts `.js`/`.jsx`
+    // alongside `.ts`/`.tsx`/`.d.ts`, ahead of either module-tagged group.
+    //
+    // Pre-fix, `tsz-core::TS_EXTENSION_CANDIDATES` ranked `.mts` ahead of
+    // `.cts`, diverging from tsc on every extensionless path-mapping stem
+    // collision in default / Classic / Bundler modes.
+
+    // CJS-tagged group precedes ESM-tagged group across all surfaces.
+    assert!(resolution_priority("foo.cts") < resolution_priority("foo.mts"));
+    assert!(resolution_priority("foo.d.cts") < resolution_priority("foo.d.mts"));
+    assert!(resolution_priority("foo.cts") < resolution_priority("foo.d.mts"));
+    assert!(resolution_priority("foo.cjs") < resolution_priority("foo.mjs"));
+
+    // Universal first group `[Ts, Tsx, Dts, Js, Jsx]` precedes both module groups.
+    assert!(resolution_priority("foo.js") < resolution_priority("foo.cts"));
+    assert!(resolution_priority("foo.jsx") < resolution_priority("foo.cts"));
+    assert!(resolution_priority("foo.jsx") < resolution_priority("foo.mts"));
+    assert!(resolution_priority("foo.cjs") < resolution_priority("foo.mts"));
+}
+
+#[test]
+fn test_fan_out_picks_cjs_tagged_sibling_over_esm_tagged_sibling() {
+    // Structural rule: `tsc`'s `allSupportedExtensions` keeps the CJS-tagged
+    // group ahead of the ESM-tagged group, so an extensionless stem with
+    // siblings in both groups must pick the CJS-tagged one. Covers the
+    // `.cts`/`.mts` (TS source), `.d.cts`/`.d.mts` (TS declaration), and
+    // `.cjs`/`.mjs` (JS) variants. Each row is tested under both file
+    // orderings to prove the fan-out is order-independent.
+    let rows: &[(&str, &str, &str)] = &[
+        ("dual", "cts", "mts"),
+        ("dual", "d.cts", "d.mts"),
+        ("legacy", "cjs", "mjs"),
+    ];
+    for (stem, cjs_ext, esm_ext) in rows {
+        let cjs_file = format!("/proj/{stem}.{cjs_ext}");
+        let esm_file = format!("/proj/{stem}.{esm_ext}");
+        for files in [
+            ["/proj/main.ts", cjs_file.as_str(), esm_file.as_str()],
+            ["/proj/main.ts", esm_file.as_str(), cjs_file.as_str()],
+        ] {
+            let idx = file_index_from(&files);
+            let resolved =
+                resolve_specifier_via_file_index("/proj/main.ts", &format!("./{stem}"), &idx);
+            assert_eq!(
+                resolved.map(|i| files[i]),
+                Some(cjs_file.as_str()),
+                "files={files:?}: ./{stem} must resolve to the .{cjs_ext} sibling \
+                 — CJS-tagged group precedes ESM-tagged group",
+            );
+        }
+    }
+}
+
+#[test]
+fn test_fan_out_prefers_universal_group_over_module_tagged_group() {
+    // `allSupportedExtensions` puts the universal `[Ts, Tsx, Dts, Js, Jsx]`
+    // group ahead of either module-tagged group, so a stem with a `.js`
+    // sibling and a `.cts` sibling resolves to the `.js` file.
+    for files in [
+        vec!["/proj/main.ts", "/proj/dual.cts", "/proj/dual.js"],
+        vec!["/proj/main.ts", "/proj/dual.js", "/proj/dual.cts"],
+    ] {
+        let idx = file_index_from(&files);
+        let resolved = resolve_specifier_via_file_index("/proj/main.ts", "./dual", &idx);
+        assert_eq!(
+            resolved.map(|i| files[i]),
+            Some("/proj/dual.js"),
+            "files={files:?}: ./dual must resolve to dual.js — universal group precedes CJS-tagged group",
+        );
+    }
 }
 
 #[test]

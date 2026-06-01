@@ -46,6 +46,59 @@ pub const KNOWN_MODULE_EXTENSIONS: &[&str] = &[
     ".json",
 ];
 
+// ---------------------------------------------------------------------------
+// Resolution-candidate priority lists (tsc parity)
+//
+// These mirror tsc's `supportedTSExtensions` and `allSupportedExtensions`
+// from `src/compiler/utilities.ts` (TypeScript 5.5+). They are the single
+// source of truth for extensionless-stem fan-out order across the crates:
+//
+//   tsz-common      — defines the order (this file)
+//   tsz-core        — uses `BARE_*` lists (no leading dot) for filesystem probes
+//   tsz-cli         — uses `BARE_*` lists for the CLI driver probes
+//   tsz-lsp         — uses `BARE_*` lists for module-specifier inference
+//   tsz-checker     — uses `DOTTED_*` lists for filename-index lookups
+//
+// Structural rule from tsc (`supportedTSExtensions`):
+//
+//   [[Ts, Tsx, Dts], [Cts, Dcts], [Mts, Dmts]]
+//
+// Grouped by module flavor: the universal TS group first, then the CJS-tagged
+// pair, then the ESM-tagged pair. Source surfaces precede their declaration
+// counterpart inside each group. `supportedJSExtensions` follows the same
+// shape: `[[Js, Jsx], [Mjs], [Cjs]]` — note that for JS, `mjs` precedes `cjs`,
+// the opposite of the TS grouping. `allSupportedExtensions` interleaves them
+// by module flavor: `[[Ts, Tsx, Dts, Js, Jsx], [Cts, Dcts, Cjs], [Mts, Dmts, Mjs]]`.
+// ---------------------------------------------------------------------------
+
+/// TS-only resolution candidate priority, with leading dot. Mirrors tsc's
+/// `supportedTSExtensions` flattened. Used by `tsz-checker` for
+/// filename-index probing where each entry already carries the dot.
+pub const TSC_TS_RESOLUTION_EXTENSIONS: &[&str] =
+    &[".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"];
+
+/// TS+JS resolution candidate priority, with leading dot. Mirrors tsc's
+/// `allSupportedExtensions` flattened: TS+JS are interleaved by module
+/// flavor (`[Ts, Tsx, Dts, Js, Jsx], [Cts, Dcts, Cjs], [Mts, Dmts, Mjs]`).
+/// Used by `tsz-checker` for stem fan-out on projects that may contain
+/// either TS or JS files.
+pub const TSC_TS_JS_RESOLUTION_EXTENSIONS: &[&str] = &[
+    ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts", ".d.mts", ".mjs",
+];
+
+/// TS-only resolution candidate priority, without leading dot. Mirrors
+/// `TSC_TS_RESOLUTION_EXTENSIONS`. Used by `tsz-core` / `tsz-cli` / `tsz-lsp`
+/// where the probe API takes the bare extension stem (it appends the dot
+/// internally via `Path::with_extension`).
+pub const TSC_TS_RESOLUTION_EXTENSIONS_BARE: &[&str] =
+    &["ts", "tsx", "d.ts", "cts", "d.cts", "mts", "d.mts"];
+
+/// TS+JS resolution candidate priority, without leading dot. Mirrors
+/// `TSC_TS_JS_RESOLUTION_EXTENSIONS`.
+pub const TSC_TS_JS_RESOLUTION_EXTENSIONS_BARE: &[&str] = &[
+    "ts", "tsx", "d.ts", "js", "jsx", "cts", "d.cts", "cjs", "mts", "d.mts", "mjs",
+];
+
 /// Strip a TS-family extension from a module-specifier display string.
 /// Matches tsc's `typeof import("X")` behaviour: TS extensions are dropped,
 /// JS extensions (and unknown suffixes) are preserved.
@@ -289,6 +342,48 @@ mod tests {
         assert!(include_pattern_has_supported_extension("src/index.mjs"));
         assert!(!include_pattern_has_supported_extension("src/*.json"));
         assert!(!include_pattern_has_supported_extension("src"));
+    }
+
+    #[test]
+    fn resolution_priority_lists_match_tsc_supported_extensions() {
+        // `supportedTSExtensions = [[Ts, Tsx, Dts], [Cts, Dcts], [Mts, Dmts]]`
+        // — universal TS group, then CJS-tagged group, then ESM-tagged group.
+        assert_eq!(
+            TSC_TS_RESOLUTION_EXTENSIONS,
+            &[".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"],
+        );
+        // `allSupportedExtensions = [[Ts, Tsx, Dts, Js, Jsx], [Cts, Dcts, Cjs], [Mts, Dmts, Mjs]]`
+        // — JS surfaces sit in the universal first group; `.cjs` ships with
+        // the CJS-tagged group; `.mjs` ships with the ESM-tagged group.
+        assert_eq!(
+            TSC_TS_JS_RESOLUTION_EXTENSIONS,
+            &[
+                ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts", ".d.mts",
+                ".mjs",
+            ],
+        );
+    }
+
+    #[test]
+    fn bare_resolution_lists_mirror_dotted_lists_without_leading_dot() {
+        // The bare lists are the same priority order, with the leading dot
+        // stripped. `tsz-core` / `tsz-cli` / `tsz-lsp` append the dot via
+        // `Path::with_extension`, so they consume the bare form.
+        for (dotted, bare) in [
+            (
+                TSC_TS_RESOLUTION_EXTENSIONS,
+                TSC_TS_RESOLUTION_EXTENSIONS_BARE,
+            ),
+            (
+                TSC_TS_JS_RESOLUTION_EXTENSIONS,
+                TSC_TS_JS_RESOLUTION_EXTENSIONS_BARE,
+            ),
+        ] {
+            assert_eq!(dotted.len(), bare.len());
+            for (d, b) in dotted.iter().zip(bare) {
+                assert_eq!(d.strip_prefix('.'), Some(*b), "{d} → {b}");
+            }
+        }
     }
 
     #[test]

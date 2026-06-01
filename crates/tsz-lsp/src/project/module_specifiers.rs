@@ -14,9 +14,8 @@ use tsz_parser::parser::node::NodeAccess;
 
 use super::{ImportSpecifierPreference, Project};
 
-const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
-const TS_EXTENSION_SUFFIXES: [&str; 7] =
-    [".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
+use tsz_common::file_extensions::TS_FAMILY_EXTENSIONS as TS_EXTENSION_SUFFIXES;
+use tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE as TS_EXTENSION_CANDIDATES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RelativeImportStyle {

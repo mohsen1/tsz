@@ -357,10 +357,10 @@ pub(super) fn relative_module_path_candidates(
     }
 
     let mut candidates = Vec::new();
-    for ext in ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"] {
+    for ext in tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE {
         candidates.push(format!("{joined_str}.{ext}"));
     }
-    for ext in ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"] {
+    for ext in tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE {
         candidates.push(format!("{joined_str}/index.{ext}"));
     }
     candidates

@@ -1134,7 +1134,7 @@ impl Server {
         }
 
         let mut candidates = Vec::new();
-        let exts = ["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+        let exts = tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS_BARE;
 
         let push_path = |out: &mut Vec<String>, path: std::path::PathBuf| {
             let normalized = Self::normalize_virtual_path(&path.to_string_lossy());

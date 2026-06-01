@@ -2279,7 +2279,7 @@ impl Server {
         specifier: &str,
     ) -> Option<std::path::PathBuf> {
         let base = Self::normalize_path(&importer_dir.join(specifier));
-        const EXTS: &[&str] = &["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+        const EXTS: &[&str] = tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS_BARE;
         let exists_anywhere = |p: &std::path::Path| -> bool {
             if p.exists() {
                 return true;
