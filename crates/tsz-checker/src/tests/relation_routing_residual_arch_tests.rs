@@ -39,14 +39,26 @@ fn allowed_raw_relation(relative_path: &str, line: &str) -> bool {
         return true;
     }
 
-    if relative_path.starts_with("src/query_boundaries/")
-        && line.contains(".assign_relation_outcome(")
+    if relative_path == "src/query_boundaries/assignability.rs"
+        && (line.contains(".assign_relation_outcome(")
+            || line.contains(".assign_relation_outcome_with_env("))
     {
+        return true;
+    }
+
+    if inline_arch_test_relation_assertion(relative_path, line) {
         return true;
     }
 
     relative_path == "src/types/computation/array_literal.rs"
         && line.contains("self.is_subtype_of(elem_type, context_element_type)")
+}
+
+fn inline_arch_test_relation_assertion(relative_path: &str, line: &str) -> bool {
+    relative_path.starts_with("src/query_boundaries/")
+        && line.contains(".contains(\"")
+        && (line.contains(".assign_relation_outcome(")
+            || line.contains(".assign_relation_outcome_with_env("))
 }
 
 #[test]
