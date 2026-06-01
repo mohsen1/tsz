@@ -158,6 +158,25 @@ count_pr_token_rows() {
   '
 }
 
+count_ready_unqueued_pr_rows() {
+  local rows="$1"
+  if [[ -z "$rows" ]]; then
+    echo 0
+    return
+  fi
+  printf '%s\n' "$rows" | awk '
+    $2 == "ready" {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "mergeQueue=off") {
+          count++
+          next
+        }
+      }
+    }
+    END { print count + 0 }
+  '
+}
+
 json_array_from_lines() {
   local rows="$1"
   ROWS="$rows" node <<'NODE'
@@ -223,6 +242,7 @@ for agent in "${SELECTED[@]}"; do
   ready_pr_count="$(count_pr_state_rows "$prs" ready)"
   draft_pr_count="$(count_pr_state_rows "$prs" draft)"
   merge_queue_pr_count="$(count_pr_token_rows "$prs" "mergeQueue=on")"
+  ready_unqueued_pr_count="$(count_ready_unqueued_pr_rows "$prs")"
   echo ""
   echo "Issues:"
   issues="$(
@@ -248,6 +268,7 @@ for agent in "${SELECTED[@]}"; do
   echo "owned_ready_pr_count=$ready_pr_count"
   echo "owned_draft_pr_count=$draft_pr_count"
   echo "owned_merge_queue_pr_count=$merge_queue_pr_count"
+  echo "owned_ready_unqueued_pr_count=$ready_unqueued_pr_count"
   echo "owned_issue_count=$issue_count"
   echo "owned_work_status=$owned_work_status"
   echo ""
@@ -262,6 +283,7 @@ for agent in "${SELECTED[@]}"; do
       ROW_READY_PR_COUNT="$ready_pr_count" \
       ROW_DRAFT_PR_COUNT="$draft_pr_count" \
       ROW_MERGE_QUEUE_PR_COUNT="$merge_queue_pr_count" \
+      ROW_READY_UNQUEUED_PR_COUNT="$ready_unqueued_pr_count" \
       ROW_ISSUE_COUNT="$issue_count" \
       ROW_STATUS="$owned_work_status" \
       ROW_PRS="$pr_json" \
@@ -276,6 +298,7 @@ const row = {
   ready_pr_count: Number(process.env.ROW_READY_PR_COUNT ?? 0),
   draft_pr_count: Number(process.env.ROW_DRAFT_PR_COUNT ?? 0),
   merge_queue_pr_count: Number(process.env.ROW_MERGE_QUEUE_PR_COUNT ?? 0),
+  ready_unqueued_pr_count: Number(process.env.ROW_READY_UNQUEUED_PR_COUNT ?? 0),
   issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
   owned_work_clear: process.env.ROW_STATUS === "clear",
   owned_work_status: process.env.ROW_STATUS,
@@ -313,6 +336,10 @@ const totalMergeQueuePrCount = agents.reduce(
   (sum, agent) => sum + Number(agent.merge_queue_pr_count ?? 0),
   0,
 );
+const totalReadyUnqueuedPrCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.ready_unqueued_pr_count ?? 0),
+  0,
+);
 const totalIssueCount = agents.reduce(
   (sum, agent) => sum + Number(agent.issue_count ?? 0),
   0,
@@ -332,6 +359,7 @@ const report = {
   total_ready_pr_count: totalReadyPrCount,
   total_draft_pr_count: totalDraftPrCount,
   total_merge_queue_pr_count: totalMergeQueuePrCount,
+  total_ready_unqueued_pr_count: totalReadyUnqueuedPrCount,
   total_issue_count: totalIssueCount,
   total_owned_count: totalOwnedCount,
   agents,
