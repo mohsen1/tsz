@@ -6,7 +6,7 @@ pub(crate) use super::common::{
     contains_type_parameter_named, contains_type_parameters, enum_def_id, intersection_list_id,
     intersection_members, is_symbol_or_unique_symbol, is_template_literal_type, lazy_def_id,
     literal_value, no_infer_inner_type, object_shape_for_type, union_list_id, union_members,
-    widen_literal_to_primitive,
+    widen_literal_to_primitive, widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 

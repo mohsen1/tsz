@@ -165,6 +165,59 @@ var arr: any[];
 }
 
 #[test]
+fn redeclaration_display_uses_window_annotation_with_renamed_members() {
+    let source = r#"
+function chooseThree<T extends any>(a: T, b: T, c: T): T {
+    return null as any;
+}
+var renamed = chooseThree(undefined, { x: 6, renamedMember: window }, { x: 6, other: '' });
+var renamed: {};
+"#;
+
+    let diagnostics = diagnostics_with_libs(source);
+    let ts2403 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2403 && diagnostic.message_text.contains("Variable 'renamed'")
+        })
+        .expect("expected renamed TS2403 redeclaration diagnostic");
+
+    assert!(
+        ts2403
+            .message_text
+            .contains("renamedMember: Window & typeof globalThis; other?: undefined;"),
+        "expected renamed member to use the global Window intersection, got: {ts2403:?}"
+    );
+}
+
+#[test]
+fn redeclaration_display_uses_local_window_annotation_provenance() {
+    let source = r#"
+declare var localWindow: Window & typeof globalThis;
+function chooseThree<T extends any>(a: T, b: T, c: T): T {
+    return null as any;
+}
+var localCase = chooseThree(undefined, { x: 6, localMember: localWindow }, { x: 6, other: '' });
+var localCase: {};
+"#;
+
+    let diagnostics = diagnostics_with_libs(source);
+    let ts2403 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2403 && diagnostic.message_text.contains("Variable 'localCase'")
+        })
+        .expect("expected localCase TS2403 redeclaration diagnostic");
+
+    assert!(
+        ts2403
+            .message_text
+            .contains("localMember: Window & typeof globalThis; other?: undefined;"),
+        "expected local annotation provenance to drive display, got: {ts2403:?}"
+    );
+}
+
+#[test]
 fn object_group_by_key_constraint_uses_property_key_in_diagnostic() {
     let source = r#"
 interface Employee {
