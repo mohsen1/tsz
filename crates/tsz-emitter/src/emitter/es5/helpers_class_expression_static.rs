@@ -38,10 +38,10 @@ impl<'a> Printer<'a> {
                 && !self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                && !self
+                && self
                     .arena
                     .get(prop.name)
-                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+                    .is_none_or(|n| n.kind != SyntaxKind::PrivateIdentifier as u16)
         })
     }
 
