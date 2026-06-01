@@ -26,17 +26,21 @@ impl<'a> CheckerState<'a> {
                 format_peer,
             ));
         }
-        if !self.is_static_schema_application(element_type) {
+        let Some(schema_type) = self
+            .static_schema_application_schema_type(element_type)
+            .or_else(|| self.static_schema_alias_application_schema_type(element_type))
+        else {
             return None;
-        }
-        if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
-            let schema_type = self.evaluate_type_for_assignability(schema_type);
-            if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
-                return Some(self.format_static_schema_array_structural_type(
-                    static_type,
-                    format_peer,
-                ));
-            }
+        };
+        let schema_type = self
+            .static_schema_type_query_value_type(schema_type)
+            .unwrap_or_else(|| self.resolve_type_query_type(schema_type));
+        let schema_type = self.evaluate_type_for_assignability(schema_type);
+        if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
+            return Some(self.format_static_schema_array_structural_type(
+                static_type,
+                format_peer,
+            ));
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
         Some(self.format_static_schema_array_structural_type(
@@ -92,11 +96,6 @@ impl<'a> CheckerState<'a> {
             .and_then(|body| self.static_schema_element_structural_type(body))
     }
 
-    fn is_static_schema_application(&self, type_id: TypeId) -> bool {
-        self.static_schema_application_schema_type(type_id)
-            .is_some()
-    }
-
     pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {
         let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
         else {
@@ -138,6 +137,9 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
         if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
+            let schema_type = self
+                .static_schema_type_query_value_type(schema_type)
+                .unwrap_or_else(|| self.resolve_type_query_type(schema_type));
             let schema_type = self.evaluate_type_for_assignability(schema_type);
             if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
                 return Some(static_type);
@@ -196,6 +198,39 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn static_schema_application_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
         let (_base, args) = self.static_schema_application_info(type_id)?;
         args.first().copied()
+    }
+
+    fn static_schema_alias_application_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(schema_type) = self.static_schema_type_alias_body_schema_type(type_id) {
+            return Some(schema_type);
+        }
+        let alias = self.ctx.types.get_display_alias(type_id)?;
+        self.static_schema_application_schema_type(alias)
+            .or_else(|| self.static_schema_type_alias_body_schema_type(alias))
+    }
+
+    fn static_schema_type_alias_body_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        self.static_schema_application_schema_type(def.body?)
+    }
+
+    fn static_schema_type_query_value_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let sym_ref =
+            crate::query_boundaries::common::get_type_query_symbol_ref(self.ctx.types, type_id)?;
+        let sym_id = tsz_binder::SymbolId(sym_ref.0);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration.into_option().or_else(|| {
+            symbol.declarations.iter().copied().find(|decl| {
+                self.ctx.arena.get(*decl).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION
+                })
+            })
+        })?;
+        Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
     }
 
     fn typebox_schema_static_type(&mut self, schema_type: TypeId, depth: u8) -> Option<TypeId> {

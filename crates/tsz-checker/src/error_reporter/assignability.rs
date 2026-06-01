@@ -777,7 +777,15 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                let has_static_schema_display = self
+                    .static_schema_array_structural_display(source, target)
+                    .is_some()
+                    || self
+                        .static_schema_array_structural_display(target, source)
+                        .is_some();
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && !has_static_schema_display
+                {
                     diag.message_text = self
                         .rewrite_declared_generic_alias_source_in_ts2322_message(
                             anchor_idx,
@@ -1029,14 +1037,18 @@ impl<'a> CheckerState<'a> {
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
+        let mut static_schema_display = false;
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
             source_str = display;
+            static_schema_display = true;
         }
         if let Some(display) = self.static_schema_array_structural_display(target, source) {
             target_str = display;
+            static_schema_display = true;
         }
-        if let Some((direct_source, direct_target)) =
-            self.direct_type_param_alias_application_pair_display(source, target)
+        if !static_schema_display
+            && let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
         {
             source_str = direct_source;
             target_str = direct_target;
@@ -1889,14 +1901,18 @@ impl<'a> CheckerState<'a> {
             ) {
                 src_str = display;
             }
+            let mut static_schema_display = false;
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 src_str = display;
+                static_schema_display = true;
             }
             if let Some(display) = self.static_schema_array_structural_display(target, source) {
                 tgt_str = display;
+                static_schema_display = true;
             }
-            if let Some((direct_source, direct_target)) =
-                self.direct_type_param_alias_application_pair_display(source, target)
+            if !static_schema_display
+                && let Some((direct_source, direct_target)) =
+                    self.direct_type_param_alias_application_pair_display(source, target)
             {
                 src_str = direct_source;
                 tgt_str = direct_target;

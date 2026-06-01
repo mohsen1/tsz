@@ -279,3 +279,64 @@ function convert<Result extends Output[]>(ors: Input[]): Result {
         "TS2322 should include the arbitrary-type elaboration for the bare target parameter, got: {diag:?}"
     );
 }
+
+#[test]
+fn static_schema_alias_array_return_to_bare_type_parameter_uses_structural_source_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface TSchema { static: unknown }
+interface TString extends TSchema { static: string }
+interface TObject<T extends Record<string, TSchema>> extends TSchema {
+    static: { [K in keyof T]: Static<T[K]> }
+}
+type Static<T extends TSchema> = T["static"];
+declare const Type: {
+    String(): TString;
+    Object<T extends Record<string, TSchema>>(properties: T): TObject<T>;
+};
+
+type Input = Static<typeof Input>;
+const Input = Type.Object({
+    level1: Type.Object({
+        level2: Type.Object({
+            foo: Type.String(),
+        }),
+    }),
+});
+
+type Output = Static<typeof Output>;
+const Output = Type.Object({
+    level1: Type.Object({
+        level2: Type.Object({
+            foo: Type.String(),
+            bar: Type.String(),
+        }),
+    }),
+});
+
+function convert<Result extends Output[]>(ors: Input[]): Result {
+    return ors;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for static-schema alias array return");
+    assert!(
+        diag.message_text
+            .contains("Type '{ level1: { level2: { foo: string; }; }; }[]' is not assignable to type 'Result'.")
+            && !diag.message_text.contains("Input[]")
+            && !diag.message_text.contains("Output[]"),
+        "TS2322 should structurally display the static-schema alias source while keeping the bare target, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information.iter().any(|related| {
+            related.code == crate::diagnostics::diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO
+                && related.message_text.contains("'Result' could be instantiated with an arbitrary type")
+                && related.message_text.contains("{ level1: { level2: { foo: string; }; }; }[]")
+        }),
+        "TS2322 should use the structural source display in the arbitrary-type elaboration, got: {diag:?}"
+    );
+}
