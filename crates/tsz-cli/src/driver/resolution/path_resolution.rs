@@ -525,9 +525,9 @@ pub(crate) const fn extension_candidates_for_resolution(
         ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => match package_type {
             Some(PackageType::Module) => &NODE16_MODULE_EXTENSION_CANDIDATES,
             Some(PackageType::CommonJs) => &NODE16_COMMONJS_EXTENSION_CANDIDATES,
-            None => &TS_EXTENSION_CANDIDATES,
+            None => TS_EXTENSION_CANDIDATES,
         },
-        _ => &TS_EXTENSION_CANDIDATES,
+        _ => TS_EXTENSION_CANDIDATES,
     }
 }
 
@@ -748,8 +748,11 @@ pub(crate) const KNOWN_EXTENSIONS: [&str; 12] = [
     ".d.mts", ".d.cts", ".d.ts", ".mts", ".cts", ".tsx", ".ts", ".mjs", ".cjs", ".jsx", ".js",
     ".json",
 ];
-pub(crate) const TS_EXTENSION_CANDIDATES: [&str; 7] =
-    ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
+/// TS-only candidate priority for non-Node16 fan-outs (path mapping, baseUrl,
+/// classic, bundler). Mirrors tsc's `supportedTSExtensions` via the shared
+/// constant in `tsz-common::file_extensions` so all crates use the same order.
+pub(crate) const TS_EXTENSION_CANDIDATES: &[&str] =
+    tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE;
 pub(crate) const PACKAGE_INDEX_FALLBACK_EXTENSIONS: [&str; 3] = ["ts", "tsx", "d.ts"];
 pub(crate) const PACKAGE_INDEX_FALLBACK_ALLOW_JS_EXTENSIONS: [&str; 5] =
     ["ts", "tsx", "d.ts", "js", "jsx"];

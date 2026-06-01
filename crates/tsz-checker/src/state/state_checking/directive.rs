@@ -82,15 +82,11 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        let unresolved_extensions: Vec<&'static str> =
-            if self.ctx.compiler_options.allow_js || self.ctx.is_js_file() {
-                vec![
-                    ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts",
-                    ".d.mts", ".mjs",
-                ]
-            } else {
-                vec![".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
-            };
+        let unresolved_extensions = if self.ctx.compiler_options.allow_js || self.ctx.is_js_file() {
+            tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS
+        } else {
+            tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS
+        };
 
         for (reference_path, line_num, quote_offset) in references {
             if !has_virtual_reference(&reference_path) {

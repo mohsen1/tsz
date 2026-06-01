@@ -14,9 +14,16 @@ use tsz_parser::parser::node::NodeAccess;
 
 use super::{ImportSpecifierPreference, Project};
 
-const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
-const TS_EXTENSION_SUFFIXES: [&str; 7] =
-    [".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
+/// Mirrors tsc's `supportedTSExtensions` (shared with `tsz-core` and `tsz-cli`
+/// via `tsz-common::file_extensions`). Source-before-decl per group, with
+/// `[Cts, Dcts]` ordered before `[Mts, Dmts]`.
+const TS_EXTENSION_CANDIDATES: &[&str] =
+    tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE;
+
+/// Declaration-first stripping order for `strip_ts_extension` below. Sharing
+/// `tsz_common::file_extensions::TS_FAMILY_EXTENSIONS` keeps every "strip a
+/// TS-family suffix" loop in lock-step.
+const TS_EXTENSION_SUFFIXES: &[&str] = tsz_common::file_extensions::TS_FAMILY_EXTENSIONS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RelativeImportStyle {

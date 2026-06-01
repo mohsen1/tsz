@@ -194,24 +194,24 @@ impl ModuleResolver {
                 }
                 None => {
                     if self.allow_js {
-                        &TS_JS_EXTENSION_CANDIDATES
+                        TS_JS_EXTENSION_CANDIDATES
                     } else {
-                        &TS_EXTENSION_CANDIDATES
+                        TS_EXTENSION_CANDIDATES
                     }
                 }
             },
             ModuleResolutionKind::Classic => {
                 if self.allow_js {
-                    &TS_JS_EXTENSION_CANDIDATES
+                    TS_JS_EXTENSION_CANDIDATES
                 } else {
-                    &CLASSIC_EXTENSION_CANDIDATES
+                    CLASSIC_EXTENSION_CANDIDATES
                 }
             }
             _ => {
                 if self.allow_js {
-                    &TS_JS_EXTENSION_CANDIDATES
+                    TS_JS_EXTENSION_CANDIDATES
                 } else {
-                    &TS_EXTENSION_CANDIDATES
+                    TS_EXTENSION_CANDIDATES
                 }
             }
         }

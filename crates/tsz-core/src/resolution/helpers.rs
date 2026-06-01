@@ -506,8 +506,11 @@ pub(crate) const KNOWN_EXTENSIONS: [&str; 12] = [
     ".d.mts", ".d.cts", ".d.ts", ".mts", ".cts", ".tsx", ".ts", ".mjs", ".cjs", ".jsx", ".js",
     ".json",
 ];
-pub(crate) const TS_EXTENSION_CANDIDATES: [&str; 7] =
-    ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
+/// TS-only candidate priority for path-mapping, baseUrl, classic, and bundler
+/// probes (mirrors tsc's `supportedTSExtensions` — `[Ts, Tsx, Dts]` then
+/// `[Cts, Dcts]` then `[Mts, Dmts]`).
+pub(crate) const TS_EXTENSION_CANDIDATES: &[&str] =
+    tsz_common::file_extensions::TSC_TS_RESOLUTION_EXTENSIONS_BARE;
 pub(crate) const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
 pub(crate) const NODE16_MODULE_ALLOWJS_EXTENSION_CANDIDATES: [&str; 11] = [
@@ -518,12 +521,13 @@ pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
 pub(crate) const NODE16_COMMONJS_ALLOWJS_EXTENSION_CANDIDATES: [&str; 11] = [
     "cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts", "cjs", "js", "jsx", "mjs",
 ];
-pub(crate) const CLASSIC_EXTENSION_CANDIDATES: [&str; 7] = TS_EXTENSION_CANDIDATES;
+pub(crate) const CLASSIC_EXTENSION_CANDIDATES: &[&str] = TS_EXTENSION_CANDIDATES;
 
-/// Extension candidates when allowJs is enabled (TypeScript + JavaScript)
-pub(crate) const TS_JS_EXTENSION_CANDIDATES: [&str; 11] = [
-    "ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts", "js", "jsx", "mjs", "cjs",
-];
+/// TS+JS candidate priority for path-mapping, baseUrl, classic, and bundler
+/// probes when `allowJs` is enabled (mirrors tsc's `allSupportedExtensions` —
+/// `[Ts, Tsx, Dts, Js, Jsx]` then `[Cts, Dcts, Cjs]` then `[Mts, Dmts, Mjs]`).
+pub(crate) const TS_JS_EXTENSION_CANDIDATES: &[&str] =
+    tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS_BARE;
 
 pub(crate) fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<PathBuf>> {
     let replacements: &[&str] = match extension {

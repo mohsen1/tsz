@@ -58,20 +58,30 @@ const TS_EXTENSIONS: &[&str] = &[
 ];
 
 /// File extensions in `tsc` resolution-candidate priority order, mirroring
-/// TypeScript's `getSupportedExtensions`: an implementation (source) file wins
-/// over its declaration counterpart (`.ts` before `.d.ts`, `.mts` before
-/// `.d.mts`, `.cts` before `.d.cts`), `.ts`/`.tsx` precede `.cts`/`.mts`, and
-/// every TypeScript surface precedes its JavaScript counterpart. So `./foo`
-/// resolves to a `foo.ts` source ahead of a sibling `foo.d.ts`, exactly as
-/// `tsc` does. The same order is used by `tsz_core::module_resolver` and by the
-/// triple-slash directive resolver in `state_checking::directive`.
+/// TypeScript's `allSupportedExtensions`:
+///
+/// ```text
+///   [Ts, Tsx, Dts, Js, Jsx], [Cts, Dcts, Cjs], [Mts, Dmts, Mjs]
+/// ```
+///
+/// Grouped by module flavor, with source surfaces ahead of their declaration
+/// counterpart inside each group. So `./foo` resolves to a `foo.ts` source
+/// ahead of a sibling `foo.d.ts`; a `foo.cts` precedes a sibling `foo.mts`
+/// because the CJS-tagged group precedes the ESM-tagged group; and a `foo.cjs`
+/// precedes a sibling `foo.mjs` for the same reason (`.cjs` lives in the
+/// CJS-tagged group, `.mjs` in the ESM-tagged group).
+///
+/// This list is the dotted form of [`tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS`].
+/// `tsz_core::module_resolver`'s default-mode `allow_js` path consumes the
+/// bare counterpart of the same shared constant; its Node16/Classic paths
+/// use distinct flavor-grouped lists also rooted in `tsz_common`. The
+/// triple-slash directive resolver in `state_checking::directive` follows the
+/// same shared order.
 ///
 /// This is intentionally distinct from [`TS_EXTENSIONS`], which is ordered
 /// declaration-first purely so suffix *stripping* works. There is no real
 /// `.d.tsx` file in TypeScript, so it is absent here.
-const RESOLUTION_EXTENSIONS: &[&str] = &[
-    ".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts", ".js", ".jsx", ".cjs", ".mjs",
-];
+const RESOLUTION_EXTENSIONS: &[&str] = tsz_common::file_extensions::TSC_TS_JS_RESOLUTION_EXTENSIONS;
 
 /// `tsc` resolution priority of a concrete file path: the position of its
 /// extension in [`RESOLUTION_EXTENSIONS`], where a lower value means higher

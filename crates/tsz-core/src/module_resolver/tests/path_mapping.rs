@@ -334,3 +334,51 @@ fn test_path_mapping_nextjs_guard_config_pattern() {
         .expect("\"*\" catch-all must resolve react to external.d.ts");
     assert_eq!(react.resolved_path, fx.join("external.d.ts"));
 }
+
+// ── tsc-canonical extension priority for extensionless aliases ───────────────
+//
+// Regression for issue #10944. Structural rule: for an extensionless alias /
+// path-mapping target (i.e. no package context — `package_type = None`), tsc's
+// `supportedTSExtensions` orders the candidates as
+// `[Ts, Tsx, Dts], [Cts, Dcts], [Mts, Dmts]`. The CJS-tagged group precedes
+// the ESM-tagged group, so a `.cts` sibling outranks a `.mts` sibling. Pre-fix,
+// `tsz-core::TS_EXTENSION_CANDIDATES` had `mts` ahead of `cts` and the
+// extensionless fan-out picked the wrong sibling on every stem collision in
+// Bundler / Classic / path-mapping resolution.
+
+#[test]
+fn test_path_mapping_extensionless_alias_follows_tsc_group_order() {
+    // Three rows exercising the same structural rule on different surfaces:
+    // (sibling extensions to drop into `src/dual.*`, expected winner). The
+    // first two rows test the CJS-vs-ESM grouping; the third confirms the
+    // universal `[Ts, Tsx, Dts]` group still outranks both module-tagged
+    // groups. Per row, `make_options` builds a fresh resolver against the
+    // same `@app/*` → `src/*` alias.
+    let rows: &[(&[&str], &str)] = &[
+        (&["src/dual.cts", "src/dual.mts"], "src/dual.cts"),
+        (&["src/dual.d.cts", "src/dual.d.mts"], "src/dual.d.cts"),
+        (
+            &["src/dual.ts", "src/dual.cts", "src/dual.mts"],
+            "src/dual.ts",
+        ),
+    ];
+    for (siblings, expected) in rows {
+        let fx = TempFixture::new();
+        for sibling in *siblings {
+            fx.write(sibling, "export const v: number;");
+        }
+        fx.write("index.ts", "import '@app/dual';");
+
+        let options = make_options(fx.path(), vec![pm("@app/*", "@app/", &["src/*"])]);
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve("@app/dual", &fx.join("index.ts"), Span::new(0, 9))
+            .expect("@app/dual must resolve");
+        assert_eq!(
+            resolved.resolved_path,
+            fx.join(expected),
+            "siblings={siblings:?}: extensionless @app/dual must pick {expected} \
+             per tsc's supportedTSExtensions grouping",
+        );
+    }
+}
