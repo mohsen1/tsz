@@ -1987,6 +1987,7 @@ export_results_json() {
     BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
     PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
     PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
+    DIAGNOSTIC_SUBSYSTEMS_JSON_PATH="$PROJECT_ROOT/scripts/ci/diagnostic-subsystems.json" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
 const os = require("node:os");
@@ -2146,28 +2147,7 @@ function normalizedDiagnosticDeltas(recorded) {
     .slice(0, 20);
 }
 
-function diagnosticCodesFrom(deltas) {
-  const codes = [];
-  const seen = new Set();
-  for (const line of deltas) {
-    for (const match of line.matchAll(/\bTS\d{4,5}\b/g)) {
-      const code = match[0];
-      if (seen.has(code)) continue;
-      seen.add(code);
-      codes.push(code);
-      if (codes.length >= 8) return codes;
-    }
-  }
-  return codes;
-}
-
-function reductionCandidatesFrom(deltas) {
-  const coded = deltas.filter((line) => /\bTS\d{4,5}\b/.test(line));
-  const source = coded.length ? coded : deltas;
-  return source.slice(0, 5);
-}
-
-function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
+function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticCodes) {
   const existing = Array.isArray(recorded.known_blockers) ? recorded.known_blockers : [];
   if (existing.length) {
     return existing.map(String).filter(Boolean).slice(0, 8);
@@ -2193,43 +2173,62 @@ function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
     add(String(group?.subsystem || ""));
   }
 
-  if (!blockers.length && diagnosticCodesFrom(diagnosticDeltas).length) {
+  if (!blockers.length && diagnosticCodes.length) {
     add("unclassified diagnostic mismatch");
   }
 
   return blockers;
 }
 
-const DIAGNOSTIC_SUBSYSTEM_RULES = [
-  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
-  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
-  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
-  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
-  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
-  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
-  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
-  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
-  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
-];
-
-function subsystemForCode(code) {
-  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
-    if (codes.has(code)) return subsystem;
-  }
-  return "unclassified diagnostic";
+// The subsystem rules table is shared with `scripts/ci/diagnostic-subsystems.mjs`
+// via `scripts/ci/diagnostic-subsystems.json`. Loading from JSON eliminates
+// the drift between this heredoc and the canonical .mjs module (e.g. the
+// previously missing `contextual-inference` row). The flatten into a single
+// Map gives O(1) `subsystemForCode` lookups vs the old linear scan.
+const DIAGNOSTIC_SUBSYSTEMS_TABLE = JSON.parse(
+  fs.readFileSync(process.env.DIAGNOSTIC_SUBSYSTEMS_JSON_PATH, "utf8"),
+);
+const CODE_TO_SUBSYSTEM = new Map();
+for (const rule of DIAGNOSTIC_SUBSYSTEMS_TABLE.rules) {
+  for (const code of rule.codes) CODE_TO_SUBSYSTEM.set(code, rule.subsystem);
 }
 
-function diagnosticSubsystemsFrom(deltas) {
-  const groups = new Map();
+function subsystemForCode(code) {
+  return CODE_TO_SUBSYSTEM.get(code) || "unclassified diagnostic";
+}
+
+// Single-pass aggregation over a row's diagnostic delta list. The previous
+// `compatibilityFor()` path walked the same list five separate times
+// (subsystems, codes, blocker fallback, output codes, reduction candidates);
+// every bucket downstream now reads from the result of this one walk.
+function aggregateDeltas(deltas) {
+  const subsystemGroups = new Map();
+  const codes = [];
+  const codeSeen = new Set();
+  const coded = [];
+  const uncoded = [];
   for (const line of deltas) {
-    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
-    const lineCodes = codes.length ? codes : ["uncoded"];
-    for (const code of lineCodes) {
-      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
-      if (!groups.has(subsystem)) {
-        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+    const lineCodes = [];
+    for (const match of line.matchAll(/\bTS\d{4,5}\b/g)) lineCodes.push(match[0]);
+    if (lineCodes.length) {
+      coded.push(line);
+      for (const code of lineCodes) {
+        if (!codeSeen.has(code) && codes.length < 8) {
+          codeSeen.add(code);
+          codes.push(code);
+        }
       }
-      const group = groups.get(subsystem);
+    } else {
+      uncoded.push(line);
+    }
+    const groupKeys = lineCodes.length ? lineCodes : ["uncoded"];
+    for (const code of groupKeys) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      let group = subsystemGroups.get(subsystem);
+      if (!group) {
+        group = { subsystem, codes: [], count: 0, examples: [] };
+        subsystemGroups.set(subsystem, group);
+      }
       group.count += 1;
       if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
         group.codes.push(code);
@@ -2239,10 +2238,14 @@ function diagnosticSubsystemsFrom(deltas) {
       }
     }
   }
-  return [...groups.values()];
+  return {
+    subsystems: [...subsystemGroups.values()],
+    codes,
+    reductionCandidates: (coded.length ? coded : uncoded).slice(0, 5),
+  };
 }
 
-function normalizedDiagnosticSubsystems(recorded, deltas) {
+function normalizedDiagnosticSubsystems(recorded, aggregate) {
   const existing = Array.isArray(recorded.diagnostic_subsystems) ? recorded.diagnostic_subsystems : [];
   if (existing.length) {
     return existing
@@ -2255,7 +2258,7 @@ function normalizedDiagnosticSubsystems(recorded, deltas) {
       .filter((group) => group.count > 0 || group.codes.length || group.examples.length)
       .slice(0, 8);
   }
-  return diagnosticSubsystemsFrom(deltas).slice(0, 8);
+  return aggregate.subsystems.slice(0, 8);
 }
 
 function lastSuccessfulPhaseFrom(recorded) {
@@ -2307,8 +2310,12 @@ function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
   const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
-  const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, diagnosticDeltas);
-  const knownBlockers = knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas);
+  // One walk over diagnosticDeltas populates subsystems, codes, and
+  // reduction candidates. Issue #11598 traced repeated per-row scans of
+  // this list to quadratic-feeling cost when row counts grew.
+  const aggregate = aggregateDeltas(diagnosticDeltas);
+  const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, aggregate);
+  const knownBlockers = knownBlockersFrom(recorded, diagnosticSubsystems, aggregate.codes);
   const state = rowStateFrom(recorded);
   return {
     compatibility: {
@@ -2321,10 +2328,10 @@ function compatibilityFor(row, compatibilityRows) {
       last_successful_phase: lastSuccessfulPhaseFrom(recorded),
       diagnostic_status: recorded.diagnostic_status || "unknown",
       diagnostic_deltas: diagnosticDeltas,
-      diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
+      diagnostic_codes: aggregate.codes,
       diagnostic_subsystems: diagnosticSubsystems,
       primary_subsystem: recorded.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
-      reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
+      reduction_candidates: aggregate.reductionCandidates,
       emit_status: recorded.emit_status || "not in scope (noEmit project check)",
       dts_status: recorded.dts_status || "not in scope (noEmit project check)",
       known_blockers: knownBlockers,

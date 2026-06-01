@@ -306,6 +306,14 @@ def summarize_budget(file_summaries: list[dict[str, object]]) -> BudgetSummary:
     )
 
 
+def exhausted_category_names(file_summaries: list[dict[str, object]]) -> list[str]:
+    return [
+        str(summary["category"])
+        for summary in build_category_summaries(file_summaries)
+        if summary["max_count"] is not None and summary["budget_status"] == "exhausted"
+    ]
+
+
 def classify_budget_status(allowlisted_calls: int, allowlist_cap: int) -> str:
     if allowlist_cap == 0:
         return "no_allowlist"
@@ -371,6 +379,12 @@ def format_category_budget_metrics(file_summaries: list[dict[str, object]]) -> s
     return "category_budgets=" + ",".join(parts)
 
 
+def format_exhausted_category_metrics(file_summaries: list[dict[str, object]]) -> str:
+    names = exhausted_category_names(file_summaries)
+    formatted_names = ";".join(names) if names else "none"
+    return f"exhausted_category_count={len(names)}, exhausted_categories={formatted_names}"
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -381,6 +395,12 @@ def build_json_report(
     summary = summarize_failures(failures)
     file_summaries = build_file_summaries(counts, allowlist)
     budget = summarize_budget(file_summaries)
+    category_summaries = build_category_summaries(file_summaries)
+    exhausted_categories = [
+        str(summary["category"])
+        for summary in category_summaries
+        if summary["max_count"] is not None and summary["budget_status"] == "exhausted"
+    ]
     return {
         "ok": not failures,
         "status": "failed" if failures else "passed",
@@ -392,6 +412,8 @@ def build_json_report(
         "allowlist_cap": budget.allowlist_cap,
         "remaining_allowlist_capacity": budget.remaining_allowlist_capacity,
         "allowlist_budget_status": budget.budget_status,
+        "exhausted_category_count": len(exhausted_categories),
+        "exhausted_categories": exhausted_categories,
         "unallowlisted_calls": summary.unallowlisted,
         "over_allowlist_files": summary.over_allowlist_files,
         "over_allowlist_excess_calls": summary.over_allowlist_excess_calls,
@@ -399,7 +421,7 @@ def build_json_report(
         "failure_summary": dataclasses.asdict(summary),
         "budget_summary": dataclasses.asdict(budget),
         "failures": failures,
-        "categories": build_category_summaries(file_summaries),
+        "categories": category_summaries,
         "files": file_summaries,
         "findings": [
             {
@@ -450,6 +472,7 @@ def format_pass_summary(
         f"files_with_findings={len(grouped_counts(findings))}, "
         f"{format_budget_metrics(budget)}, "
         f"{format_category_budget_metrics(file_summaries)}, "
+        f"{format_exhausted_category_metrics(file_summaries)}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
         f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
@@ -485,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
             "\nOutput-surgery audit summary: "
             f"{format_budget_metrics(budget)}, "
             f"{format_category_budget_metrics(file_summaries)}, "
+            f"{format_exhausted_category_metrics(file_summaries)}, "
             f"unallowlisted_calls={summary.unallowlisted}, "
             f"unallowlisted_files={summary.unallowlisted_files}, "
             f"over_allowlist_files={summary.over_allowlist_files}, "

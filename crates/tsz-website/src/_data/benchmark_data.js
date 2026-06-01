@@ -8,6 +8,7 @@ import {
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { benchReadinessMessages } from "../../../../scripts/bench/bench-readiness-banner.mjs";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
@@ -806,6 +807,12 @@ function readJsonIfExists(p) {
   } catch {
     return null;
   }
+}
+
+function benchReadinessBanner(readiness) {
+  const messages = benchReadinessMessages(readiness);
+  if (messages.length === 0) return "";
+  return `<p class="bench-readiness-warning">⚠️ ${escapeHtml(messages.join(" "))}</p>`;
 }
 
 let _benchReadinessStatus;
@@ -1855,12 +1862,7 @@ export function getProjectCompatibilityDashboard() {
   };
 
   const readiness = loadBenchReadinessStatus();
-  let artifactBanner = "";
-  if (readiness?.artifact_absent) {
-    artifactBanner = `<p class="bench-readiness-warning">⚠️ No recent benchmark artifact — compatibility data shown from repository snapshot and may be stale.</p>`;
-  } else if (readiness?.missing > 0) {
-    artifactBanner = `<p class="bench-readiness-warning">⚠️ Benchmark artifact is missing ${readiness.missing} required row(s); shown data may be incomplete.</p>`;
-  }
+  const artifactBanner = benchReadinessBanner(readiness);
 
   return `<section class="compat-dashboard">
   <h2>Compatibility</h2>

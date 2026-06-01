@@ -1,0 +1,80 @@
+{
+  "rules": [
+    {
+      "subsystem": "project-config",
+      "codes": ["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"],
+      "owner_track": "Track 1 project-corpus harness/config",
+      "crate": "bench",
+      "labels": ["bench"]
+    },
+    {
+      "subsystem": "syntax-parser-jsdoc",
+      "codes": ["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"],
+      "owner_track": "Track 8 syntax/parser/jsdoc parity",
+      "crate": "parser",
+      "labels": ["bench", "parser"]
+    },
+    {
+      "subsystem": "module-symbol-resolution",
+      "codes": ["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"],
+      "owner_track": "Track 7 lib/module identity",
+      "crate": "checker",
+      "labels": ["checker"]
+    },
+    {
+      "subsystem": "relations-assignability",
+      "codes": ["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"],
+      "owner_track": "Track 4 relation diagnostics/compatibility",
+      "crate": "solver",
+      "labels": ["solver", "checker"]
+    },
+    {
+      "subsystem": "contextual-inference",
+      "codes": ["TS2347", "TS7006", "TS7031"],
+      "owner_track": "Track 3 inference/session/contextual typing",
+      "crate": "checker",
+      "labels": ["checker", "type-inference"]
+    },
+    {
+      "subsystem": "evaluation-inference-instantiation",
+      "codes": ["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"],
+      "owner_track": "Track 2/3 conditional, mapped, inference, instantiation",
+      "crate": "solver",
+      "labels": ["solver"]
+    },
+    {
+      "subsystem": "keyspace-property-indexed",
+      "codes": ["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"],
+      "owner_track": "Track 5 keyspace/property/indexed access",
+      "crate": "solver",
+      "labels": ["solver"]
+    },
+    {
+      "subsystem": "flow-narrowing",
+      "codes": ["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"],
+      "owner_track": "Track 6 flow/narrowing",
+      "crate": "solver",
+      "labels": ["solver"]
+    },
+    {
+      "subsystem": "class-this-accessor",
+      "codes": ["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"],
+      "owner_track": "Track 4 class/this/accessor compatibility",
+      "crate": "solver",
+      "labels": ["solver", "checker"]
+    },
+    {
+      "subsystem": "emit-dts-nameability",
+      "codes": ["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"],
+      "owner_track": "emit/dts nameability",
+      "crate": "emitter",
+      "labels": ["emitter"]
+    }
+  ],
+  "exit_class_crates": {
+    "runtime-timeout": "bench",
+    "runtime-oom": "bench",
+    "runtime-crash": "bench",
+    "runner-error": "bench"
+  }
+}

@@ -5,18 +5,16 @@ import {
   normalizePath,
   semanticFamiliesForFile,
 } from "./type-challenges-semantic-families.mjs";
+import { ownerTrackForSubsystem } from "./diagnostic-subsystems.mjs";
 import {
-  ownerTrackForSubsystem,
-  subsystemForCode,
-} from "./diagnostic-subsystems.mjs";
+  aggregateRowDeltas,
+  aggregateRowsForSummary,
+  parseDiagnosticLine,
+} from "./diagnostic-aggregator.mjs";
 
 const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
   "type-challenges-solutions-project",
 ]);
-
-const DELTA_SOURCES = ["tsc", "tsz", "tsgo"];
-const DELTA_SOURCE_SET = new Set(DELTA_SOURCES);
-const SOURCE_LABEL_PATTERN = /^([a-z][\w-]*):\s+(.*)$/;
 
 const ORACLE_CLASSIFICATION_ORDER = [
   "both-pass",
@@ -29,7 +27,6 @@ const ORACLE_CLASSIFICATION_ORDER = [
 const ORACLE_CLASSIFICATIONS = new Set(ORACLE_CLASSIFICATION_ORDER);
 
 const ROW_STATE_DISPLAY_ORDER = ["green", "yellow", "red", "gray"];
-const ROW_STATE_PRIORITY = { red: 0, yellow: 1, gray: 2, green: 3 };
 
 // Closed vocabulary for the structured reason a residency field is absent.
 // Null is reserved for "measurement present"; every other value must come
@@ -92,43 +89,20 @@ function splitDeltaLines(value) {
     .filter(Boolean);
 }
 
-function stripSourceLabel(line) {
-  const text = String(line || "").trim();
-  const match = text.match(SOURCE_LABEL_PATTERN);
-  if (!match) return { source: null, body: text };
-  const source = match[1].toLowerCase();
-  if (!DELTA_SOURCE_SET.has(source)) return { source: null, body: text };
-  return { source, body: match[2].trim() };
-}
-
-// Unattributed lines are folded into the tsz bucket downstream because tsz
-// is the active failing side in the common project-row failure path.
-function partitionDeltaBySource(lines) {
-  const buckets = { unattributed: [] };
-  for (const source of DELTA_SOURCES) buckets[source] = [];
-  for (const line of lines) {
-    const { source, body } = stripSourceLabel(line);
-    (source ? buckets[source] : buckets.unattributed).push(body);
-  }
-  return buckets;
-}
-
-function perSourceDeltasFrom(env, unifiedLines) {
-  const explicit = {
-    tsc: env.COMPAT_TSC_DIAGNOSTIC_DELTA,
-    tsz: env.COMPAT_TSZ_DIAGNOSTIC_DELTA,
-    tsgo: env.COMPAT_TSGO_DIAGNOSTIC_DELTA,
-  };
-  const needsPartition = DELTA_SOURCES.some((source) => explicit[source] === undefined);
-  const partitioned = needsPartition
-    ? partitionDeltaBySource(unifiedLines)
-    : { tsc: [], tsz: [], tsgo: [], unattributed: [] };
+// When per-source COMPAT_*_DIAGNOSTIC_DELTA env overrides are set they win
+// over the unified-delta partition; otherwise the per-source bodies come
+// directly from the unified-delta aggregator so the unified list is walked
+// exactly once for both subsystem grouping AND per-source code extraction.
+// `explicit` is taken from the caller so the env triplet is read in exactly
+// one place per row.
+function perSourceDeltasFrom(explicit, aggregate) {
+  const bodiesBySource = aggregate.bodiesBySource;
   return {
-    tsc: explicit.tsc !== undefined ? splitDeltaLines(explicit.tsc) : partitioned.tsc,
+    tsc: explicit.tsc !== undefined ? splitDeltaLines(explicit.tsc) : bodiesBySource.tsc,
     tsz: explicit.tsz !== undefined
       ? splitDeltaLines(explicit.tsz)
-      : [...partitioned.tsz, ...partitioned.unattributed],
-    tsgo: explicit.tsgo !== undefined ? splitDeltaLines(explicit.tsgo) : partitioned.tsgo,
+      : [...bodiesBySource.tsz, ...bodiesBySource.unattributed],
+    tsgo: explicit.tsgo !== undefined ? splitDeltaLines(explicit.tsgo) : bodiesBySource.tsgo,
   };
 }
 
@@ -242,56 +216,6 @@ function fixtureSourcesFrom(value) {
   return sources;
 }
 
-function diagnosticSubsystemsFrom(deltas) {
-  const groups = new Map();
-  for (const line of deltas) {
-    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
-    const lineCodes = codes.length ? codes : ["uncoded"];
-    for (const code of lineCodes) {
-      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
-      if (!groups.has(subsystem)) {
-        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
-      }
-      const group = groups.get(subsystem);
-      group.count += 1;
-      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
-        group.codes.push(code);
-      }
-      if (group.examples.length < 3) {
-        group.examples.push(line);
-      }
-    }
-  }
-  return [...groups.values()];
-}
-
-function parseDiagnosticDelta(line) {
-  const withoutLabel = String(line || "").replace(/^[a-z][\w-]*:\s+/, "");
-  const parenMatch = withoutLabel.match(
-    /^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/,
-  );
-  if (parenMatch) {
-    return {
-      path: parenMatch[1],
-      code: parenMatch[4],
-    };
-  }
-
-  const colonMatch = withoutLabel.match(
-    /^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/,
-  );
-  if (colonMatch) {
-    return {
-      path: colonMatch[1],
-      code: colonMatch[4],
-    };
-  }
-  return {
-    path: null,
-    code: null,
-  };
-}
-
 function sourceRootsForTypeChallenges() {
   const roots = [];
   const add = (value) => {
@@ -327,52 +251,20 @@ function typeChallengesFamiliesForFile(file, sourceRoots, sourceCache) {
   return ["unknown"];
 }
 
-function typeChallengesDiagnosticSubsystemsFrom(projectName, deltas) {
-  if (!TYPE_CHALLENGES_PROJECT_ROWS.has(projectName)) {
-    return [];
-  }
-
-  const groups = new Map();
+// Plug-in subsystem classifier for the type-challenges project row. Returns
+// the family labels for the line if any match, or null to fall back to the
+// default code -> subsystem table. Returning `[]` would suppress the line
+// for grouping; we instead fall back so the unified aggregator's
+// subsystem-or-uncoded bucket is still populated for non-classifiable lines.
+function typeChallengesSubsystemHook() {
   const sourceRoots = sourceRootsForTypeChallenges();
   const sourceCache = new Map();
-  for (const line of deltas) {
-    const diagnostic = parseDiagnosticDelta(line);
-    const codes = diagnostic.code
-      ? [diagnostic.code]
-      : [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
-    const lineCodes = codes.length ? codes : ["uncoded"];
-    const families = typeChallengesFamiliesForFile(diagnostic.path, sourceRoots, sourceCache);
-    if (families.length === 1 && families[0] === "unknown") {
-      continue;
-    }
-
-    for (const family of families) {
-      const subsystem = `type-challenges ${family}`;
-      if (!groups.has(subsystem)) {
-        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
-      }
-      const group = groups.get(subsystem);
-      group.count += 1;
-      for (const code of lineCodes) {
-        if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
-          group.codes.push(code);
-        }
-      }
-      if (group.examples.length < 3) {
-        group.examples.push(line);
-      }
-    }
-  }
-  return [...groups.values()];
-}
-
-function diagnosticSubsystemsForProject(projectName, deltas) {
-  const typeChallengesSubsystems = typeChallengesDiagnosticSubsystemsFrom(projectName, deltas);
-  return typeChallengesSubsystems.length ? typeChallengesSubsystems : diagnosticSubsystemsFrom(deltas);
-}
-
-function diagnosticCodesFrom(deltas) {
-  return codesFromLines(deltas, 8);
+  return (_line, parsedLocation) => {
+    const filePath = parsedLocation?.path ?? null;
+    const families = typeChallengesFamiliesForFile(filePath, sourceRoots, sourceCache);
+    if (families.length === 1 && families[0] === "unknown") return null;
+    return families.map((family) => `type-challenges ${family}`);
+  };
 }
 
 function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticCodes }) {
@@ -453,47 +345,25 @@ function relativeToFixture(value) {
   return value;
 }
 
-function firstDiagnosticLocation(diagnosticDeltas) {
-  for (const line of diagnosticDeltas) {
-    const withoutLabel = String(line || "").replace(/^[a-z][\w-]*:\s+/, "");
-    const parenMatch = withoutLabel.match(/^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/);
-    if (parenMatch) {
-      return {
-        path: relativeToFixture(parenMatch[1]),
-        line: Number(parenMatch[2]),
-        column: Number(parenMatch[3]),
-        code: parenMatch[4],
-      };
-    }
-
-    const colonMatch = withoutLabel.match(/^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/);
-    if (colonMatch) {
-      return {
-        path: relativeToFixture(colonMatch[1]),
-        line: Number(colonMatch[2]),
-        column: Number(colonMatch[3]),
-        code: colonMatch[4],
-      };
-    }
-  }
-  return null;
-}
-
-function reproFrom(diagnosticDeltas) {
-  const location = firstDiagnosticLocation(diagnosticDeltas);
+// Builds the repro payload from the aggregator's first-failure location.
+// The aggregator captures the location during its single walk over the delta
+// list, so the delta list is not re-scanned here. `relativeToFixture` is
+// applied to the path at the boundary (raw paths flow into the aggregator).
+function reproFrom(rawLocation) {
+  const relativePath = rawLocation ? relativeToFixture(rawLocation.path) : null;
   const tsconfigPath = relativeToFixture(process.env.COMPAT_TSCONFIG_PATH || "");
   const sourceRoot = relativeToFixture(process.env.COMPAT_SOURCE_ROOT || "");
-  const reducedReproPath = location?.path || sourceRoot || tsconfigPath || null;
+  const reducedReproPath = relativePath || sourceRoot || tsconfigPath || null;
   const tszCommandEnvPrefix = String(process.env.COMPAT_TSZ_COMMAND_ENV_PREFIX || "").trim();
   const commandPrefix = tszCommandEnvPrefix ? `${tszCommandEnvPrefix} ` : "";
 
   return {
     tsconfig_path: tsconfigPath,
     source_root: sourceRoot,
-    first_failure_path: location?.path || null,
-    first_failure_line: location?.line ?? null,
-    first_failure_column: location?.column ?? null,
-    first_failure_code: location?.code || null,
+    first_failure_path: relativePath || null,
+    first_failure_line: rawLocation?.line ?? null,
+    first_failure_column: rawLocation?.column ?? null,
+    first_failure_code: rawLocation?.code || null,
     reduced_repro_path: reducedReproPath,
     command: tsconfigPath ? `${commandPrefix}$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
   };
@@ -578,17 +448,45 @@ function record() {
     process.exit(1);
   }
 
-  const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
-  const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
+  // One linear walk over the canonical (capped) delta list populates every
+  // bucket downstream: subsystem groups, deduped codes, per-source bodies,
+  // and the first-failure location. Type-challenges family classification
+  // piggybacks on the same walk via the subsystem hook so the delta list
+  // is never re-iterated for that project family either.
+  const aggregate = aggregateRowDeltas(diagnosticDeltas, {
+    subsystemFor: TYPE_CHALLENGES_PROJECT_ROWS.has(projectName)
+      ? typeChallengesSubsystemHook()
+      : undefined,
+  });
+  const diagnosticSubsystems = aggregate.subsystems;
+  const diagnosticCodes = aggregate.codes;
 
   const tscExitCodes = toExitCodes(process.env.COMPAT_TSC_EXIT_CODES);
   const tszExitCodes = toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES);
   const tsgoExitCodes = toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES);
 
-  const perSourceDeltas = perSourceDeltasFrom(process.env, diagnosticDeltas);
-  const tscDiagnosticCodes = codesFromLines(perSourceDeltas.tsc, 8);
-  const tszDiagnosticCodes = codesFromLines(perSourceDeltas.tsz, 8);
-  const tsgoDiagnosticCodes = codesFromLines(perSourceDeltas.tsgo, 8);
+  // env reads, per-source body partition, and per-source code lists are all
+  // derived from a single shared `explicit` object so each env var is read
+  // exactly once even though it gates multiple downstream decisions.
+  const explicit = {
+    tsc: process.env.COMPAT_TSC_DIAGNOSTIC_DELTA,
+    tsz: process.env.COMPAT_TSZ_DIAGNOSTIC_DELTA,
+    tsgo: process.env.COMPAT_TSGO_DIAGNOSTIC_DELTA,
+  };
+  const perSourceDeltas = perSourceDeltasFrom(explicit, aggregate);
+  const tscDiagnosticCodes = explicit.tsc !== undefined
+    ? codesFromLines(perSourceDeltas.tsc, 8)
+    : aggregate.codesBySource.tsc;
+  // Unattributed bodies fold into the tsz bucket (the active failing side
+  // in the common project-row failure path). Both source lists are already
+  // deduped and capped at CODE_LIMIT by the aggregator, so the merge is
+  // bounded and small enough to express inline.
+  const tszDiagnosticCodes = explicit.tsz !== undefined
+    ? codesFromLines(perSourceDeltas.tsz, 8)
+    : [...new Set([...aggregate.codesBySource.tsz, ...aggregate.codesBySource.unattributed])].slice(0, 8);
+  const tsgoDiagnosticCodes = explicit.tsgo !== undefined
+    ? codesFromLines(perSourceDeltas.tsgo, 8)
+    : aggregate.codesBySource.tsgo;
 
   const oracleClassification = oracleClassificationFrom({
     tscExitCodes,
@@ -604,7 +502,7 @@ function record() {
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
   const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
   const state = rowStateFrom({ exitClass, diagnosticStatus });
-  const repro = reproFrom(diagnosticDeltas);
+  const repro = reproFrom(aggregate.firstLocation);
   const knownBlockers = knownBlockersFrom({
     exitClass,
     phase: process.env.COMPAT_PHASE || "unknown",
@@ -684,66 +582,6 @@ function record() {
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
 }
 
-function topDiagnosticDeltasFrom(rows, limit) {
-  const priority = (state) => ROW_STATE_PRIORITY[state] ?? 4;
-  const sorted = rows
-    .filter((row) => Array.isArray(row?.diagnostic_deltas) && row.diagnostic_deltas.length > 0)
-    .sort((a, b) => priority(a.state) - priority(b.state));
-
-  const items = [];
-  for (const row of sorted) {
-    const deltas = row.diagnostic_deltas;
-
-    const subsystemByLine = new Map();
-    const subsystems = Array.isArray(row.diagnostic_subsystems) ? row.diagnostic_subsystems : [];
-    for (const group of subsystems) {
-      if (!group?.subsystem) continue;
-      for (const example of group.examples || []) {
-        if (!subsystemByLine.has(example)) {
-          subsystemByLine.set(example, group.subsystem);
-        }
-      }
-    }
-
-    for (const delta of deltas) {
-      const parsed = parseDiagnosticDelta(delta);
-      const subsystem = subsystemByLine.get(delta)
-        || (parsed.code ? subsystemForCode(parsed.code) : "unattributed");
-      items.push({
-        project: row.name || null,
-        oracle_classification: row.oracle_classification || "unknown",
-        state: row.state || null,
-        code: parsed.code || null,
-        path: parsed.path || null,
-        subsystem,
-        delta,
-      });
-      if (items.length >= limit) return items;
-    }
-  }
-  return items;
-}
-
-// Residency facts (files_reached, peak_memory_bytes) are surfaced for every
-// red/yellow row so a reader can distinguish semantic failure from runner /
-// timeout / OOM / scale failure without scrolling through full row JSON.
-// Rows with neither a measurement nor a reason are still listed; the table
-// would otherwise hide schema gaps.
-function residencyByRowFrom(rows) {
-  const priority = (state) => ROW_STATE_PRIORITY[state] ?? 4;
-  return rows
-    .filter((row) => row?.state === "red" || row?.state === "yellow")
-    .sort((a, b) => priority(a.state) - priority(b.state))
-    .map((row) => ({
-      project: row.name || null,
-      state: row.state || null,
-      files_reached: row.files_reached ?? null,
-      files_reached_reason: row.files_reached_reason ?? null,
-      peak_memory_bytes: row.peak_memory_bytes ?? null,
-      peak_memory_bytes_reason: row.peak_memory_bytes_reason ?? null,
-    }));
-}
-
 function summarize() {
   const generatedAt = new Date().toISOString();
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
@@ -759,25 +597,35 @@ function summarize() {
     console.error(`error: ${error.message}`);
     process.exit(1);
   }
-  const byState = rows.reduce((counts, row) => {
-    const key = row.state || rowStateFrom({
-      exitClass: row.exit_class,
-      diagnosticStatus: row.diagnostic_status,
-    });
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
 
-  const byOracleClassification = rows.reduce((counts, row) => {
-    const key = ORACLE_CLASSIFICATIONS.has(row.oracle_classification)
-      ? row.oracle_classification
-      : "unknown";
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
+  // Ensure every row has a `state` populated before the single-pass
+  // aggregator runs. Recorded rows already carry `state`; the few that
+  // don't (legacy fixtures, malformed manual inputs) get derived once
+  // here so the aggregator stays a pure data-flow function.
+  for (const row of rows) {
+    if (!row?.state) {
+      row.state = rowStateFrom({
+        exitClass: row?.exit_class,
+        diagnosticStatus: row?.diagnostic_status,
+      });
+    }
+  }
 
-  const firstDiagnosticDeltas = topDiagnosticDeltasFrom(rows, 3);
-  const residencyByRow = residencyByRowFrom(rows);
+  // Single-pass row aggregation: by_state, by_oracle_classification, top
+  // diagnostic deltas, and the residency table are all built in one walk
+  // over `rows`. The old code path had four separate scans (two reduces,
+  // a filter+sort+iter+map for top deltas, and another filter+sort+map for
+  // residency) which scaled superlinearly when every row carried up to 20
+  // diagnostic delta lines.
+  const {
+    byState,
+    byOracleClassification,
+    topDiagnosticDeltas: firstDiagnosticDeltas,
+    residencyByRow,
+  } = aggregateRowsForSummary(rows, {
+    topDeltasLimit: 3,
+    oracleClassifications: ORACLE_CLASSIFICATIONS,
+  });
 
   const summary = {
     ...artifactMetadata(process.env, "SUMMARY", generatedAt),
