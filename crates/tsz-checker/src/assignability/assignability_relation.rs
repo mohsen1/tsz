@@ -387,6 +387,21 @@ impl<'a> CheckerState<'a> {
         self.relation_outcome_with_env(source, target, RelationRequest::call_arg)
     }
 
+    /// Execute a diagnostic-bearing round-2 contextual substitution relation
+    /// using the current `TypeEnvironment`, preserving env-aware relation
+    /// semantics while keeping call-inference refinement on its named request.
+    pub(crate) fn round2_contextual_substitution_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(
+            source,
+            target,
+            RelationRequest::round2_contextual_substitution,
+        )
+    }
+
     /// Execute a diagnostic-bearing return relation using the current
     /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
     /// return diagnostics on the canonical return request shape.

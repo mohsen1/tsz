@@ -1411,10 +1411,16 @@ impl<'a> CheckerState<'a> {
                 // (alias unfoldings, interner aliasing, etc.). Treat as equal
                 // when each side is mutually assignable to the other.
                 let mutually_assignable = self
-                    .assign_relation_outcome_with_env(probed, params[i].type_id)
+                    .round2_contextual_substitution_relation_outcome_with_env(
+                        probed,
+                        params[i].type_id,
+                    )
                     .related
                     && self
-                        .assign_relation_outcome_with_env(params[i].type_id, probed)
+                        .round2_contextual_substitution_relation_outcome_with_env(
+                            params[i].type_id,
+                            probed,
+                        )
                         .related;
                 if !mutually_assignable {
                     all_match = false;

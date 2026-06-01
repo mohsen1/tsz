@@ -148,9 +148,11 @@ fn round2_inference_refinement_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("round2_contextual_substitution_relation_outcome_with_env(")
+            .count(),
         2,
-        "round-2 inference refinement should keep type-equivalence probes on generic RelationOutcome"
+        "round-2 inference refinement should route type-equivalence probes through the round-2 RelationRequest"
     );
     assert_eq!(
         helper
@@ -166,6 +168,10 @@ fn round2_inference_refinement_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "round-2 inference refinement should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "round-2 inference refinement should not use generic assignment request routing"
     );
 }
 

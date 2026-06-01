@@ -448,11 +448,14 @@ the request names the relation role.
 
 Round-2 contextual call inference builds
 `RelationRequest::round2_contextual_substitution` through
-`round2_contextual_substitution_relation_outcome` when probing widened/current
-substitutions against evaluated contextual constraints before preserving a
-literal substitution. The checker owns widening, literal-preservation policy,
-substitution, and constraint evaluation while the request names the relation
-role.
+`round2_contextual_substitution_relation_outcome` or
+`round2_contextual_substitution_relation_outcome_with_env` when probing
+widened/current substitutions against evaluated contextual constraints before
+preserving a literal substitution, or when checking whether a probed
+instantiated parameter still matches the solver parameter during refinement.
+The checker owns widening, literal-preservation policy, substitution, solver
+default detection, and constraint evaluation while the request names the
+relation role.
 
 Generic constructor inference builds
 `RelationRequest::constructor_inference_constraint` through
