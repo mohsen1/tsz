@@ -1336,6 +1336,27 @@ impl TupleElement {
     pub const fn is_required(&self) -> bool {
         !self.optional && !self.rest
     }
+
+    /// Create an anonymous, non-optional, non-rest element — the most common
+    /// shape when constructing proxy or synthetic tuples.
+    pub const fn fixed(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            name: None,
+            optional: false,
+            rest: false,
+        }
+    }
+
+    /// Create an anonymous rest element (`...type_id`).
+    pub const fn rest(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            name: None,
+            optional: false,
+            rest: true,
+        }
+    }
 }
 
 /// Type predicate information (x is T / asserts x is T).

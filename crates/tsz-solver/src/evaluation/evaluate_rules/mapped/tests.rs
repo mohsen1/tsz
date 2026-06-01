@@ -307,15 +307,16 @@ fn identity_homomorphic_mapped_over_trailing_rest_variadic_tuple_preserves_shape
 #[test]
 fn identity_homomorphic_mapped_over_trailing_rest_renamed_iter_var() {
     let interner = TypeInterner::new();
+    // Same element types as the canonical twin; only the iter var name changes.
     let elements = vec![
         TupleElement {
-            type_id: TypeId::BOOLEAN,
+            type_id: TypeId::NUMBER,
             name: None,
             optional: false,
             rest: false,
         },
         TupleElement {
-            type_id: interner.array(TypeId::NUMBER),
+            type_id: interner.array(TypeId::STRING),
             name: None,
             optional: false,
             rest: true,
@@ -363,6 +364,74 @@ fn identity_homomorphic_mapped_over_leading_rest_variadic_tuple_preserves_shape(
     assert_eq!(
         result, expected,
         "identity homomorphic over `[...string[], number]` must reproduce the same tuple"
+    );
+}
+
+/// Same leading-rest test with a renamed iteration variable (`P` instead of `K`).
+/// The fix must be name-blind — changing the iteration variable must not affect
+/// which branch handles suffix elements.
+#[test]
+fn identity_homomorphic_mapped_over_leading_rest_renamed_iter_var() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement::rest(interner.array(TypeId::BOOLEAN)),
+        TupleElement::fixed(TypeId::STRING),
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "P", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic with iter `P` over `[...boolean[], string]` must preserve shape"
+    );
+}
+
+/// Middle-rest tuple `[string, ...number[], boolean]` — the suffix element
+/// follows a rest element that is itself preceded by a fixed prefix. The
+/// proxy-based suffix rebinding must handle this shape too.
+#[test]
+fn identity_homomorphic_mapped_over_middle_rest_with_prefix_and_suffix() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement::rest(interner.array(TypeId::NUMBER)),
+        TupleElement::fixed(TypeId::BOOLEAN),
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic over `[string, ...number[], boolean]` must preserve shape"
+    );
+}
+
+/// Multiple suffix elements after the rest: `[...string[], number, boolean]`.
+/// Both suffix elements require the proxy rebind, and each must resolve to
+/// its own type, not the union of all element types.
+#[test]
+fn identity_homomorphic_mapped_over_leading_rest_multiple_suffixes() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement::rest(interner.array(TypeId::STRING)),
+        TupleElement::fixed(TypeId::NUMBER),
+        TupleElement::fixed(TypeId::BOOLEAN),
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic over `[...string[], number, boolean]` must preserve all suffix types"
     );
 }
 
