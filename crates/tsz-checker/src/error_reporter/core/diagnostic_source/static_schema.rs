@@ -7,6 +7,9 @@ impl<'a> CheckerState<'a> {
         array_type: TypeId,
         other: TypeId,
     ) -> Option<String> {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, array_type) {
+            return None;
+        }
         let element_type =
             crate::query_boundaries::common::array_element_type(self.ctx.types, array_type)?;
         let array_display = self.format_type_diagnostic(array_type);
