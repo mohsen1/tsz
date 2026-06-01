@@ -1511,6 +1511,15 @@ impl TypeInterner {
                 return;
             }
         }
+        if application_is_alias
+            && evaluated_precedes_application
+            && self.display_alias.get(&evaluated).is_some_and(|existing| {
+                *existing != application
+                    && matches!(self.lookup(*existing), Some(TypeData::Application(_)))
+            })
+        {
+            return;
+        }
         // Never alias intrinsic types (string, number, any, etc.) — they are
         // shared sentinels and aliasing them would make ALL occurrences display
         // as whatever alias happened to be stored last.
@@ -1593,7 +1602,6 @@ impl TypeInterner {
         // recorded by an earlier Application (e.g., from evaluating `Id<{x:{...}}>`)
         // that produced the same interned structural type.
         if evaluated_precedes_application
-            && !evaluated_is_mapped
             && self.get_display_alias(evaluated).is_some_and(|existing| {
                 matches!(self.lookup(existing), Some(TypeData::Application(_)))
             })
