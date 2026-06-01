@@ -109,6 +109,24 @@ let machine = new Machine({
 }
 
 #[test]
+fn test_namespace_qualified_generic_new_expression_preserves_explicit_type_arguments() {
+    let output = emit_dts_with_binding(
+        r#"
+namespace Outer {
+    export class Box<T> {}
+    export class Item {}
+}
+
+var value = new Outer.Box<Outer.Item>();
+"#,
+    );
+    assert!(
+        output.contains("declare var value: Outer.Box<Outer.Item>;"),
+        "Expected explicit type arguments on namespace-qualified new expression: {output}"
+    );
+}
+
+#[test]
 fn test_generic_call_this_type_descriptor_intersections_preserve_source_surfaces() {
     let output = emit_dts_with_binding(
         r#"
