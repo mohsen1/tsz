@@ -141,6 +141,72 @@ type BadArrayQ<Q> = Box<Array<Q>>;
     );
 }
 
+#[test]
+fn explicit_type_alias_args_violating_callable_constraint_emit_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type AppendArgument<Fn extends (...args: any[]) => any, A> =
+  Fn extends (...args: infer Args) => infer R
+    ? (...args: [...Args, A]) => R
+    : never;
+
+type BadUnknown = AppendArgument<unknown, undefined>;
+type BadString = AppendArgument<string, number>;
+type BadObject = AppendArgument<{ a: 1 }, boolean>;
+type Good = AppendArgument<(value: string) => number, boolean>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344.len(),
+        3,
+        "Expected TS2344 for the three invalid AppendArgument instantiations only, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|(_, message)| message.contains("unknown")),
+        "Expected one TS2344 to mention unknown, got: {ts2344:?}"
+    );
+    assert!(
+        ts2344.iter().any(|(_, message)| message.contains("string")),
+        "Expected one TS2344 to mention string, got: {ts2344:?}"
+    );
+}
+
+#[test]
+fn explicit_interface_and_class_args_violating_callable_constraint_emit_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface CallableBox<T extends (...args: any[]) => any> {
+  value: T;
+}
+class CallableHolder<T extends (...args: any[]) => any> {
+  value!: T;
+}
+
+type BadInterface = CallableBox<string>;
+type BadClass = CallableHolder<{ a: 1 }>;
+type GoodInterface = CallableBox<() => void>;
+type GoodClass = CallableHolder<(value: string) => number>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344.len(),
+        2,
+        "Expected TS2344 for invalid interface/class callable constraints only, got: {diagnostics:?}"
+    );
+}
+
 /// Control: generic-ref type arguments whose surface IS assignable to the
 /// constraint must still be accepted.
 #[test]
