@@ -822,6 +822,57 @@ impl<'a> AsyncES5Transformer<'a> {
             return IRNode::Raw(generated.into());
         }
 
+        if func.is_async {
+            let uses_lexical_this = if self.is_recovered_arrow_function_expression(node) {
+                self.function_body_contains_this_reference(node)
+            } else {
+                tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx)
+            };
+            if uses_lexical_this {
+                self.set_capture_this_references(true);
+            }
+
+            let mut transformer = AsyncES5Transformer::new(self.arena);
+            transformer.set_temp_var_counter(self.temp_var_counter());
+            transformer.downlevel_iteration = self.downlevel_iteration;
+            transformer.set_module_kind(self.module_kind);
+            transformer
+                .dynamic_import_promise_counter
+                .set(self.dynamic_import_promise_counter.get());
+            transformer.set_catch_binding_ordinals(self.catch_binding_ordinals.borrow().clone());
+            if let Some(source_text) = self.source_text {
+                transformer.set_source_text(source_text);
+            }
+
+            let has_await = transformer.body_contains_await(func.body);
+            let mut generator_body = transformer.transform_generator_body(func.body, has_await);
+            let hoisted_var_groups =
+                AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+            let body = transformer.build_async_arrow_awaiter_body(
+                if uses_lexical_this {
+                    IRNode::this_captured()
+                } else {
+                    IRNode::void_0()
+                },
+                generator_body,
+                hoisted_var_groups,
+            );
+            let is_expression_body = !transformer.state.captures_arguments;
+
+            self.set_temp_var_counter(transformer.temp_var_counter());
+            self.dynamic_import_promise_counter
+                .set(transformer.dynamic_import_promise_counter.get());
+            self.set_catch_binding_ordinals(transformer.take_catch_binding_ordinals());
+
+            return IRNode::FunctionExpr {
+                name: None,
+                parameters: self.convert_parameters(&func.parameters.nodes),
+                body,
+                is_expression_body,
+                body_source_range: None,
+            };
+        }
+
         // Convert parameters
         let params = self.convert_parameters(&func.parameters.nodes);
 

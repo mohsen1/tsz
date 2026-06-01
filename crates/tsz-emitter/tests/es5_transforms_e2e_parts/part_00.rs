@@ -616,6 +616,45 @@ fn async_es5_nested_regular_function_arrow_owns_this_capture() {
 }
 
 #[test]
+fn async_es5_nested_async_function_likes_lower_inside_outer_async_body() {
+    let output = emit_es5(
+        "async function outer() {\n\
+             await first();\n\
+             const named = async function inner(value: number) {\n\
+                 await second(value);\n\
+                 return value;\n\
+             };\n\
+             const arrow = async (value: number) => {\n\
+                 await third(value);\n\
+                 return value;\n\
+             };\n\
+             return [named, arrow];\n\
+         }\n",
+    );
+
+    let awaiter_calls = output.matches("return __awaiter(").count();
+    assert!(
+        awaiter_calls >= 3,
+        "Outer async function, nested async function expression, and nested async arrow should each lower through __awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function inner(value) {\n")
+            && output.contains("arrow = function (value) {"),
+        "Nested async function-like expressions should become ordinary ES5 functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, second(value)];")
+            && output.contains("return [4 /*yield*/, third(value)];"),
+        "Nested async bodies should lower their own await expressions to generator yields.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("async function inner") && !output.contains("await second(value)")
+            && !output.contains("await third(value)"),
+        "Raw async/await syntax must not leak from nested async function-like expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_user_this_alias_identifier_does_not_trigger_capture() {
     let output = emit_es5(
         "async function f() {\n\
