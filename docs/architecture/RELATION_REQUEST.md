@@ -73,6 +73,9 @@ env-aware call-argument request when comparing refreshed argument types or
 synthetic spread markers against instantiated parameter/rest types.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
+Iterator `next(value)` compatibility diagnostics use the call-argument request
+when probing whether the value sent by `for...of`, spread, destructuring, or
+`yield*` is accepted by the iterator's `next` parameter type.
 
 `assignability/assignment_checker/destructuring.rs` builds
 `RelationRequest::destructuring` for rest/default/property destructuring
