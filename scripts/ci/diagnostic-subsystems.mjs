@@ -1,65 +1,40 @@
 #!/usr/bin/env node
+// Diagnostic-subsystem classification table.
+//
+// The rules table is the single source of truth for mapping TypeScript
+// diagnostic codes to owning subsystems, owner tracks, owning crates, and
+// labels. It lives in `diagnostic-subsystems.json` so JS modules (this file
+// + the `node <<'NODE'` heredoc in `scripts/bench/bench-vs-tsgo.sh`) read
+// the same table and cannot drift.
 
-export const DIAGNOSTIC_SUBSYSTEM_RULES = [
-  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
-  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
-  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
-  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
-  ["contextual-inference", new Set(["TS2347", "TS7006", "TS7031"])],
-  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
-  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
-  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
-  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
-  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
-];
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const TABLE = JSON.parse(fs.readFileSync(path.join(HERE, "diagnostic-subsystems.json"), "utf8"));
+
+export const DIAGNOSTIC_SUBSYSTEM_RULES = TABLE.rules.map(
+  (rule) => [rule.subsystem, new Set(rule.codes)],
+);
 
 const CODE_TO_SUBSYSTEM = new Map();
-for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
-  for (const code of codes) CODE_TO_SUBSYSTEM.set(code, subsystem);
+for (const rule of TABLE.rules) {
+  for (const code of rule.codes) CODE_TO_SUBSYSTEM.set(code, rule.subsystem);
 }
 
-export const OWNER_TRACK_BY_SUBSYSTEM = new Map([
-  ["project-config", "Track 1 project-corpus harness/config"],
-  ["syntax-parser-jsdoc", "Track 8 syntax/parser/jsdoc parity"],
-  ["module-symbol-resolution", "Track 7 lib/module identity"],
-  ["relations-assignability", "Track 4 relation diagnostics/compatibility"],
-  ["contextual-inference", "Track 3 inference/session/contextual typing"],
-  ["evaluation-inference-instantiation", "Track 2/3 conditional, mapped, inference, instantiation"],
-  ["keyspace-property-indexed", "Track 5 keyspace/property/indexed access"],
-  ["flow-narrowing", "Track 6 flow/narrowing"],
-  ["class-this-accessor", "Track 4 class/this/accessor compatibility"],
-  ["emit-dts-nameability", "emit/dts nameability"],
-]);
+export const OWNER_TRACK_BY_SUBSYSTEM = new Map(
+  TABLE.rules.map((rule) => [rule.subsystem, rule.owner_track]),
+);
 
 export const CRATE_BY_SUBSYSTEM = new Map([
-  ["project-config", "bench"],
-  ["syntax-parser-jsdoc", "parser"],
-  ["module-symbol-resolution", "checker"],
-  ["relations-assignability", "solver"],
-  ["contextual-inference", "checker"],
-  ["evaluation-inference-instantiation", "solver"],
-  ["keyspace-property-indexed", "solver"],
-  ["flow-narrowing", "solver"],
-  ["class-this-accessor", "solver"],
-  ["emit-dts-nameability", "emitter"],
-  ["runtime-timeout", "bench"],
-  ["runtime-oom", "bench"],
-  ["runtime-crash", "bench"],
-  ["runner-error", "bench"],
+  ...TABLE.rules.map((rule) => [rule.subsystem, rule.crate]),
+  ...Object.entries(TABLE.exit_class_crates ?? {}),
 ]);
 
-export const LABELS_BY_SUBSYSTEM = new Map([
-  ["project-config", ["bench"]],
-  ["syntax-parser-jsdoc", ["bench", "parser"]],
-  ["module-symbol-resolution", ["checker"]],
-  ["relations-assignability", ["solver", "checker"]],
-  ["contextual-inference", ["checker", "type-inference"]],
-  ["evaluation-inference-instantiation", ["solver"]],
-  ["keyspace-property-indexed", ["solver"]],
-  ["flow-narrowing", ["solver"]],
-  ["class-this-accessor", ["solver", "checker"]],
-  ["emit-dts-nameability", ["emitter"]],
-]);
+export const LABELS_BY_SUBSYSTEM = new Map(
+  TABLE.rules.map((rule) => [rule.subsystem, rule.labels]),
+);
 
 export function subsystemForCode(code) {
   return CODE_TO_SUBSYSTEM.get(code) ?? "unclassified diagnostic";
