@@ -153,9 +153,16 @@ fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
         .and_then(|tail| tail.split("let value_has_non_widening_source").next())
         .expect("failed to locate object-literal JSDoc declared-property block");
     assert!(
-        jsdoc_declared_property.contains("assign_relation_outcome(value_type, declared_type)"),
+        jsdoc_declared_property
+            .contains("object_literal_jsdoc_declared_property_relation_outcome("),
         "object literal JSDoc declared-property diagnostics must pre-gate \
          through RelationOutcome"
+    );
+    assert!(
+        !jsdoc_declared_property.contains("assign_relation_outcome(value_type, declared_type)")
+            && !jsdoc_declared_property.contains("assign_relation_outcome("),
+        "object literal JSDoc declared-property diagnostics must route through \
+         a named RelationRequest"
     );
     assert!(
         !jsdoc_declared_property.contains("!self.is_assignable_to(value_type, declared_type)"),

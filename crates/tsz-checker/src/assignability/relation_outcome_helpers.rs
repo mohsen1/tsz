@@ -723,6 +723,22 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing object-literal JSDoc declared-property
+    /// relation for raw checker types, preserving the canonical declared
+    /// property request shape.
+    pub(crate) fn object_literal_jsdoc_declared_property_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::object_literal_jsdoc_declared_property(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing contextual symbol-index value relation for
     /// raw checker types, preserving the canonical symbol-index request shape.
     pub(crate) fn contextual_symbol_index_value_relation_outcome(

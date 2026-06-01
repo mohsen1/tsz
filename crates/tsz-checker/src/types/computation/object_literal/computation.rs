@@ -641,7 +641,10 @@ impl<'a> CheckerState<'a> {
                         // Check initializer assignability against @type (TS2322)
                         if prop.initializer != prop.name
                             && !self
-                                .assign_relation_outcome(value_type, declared_type)
+                                .object_literal_jsdoc_declared_property_relation_outcome(
+                                    value_type,
+                                    declared_type,
+                                )
                                 .related
                         {
                             let declared_check_type =

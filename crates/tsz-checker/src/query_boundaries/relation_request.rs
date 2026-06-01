@@ -113,6 +113,8 @@ pub(crate) enum RelationKind {
     ObjectLiteralMappedContextualKey,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
+    /// Object-literal JSDoc declared-property initializer compatibility probes.
+    ObjectLiteralJsdocDeclaredProperty,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
     ContextualSymbolIndexValue,
     /// `in`-operator left key compatibility against the property-key space.
@@ -436,6 +438,17 @@ impl RelationRequest {
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ObjectLiteralComputedKey)
+    }
+
+    pub(crate) const fn object_literal_jsdoc_declared_property(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::ObjectLiteralJsdocDeclaredProperty,
+        )
     }
 
     pub(crate) const fn contextual_symbol_index_value(source: TypeId, target: TypeId) -> Self {
