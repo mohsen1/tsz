@@ -454,6 +454,61 @@ let err = <Comp><div /><div /></Comp>;
 }
 
 #[test]
+fn jsx_react_class_tuple_children_prefer_declared_tuple_over_injected_react_node() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let source = r#"
+import React from 'react'
+
+interface ResizablePanelProps {
+  children: [React.ReactNode, React.ReactNode]
+}
+
+class ResizablePanel extends React.Component<
+  ResizablePanelProps, any> {}
+
+const test = <ResizablePanel>
+  <div />
+  <div />
+</ResizablePanel>
+
+const testErr = <ResizablePanel>
+  <div />
+  <div />
+  <div />
+</ResizablePanel>
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        &react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            es_module_interop: true,
+            allow_synthetic_default_imports: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
+            || has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Extra tuple children should still fail the declared tuple check, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        ) + count_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ),
+        0,
+        "Declared tuple children should prevent per-child ReactNode TS2739 noise, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_multiline_formatting_whitespace_does_not_break_array_children() {
     let source = format!(
         r#"
@@ -1756,4 +1811,3 @@ fn jsx_lma_user_type_named_factory_does_not_disable_default_props() {
          expected no TS2741 for `<Comp />`, got: {codes:?}"
     );
 }
-

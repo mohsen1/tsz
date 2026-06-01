@@ -35,10 +35,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             } else {
                 None
             };
+            let normal_request = request.read().normal_origin().contextual_opt(None);
             let children_request = request
                 .read()
                 .normal_origin()
                 .contextual_opt(children_ctx_type);
+            let child_diagnostics_start = self.checker.ctx.diagnostics.len();
             // Collect children types for children prop synthesis.
             // tsc synthesizes a `children` prop from JSX element body children
             // and validates it against the component's `children` prop type.
@@ -133,6 +135,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.get_type_of_node(child);
                         TypeId::ANY
                     }
+                } else if let Some(child_node) = self.checker.ctx.arena.get(child)
+                    && matches!(
+                        child_node.kind,
+                        syntax_kind_ext::JSX_ELEMENT
+                            | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                            | syntax_kind_ext::JSX_FRAGMENT
+                    )
+                {
+                    self.checker
+                        .get_type_of_node_with_request(child, &normal_request)
                 } else {
                     self.checker
                         .get_type_of_node_with_request(child, &children_request)
@@ -238,13 +250,93 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
             let opening_element = jsx.opening_element;
-            self.checker.get_type_of_jsx_opening_element_with_children(
+            let result = self.checker.get_type_of_jsx_opening_element_with_children(
                 opening_element,
                 request,
                 children_ctx,
-            )
+            );
+            let opening_span = self.checker.get_node_span(opening_element);
+            let has_parent_overload_failure = self
+                .checker
+                .ctx
+                .diagnostics
+                .iter()
+                .skip(child_diagnostics_start)
+                .any(|diagnostic| {
+                    diagnostic.code
+                        == crate::diagnostics::diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                        && opening_span.is_none_or(|(start, end)| {
+                            diagnostic.start >= start && diagnostic.start <= end
+                        })
+                });
+            if has_parent_overload_failure {
+                let child_spans: Vec<(u32, u32)> = jsx
+                    .children
+                    .nodes
+                    .iter()
+                    .filter(|&&child_idx| self.jsx_child_is_intrinsic_element(child_idx))
+                    .filter_map(|&child_idx| self.checker.get_node_span(child_idx))
+                    .collect();
+                let mut diagnostic_index = 0usize;
+                self.checker.ctx.diagnostics.retain(|diagnostic| {
+                    let current_index = diagnostic_index;
+                    diagnostic_index += 1;
+                    let is_missing_property = matches!(
+                        diagnostic.code,
+                        crate::diagnostics::diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                            | crate::diagnostics::diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    );
+                    let is_child_diagnostic = child_spans
+                        .iter()
+                        .any(|&(start, end)| diagnostic.start >= start && diagnostic.start <= end);
+                    current_index < child_diagnostics_start
+                        || !is_missing_property
+                        || !is_child_diagnostic
+                });
+            }
+            result
         } else {
             TypeId::ERROR
         }
+    }
+
+    fn jsx_child_is_intrinsic_element(&self, child_idx: NodeIndex) -> bool {
+        let Some(child_node) = self.checker.ctx.arena.get(child_idx) else {
+            return false;
+        };
+        let opening_idx = match child_node.kind {
+            syntax_kind_ext::JSX_ELEMENT => {
+                let Some(jsx) = self.checker.ctx.arena.get_jsx_element(child_node) else {
+                    return false;
+                };
+                jsx.opening_element
+            }
+            syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => child_idx,
+            _ => return false,
+        };
+        let Some(opening_node) = self.checker.ctx.arena.get(opening_idx) else {
+            return false;
+        };
+        let Some(opening) = self.checker.ctx.arena.get_jsx_opening(opening_node) else {
+            return false;
+        };
+        let Some(tag_name_node) = self.checker.ctx.arena.get(opening.tag_name) else {
+            return false;
+        };
+        if tag_name_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .checker
+                .ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .is_some_and(|ident| {
+                    ident
+                        .escaped_text
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_lowercase())
+                });
+        }
+        tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME
     }
 }

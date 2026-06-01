@@ -1,6 +1,4 @@
-//! JSX props validation: attribute type-checking helpers, missing required props (TS2741),
-//! intrinsic attribute resolution, and grammar checks.
-//!
+//! JSX props validation: attributes, missing required props (TS2741), intrinsics, grammar.
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
 use crate::context::TypingRequest;
@@ -14,8 +12,7 @@ use crate::error_reporter::{
 };
 use crate::query_boundaries::checkers::jsx as jsx_queries;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{ObjectShape, TypeId};
@@ -111,7 +108,6 @@ impl<'a> CheckerState<'a> {
         if request.contextual_type.is_some() {
             self.invalidate_expression_for_contextual_retry(spread_expr_idx);
         }
-
         let spread_type = self.get_type_of_node_with_request(spread_expr_idx, request);
         let spread_type = self.evaluate_type_with_env(spread_type);
         self.resolve_type_for_property_access(spread_type)
@@ -167,14 +163,12 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
         };
         let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
             return;
         };
-
         let mut generic_spreads = Vec::new();
         let mut explicit_attrs = Vec::new();
         for &attr_idx in &attrs.properties.nodes {
@@ -214,7 +208,6 @@ impl<'a> CheckerState<'a> {
             if attr_name == "key" || attr_name == "ref" {
                 continue;
             }
-
             let attr_type = if attr_data.initializer.is_none() {
                 TypeId::BOOLEAN_TRUE
             } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
@@ -1353,29 +1346,41 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let missing_names: Vec<_> = shape
+        let missing_props: Vec<_> = shape
             .properties
             .iter()
             .filter(|prop| !prop.optional)
-            .filter_map(|prop| {
+            .filter(|prop| {
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                (!provided_attrs.iter().any(|(a, _)| a == &prop_name)).then_some(prop.name)
+                !provided_attrs.iter().any(|(a, _)| a == &prop_name)
             })
             .collect();
 
-        if missing_names.is_empty() {
+        if missing_props.is_empty() {
             return;
         }
-        let mut missing_names = missing_names;
+        if provided_attrs.is_empty()
+            && tag_name_idx.is_some_and(|tag_name_idx| {
+                self.get_jsx_tag_name_text(tag_name_idx)
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|ch| ch.is_ascii_lowercase())
+            })
+            && jsx_queries::missing_props_are_iterator_protocol_noise(
+                self.ctx.types,
+                &missing_props,
+            )
+        {
+            return;
+        }
+        let mut missing_names: Vec<_> = missing_props.into_iter().map(|prop| prop.name).collect();
         missing_names.sort_by_key(|name| self.ctx.types.resolve_atom_ref(*name).to_string());
-
         let source_type = self.format_jsx_provided_attrs_source_type(provided_attrs);
         let target_type = self.format_jsx_missing_props_target_type(
             preferred_target,
             props_type,
             preferred_target_display.filter(|display| !display.is_empty()),
         );
-
         if missing_names.len() == 1 {
             let missing_name = missing_names[0];
             let prop_name = self.ctx.types.resolve_atom(missing_name);
