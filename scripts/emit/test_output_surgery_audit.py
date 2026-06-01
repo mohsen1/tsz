@@ -76,12 +76,26 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "c.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "stale debt"),
         }
         failures = ["a.rs: 1 unallowlisted output-surgery call(s)"]
+        git_context = {
+            "repo_root": "/repo",
+            "head": "abc123",
+            "branch": "codex/studio-f-output-surgery",
+            "upstream": "origin/main",
+            "dirty": False,
+            "dirty_path_count": 0,
+        }
 
-        report = self.audit.build_json_report(findings, allowlist, failures)
+        report = self.audit.build_json_report(
+            findings,
+            allowlist,
+            failures,
+            git_context=git_context,
+        )
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["output_surgery_status"], "failed")
+        self.assertEqual(report["git_context"], git_context)
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["allowlisted_calls"], 1)
@@ -151,6 +165,35 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["output_surgery_status"], "passed")
         self.assertEqual(report["failures"], [])
+
+    def test_git_context_records_branch_upstream_and_dirty_count(self):
+        calls = []
+
+        def fake_run_git(root, args):
+            calls.append((root, tuple(args)))
+            responses = {
+                ("status", "--porcelain"): " M scripts/emit/audit-output-surgery.py\n?? tmp.txt",
+                ("branch", "--show-current"): "codex/studio-f-output-surgery",
+                ("rev-parse", "HEAD"): "abc123",
+                (
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{u}",
+                ): "origin/main",
+            }
+            return responses.get(tuple(args))
+
+        root = pathlib.Path("/repo")
+        context = self.audit.build_git_context(root, run_git=fake_run_git)
+
+        self.assertEqual(context["repo_root"], "/repo")
+        self.assertEqual(context["head"], "abc123")
+        self.assertEqual(context["branch"], "codex/studio-f-output-surgery")
+        self.assertEqual(context["upstream"], "origin/main")
+        self.assertTrue(context["dirty"])
+        self.assertEqual(context["dirty_path_count"], 2)
+        self.assertIn((root, ("status", "--porcelain")), calls)
 
     def test_pass_summary_names_clean_guardrail_counters(self):
         findings = [
