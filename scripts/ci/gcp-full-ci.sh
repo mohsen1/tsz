@@ -59,7 +59,7 @@ CONFORMANCE_SHARD_COUNT="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE
 CONFORMANCE_SHARD_STRATEGY="${TSZ_CI_CONFORMANCE_SHARD_STRATEGY:-hash}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-60000}"
-METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
+METRICS_DIR="${TSZ_CI_METRICS_DIR:-ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
 if [[ "$METRICS_DIR" != /* ]]; then
   METRICS_DIR="$ROOT_DIR/$METRICS_DIR"
@@ -1211,8 +1211,8 @@ run_conformance_aggregate() {
   local using_artifacts=0
   if [[ -d "$artifacts_dir" ]]; then
     # upload-artifact@v4 preserves the full workspace-relative path inside the artifact.
-    # The file is at .ci-metrics/conformance.json in the workspace, so after download it
-    # lands at conformance-shard-N/.ci-metrics/conformance.json (not conformance-shard-N/conformance.json).
+    # The file is at ci-metrics/conformance.json in the workspace, so after download it
+    # lands at conformance-shard-N/ci-metrics/conformance.json (not conformance-shard-N/conformance.json).
     # Use find with maxdepth to locate the file regardless of the subdirectory depth.
     local found=0
     for shard_dir in "$artifacts_dir"/conformance-shard-*/; do
@@ -1223,7 +1223,7 @@ run_conformance_aggregate() {
       local shard_name
       shard_name="$(basename "$shard_dir")"
       cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
-      local artifact_failure_list="$shard_dir/.ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
+      local artifact_failure_list="$shard_dir/ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
       if [[ -f "$artifact_failure_list" ]]; then
         cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
       fi

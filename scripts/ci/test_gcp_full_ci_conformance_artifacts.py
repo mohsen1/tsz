@@ -30,8 +30,8 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             self.workflow,
             re.compile(
                 r"path:\s*\|\s*\n"
-                r"\s+\.ci-metrics/conformance\.json\s*\n"
-                r"\s+\.ci-metrics/conformance-failures-\*\.txt",
+                r"\s+ci-metrics/conformance\.json\s*\n"
+                r"\s+ci-metrics/conformance-failures-\*\.txt",
                 re.MULTILINE,
             ),
         )
@@ -39,7 +39,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             self.workflow.index("name: conformance-shard-${{ matrix.shard }}") :
         ]
         upload_block = upload_block[: upload_block.index("retention-days: 1")]
-        self.assertIn("include-hidden-files: true", upload_block)
+        self.assertNotIn("include-hidden-files", upload_block)
 
     def test_shard_writes_failure_list_before_optional_gcs_upload(self):
         body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
@@ -56,7 +56,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             "run_conformance_aggregate",
             "\n# Download shard failure lists",
         )
-        self.assertIn('local artifact_failure_list="$shard_dir/.ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"', aggregate)
+        self.assertIn('local artifact_failure_list="$shard_dir/ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"', aggregate)
         self.assertIn('cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"', aggregate)
         allowlist = self.function_body(
             "_check_conformance_regression_allowlist",
@@ -73,7 +73,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = pathlib.Path(temp_dir)
-            (temp / ".ci-metrics").mkdir()
+            (temp / "ci-metrics").mkdir()
             (temp / "scripts" / "conformance").mkdir(parents=True)
             (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
                 '{"summary":{"passed":10,"total_tests":10}}\n',
@@ -84,7 +84,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
                     temp
                     / ".conformance-shards"
                     / f"conformance-shard-{shard}"
-                    / ".ci-metrics"
+                    / "ci-metrics"
                 )
                 shard_dir.mkdir(parents=True)
                 shard_dir.joinpath("conformance.json").write_text(
@@ -106,7 +106,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
                 f"""#!/usr/bin/env bash
 set -Eeuo pipefail
 
-METRICS_DIR=.ci-metrics
+METRICS_DIR=ci-metrics
 TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
 _TSZ_CI_CONFORMANCE_SHARD_COUNT=2
 
@@ -147,7 +147,7 @@ run_conformance_aggregate
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = pathlib.Path(temp_dir)
-            (temp / ".ci-metrics").mkdir()
+            (temp / "ci-metrics").mkdir()
             (temp / "scripts" / "conformance").mkdir(parents=True)
             (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
                 '{"summary":{"passed":10,"total_tests":20}}\n',
@@ -158,7 +158,7 @@ run_conformance_aggregate
                     temp
                     / ".conformance-shards"
                     / f"conformance-shard-{shard}"
-                    / ".ci-metrics"
+                    / "ci-metrics"
                 )
                 shard_dir.mkdir(parents=True)
                 shard_dir.joinpath("conformance.json").write_text(
@@ -180,7 +180,7 @@ run_conformance_aggregate
                 f"""#!/usr/bin/env bash
 set -Eeuo pipefail
 
-METRICS_DIR=.ci-metrics
+METRICS_DIR=ci-metrics
 TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
 _TSZ_CI_CONFORMANCE_SHARD_COUNT=2
 

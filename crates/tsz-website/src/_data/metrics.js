@@ -148,7 +148,7 @@ function extractMetrics() {
   setSuiteUnavailable(metrics, "emit_dts");
   setSuiteUnavailable(metrics, "fourslash");
 
-  const metricsDir = path.join(ROOT, ".ci-metrics");
+  const metricsDir = path.join(ROOT, "ci-metrics");
   const conformance = readJsonIfExists(path.join(metricsDir, "conformance.json"));
   const emit = readJsonIfExists(path.join(metricsDir, "emit.json"));
   const fourslash = readJsonIfExists(path.join(metricsDir, "fourslash.json"));

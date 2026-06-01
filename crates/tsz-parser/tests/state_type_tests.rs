@@ -1061,3 +1061,206 @@ fn template_literal_multiple_declarations_token_isolation() {
          type C<T extends string> = A<T> extends B<T> ? true : false;",
     );
 }
+
+#[test]
+fn test_repro_issue_10937_flatten_rows() {
+    let source = r#"
+type FlattenRows<T extends readonly unknown[]> =
+  T extends readonly [infer Head, ...infer Tail]
+    ? Head extends readonly unknown[]
+      ? [...FlattenRows<Head>, ...FlattenRows<Tail>]
+      : [Head, ...FlattenRows<Tail>]
+    : [];
+
+type RemapTuple<T extends readonly unknown[]> = {
+  [K in keyof T]: T[K] extends readonly unknown[] ? FlattenRows<T[K]> : T[K]
+};
+
+type Row6 = RemapTuple<[["utility-types-project"], [1, 2], []]>;
+"#;
+    assert_no_errors(source);
+}
+
+#[test]
+fn test_issue_10937_multiple_rest_spreads_no_diagnostics() {
+    // Multiple rest spread elements in nested recursive conditional tuple types
+    let cases = [
+        // Multiple rest elements in a tuple
+        "type T = [...A, ...B];",
+        // Rest with generic type refs
+        "type T<A, B> = [...A, ...B];",
+        // Recursive with infer rest
+        "type T<U> = U extends readonly [infer Head, ...infer Tail] ? Tail : never;",
+        // Nested recursive flatten shape
+        "type Flatten<T extends readonly unknown[]> = T extends readonly [infer H, ...infer Tail] ? [H, ...Flatten<Tail>] : [];",
+        // Mapped tuple over keyof
+        "type Remap<T extends readonly unknown[]> = { [K in keyof T]: T[K] };",
+        // Combined mapped + conditional + recursive spread
+        "type Remap<T extends readonly unknown[]> = { [K in keyof T]: T[K] extends readonly unknown[] ? T[K] : never };",
+    ];
+    for source in cases {
+        assert_no_errors(source);
+    }
+}
+
+#[test]
+fn test_issue_10937_rest_span_stability_in_recursive_context() {
+    // REST_TYPE nodes in nested positions must have stable spans
+    assert_span("type T = [...A, ...B];", syntax_kind_ext::REST_TYPE, "...A");
+    assert_span(
+        "type T<U> = U extends readonly [infer Head, ...infer Tail] ? Tail : never;",
+        syntax_kind_ext::REST_TYPE,
+        "...infer Tail",
+    );
+}
+
+#[test]
+fn test_issue_10937_nested_generic_in_rest_tuple_element() {
+    // The rest spread element contains a generic type - check spans are stable
+    let source = "type T<A, B> = [...FlattenRows<A>, ...FlattenRows<B>];";
+    let (parser, _root) = parse_source(source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no diagnostics for nested generics in rest tuple: {:?}",
+        parser.get_diagnostics()
+    );
+    // Reuse the already-parsed state — avoids a second parse inside assert_span.
+    assert_span_on(
+        &parser,
+        source,
+        syntax_kind_ext::REST_TYPE,
+        "...FlattenRows<A>",
+    );
+    assert_span_on(
+        &parser,
+        source,
+        syntax_kind_ext::REST_TYPE,
+        "...FlattenRows<B>",
+    );
+}
+
+#[test]
+fn test_issue_10937_infer_constraint_in_rest_spread() {
+    // These forms must parse without diagnostics.
+    let no_error_cases = [
+        "type T = [...string[], ...number[]];",
+        "type Remap<T extends readonly unknown[]> = { [K in keyof T]: T[K] extends readonly unknown[] ? T[K] : never };",
+        "type T<U> = U extends readonly [infer H, ...infer R] ? H : never;",
+    ];
+    for source in no_error_cases {
+        assert_no_errors(source);
+    }
+    // infer with `extends` constraint in rest position (TS 4.7+ variadic infer constraint)
+    assert_no_errors(
+        "type T<U> = U extends readonly [infer H extends string, ...infer R extends number[]] ? H : never;",
+    );
+}
+
+#[test]
+fn test_issue_10937_span_stability_multiple_rest_in_nested_conditional() {
+    // Verifies REST_TYPE spans are correct in a deeply nested recursive context
+    let source = r#"
+type FlattenRows<T extends readonly unknown[]> =
+  T extends readonly [infer Head, ...infer Tail]
+    ? Head extends readonly unknown[]
+      ? [...FlattenRows<Head>, ...FlattenRows<Tail>]
+      : [Head, ...FlattenRows<Tail>]
+    : [];
+"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "{diags:?}");
+
+    // Every REST_TYPE node must start with `...` and not overshoot into trailing
+    // whitespace — a two-sided bound on span correctness for all nodes at once.
+    let arena = parser.get_arena();
+    for node in &arena.nodes {
+        if node.kind == syntax_kind_ext::REST_TYPE {
+            let node_text = &source[node.pos as usize..node.end as usize];
+            assert!(
+                node_text.starts_with("..."),
+                "REST_TYPE node at [{},{}] should start with '...', got {:?}",
+                node.pos,
+                node.end,
+                node_text
+            );
+            assert!(
+                !node_text.ends_with(|c: char| c.is_whitespace()),
+                "REST_TYPE node at [{},{}] span overshoots into whitespace, got {:?}",
+                node.pos,
+                node.end,
+                node_text
+            );
+        }
+    }
+}
+
+#[test]
+fn test_issue_10937_infer_extends_constraint_inside_tuple_in_extends_clause() {
+    // This is the tricky case: infer T extends U inside a tuple that is itself
+    // inside the extends clause of a conditional type. The DISALLOW_CONDITIONAL_TYPES
+    // flag is active for the outer extends, cleared for the tuple element, and the
+    // infer constraint handler must correctly back-track when it sees `?`.
+    let cases = [
+        // infer with constraint, spread form
+        "type T<U> = U extends [infer H extends string] ? H : never;",
+        "type T<U> = U extends [infer H extends string, infer T extends number] ? H : never;",
+        "type T<U> = U extends [...infer H extends string[]] ? H : never;",
+        // infer without constraint in extends position
+        "type T<U> = U extends [infer H, ...infer R] ? H : never;",
+        // nested infer constraint disambiguation: `?` after constraint belongs to outer conditional
+        "type T<U> = U extends infer X extends string ? X : never;",
+        // Verify these don't confuse the ? as infer constraint vs outer conditional
+        "type T<U> = U extends readonly [infer Head, ...infer Tail] ? Tail : never;",
+    ];
+    for source in cases {
+        assert_no_errors(source);
+    }
+}
+
+#[test]
+fn test_issue_10937_tuple_recovery_does_not_emit_false_comma_expected_in_spread_with_conditional() {
+    // Spread elements that contain complex types (conditionals, mapped) inside tuples
+    // must not trigger recovery (false ',' expected) when they're valid
+    let valid_cases = [
+        // Rest element with a complex conditional type
+        "type T<U> = [...(U extends string ? string[] : number[])];",
+        // Nested tuple spreads in a conditional
+        "type T<U> = U extends any ? [...U[]] : never;",
+        // Mapped type inside tuple element (edge case)
+        "type T<U> = [{ [K in keyof U]: U[K] }];",
+    ];
+    for source in valid_cases {
+        assert_no_errors(source);
+    }
+}
+
+#[test]
+fn rest_type_span_excludes_trailing_whitespace() {
+    // REST_TYPE end uses `token_full_start()` of the next token, which is the
+    // full-start position (before leading trivia). With a space before `,` the
+    // span must still stop right after `T`, not include the space.
+    assert_span("type A = [...T , U];", syntax_kind_ext::REST_TYPE, "...T");
+}
+
+#[test]
+fn test_issue_10937_three_rest_elements_in_tuple() {
+    // Three rest elements at parse level. TypeScript 4.2+ allows rest in
+    // non-final positions; the parser must accept these without diagnostics
+    // regardless of later semantic checks.
+    let cases = [
+        "type T = [...A, ...B, ...C];",
+        "type T<A, B, C> = [...A, ...B, ...C];",
+        "type T = [...string[], ...number[], ...boolean[]];",
+        "type T = [...A, B, ...C];",
+    ];
+    for source in cases {
+        assert_no_errors(source);
+    }
+    // Span check: first and last rest elements in a three-spread tuple.
+    assert_span(
+        "type T = [...A, ...B, ...C];",
+        syntax_kind_ext::REST_TYPE,
+        "...A",
+    );
+}
