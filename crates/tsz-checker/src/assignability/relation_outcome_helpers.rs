@@ -212,6 +212,21 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing base-union constraint relation for raw
+    /// checker types, preserving the canonical union-constraint request shape.
+    pub(crate) fn union_constraint_member_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::union_constraint_member(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing generic constraint property relation for
     /// raw checker types, preserving the canonical generic-constraint request
     /// shape.
