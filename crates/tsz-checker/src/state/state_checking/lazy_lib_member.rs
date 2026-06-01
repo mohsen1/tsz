@@ -57,6 +57,23 @@ pub(crate) fn lazy_lib_member_access_disabled() -> bool {
     })
 }
 
+/// Kill-switch for keeping a global ambient-var value type lazy when its
+/// annotation is a bare reference to a simple lib interface (e.g. the global
+/// `declare var document: Document`). Set `TSZ_DISABLE_LAZY_GLOBAL_VAR=1` to
+/// force the legacy eager `resolve_ref_type` materialization, enabling
+/// byte-identical diagnostic comparison.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_global_var_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_LAZY_GLOBAL_VAR")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl CheckerState<'_> {
     /// Return the `DefId` of an eligible simple lib-interface receiver when
     /// `object_type` is a bare `Lazy(DefId)` reference to one, or `None`
@@ -81,7 +98,34 @@ impl CheckerState<'_> {
         if lazy_lib_member_access_disabled() {
             return None;
         }
+        self.simple_lib_interface_lazy_ref_def_id(object_type)
+    }
 
+    /// Structural eligibility predicate shared by the property-access fast path
+    /// ([`Self::lazy_lib_member_receiver_def_id`]) and the lazy global-var value
+    /// type ([`Self::lazy_global_var_lib_interface_def_id`]).
+    ///
+    /// Returns the `DefId` when `object_type` is a bare `Lazy(DefId)` reference
+    /// to a simple lib interface, or `None` otherwise. This does **not** check
+    /// either kill-switch; callers gate independently so each lever can be A/B
+    /// compared in isolation.
+    ///
+    /// Eligibility (same conservative shape as PR #8638's
+    /// `try_lower_simple_actual_lib_type_reference`):
+    /// 1. `object_type` is a bare `Lazy(DefId)` (not an `Application`).
+    /// 2. The `DefId` maps to a symbol that is an `INTERFACE`.
+    /// 3. The symbol is from the actual or cloned standard library.
+    /// 4. The interface is **non-generic** (no type parameters) — generic
+    ///    receivers need argument substitution that the single-member walk does
+    ///    not perform.
+    /// 5. The interface name is not compiler-managed and not shadowed by a
+    ///    file-local type declaration.
+    /// 6. The interface is not globally augmented (`declare global { interface
+    ///    X { ... } }`), which could add the accessed member out of band.
+    pub(crate) fn simple_lib_interface_lazy_ref_def_id(
+        &self,
+        object_type: tsz_solver::TypeId,
+    ) -> Option<DefId> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
 
         // Must resolve to a concrete lib interface symbol.
@@ -125,6 +169,56 @@ impl CheckerState<'_> {
         }
 
         Some(def_id)
+    }
+
+    /// When `annotated_type` is the value type of a global/cross-file ambient var
+    /// whose annotation is a bare reference to a simple lib interface, return the
+    /// same `Lazy(DefId)` so the value type stays lazy instead of being eagerly
+    /// materialized by `resolve_ref_type`.
+    ///
+    /// This is the value-position counterpart of the property-access fast path:
+    /// keeping the global receiver lazy (e.g. `document: Document`) lets
+    /// `try_lazy_lib_member_property_access` resolve only the accessed member on
+    /// `document.title` / `document.querySelector(...)`, mirroring the already-lazy
+    /// file-local `declare const d: Document` path.
+    ///
+    /// Returns `None` (caller keeps the eager `resolve_ref_type` result) when the
+    /// kill-switch is set or the annotation is not an eligible bare lib-interface
+    /// `Lazy(DefId)`.
+    pub(crate) fn lazy_global_var_lib_interface_def_id(
+        &self,
+        annotated_type: tsz_solver::TypeId,
+    ) -> Option<DefId> {
+        if lazy_global_var_disabled() {
+            return None;
+        }
+        self.simple_lib_interface_lazy_ref_def_id(annotated_type)
+    }
+
+    /// Build the `Lazy(DefId)` value type for a global ambient var whose
+    /// annotation is a bare reference to the simple lib interface named
+    /// `type_name`, or `None` when ineligible.
+    ///
+    /// Used by the lib-declaration resolution shortcut so an ambient lib var
+    /// like `declare var document: Document` keeps a lazy value type instead of
+    /// eagerly materializing the interface. The candidate lazy ref is validated
+    /// through the same conservative eligibility predicate as the property-access
+    /// fast path (simple, non-generic, actual-lib, unshadowed, unaugmented
+    /// interface), and the whole lever is gated by `TSZ_DISABLE_LAZY_GLOBAL_VAR`.
+    pub(crate) fn lazy_global_var_lib_interface_type(
+        &self,
+        type_name: &str,
+    ) -> Option<tsz_solver::TypeId> {
+        if lazy_global_var_disabled() {
+            return None;
+        }
+        let def_id = self.ctx.actual_lib_def_id_for_bare_name(type_name)?;
+        let lazy = self.ctx.types.lazy(def_id);
+        // Re-validate the structural eligibility on the constructed lazy ref so a
+        // generic, augmented, shadowed, or non-interface lib name falls back to
+        // the eager materialization path below.
+        self.simple_lib_interface_lazy_ref_def_id(lazy)
+            .map(|_| lazy)
     }
 
     /// Whether a lib interface `name` has any global augmentation declarations

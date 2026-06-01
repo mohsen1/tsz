@@ -626,6 +626,20 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if var_decl.type_annotation.is_some() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                // Lazy global-var value type: when the annotation is a bare
+                // reference to a simple lib interface (e.g. the global
+                // `declare var document: Document`), keep the value type lazy
+                // instead of eagerly materializing the whole interface via
+                // `resolve_ref_type`. Downstream property access then resolves
+                // only the accessed member, mirroring the file-local
+                // `declare const d: Document` path. Falls back to the eager
+                // path on any miss; gated by `TSZ_DISABLE_LAZY_GLOBAL_VAR`.
+                if self
+                    .lazy_global_var_lib_interface_def_id(annotated)
+                    .is_some()
+                {
+                    return annotated;
+                }
                 return self.resolve_ref_type(annotated);
             }
             if self.ctx.is_js_file()
@@ -903,11 +917,30 @@ impl<'a> CheckerState<'a> {
             if let Some(type_annotation_node) = decl_arena.get(var_decl.type_annotation)
                 && let Some(type_ref) = decl_arena.get_type_ref(type_annotation_node)
             {
-                // Check if this is a simple identifier (not qualified name)
-                if let Some(type_name_node) = decl_arena.get(type_ref.type_name)
+                // Check this is a simple identifier (not a qualified name) and
+                // the reference carries no type arguments — a bare lib type ref.
+                let has_type_arguments = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty());
+                if !has_type_arguments
+                    && let Some(type_name_node) = decl_arena.get(type_ref.type_name)
                     && let Some(ident) = decl_arena.get_identifier(type_name_node)
                 {
                     let type_name = ident.escaped_text.as_str();
+                    // Lazy global-var value type: when this ambient lib var (e.g.
+                    // `declare var document: Document`) is annotated with a bare
+                    // reference to a simple lib interface, keep the value type as
+                    // a `Lazy(DefId)` instead of materializing the whole interface
+                    // here. Property access then resolves only the accessed member
+                    // via the #12117 fast path, mirroring the file-local
+                    // `declare const d: Document` path. Gated by the
+                    // `TSZ_DISABLE_LAZY_GLOBAL_VAR` kill-switch and the same
+                    // conservative eligibility predicate as the property-access
+                    // fast path, so any non-simple shape falls back below.
+                    if let Some(lazy) = self.lazy_global_var_lib_interface_type(type_name) {
+                        return lazy;
+                    }
                     // Use resolve_lib_type_by_name for global lib types
                     if let Some(lib_type) = self.resolve_lib_type_by_name(type_name)
                         && lib_type != TypeId::UNKNOWN
