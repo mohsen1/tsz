@@ -1757,6 +1757,56 @@ const result = pipe(myMap((x: number) => x + 1), myFilter(y => y > 0));
 }
 
 #[test]
+fn ts2345_for_pipe_callback_body_mismatch_anchors_to_body_expression() {
+    // The callback body should remain the anchor when a nested `pipe`-style call
+    // preserves an argument-level mismatch through an interface-wrapper chain.
+    for name in ["OperatorFunction", "OperatorFunctor"] {
+        let source = format!(
+            r#"interface {name}<A, B> {{ (source: A): B; }}
+declare function map<A, B>(fn: (t: A) => B): {name}<A, B>;
+declare function filter<A>(fn: (t: A) => number): {name}<A, A>;
+declare function pipe<A, B>(op1: {name}<A, B>): {name}<A, B>;
+declare function pipe<A, B, C>(op1: {name}<A, B>, op2: {name}<B, C>): {name}<A, C>;
+const r = pipe(map((x: number) => x + 1), filter(x => x > 0));
+"#,
+            name = name
+        );
+
+        let diagnostics = check_source_with_strict_null(&source);
+        let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+
+        assert!(
+            !ts2345.is_empty(),
+            "Expected TS2345 for wrapper callback body mismatch with {name}, got: {:?}",
+            ts2345
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+
+        let body_offset = source.find("x > 0").expect("body pattern exists");
+        let call_offset = source.find("const r = pipe").expect("pipe call exists");
+
+        assert!(
+            ts2345.iter().any(|diag| diag.start as usize == body_offset),
+            "Expected TS2345 anchored at callback body `x > 0` for {name}; starts={:?}",
+            ts2345
+                .iter()
+                .map(|diag| (diag.start, diag.length))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !ts2345.iter().all(|diag| diag.start as usize == call_offset),
+            "Expected callback-body anchor, not outer call-only anchoring for {name}; got: {:?}",
+            ts2345
+                .iter()
+                .map(|diag| (diag.start, diag.length))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn outer_and_overload_share_tp_name_metadata_but_stay_distinct() {
     // Regression: when an outer generic function <T> calls an overloaded generic
     // function whose overloads also use <T>, both unconstrained and with identical

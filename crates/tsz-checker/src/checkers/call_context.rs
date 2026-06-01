@@ -39,6 +39,15 @@ impl<'a> CheckerState<'a> {
             {
                 out.push(current);
             }
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    if let Some(args) = call.arguments.as_ref() {
+                        for &arg_idx in &args.nodes {
+                            self.collect_callback_function_indices(arg_idx, out, depth + 1);
+                        }
+                    }
+                }
+            }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
                     self.collect_callback_function_indices(cond.when_true, out, depth + 1);
@@ -343,6 +352,17 @@ impl<'a> CheckerState<'a> {
                     if let Some(literal) = checker.ctx.arena.get_literal_expr(node) {
                         for &element_idx in &literal.elements.nodes {
                             collect(checker, element_idx, spans);
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    if let Some(call) = checker.ctx.arena.get_call_expr(node) {
+                        if let Some(arguments) = call.arguments.as_ref() {
+                            for &arg_idx in &arguments.nodes {
+                                collect(checker, arg_idx, spans);
+                            }
                         }
                     }
                 }

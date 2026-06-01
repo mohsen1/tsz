@@ -751,7 +751,6 @@ impl<'a> CheckerState<'a> {
                 .logical_call_argument_nodes(idx)
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|&arg_idx| self.is_callback_like_argument(arg_idx))
                 .flat_map(|arg_idx| self.callback_body_spans(arg_idx))
                 .collect();
             let mut shared = None;
