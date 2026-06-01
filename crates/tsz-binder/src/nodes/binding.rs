@@ -489,6 +489,14 @@ impl BinderState {
                         !is_function_body,
                     );
                 }
+            } else if node.kind == syntax_kind_ext::MODULE_BLOCK {
+                // Namespace bodies are function scopes: top-level `function`
+                // declarations in the body are not block-scoped.
+                if let Some(block) = arena.get_module_block(node)
+                    && let Some(ref statements) = block.statements
+                {
+                    self.collect_hoisted_declarations_impl(arena, statements, false);
+                }
             } else {
                 // Handle single statement (not wrapped in a block)
                 // e.g., `if (x) var y = 1;` or `while (x) var i = 0;`
