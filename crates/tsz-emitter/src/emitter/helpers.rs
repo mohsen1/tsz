@@ -1504,6 +1504,9 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
+                    if node.is_global_augmentation() && module.body.is_none() {
+                        return false;
+                    }
                     if self
                         .arena
                         .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)

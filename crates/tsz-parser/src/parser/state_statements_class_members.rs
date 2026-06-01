@@ -1158,6 +1158,21 @@ impl ParserState {
                 break;
             }
 
+            if matches!(
+                self.token(),
+                SyntaxKind::GlobalKeyword
+                    | SyntaxKind::NamespaceKeyword
+                    | SyntaxKind::ModuleKeyword
+            ) && self.look_ahead_is_module_declaration()
+            {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
             let member = self.parse_class_member();
             if member.is_some() {
                 // Don't consume trailing semicolon if the member itself is a
