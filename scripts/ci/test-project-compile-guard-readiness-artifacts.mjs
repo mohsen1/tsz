@@ -480,3 +480,168 @@ withTempDir((dir) => {
   assert.deepEqual(rows[0].exit_codes.tsc, [127]);
   assert.deepEqual(rows[0].exit_codes.tsz, []);
 });
+
+// Result cache: second guard run skips tsz when binary, tsconfig, and fixture ref are unchanged.
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeRepo = path.join(dir, "fake-utility-types");
+  const fakeTsz = path.join(dir, "tsz");
+  const runCountFile = path.join(dir, "tsz-run-count");
+
+  const fakeRef = createGitRepo(fakeRepo, {
+    "src/index.ts": "export type Id<T> = T;\n",
+  });
+
+  writeExecutable(
+    fakeTsz,
+    `#!/usr/bin/env bash
+count=0
+[ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})
+printf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}
+exit 0
+`,
+  );
+
+  const env = {
+    ...process.env,
+    TSZ_BIN: fakeTsz,
+    UTILITY_TYPES_REPO: fakeRepo,
+    UTILITY_TYPES_REF: fakeRef,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_SET: "required",
+    TSZ_PROJECT_COMPILE_FILTER: "^utility-types-project$",
+    TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+  };
+
+  const r1 = spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
+  assert.equal(r1.status, 0, `first run failed:\n${r1.stderr}\n${r1.stdout}`);
+  assert.equal(
+    fs.readFileSync(runCountFile, "utf8"),
+    "1",
+    "tsz should run on first pass",
+  );
+
+  const r2 = spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
+  assert.equal(r2.status, 0, `second run failed:\n${r2.stderr}\n${r2.stdout}`);
+  assert.equal(
+    fs.readFileSync(runCountFile, "utf8"),
+    "1",
+    "tsz must not re-run when binary, tsconfig, and fixture ref are unchanged",
+  );
+
+  const rows = readJsonl(
+    path.join(fixtureRoot, "project-compatibility.jsonl"),
+  );
+  assert.equal(rows.length, 1);
+  assertRequiredCompatibilityFields(rows[0]);
+  assert.equal(rows[0].name, "utility-types-project");
+  assert.equal(rows[0].state, "green");
+  assert.equal(rows[0].exit_class, "exit success");
+});
+
+// Result cache disabled: tsz always runs when TSZ_PROJECT_COMPILE_RESULT_CACHE=0.
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeRepo = path.join(dir, "fake-utility-types");
+  const fakeTsz = path.join(dir, "tsz");
+  const runCountFile = path.join(dir, "tsz-run-count");
+
+  const fakeRef = createGitRepo(fakeRepo, {
+    "src/index.ts": "export type Id<T> = T;\n",
+  });
+
+  writeExecutable(
+    fakeTsz,
+    `#!/usr/bin/env bash
+count=0
+[ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})
+printf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}
+exit 0
+`,
+  );
+
+  const env = {
+    ...process.env,
+    TSZ_BIN: fakeTsz,
+    UTILITY_TYPES_REPO: fakeRepo,
+    UTILITY_TYPES_REF: fakeRef,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_SET: "required",
+    TSZ_PROJECT_COMPILE_FILTER: "^utility-types-project$",
+    TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    TSZ_PROJECT_COMPILE_RESULT_CACHE: "0",
+  };
+
+  spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
+  spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
+
+  assert.equal(
+    fs.readFileSync(runCountFile, "utf8"),
+    "2",
+    "tsz must re-run on every pass when cache is disabled",
+  );
+});
+
+// Result cache miss: tsz re-runs after tsz binary changes.
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeRepo = path.join(dir, "fake-utility-types");
+  const tszV1 = path.join(dir, "tsz-v1");
+  const tszV2 = path.join(dir, "tsz-v2");
+  const runCountFile = path.join(dir, "tsz-run-count");
+
+  const fakeRef = createGitRepo(fakeRepo, {
+    "src/index.ts": "export type Id<T> = T;\n",
+  });
+
+  const counterScript = (tag) =>
+    `#!/usr/bin/env bash\n# ${tag}\ncount=0\n[ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})\nprintf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}\nexit 0\n`;
+
+  writeExecutable(tszV1, counterScript("v1"));
+  writeExecutable(tszV2, counterScript("v2"));
+
+  const commonEnv = {
+    ...process.env,
+    UTILITY_TYPES_REPO: fakeRepo,
+    UTILITY_TYPES_REF: fakeRef,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_SET: "required",
+    TSZ_PROJECT_COMPILE_FILTER: "^utility-types-project$",
+    TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+  };
+
+  // First run with v1 — cache miss, tsz runs.
+  const r1 = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...commonEnv, TSZ_BIN: tszV1 },
+  });
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.equal(fs.readFileSync(runCountFile, "utf8"), "1");
+
+  // Second run with v1 — cache hit, tsz skipped.
+  const r2 = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...commonEnv, TSZ_BIN: tszV1 },
+  });
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(
+    fs.readFileSync(runCountFile, "utf8"),
+    "1",
+    "same binary: cache hit",
+  );
+
+  // Third run with v2 — binary changed, cache miss, tsz re-runs.
+  const r3 = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...commonEnv, TSZ_BIN: tszV2 },
+  });
+  assert.equal(r3.status, 0, r3.stderr);
+  assert.equal(
+    fs.readFileSync(runCountFile, "utf8"),
+    "2",
+    "new binary: cache miss",
+  );
+});
