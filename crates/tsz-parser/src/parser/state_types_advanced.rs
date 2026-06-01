@@ -1707,22 +1707,22 @@ impl ParserState {
     }
 
     pub(crate) fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
-        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
-        {
+        if !self.is_token(SyntaxKind::OpenBracketToken) {
             return false;
         }
 
-        // A mapped type parameter `[K in T]` on a new line is always a type member
-        // boundary, never an array/indexed-access suffix.  The bracket-scanning loop
+        // `[identifier in ...]` is a mapped-type start, not array/indexed-access.
+        // Treat it as a type-member boundary immediately because the bracket scanner
         // below uses raw scanner calls that do not re-enter template-continuation mode
-        // after a `TemplateHead` substitution; template literals inside the `as` clause
-        // (e.g. `[K in T as K extends \`${P}:${N}\` ? N : never]`) can absorb the
-        // closing `]` into the template string, making bracket_depth never reach 0 and
-        // causing the function to incorrectly return false.  Short-circuit here: any
-        // `[identifier in …]` sequence with a preceding line break is a mapped type and
-        // therefore a boundary, regardless of what the bracket contents look like.
+        // after a `TemplateHead` substitution. Template literals inside `as` clauses
+        // such as `${infer P}:${infer N}` can absorb the closing `]`, so bracket-depth
+        // tracking may never reach 0 and incorrectly fall through to non-boundary.
         if self.look_ahead_is_mapped_type_start() {
             return true;
+        }
+
+        if !self.scanner.has_preceding_line_break() {
+            return false;
         }
 
         let snapshot = self.scanner.save_state();

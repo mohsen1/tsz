@@ -1284,6 +1284,50 @@ declare namespace Lib {
 }
 
 #[test]
+fn test_ambient_module_key_remap_with_as_clause_no_errors() {
+    // Repro from issue #10934 (`parser-3-20`): key-remap mapped types inside
+    // ambient module declarations should stay in type-context, not JSX.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare module "row3-ambient" {
+    export interface Source {
+        "utility-types-project_value": string;
+    }
+
+    export type Remap<T> = {
+        [K in keyof T as K extends `${infer Prefix}_${infer Suffix}`
+            ? `${Prefix}${Capitalize<Suffix>}`
+            : K]: T[K]
+    };
+
+    export type Result = Remap<Source>;
+}
+    "#,
+    );
+}
+
+#[test]
+fn test_ambient_module_key_remap_with_as_clause_and_renamed_bindings_no_errors() {
+    // Exercise the same structural case with different binder names so recovery
+    // is not tied to a single parameter identifier spelling.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare module "row3-ambient-rename" {
+    type RemapRow<Shape> = {
+        [Key in keyof Shape as Key extends `${infer Head}_${infer Tail}`
+            ? `${Head}${Capitalize<Tail>}`
+            : Key]: Shape[Key]
+    };
+
+    export type Result<Value> = RemapRow<Value>;
+}
+    "#,
+    );
+}
+
+#[test]
 fn test_ambient_module_conditional_type_no_errors() {
     assert_no_errors_named(
         "test.tsx",

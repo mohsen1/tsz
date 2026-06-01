@@ -168,10 +168,13 @@ impl ParserState {
             self.next_token();
         }
 
-        // In JSX language variants, `<T>() => ...` remains JSX (not a generic arrow)
-        // unless the type parameter list is disambiguated by:
-        // - multiple/trailing parameters (`<T,>()`, `<T, U>()`)
-        // - a constraint/default (`<T extends X>()`, `<T = X>()`)
+        // In JSX language variants, `<T>(...) => ...` is typically treated as JSX
+        // unless the type-parameter list has explicit disambiguation.
+        //
+        // Keep this as TypeScript-compatible ambiguity for single-parameter forms:
+        // no explicit delimiter/constraint/default means it is JSX-like.
+        // The malformed `extends` paths (`<T extends ...`) are also kept in JSX
+        // recovery so they continue to emit JSX-oriented diagnostics.
         if self.is_jsx_file()
             && !self.in_ambient_context()
             && type_parameter_count == 1
