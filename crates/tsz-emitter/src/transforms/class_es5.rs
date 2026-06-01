@@ -220,6 +220,11 @@ impl<'a> ClassES5Emitter<'a> {
             .set_inherited_computed_name_super(super_name);
     }
 
+    pub fn set_inherited_computed_name_this(&mut self, this_alias: String) {
+        self.transformer
+            .set_inherited_computed_name_this(this_alias);
+    }
+
     pub const fn set_tc39_decorators(&mut self, enabled: bool) {
         self.tc39_decorators = enabled;
         self.transformer.set_tc39_decorators(enabled);

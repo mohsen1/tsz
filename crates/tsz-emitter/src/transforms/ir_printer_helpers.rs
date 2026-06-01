@@ -7,6 +7,17 @@ use super::*;
 use tsz_parser::syntax_kind_ext;
 
 impl<'a> IRPrinter<'a> {
+    pub(super) fn temp_counter_after_name(name: &str) -> Option<u32> {
+        let rest = name.strip_prefix('_')?;
+        if rest.len() == 1 {
+            let ch = rest.as_bytes()[0];
+            if ch.is_ascii_lowercase() {
+                return Some(u32::from(ch - b'a') + 1);
+            }
+        }
+        rest.parse::<u32>().ok().map(|idx| idx + 1)
+    }
+
     /// Check if a body source range represents a single-line block in the source text.
     /// Uses brace depth counting to find the matching `}` and skips leading trivia.
     /// Check if a source range is on a single line (for object literals, etc.)

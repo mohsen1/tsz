@@ -1015,6 +1015,9 @@ impl<'a> Printer<'a> {
         if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
             es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
         }
+        if let Some(alias) = &self.scoped_static_this_alias {
+            es5_emitter.set_inherited_computed_name_this(alias.as_ref().to_string());
+        }
 
         let mut outer_rename_map = self.ctx.block_scope_state.visible_outer_rename_map();
         for (class_name, class_alias) in &self.scoped_class_expression_self_alias_ancestors {

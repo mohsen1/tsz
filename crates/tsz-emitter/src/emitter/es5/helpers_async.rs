@@ -31,7 +31,7 @@ pub(in crate::emitter) enum Es5StaticClassExpressionElement {
 }
 
 impl Es5StaticClassExpressionElement {
-    const fn member_pos(&self) -> u32 {
+    pub(in crate::emitter) const fn member_pos(&self) -> u32 {
         match self {
             Self::Field(field) => field.member_pos,
             Self::StaticBlock { member_pos, .. } => *member_pos,
@@ -158,7 +158,7 @@ impl<'a> Printer<'a> {
         })
     }
 
-    fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
+    pub(in crate::emitter) fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
         let brace_pos = if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
             let start = std::cmp::min(member_node.pos as usize, bytes.len());
@@ -318,20 +318,47 @@ impl<'a> Printer<'a> {
                     self.write(",");
                     self.write_line();
                     self.increase_indent();
-                    self.write(&temp);
-                    match &field.name_emit {
-                        PropertyNameEmit::Dot(name) => {
-                            self.write(".");
-                            self.write(name);
+                    if self.ctx.options.use_define_for_class_fields {
+                        self.write("Object.defineProperty(");
+                        self.write(&temp);
+                        self.write(", ");
+                        match &field.name_emit {
+                            PropertyNameEmit::Dot(name) => {
+                                self.write("\"");
+                                self.write(name);
+                                self.write("\"");
+                            }
+                            PropertyNameEmit::Bracket(name)
+                            | PropertyNameEmit::BracketNumeric(name) => {
+                                self.write(name);
+                            }
                         }
-                        PropertyNameEmit::Bracket(name)
-                        | PropertyNameEmit::BracketNumeric(name) => {
-                            self.write("[");
-                            self.write(name);
-                            self.write("]");
+                        self.write(", {");
+                        self.write_line();
+                        self.increase_indent();
+                        self.write("enumerable: true,");
+                        self.write_line();
+                        self.write("configurable: true,");
+                        self.write_line();
+                        self.write("writable: true,");
+                        self.write_line();
+                        self.write("value: ");
+                    } else {
+                        self.write(&temp);
+                        match &field.name_emit {
+                            PropertyNameEmit::Dot(name) => {
+                                self.write(".");
+                                self.write(name);
+                            }
+                            PropertyNameEmit::Bracket(name)
+                            | PropertyNameEmit::BracketNumeric(name) => {
+                                self.write("[");
+                                self.write(name);
+                                self.write("]");
+                            }
                         }
+                        self.write(" = ");
                     }
-                    self.write(" = ");
 
                     let prev_self_alias = self.scoped_class_expression_self_alias.clone();
                     if !class_name.is_empty() && class_name != temp {
@@ -355,6 +382,11 @@ impl<'a> Printer<'a> {
                             self.writer.truncate(before);
                             self.write(&replaced);
                         }
+                    }
+                    if self.ctx.options.use_define_for_class_fields {
+                        self.write_line();
+                        self.decrease_indent();
+                        self.write("})");
                     }
                     self.decrease_indent();
                 }
@@ -1452,7 +1484,10 @@ impl<'a> Printer<'a> {
         let use_static_comma = !static_elements.is_empty()
             && !self.ctx.options.use_define_for_class_fields
             && !defer_static_block_only_tail;
-        if use_static_comma || defer_static_block_only_tail {
+        let computed_instance_static_comma = self
+            .es5_class_expression_has_computed_instance_fields(class_data)
+            && self.es5_class_expression_has_static_runtime_elements(class_data);
+        if use_static_comma || defer_static_block_only_tail || computed_instance_static_comma {
             es5_emitter.set_skip_static_members(true);
         }
 
@@ -1489,12 +1524,19 @@ impl<'a> Printer<'a> {
                 self.make_class_static_temp_name_hoisted(class_node)
             };
 
-            let comma_static_elements = if use_static_comma {
+            let computed_static_elements = self
+                .es5_static_class_expression_elements_with_computed_temps(
+                    class_data,
+                    &computed_decls,
+                );
+            let comma_static_elements = if computed_instance_static_comma {
+                computed_static_elements.as_slice()
+            } else if use_static_comma {
                 static_elements.as_slice()
             } else {
                 &[]
             };
-            let comma_set_function_name = if use_static_comma {
+            let comma_set_function_name = if use_static_comma || computed_instance_static_comma {
                 class_expr_set_function_name.as_deref()
             } else {
                 None

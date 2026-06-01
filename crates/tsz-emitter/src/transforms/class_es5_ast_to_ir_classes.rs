@@ -81,6 +81,10 @@ impl<'a> AstToIr<'a> {
         })
     }
 
+    pub(super) fn class_expression_has_computed_name_this(&self, idx: NodeIndex) -> bool {
+        !collect_class_computed_name_this_references(self.arena, idx).is_empty()
+    }
+
     fn has_tc39_decorator_directive(&self, idx: NodeIndex) -> bool {
         self.transforms
             .as_ref()
