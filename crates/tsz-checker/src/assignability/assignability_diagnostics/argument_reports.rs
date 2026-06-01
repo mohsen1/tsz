@@ -68,7 +68,8 @@ impl<'a> CheckerState<'a> {
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();
-        if self.assign_relation_outcome(source, target).related && !checker_only_mismatch {
+        let outcome = self.call_arg_relation_outcome(source, target);
+        if outcome.related && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -82,10 +83,6 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
-
-        // Use the canonical call-argument relation outcome to collect the weak-union hint
-        // without a separate solver call.
-        let outcome = self.call_arg_relation_outcome(source, target);
 
         if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
