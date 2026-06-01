@@ -236,6 +236,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn call_adapter_identity",
             "RelationKind::CallAdapterIdentity",
         ),
+        (
+            "fn overload_implementation_parameter",
+            "RelationKind::OverloadImplementationParameter",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

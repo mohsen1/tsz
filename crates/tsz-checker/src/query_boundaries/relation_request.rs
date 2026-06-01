@@ -97,6 +97,8 @@ pub(crate) enum RelationKind {
     CallAdapterCompatibility,
     /// Call checker adapter lazy-resolution identity fallback probe.
     CallAdapterIdentity,
+    /// Overload implementation parameter-surface compatibility probe.
+    OverloadImplementationParameter,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -342,6 +344,14 @@ impl RelationRequest {
 
     pub(crate) const fn call_adapter_identity(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallAdapterIdentity)
+    }
+
+    pub(crate) const fn overload_implementation_parameter(source: TypeId, target: TypeId) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::OverloadImplementationParameter,
+        )
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

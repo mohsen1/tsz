@@ -8,8 +8,12 @@ fn overload_parameter_signature_check_uses_relation_outcome_boundary() {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
     assert!(
-        source.contains("assign_relation_outcome(impl_with_any_ret, overload_with_any_ret)"),
-        "overload parameter-only compatibility should use the shared relation outcome boundary"
+        source.contains("overload_implementation_parameter_relation_outcome("),
+        "overload parameter-only compatibility should use its dedicated relation outcome boundary"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(impl_with_any_ret, overload_with_any_ret)"),
+        "overload parameter-only compatibility should not regress to the generic assign relation outcome"
     );
     assert!(
         !source.contains(
