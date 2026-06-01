@@ -203,6 +203,18 @@ impl<'a> CheckerState<'a> {
             self.resolve_type_queries_for_eval(type_id);
         }
 
+        // The intermediate seed/persist memo is a *speed-only* optimization: it
+        // pre-seeds a fresh evaluator's per-run cache with already-computed
+        // `(key -> value)` pairs and saves drained intermediates for later
+        // runs. Because each call re-marshals the entire growing persistent
+        // cache, that round-trip is O(cache_size) per call and O(N^2) across a
+        // file with many alias-sharing positions. Once the cache exceeds a
+        // structural soft cap the marshalling dominates the memo benefit, so we
+        // skip it. Skipping never changes results — the deterministic evaluator
+        // recomputes the same sub-term values — only the authoritative
+        // top-level result memo (`use_cache`) below affects correctness.
+        let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
+
         let mut depth_exceeded = false;
         let first_pass_silent_bailed;
         let result = {
@@ -211,7 +223,7 @@ impl<'a> CheckerState<'a> {
             // PERF: Only collect seed entries when cache is non-empty. The
             // helper returns an owned Vec so no RefCell borrow overlaps
             // evaluate_type_with_cache.
-            let seed_iter = if use_cache {
+            let seed_iter = if seed_persist {
                 self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
@@ -238,7 +250,7 @@ impl<'a> CheckerState<'a> {
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
             // Persist intermediate evaluation results to the shared cache.
             // Skip entries whose result contains unbound `infer` types or type queries.
-            if use_cache {
+            if seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             eval_result.result
@@ -292,17 +304,18 @@ impl<'a> CheckerState<'a> {
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
-            let seed_iter = if use_cache {
+            let seed_iter = if seed_persist {
                 self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
             };
+            let has_seed = !seed_iter.is_empty();
             let eval_result = evaluate_type_with_cache(
                 self.ctx.types,
                 &self.ctx,
                 type_id,
                 seed_iter.into_iter(),
-                use_cache,
+                has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
                 // Second pass uses the authoritative full `CheckerContext`
                 // resolver, so its application expansions are safe to memoize in
@@ -313,7 +326,7 @@ impl<'a> CheckerState<'a> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            if use_cache {
+            if seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             if eval_result.result == type_id {

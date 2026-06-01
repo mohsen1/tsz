@@ -25,7 +25,7 @@ mod core;
 mod cross_file_query;
 mod diagnostic_indices;
 mod diagnostic_push;
-mod env_eval_cache;
+pub(crate) mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};

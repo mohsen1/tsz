@@ -2,7 +2,56 @@ use tsz_solver::TypeId;
 
 use super::{CheckerContext, EnvEvalCacheEntry};
 
+/// Soft cap on the number of persistent `env_eval_cache` entries that the
+/// per-evaluation *intermediate* seed/persist memo will marshal.
+///
+/// The top-level result memo (`cache_env_eval_result` / `lookup_env_eval_cache`)
+/// is always honored and is the only correctness-relevant cache. The
+/// intermediate seed/persist path is a pure speed memo: it pre-populates a
+/// fresh evaluator's per-run cache with already-computed `(key -> value)` pairs
+/// and saves drained intermediates for future runs. Because each
+/// `evaluate_type_with_env_impl` call re-marshals the *entire* growing cache
+/// (clone into a `Vec`, `extend` a fresh map, then re-scan every drained entry
+/// with recursive `contains_*` predicates), the round-trip is `O(cache_size)`
+/// per call and `O(N^2)` across a file with `N` alias-sharing type positions.
+///
+/// Once the cache exceeds this many entries the marshalling cost dominates the
+/// memo benefit, so the intermediate seed/persist is skipped. Skipping only
+/// changes speed, never results: a deterministic evaluator recomputes the same
+/// sub-term values on demand. The cap is keyed by cache size (a structural
+/// invariant), not by any fixture, file name, or identifier.
+pub(crate) const ENV_EVAL_SEED_PERSIST_SOFT_CAP: usize = 256;
+
+/// Kill-switch: set `TSZ_DISABLE_ENV_EVAL_SEED_CAP` to a non-empty, non-`0`
+/// value to force the legacy behavior (always seed/persist the full cache).
+///
+/// Used to prove byte-identical diagnostics: with the cap on vs. off, the
+/// intermediate seed/persist memo is speed-only, so output must be identical
+/// for every input. The cap only ever skips a *performance* memo above
+/// [`ENV_EVAL_SEED_PERSIST_SOFT_CAP`] entries.
+pub(crate) fn env_eval_seed_cap_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_ENV_EVAL_SEED_CAP")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl<'a> CheckerContext<'a> {
+    /// Whether the per-evaluation intermediate seed/persist memo should run.
+    ///
+    /// Returns `false` once the persistent cache has grown past the soft cap,
+    /// unless the kill-switch forces the legacy always-on behavior. The
+    /// top-level result memo is unaffected by this gate.
+    pub(crate) fn env_eval_seed_persist_enabled(&self) -> bool {
+        if env_eval_seed_cap_disabled() {
+            return true;
+        }
+        self.env_eval_cache.borrow().len() <= ENV_EVAL_SEED_PERSIST_SOFT_CAP
+    }
+
     fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
         crate::query_boundaries::common::contains_lazy_def_id(self.types, type_id, def_id)
     }
