@@ -63,10 +63,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -143,10 +143,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -193,10 +193,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -240,7 +240,7 @@ impl<'a> CheckerState<'a> {
             &substitution,
         );
         let restricted = self.resolve_lazy_type(restricted);
-        self.assign_relation_outcome(restricted, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted, inst_constraint)
             .related
             || self.base_union_members_satisfy_constraint(restricted, inst_constraint)
     }

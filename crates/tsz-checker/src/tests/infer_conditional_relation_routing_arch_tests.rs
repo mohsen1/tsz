@@ -21,10 +21,16 @@ fn infer_result_check_constraint_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "infer-result check-constraint relation decisions must use the shared relation outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "infer-result check-constraint relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("infer_result_constraint_relation_outcome(")
+            .count(),
         2,
-        "the evaluated and raw restricted relations should both route through RelationOutcome"
+        "the evaluated and raw restricted relations should both route through the infer-result constraint request helper"
     );
 }
 
@@ -49,10 +55,16 @@ fn infer_result_referenced_constraints_use_relation_outcome_boundary() {
         "infer-result referenced-constraint relation decisions must use the \
          shared relation outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "infer-result referenced-constraint relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("infer_result_constraint_relation_outcome(")
+            .count(),
         2,
-        "the evaluated and raw restricted relations should both route through RelationOutcome"
+        "the evaluated and raw restricted relations should both route through the infer-result constraint request helper"
     );
 }
 
@@ -77,10 +89,16 @@ fn hidden_infer_constraints_use_relation_outcome_boundary() {
         "hidden-infer constraint relation decisions must use the shared relation \
          outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "hidden-infer constraint relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("infer_result_constraint_relation_outcome(")
+            .count(),
         1,
-        "the restricted relation should route through RelationOutcome"
+        "the restricted relation should route through the infer-result constraint request helper"
     );
 }
 

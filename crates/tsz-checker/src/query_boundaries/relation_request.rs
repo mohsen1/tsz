@@ -57,6 +57,8 @@ pub(crate) enum RelationKind {
     ConditionalTrueBaseConstraint,
     /// Required mapped generic constraint compatibility probes.
     RequiredMappedConstraint,
+    /// Infer-result generic constraint compatibility probes.
+    InferResultConstraint,
     /// Generic constraint diagnostic property compatibility probes.
     GenericConstraintProperty,
     /// Source property-name literal compatibility against an index key type.
@@ -298,6 +300,10 @@ impl RelationRequest {
 
     pub(crate) const fn required_mapped_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::RequiredMappedConstraint)
+    }
+
+    pub(crate) const fn infer_result_constraint(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::InferResultConstraint)
     }
 
     pub(crate) const fn generic_constraint_property(source: TypeId, target: TypeId) -> Self {
