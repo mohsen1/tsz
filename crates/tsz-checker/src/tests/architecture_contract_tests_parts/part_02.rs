@@ -121,6 +121,10 @@ fn test_relation_request_constructors_encode_relation_kind() {
         ),
         ("fn index_signature", "RelationKind::IndexSignature"),
         ("fn decorator_callee", "RelationKind::DecoratorCallee"),
+        (
+            "fn jsdoc_type_constraint",
+            "RelationKind::JsdocTypeConstraint",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),
