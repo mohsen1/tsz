@@ -617,7 +617,7 @@ impl<'a> CheckerState<'a> {
                                 .zip(self.get_generator_next_type_argument(expected_return))
                                 .is_some_and(|(actual_next, expected_next)| {
                                     !self
-                                        .assign_relation_outcome(expected_next, actual_next)
+                                        .call_arg_relation_outcome(expected_next, actual_next)
                                         .related
                                 });
 
@@ -636,7 +636,7 @@ impl<'a> CheckerState<'a> {
                         // solver then checks TNext covariantly (`unknown </: number`)
                         // instead of contravariantly, causing a spurious mismatch.
                         // The component check already handles TNext contravariantly
-                        // (line: `is_assignable_to(expected_next, actual_next)`),
+                        // (line: `call_arg_relation_outcome(expected_next, actual_next)`),
                         // so it is the more accurate signal for generators.
                         // When the expected return type contains unresolved
                         // type parameters (e.g., `U` from a generic overload
