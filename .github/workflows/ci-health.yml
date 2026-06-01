@@ -270,10 +270,12 @@ jobs:
           check_exit=0
           node scripts/bench/check-artifact-readiness.mjs "${artifact}" \
             --expect-source-commit="${GITHUB_SHA}" \
+            --require-clean-metadata \
+            --require-source-current \
             || check_exit=$?
 
           if [[ "${check_exit}" -eq 1 ]]; then
-            echo "::warning::bench artifact is present but missing required project rows"
+            echo "::warning::bench artifact is present but not current release truth; inspect the readiness report above"
           elif [[ "${check_exit}" -eq 2 ]]; then
             echo "::warning::bench artifact absent or could not be parsed — bench did not complete for latest main"
           fi
