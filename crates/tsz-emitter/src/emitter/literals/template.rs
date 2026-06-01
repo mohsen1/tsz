@@ -202,6 +202,9 @@ impl<'a> Printer<'a> {
             .and_then(|lit| lit.raw_text.as_deref())
         {
             self.write(raw);
+            if self.should_emit_recovery_newline_after_template_part(node, raw) {
+                self.write_line();
+            }
             return;
         }
 
@@ -360,10 +363,35 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
         let lit = self.arena.get_literal(node)?;
         if let Some(raw) = lit.raw_text.as_deref() {
-            return Some(strip_template_delimiters(node.kind, raw).to_string());
+            let mut text = strip_template_delimiters(node.kind, raw).to_string();
+            if unterminated_template_part_ends_with_recovery_brace(node.kind, raw) {
+                text.push('\n');
+            }
+            return Some(text);
         }
         Some(lit.text.clone())
     }
+
+    fn should_emit_recovery_newline_after_template_part(&self, node: &Node, raw: &str) -> bool {
+        if !unterminated_template_part_ends_with_recovery_brace(node.kind, raw) {
+            return false;
+        }
+        if node.kind == SyntaxKind::TemplateTail as u16 {
+            return true;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        text.get(node.end as usize..)
+            .is_some_and(|tail| !tail.contains('`') && !tail.contains("${"))
+    }
+}
+
+fn unterminated_template_part_ends_with_recovery_brace(kind: u16, raw: &str) -> bool {
+    let Some((_, close)) = template_part_delimiters(kind) else {
+        return false;
+    };
+    !raw.ends_with(close) && raw.ends_with('}')
 }
 
 /// Strip the opening and (when present) closing delimiters from a template
@@ -528,6 +556,15 @@ mod tests {
         assert!(
             output.contains("`head${0"),
             "recovered template head and expression bytes should still be emitted\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn unterminated_template_tail_ending_with_brace_keeps_recovery_newline() {
+        let output = emit("`head${0}\n}");
+        assert!(
+            output.contains("}\n;"),
+            "unterminated template tail ending in `}}` should keep a line break before the synthesized semicolon\nGot: {output}"
         );
     }
 }

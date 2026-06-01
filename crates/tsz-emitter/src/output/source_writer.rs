@@ -723,6 +723,10 @@ impl SourceWriter {
     ///
     /// Optimized using memchr for SIMD newline search and ASCII fast-path
     fn raw_write(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
         self.output.push_str(text);
 
         let bytes = text.as_bytes();
@@ -746,6 +750,7 @@ impl SourceWriter {
                     // Handle newline
                     self.line += 1;
                     self.column = 0;
+                    self.at_line_start = true;
                     i = segment_end + 1;
                 }
                 None => {
@@ -757,6 +762,7 @@ impl SourceWriter {
                     } else {
                         self.column += segment.chars().map(|c| c.len_utf16() as u32).sum::<u32>();
                     }
+                    self.at_line_start = segment.is_empty();
                     break;
                 }
             }
@@ -813,9 +819,11 @@ impl SourceWriter {
         if ch == '\n' {
             self.line += 1;
             self.column = 0;
+            self.at_line_start = true;
         } else {
             // UTF-16 code units: non-BMP characters (emojis etc.) count as 2
             self.column += ch.len_utf16() as u32;
+            self.at_line_start = false;
         }
         self.output.push(ch);
     }

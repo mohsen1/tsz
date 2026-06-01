@@ -295,6 +295,19 @@ fn write_with_internal_newlines_resets_column() {
     writer.write("foo\nbar");
     assert_eq!(writer.current_line(), 1);
     assert_eq!(writer.current_column(), 3);
+    assert!(!writer.is_at_line_start());
+}
+
+#[test]
+fn write_ending_with_newline_marks_line_start_for_lazy_indent() {
+    let mut writer = SourceWriter::new();
+    writer.increase_indent();
+    writer.write("foo\n");
+    writer.write("bar");
+    assert_eq!(writer.get_output(), "    foo\n    bar");
+    assert_eq!(writer.current_line(), 1);
+    assert_eq!(writer.current_column(), 7);
+    assert!(!writer.is_at_line_start());
 }
 
 #[test]
