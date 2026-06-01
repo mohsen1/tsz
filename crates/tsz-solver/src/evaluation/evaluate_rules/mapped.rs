@@ -99,7 +99,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn get_mapped_modifiers(
         &mut self,
         mapped: &MappedType,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         key_name: Atom,
     ) -> (bool, bool) {
@@ -125,7 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Delegate to centralized modifier computation in type_queries.
         crate::type_queries::compute_mapped_modifiers(
             mapped,
-            is_homomorphic,
+            inherits_modifiers,
             source_mods.0,
             source_mods.1,
         )
@@ -300,8 +300,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This handles both pre-evaluation form (constraint is `keyof T`) and
         // post-instantiation form (constraint eagerly evaluated to literal union).
         let homomorphic_source = self.homomorphic_mapped_source(mapped);
-        // True identity homomorphic: template is T[K] and constraint is keyof T.
-        // Used for declared-type substitution (avoid double-encoding optionality).
+        // True when constraint is `keyof T` AND template is `T[K]` (Method 1/2 matched).
+        // Used for declared-type substitution and for extending modifier inheritance to
+        // non-identity `as` clauses: `is_identity_homomorphic || is_homomorphic` is the
+        // full modifier-inheritance condition (see below).
         let is_identity_homomorphic = homomorphic_source.is_some();
 
         // For homomorphic types, source comes from the homomorphic check.
@@ -322,12 +324,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
-        // inheritance — the source T's optional/readonly flags propagate to the
-        // output even when the template is NOT `T[K]`. For example:
+        // tsc treats `{ [K in keyof T]: ... }` (no as-clause or identity as K) as
+        // homomorphic for modifier inheritance — the source T's optional/readonly flags
+        // propagate to the output even when the template is NOT `T[K]`. For example:
         //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
         // inherits optionality from Partial<M0>'s properties, even though the
-        // template is `M0[K]`, not `Partial<M0>[K]`.
+        // template is `M0[K]`, not `Partial<M0>[K]`. Key remapping still breaks
+        // array/tuple shape preservation below, but it does not strip source
+        // property modifiers from emitted object properties.
         let is_homomorphic = source_object.is_some();
 
         // A filtering/remapping `as` clause can still use the original source
@@ -449,68 +453,60 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // mapping (as K where K is the iteration variable). Identity `as` clauses
         // don't change keys so the mapped type is still homomorphic.
         // Example: { [K in keyof T as K]: T[K] } is equivalent to { [K in keyof T]: T[K] }
-        if let Some(source) = source_object {
-            let is_identity_or_no_name = mapped.name_type.is_none()
-                || mapped.name_type.is_some_and(|nt| {
-                    matches!(
-                        self.interner().lookup(nt),
-                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
-                    )
-                });
-            if is_identity_or_no_name {
-                // Resolve the source to check if it's an Array or Tuple
-                // Use evaluate() to resolve Lazy types (interfaces/classes)
-                let resolved = self.evaluate(source);
+        if let Some(source) = source_object
+            && crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped)
+        {
+            // Resolve the source to check if it's an Array or Tuple
+            // Use evaluate() to resolve Lazy types (interfaces/classes)
+            let resolved = self.evaluate(source);
 
-                match self.interner().lookup(resolved) {
-                    // Array type: map the element type
-                    Some(TypeData::Array(element_type)) => {
-                        return self.evaluate_mapped_array(mapped, element_type);
-                    }
+            match self.interner().lookup(resolved) {
+                // Array type: map the element type
+                Some(TypeData::Array(element_type)) => {
+                    return self.evaluate_mapped_array(mapped, element_type);
+                }
 
-                    // Tuple type: map each element. Source is mutable, so the
-                    // result is readonly only if the modifier adds `+readonly`.
-                    Some(TypeData::Tuple(tuple_id)) => {
+                // Tuple type: map each element. Source is mutable, so the
+                // result is readonly only if the modifier adds `+readonly`.
+                Some(TypeData::Tuple(tuple_id)) => {
+                    return self
+                        .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                }
+
+                // `readonly [a, b]`: map each element and preserve readonly
+                // unless the modifier strips it (`-readonly`).
+                Some(TypeData::ReadonlyType(inner)) => {
+                    if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
                         return self
-                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, true);
                     }
+                }
 
-                    // `readonly [a, b]`: map each element and preserve readonly
-                    // unless the modifier strips it (`-readonly`).
-                    Some(TypeData::ReadonlyType(inner)) => {
-                        if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                            return self.evaluate_mapped_tuple_with_readonly(
-                                mapped, tuple_id, source, true,
+                // ReadonlyArray: map the element type and preserve readonly
+                Some(TypeData::ObjectWithIndex(shape_id)) => {
+                    // Check if this is a ReadonlyArray (has readonly numeric index)
+                    // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
+                    // has methods like length, map, filter, etc. We only care about the index signature.
+                    let shape = self.interner().object_shape(shape_id);
+                    let has_readonly_index = shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+
+                    if has_readonly_index {
+                        // This is ReadonlyArray<T> - map element type
+                        // Extract the element type from the number index signature
+                        if let Some(index) = &shape.number_index {
+                            return self.evaluate_mapped_array_with_readonly(
+                                mapped,
+                                index.value_type,
+                                true,
                             );
                         }
                     }
-
-                    // ReadonlyArray: map the element type and preserve readonly
-                    Some(TypeData::ObjectWithIndex(shape_id)) => {
-                        // Check if this is a ReadonlyArray (has readonly numeric index)
-                        // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
-                        // has methods like length, map, filter, etc. We only care about the index signature.
-                        let shape = self.interner().object_shape(shape_id);
-                        let has_readonly_index = shape
-                            .number_index
-                            .as_ref()
-                            .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
-
-                        if has_readonly_index {
-                            // This is ReadonlyArray<T> - map element type
-                            // Extract the element type from the number index signature
-                            if let Some(index) = &shape.number_index {
-                                return self.evaluate_mapped_array_with_readonly(
-                                    mapped,
-                                    index.value_type,
-                                    true,
-                                );
-                            }
-                        }
-                    }
-
-                    _ => {}
                 }
+
+                _ => {}
             }
         }
 
@@ -583,7 +579,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -715,7 +711,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -809,7 +805,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::STRING,
-                        is_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -830,7 +826,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::NUMBER,
-                        is_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -848,7 +844,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(self.build_index_signature_for_mapped(
                 *mapped,
                 key_type,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_object,
                 empty_atom,
             ))
@@ -873,7 +869,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &mut self,
         mapped: MappedType,
         key_type: TypeId,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         empty_atom: Atom,
     ) -> IndexSignature {
@@ -881,7 +877,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
-            self.get_mapped_modifiers(&mapped, is_homomorphic, source_object, empty_atom);
+            self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, empty_atom);
         if idx_optional {
             value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
         }
@@ -1064,14 +1060,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Only preserve array shape for identity name mappings (no `as` clause
         // or `as K` where K is the iteration variable)
-        let is_identity_or_no_name = mapped.name_type.is_none()
-            || mapped.name_type.is_some_and(|nt| {
-                matches!(
-                    self.interner().lookup(nt),
-                    Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
-                )
-            });
-        if !is_identity_or_no_name {
+        if !crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
             return None;
         }
 
@@ -1778,17 +1767,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // to a union of string literals. The template still has the original structure
         // `T[P]` with the concrete object. Verify by computing `keyof obj` and
         // comparing with the constraint.
-        // Key remapping (`as` clause / name_type) breaks homomorphism,
-        // UNLESS the name type is an identity mapping (as K where K is the param).
-        let is_identity_or_no_name = mapped.name_type.is_none()
-            || mapped.name_type.is_some_and(|nt| {
-                matches!(
-                    self.interner().lookup(nt),
-                    Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
-                )
-            });
-        if is_identity_or_no_name
-            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+        // Key remapping does not change the source used for property modifier
+        // preservation. Array/tuple shape preservation is guarded separately.
+        if let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
             && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
             && param.name == mapped.type_param.name
         {
@@ -1799,40 +1780,38 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             ) {
                 return None;
             }
-            // Verify: the constraint is the keys of obj (exact match or subset).
-            // Exact match handles `{ [P in keyof T]: T[P] }` after instantiation.
-            // Subset match handles Pick/Omit where constraint is a filtered subset
-            // of `keyof T` (e.g., `Exclude<keyof T, K>` evaluates to a subset of keys).
-            // In both cases, the mapped type is homomorphic w.r.t. obj so modifiers
-            // (readonly, optional) should be inherited from source properties.
             let expected_keys = self.evaluate_keyof(obj);
+            // Exact match: safe for all as-clauses including non-identity remapping.
+            // For a renaming as-clause like `as Uppercase<K>`, the constraint is still
+            // the original keyof obj (before renaming), so the exact match holds.
             if expected_keys == mapped.constraint {
                 return Some(obj);
             }
-            // Subset check: all constraint keys must exist in keyof obj.
-            // Use the already-evaluated keys (from evaluate_keyof_or_constraint
-            // at the top of evaluate_mapped) rather than the raw constraint.
-            // The raw constraint may be an unevaluated Application type (e.g.,
-            // Exclude<keyof T, K>) that extract_mapped_keys can't handle,
-            // but the evaluated keys are a concrete union of string literals.
-            let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
-            if let (Some(constraint_keys), Some(expected_key_set)) = (
-                self.extract_mapped_keys(evaluated_constraint),
-                self.extract_mapped_keys(expected_keys),
-            ) {
-                // Only do subset check for pure string literal keys (no string/number index)
-                if !constraint_keys.has_string
-                    && !constraint_keys.has_number
-                    && !constraint_keys.keys.is_empty()
-                {
-                    let expected_set: rustc_hash::FxHashSet<Atom> =
-                        expected_key_set.keys.iter().map(|k| k.name).collect();
-                    let is_subset = constraint_keys
-                        .keys
-                        .iter()
-                        .all(|k| expected_set.contains(&k.name));
-                    if is_subset {
-                        return Some(obj);
+            // Subset check: only safe for identity/no-name mappings. A non-identity
+            // as-clause could produce a proper subset for unrelated reasons (e.g.,
+            // filtering), making it unsafe to infer source from a subset constraint.
+            if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
+                // Subset match handles Pick/Omit where constraint is a filtered subset
+                // of `keyof T` (e.g., `Exclude<keyof T, K>` evaluates to a subset of keys).
+                let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
+                if let (Some(constraint_keys), Some(expected_key_set)) = (
+                    self.extract_mapped_keys(evaluated_constraint),
+                    self.extract_mapped_keys(expected_keys),
+                ) {
+                    // Only do subset check for pure string literal keys (no string/number index)
+                    if !constraint_keys.has_string
+                        && !constraint_keys.has_number
+                        && !constraint_keys.keys.is_empty()
+                    {
+                        let expected_set: rustc_hash::FxHashSet<Atom> =
+                            expected_key_set.keys.iter().map(|k| k.name).collect();
+                        let is_subset = constraint_keys
+                            .keys
+                            .iter()
+                            .all(|k| expected_set.contains(&k.name));
+                        if is_subset {
+                            return Some(obj);
+                        }
                     }
                 }
             }
