@@ -509,9 +509,25 @@ impl<'a> DeclarationEmitter<'a> {
                 });
 
             if is_empty_body {
-                // tsc uses single-line `{ }` for empty namespaces nested inside
-                // another declare namespace, but multi-line `{\n}` for top-level.
-                if self.inside_declare_namespace && !use_module_keyword {
+                // tsc uses single-line `{ }` for empty namespaces that are nested inside
+                // another namespace body — whether that outer namespace is ambient
+                // (`declare namespace X`) or non-ambient (`namespace X`).
+                // The emitter sets `inside_declare_namespace = true` on entry to any
+                // namespace body, so the flag covers both ambient and non-ambient nesting.
+                //
+                // Exceptions that require multiline `{\n}`:
+                //   - Top-level namespace (`inside_declare_namespace` is false).
+                //   - Inside a string-literal ambient module (`declare module "..."`);
+                //     `current_ambient_module_specifier` is `Some(_)` in that context.
+                //
+                // See also `test_non_ambient_exported_empty_inner_namespace_is_preserved`
+                // (non-ambient nested → single-line) and
+                // `test_empty_namespace_inside_declare_module_uses_multiline_format`
+                // (string-literal ambient module → multiline).
+                let in_identifier_namespace_context = self.inside_declare_namespace
+                    && !use_module_keyword
+                    && self.current_ambient_module_specifier.is_none();
+                if in_identifier_namespace_context {
                     self.write(" { }");
                     self.write_line();
                 } else {
