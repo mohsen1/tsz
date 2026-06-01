@@ -189,9 +189,10 @@ Class/interface heritage diagnostics build
 `RelationRequest::interface_heritage_generic_method`,
 `RelationRequest::interface_heritage_property_index`, or
 `RelationRequest::jsdoc_heritage_constraint` through dedicated relation outcome
-helpers when probing index-signature values, whole class-implements surfaces,
-generic method specialization, type-alias property compatibility with inherited
-string indexes, or JSDoc heritage object constraints. The checker owns
+helpers when probing index-signature values, inherited-base index conflicts,
+whole class-implements surfaces, generic method specialization, type-alias
+property compatibility with inherited string indexes, or JSDoc heritage object
+constraints. The checker owns
 heritage diagnostic anchoring and suppression order while the requests name the
 relation roles.
 
