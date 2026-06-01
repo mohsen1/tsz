@@ -4,6 +4,7 @@ mod decorators;
 mod duplicate_private_names;
 mod emit_declaration;
 mod emit_es6;
+mod emit_es6_recovery;
 mod helpers;
 mod private_comma_items;
 mod private_method_defs;
