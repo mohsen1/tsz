@@ -1514,9 +1514,10 @@ impl<'a> CheckerState<'a> {
                                 Vec::new(),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
-                        ));
+                        failures.push(
+                            PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
+                                .with_optional_span(self.arg_source_span(args, index)),
+                        );
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                                 Self::should_preserve_speculative_call_diagnostic(diag)
@@ -1758,9 +1759,10 @@ impl<'a> CheckerState<'a> {
                                 ),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
-                        ));
+                        failures.push(
+                            PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
+                                .with_optional_span(self.arg_source_span(args, index)),
+                        );
                     }
                 }
                 CallResult::ArgumentCountMismatch {
@@ -1986,5 +1988,17 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
+    }
+
+    /// Returns the source span for the argument at `index` in `args`, or `None`
+    /// when the index is out of range or the node has no recorded position.
+    fn arg_source_span(&self, args: &[NodeIndex], index: usize) -> Option<tsz_solver::SourceSpan> {
+        let &arg_idx = args.get(index)?;
+        let node = self.ctx.arena.get(arg_idx)?;
+        Some(tsz_solver::SourceSpan::new(
+            self.ctx.file_name.as_str(),
+            node.pos,
+            node.end.saturating_sub(node.pos),
+        ))
     }
 }
