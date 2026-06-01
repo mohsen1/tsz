@@ -2,10 +2,11 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::checkers::iterable::{
-    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
-    classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
-    function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
-    is_tuple_type, union_members_for_type,
+    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind,
+    async_iterable_protocol_lookup_type, call_signatures_for_type, classify_async_iterable_type,
+    classify_for_of_element_type, classify_full_iterable_type, function_shape_for_type,
+    is_array_type, is_string_literal_type, is_string_type, is_this_type, is_tuple_type,
+    union_members_for_type,
 };
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
@@ -355,17 +356,10 @@ impl<'a> CheckerState<'a> {
                 // Check if object has a [Symbol.asyncIterator] method or callable property.
                 // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
                 // `{ [Symbol.asyncIterator]: generatorFn }` (callable value) are valid.
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == "[Symbol.asyncIterator]"
-                        && !prop.optional
-                        && self.is_callable_with_no_required_args(prop.type_id)
-                    {
-                        return true;
-                    }
+                match self.object_has_async_iterator_method(shape_id) {
+                    Some(valid) => valid,
+                    None => self.type_has_symbol_async_iterator_via_property_access(type_id),
                 }
-                false
             }
             AsyncIterableTypeKind::Readonly(inner) => {
                 // Unwrap readonly wrapper and check inner type
@@ -374,16 +368,37 @@ impl<'a> CheckerState<'a> {
             AsyncIterableTypeKind::NotAsyncIterable => {
                 // Use property access to check for [Symbol.asyncIterator] on types
                 // that couldn't be classified (e.g., Application types with Lazy bases).
-                use crate::query_boundaries::common::PropertyAccessResult;
-                let result =
-                    self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
-                match result {
-                    PropertyAccessResult::Success { type_id, .. } => {
-                        self.is_callable_with_no_required_args(type_id)
-                    }
-                    _ => false,
-                }
+                self.type_has_symbol_async_iterator_via_property_access(type_id)
             }
+        }
+    }
+
+    fn object_has_async_iterator_method(
+        &self,
+        shape_id: tsz_solver::ObjectShapeId,
+    ) -> Option<bool> {
+        let shape = self.ctx.types.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            if prop_name.as_ref() == "[Symbol.asyncIterator]" {
+                if prop.optional {
+                    return Some(false);
+                }
+                return Some(self.is_callable_with_no_required_args(prop.type_id));
+            }
+        }
+        None
+    }
+
+    fn type_has_symbol_async_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let lookup_type = async_iterable_protocol_lookup_type(self.ctx.types, type_id);
+        match self.resolve_property_access_with_env(lookup_type, "[Symbol.asyncIterator]") {
+            PropertyAccessResult::Success {
+                type_id: iterator_fn_type,
+                ..
+            } => self.is_callable_with_no_required_args(iterator_fn_type),
+            _ => false,
         }
     }
 

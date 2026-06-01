@@ -11,7 +11,10 @@
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::{check_source_with_libs_code_messages, load_default_lib_files};
+use tsz_checker::test_utils::{
+    check_multi_file_with_libs, check_source_with_libs_code_messages, diagnostic_code_messages,
+    load_default_lib_files, load_lib_files,
+};
 use tsz_common::common::ScriptTarget;
 
 const TS2504: u32 = 2504;
@@ -42,6 +45,52 @@ fn assert_has_ts2504(source: &str, libs: &[Arc<LibFile>], context: &str) {
         diags.iter().any(|(code, _)| *code == TS2504),
         "{context}: expected TS2504, got: {diags:#?}"
     );
+}
+
+fn load_es2022_dom_lib_files() -> Vec<Arc<LibFile>> {
+    load_lib_files(&[
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "es2016.array.include.d.ts",
+        "es2017.arraybuffer.d.ts",
+        "es2017.date.d.ts",
+        "es2017.object.d.ts",
+        "es2017.sharedmemory.d.ts",
+        "es2017.string.d.ts",
+        "es2017.typedarrays.d.ts",
+        "es2018.asynciterable.d.ts",
+        "es2018.asyncgenerator.d.ts",
+        "es2018.promise.d.ts",
+        "es2018.regexp.d.ts",
+        "es2019.array.d.ts",
+        "es2019.object.d.ts",
+        "es2019.string.d.ts",
+        "es2019.symbol.d.ts",
+        "es2020.bigint.d.ts",
+        "es2020.date.d.ts",
+        "es2020.promise.d.ts",
+        "es2020.sharedmemory.d.ts",
+        "es2020.string.d.ts",
+        "es2020.symbol.wellknown.d.ts",
+        "es2021.promise.d.ts",
+        "es2021.string.d.ts",
+        "es2021.weakref.d.ts",
+        "es2022.array.d.ts",
+        "es2022.error.d.ts",
+        "es2022.object.d.ts",
+        "es2022.regexp.d.ts",
+        "es2022.string.d.ts",
+        "dom.d.ts",
+    ])
 }
 
 #[test]
@@ -131,6 +180,144 @@ async function f(t: AsyncIterableIterator<number>) {
 "#,
         &libs,
         "direct AsyncIterableIterator<number>",
+    );
+}
+
+#[test]
+fn async_iterable_iterator_from_function_call_result_is_async_iterable() {
+    let libs = load_default_lib_files();
+    assert_no_ts2504(
+        r#"
+interface QueryResult<R> {
+    rows: R[];
+}
+
+interface DatabaseConnection {
+    streamQuery<R>(query: string, chunkSize?: number): AsyncIterableIterator<QueryResult<R>>;
+}
+
+function patch(connection: DatabaseConnection): void {
+    const streamQuery = connection.streamQuery;
+    connection.streamQuery = async function* (
+        query,
+        chunkSize,
+    ): AsyncIterableIterator<QueryResult<any>> {
+        for await (const result of streamQuery.call(connection, query, chunkSize)) {
+            yield result;
+        }
+    };
+}
+"#,
+        &libs,
+        "AsyncIterableIterator<QueryResult<unknown>> returned through Function.prototype.call",
+    );
+}
+
+#[test]
+fn imported_async_iterable_iterator_call_result_is_async_iterable() {
+    let libs = load_es2022_dom_lib_files();
+    let diagnostics = diagnostic_code_messages(check_multi_file_with_libs(
+        &[
+            (
+                "./kysely.ts",
+                r#"
+declare global {
+    interface AsyncDisposable {}
+    interface SymbolConstructor {
+        readonly asyncDispose: unique symbol;
+    }
+}
+
+export {};
+"#,
+            ),
+            (
+                "./query-compiler/compiled-query.ts",
+                r#"
+export interface CompiledQuery {
+    sql: string;
+}
+"#,
+            ),
+            (
+                "./driver/database-connection.ts",
+                r#"
+import type { CompiledQuery } from "../query-compiler/compiled-query.js";
+
+export interface DatabaseConnection {
+    streamQuery<R>(
+        compiledQuery: CompiledQuery,
+        chunkSize?: number,
+    ): AsyncIterableIterator<QueryResult<R>>;
+}
+
+export interface QueryResult<O> {
+    readonly rows: O[];
+}
+"#,
+            ),
+            (
+                "./driver/runtime-driver.ts",
+                r#"
+import type { DatabaseConnection, QueryResult } from "./database-connection.js";
+
+class RuntimeDriver {
+    #addLogging(connection: DatabaseConnection): void {
+        const streamQuery = connection.streamQuery;
+
+        connection.streamQuery = async function* (
+            compiledQuery,
+            chunkSize,
+        ): AsyncIterableIterator<QueryResult<any>> {
+            for await (const result of streamQuery.call(
+                connection,
+                compiledQuery,
+                chunkSize,
+            )) {
+                yield result;
+            }
+        };
+    }
+}
+"#,
+            ),
+        ],
+        "./driver/runtime-driver.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2017,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    ));
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == TS2504),
+        "imported AsyncIterableIterator<QueryResult<unknown>> returned through Function.prototype.call must not emit TS2504, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn interface_extending_async_iterable_iterator_is_async_iterable() {
+    let libs = load_default_lib_files();
+    assert_no_ts2504(
+        r#"
+interface QueryResult<R> {
+    readonly rows: R[];
+}
+
+interface QueryStream<R> extends AsyncIterableIterator<QueryResult<R>> {}
+
+async function consume(stream: QueryStream<unknown>) {
+    for await (const result of stream) {
+        void result;
+    }
+}
+"#,
+        &libs,
+        "interface inheriting AsyncIterableIterator<QueryResult<unknown>>",
     );
 }
 
