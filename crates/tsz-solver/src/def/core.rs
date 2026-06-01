@@ -1065,36 +1065,18 @@ impl DefinitionStore {
                 if existing == def_id {
                     return;
                 }
-                // TypeAlias defs carry an aliasSymbol-equivalent semantic: tsc
-                // preserves the alias name in diagnostics when a user writes a
-                // type alias annotation. When both a TypeAlias and a
-                // non-alias (Interface/Class/etc.) share the same structural
-                // TypeId, prefer the TypeAlias so the formatter displays the
-                // user-visible alias name rather than an earlier-registered
-                // interface from a lib or declaration file.
-                let existing_is_alias = self.get_kind(existing) == Some(DefKind::TypeAlias);
-                let new_is_alias = self.get_kind(def_id) == Some(DefKind::TypeAlias);
-                let should_replace = if new_is_alias != existing_is_alias {
-                    // Alias vs non-alias: the TypeAlias always wins.
-                    new_is_alias
-                } else {
-                    // Same category: prefer the def with the earlier source
-                    // position for determinism. Only clone the full
-                    // DefinitionInfo here, where we actually need the fields.
-                    let existing_pos = self
-                        .get(existing)
-                        .and_then(|d| d.file_id.zip(d.span.map(|(s, _)| s)));
-                    let new_pos = self
-                        .get(def_id)
-                        .and_then(|d| d.file_id.zip(d.span.map(|(s, _)| s)));
-                    match (existing_pos, new_pos) {
-                        (Some((ef, ep)), Some((nf, np))) => (nf, np) < (ef, ep),
-                        (None, Some(_)) => true,
-                        _ => false,
+                let existing_pos = self
+                    .get(existing)
+                    .and_then(|d| Some((d.file_id?, d.span?.0)));
+                let new_pos = self.get(def_id).and_then(|d| Some((d.file_id?, d.span?.0)));
+                match (existing_pos, new_pos) {
+                    (Some((ef, ep)), Some((nf, np))) if (nf, np) < (ef, ep) => {
+                        e.insert(def_id);
                     }
-                };
-                if should_replace {
-                    e.insert(def_id);
+                    (None, Some(_)) => {
+                        e.insert(def_id);
+                    }
+                    _ => {}
                 }
             }
         }
