@@ -1076,6 +1076,40 @@ const render = <T extends { label: string },>(item: T, show: boolean) => (
 }
 
 #[test]
+fn test_generic_arrow_no_comma_no_params_tsx_no_errors() {
+    // #11320: single-parameter generic arrow without explicit disambiguating
+    // comma/default must still parse in TSX.
+    for source in [
+        r#"
+export const f = <T>() => <div>{1 + 2}</div>;
+"#,
+        r#"
+const g = <K>() => <div>{flag ? <Yes /> : <No />}</div>;
+"#,
+    ] {
+        assert_no_errors_named("test.tsx", source);
+    }
+}
+
+#[test]
+fn test_generic_arrow_no_comma_wrapped_return_type_tsx_no_errors() {
+    for source in [
+        r#"
+const build = <X>() => (
+  <div className={classes.root}>
+    {compute()}
+  </div>
+);
+"#,
+        r#"
+const launch = <Y extends { text: string }>() => <Badge text={labelText(Y)} />;
+"#,
+    ] {
+        assert_no_errors_named("test.tsx", source);
+    }
+}
+
+#[test]
 fn test_jsx_conditional_chained_ternary_template_no_errors() {
     // Chained ternary with template strings
     assert_no_errors_named(
