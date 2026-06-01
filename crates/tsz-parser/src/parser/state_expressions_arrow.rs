@@ -70,9 +70,6 @@ impl ParserState {
         self.next_token();
 
         let mut at_type_parameter_start = true;
-        let mut type_parameter_count = 0u32;
-        let mut saw_top_level_type_parameter_delimiter = false;
-        let mut saw_top_level_constraint_or_default = false;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
         let mut bracket_depth = 0u32;
@@ -99,7 +96,6 @@ impl ParserState {
             if at_type_parameter_top_level {
                 if token == SyntaxKind::CommaToken {
                     at_type_parameter_start = true;
-                    saw_top_level_type_parameter_delimiter = true;
                 } else if at_type_parameter_start {
                     if !matches!(
                         token,
@@ -107,10 +103,8 @@ impl ParserState {
                     ) && (self.is_identifier_or_keyword() || self.is_reserved_word())
                     {
                         at_type_parameter_start = false;
-                        type_parameter_count += 1;
                     }
                 } else if token == SyntaxKind::ExtendsKeyword {
-                    saw_top_level_constraint_or_default = true;
                     self.next_token();
                     if matches!(
                         self.token(),
@@ -125,7 +119,19 @@ impl ParserState {
                     }
                     continue;
                 } else if token == SyntaxKind::EqualsToken {
-                    saw_top_level_constraint_or_default = true;
+                    self.next_token();
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::GreaterThanToken
+                            | SyntaxKind::EqualsToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::CloseParenToken
+                    ) {
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        return false;
+                    }
+                    continue;
                 }
             }
 

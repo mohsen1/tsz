@@ -101,6 +101,14 @@ fn test_issue_11320_generic_arrow_jsx_return_tsx() {
             r#"const f = <T, U>(x: T, y: U) => <div />;"#,
         ),
         (
+            "generic export default arrow with no delimiter",
+            r#"export default <T>() => <div />;"#,
+        ),
+        (
+            "generic export default arrow with renamed type parameter",
+            r#"export default <K>() => <div>{1 + 2}</div>;"#,
+        ),
+        (
             "generic arrow with trailing comma returning jsx",
             r#"const f = <T,>(x: T) => <div>{x}</div>;"#,
         ),
