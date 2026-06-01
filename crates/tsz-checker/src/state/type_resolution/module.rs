@@ -1071,12 +1071,18 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn merge_module_augmentation_namespace_exports(
+    pub(crate) fn merge_module_augmentation_namespace_exports(
         &self,
         exports: &mut tsz_binder::SymbolTable,
         target_file_idx: usize,
         module_specifier: Option<&str>,
     ) {
+        // Programs without any module augmentation pay no cost here. This
+        // matters because the helper is now invoked once per visited file in
+        // `collect_reexported_symbols`'s wildcard chain.
+        if !self.ctx.program_has_module_augmentations() {
+            return;
+        }
         let mut names: Vec<String> = Vec::new();
 
         if let Some(module_specifier) = module_specifier {
