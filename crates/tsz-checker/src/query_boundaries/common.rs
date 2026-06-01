@@ -20,19 +20,12 @@ pub(crate) use tsz_solver::type_queries::{
 pub(crate) use tsz_solver::{
     FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
     PendingDiagnosticBuilder, SourceLocation, SubtypeFailureReason, TypeFormatter,
-    computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
+    computation::{ContextualTypeContext, TypeSubstitution},
 };
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
+pub(crate) use super::generic_instantiation::{instantiate_generic, instantiate_type};
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
-
-pub(crate) fn instantiate_type(
-    db: &dyn QueryDatabase,
-    type_id: TypeId,
-    substitution: &TypeSubstitution,
-) -> TypeId {
-    c::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
-}
 
 pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
     tsz_solver::is_compiler_managed_type(name)
