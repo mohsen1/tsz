@@ -3,11 +3,17 @@ use std::path::Path;
 
 #[test]
 fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_outcomes() {
-    let source = fs::read_to_string(
+    let root_source = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/assignability/assignability_diagnostics.rs"),
     )
     .expect("failed to read assignability_diagnostics.rs");
+    let argument_reports = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/assignability/assignability_diagnostics/argument_reports.rs"),
+    )
+    .expect("failed to read argument_reports.rs");
+    let source = format!("{root_source}\n{argument_reports}");
 
     assert!(
         source.matches("assign_relation_outcome(").count() >= 11,
