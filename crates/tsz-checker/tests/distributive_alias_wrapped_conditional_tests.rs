@@ -6,9 +6,12 @@
 //! declaration seam. Snapshotting freezes distribution into a single object
 //! that later consumers (e.g. `Extract<V, P>`) then substitute against.
 //!
-//! The guard lives in
-//! `crates/tsz-checker/src/state/type_analysis/computed/type_alias_variable_alias.rs`
-//! (`alias_distributive_check_is_alias_ref`).
+//! The structural classifier lives in
+//! `crates/tsz-solver/src/type_queries/classifiers.rs`
+//! (`is_distributive_conditional_with_deferred_check`) and is consulted from
+//! the two checker eager-eval gates:
+//! - `crates/tsz-checker/src/state/type_analysis/computed/type_alias_variable_alias.rs`
+//! - `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs`
 //!
 //! Adjacent cases (see CLAUDE.md §26) exercised here:
 //! 1. The reported repro shape (`{kind, value}` classifier over a tuple union).
