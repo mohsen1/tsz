@@ -111,6 +111,14 @@ fn test_relation_request_constructors_encode_relation_kind() {
         ("fn destructuring", "RelationKind::Destructuring"),
         ("fn rest_parameter", "RelationKind::RestParameter"),
         ("fn import_attributes", "RelationKind::ImportAttributes"),
+        (
+            "fn computed_enum_member",
+            "RelationKind::ComputedEnumMember",
+        ),
+        (
+            "fn type_parameter_default",
+            "RelationKind::TypeParameterDefault",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

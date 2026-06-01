@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -103,6 +103,16 @@ type must be assignable to readonly `any[]`.
 `RelationRequest::import_attributes` for TS2322 import-attribute object-shape
 checks, where the synthesized attribute object must be assignable to the global
 `ImportAttributes` target while checker code owns the import-attribute anchor.
+
+`state/state_checking_members/statement_helpers.rs` builds
+`RelationRequest::computed_enum_member` for computed enum-member validation,
+where checker-owned enum evaluation fallback and TS18033 anchoring need
+number/string compatibility probes.
+
+`state/type_analysis/type_param_defaults.rs` builds
+`RelationRequest::type_parameter_default` for type-parameter default constraint
+validation, where checker code owns the type-parameter default diagnostic and
+uses relation outcomes for raw, evaluated, and syntax-instantiated forms.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

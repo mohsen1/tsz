@@ -1812,6 +1812,8 @@ fn test_relation_request_policy_enums_cover_canonical_modes() {
         "Destructuring",
         "RestParameter",
         "ImportAttributes",
+        "ComputedEnumMember",
+        "TypeParameterDefault",
         "Satisfies",
     ] {
         assert!(

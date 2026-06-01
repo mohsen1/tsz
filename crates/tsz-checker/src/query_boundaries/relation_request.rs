@@ -27,6 +27,10 @@ pub(crate) enum RelationKind {
     RestParameter,
     /// Import attribute shape compatibility: `import x from "m" with { ... }`
     ImportAttributes,
+    /// Computed enum-member initializer compatibility for TS18033.
+    ComputedEnumMember,
+    /// Type-parameter default compatibility against its constraint.
+    TypeParameterDefault,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -125,6 +129,14 @@ impl RelationRequest {
 
     pub(crate) const fn import_attributes(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::ImportAttributes)
+    }
+
+    pub(crate) const fn computed_enum_member(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ComputedEnumMember)
+    }
+
+    pub(crate) const fn type_parameter_default(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::TypeParameterDefault)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
