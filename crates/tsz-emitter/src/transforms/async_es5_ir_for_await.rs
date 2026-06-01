@@ -48,11 +48,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 } | IRNode::HoistedVarGroupBreak
             )
         });
+        let loop_guard_name = self.generate_hoisted_temp();
         let (iterator_name, result_name) = self.for_await_iterator_names(for_in_of.expression, 1);
         let catch_value_name = self.fresh_reserved_name("e_1_1");
 
         if let Some(loop_fn) = &captured_loop_fn {
             current_statements.push(IRNode::var_decl(loop_fn.clone(), None));
+        }
+        for name in [&loop_guard_name, &iterator_name, &result_name] {
+            current_statements.push(IRNode::var_decl(name.clone(), None));
         }
         if declared_name.is_some() && captured_loop_fn.is_none() {
             current_statements.push(IRNode::var_decl(target_name.clone(), None));
@@ -64,16 +68,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let error_name = self.fresh_reserved_name("e_1");
         let return_name = self.generate_hoisted_temp();
         let value_name = self.generate_hoisted_temp();
-        let loop_guard_name = self.generate_hoisted_temp();
-        for name in [
-            &done_name,
-            &error_name,
-            &return_name,
-            &value_name,
-            &loop_guard_name,
-            &iterator_name,
-            &result_name,
-        ] {
+        for name in [&done_name, &error_name, &return_name, &value_name] {
             current_statements.push(IRNode::var_decl(name.clone(), None));
         }
         let captured_loop_assignment = if let Some(loop_fn) = &captured_loop_fn {
