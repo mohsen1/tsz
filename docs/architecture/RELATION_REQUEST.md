@@ -211,8 +211,9 @@ Infer-result generic constraint diagnostics build
 `RelationRequest::infer_result_constraint` through
 `infer_result_constraint_relation_outcome` when probing whether a restricted
 infer-result type satisfies an instantiated constraint. The checker owns
-check-constraint, application-argument, referenced-constraint, and hidden-infer
-substitution plus fallback ordering while the request names the relation role.
+check-constraint, application-argument, referenced-constraint, inferred-base,
+evaluated-result, positional, and hidden-infer substitution plus fallback
+ordering while the request names the relation role.
 
 Generic constraint diagnostics build
 `RelationRequest::generic_constraint_property` through

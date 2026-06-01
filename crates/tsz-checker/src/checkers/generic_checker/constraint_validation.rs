@@ -646,14 +646,17 @@ impl<'a> CheckerState<'a> {
                                             let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                                 || inst_constraint == TypeId::ANY
                                                 || self
-                                                    .assign_relation_outcome(infer_base, inst_constraint)
+                                                    .infer_result_constraint_relation_outcome(
+                                                        infer_base,
+                                                        inst_constraint,
+                                                    )
                                                     .related
                                                 || {
                                                     let evaluated =
                                                         self.evaluate_type_for_assignability(type_arg);
                                                     evaluated != type_arg
                                                         && self
-                                                            .assign_relation_outcome(
+                                                            .infer_result_constraint_relation_outcome(
                                                             evaluated,
                                                             inst_constraint,
                                                         )
@@ -1172,11 +1175,14 @@ impl<'a> CheckerState<'a> {
                                 let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                     || inst_constraint == TypeId::ANY
                                     || self
-                                        .assign_relation_outcome(infer_base, inst_constraint)
+                                        .infer_result_constraint_relation_outcome(
+                                            infer_base,
+                                            inst_constraint,
+                                        )
                                         .related
                                     || (type_arg_evaluated != type_arg
                                         && self
-                                            .assign_relation_outcome(
+                                            .infer_result_constraint_relation_outcome(
                                                 type_arg_evaluated,
                                                 inst_constraint,
                                             )
@@ -1352,7 +1358,10 @@ impl<'a> CheckerState<'a> {
                             if inst_constraint == TypeId::UNKNOWN
                                 || inst_constraint == TypeId::ANY
                                 || self
-                                    .assign_relation_outcome(positional_constraint, inst_constraint)
+                                    .infer_result_constraint_relation_outcome(
+                                        positional_constraint,
+                                        inst_constraint,
+                                    )
                                     .related
                             {
                                 continue;
@@ -1417,7 +1426,10 @@ impl<'a> CheckerState<'a> {
                                             inst_constraint,
                                         )
                                         && !self
-                                            .assign_relation_outcome(hidden_base, inst_constraint)
+                                            .infer_result_constraint_relation_outcome(
+                                                hidden_base,
+                                                inst_constraint,
+                                            )
                                             .related
                                     {
                                         self.error_type_constraint_not_satisfied(
