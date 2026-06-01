@@ -302,3 +302,64 @@ fn redeclaration_identity_relation_does_not_populate_ordinary_relation_cache_slo
         "redeclaration identity must not populate the ordinary subtype slot",
     );
 }
+
+#[test]
+fn overlap_relation_does_not_populate_ordinary_relation_cache_slots() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::default();
+    let source = TypeId::STRING;
+    let target = TypeId::NUMBER;
+    let assignability_key =
+        RelationCacheKey::for_assignability(source, target, policy.cache_config());
+    let subtype_key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
+
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        None,
+        "assignability slot should start empty",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        None,
+        "subtype slot should start empty",
+    );
+
+    let overlap_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Overlap,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let overlap_with_cache_context = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Overlap,
+        policy,
+        RelationContext {
+            query_db: Some(&db),
+            ..RelationContext::default()
+        },
+    )
+    .is_related();
+
+    assert!(!overlap_uncached, "disjoint primitives should not overlap");
+    assert_eq!(
+        overlap_with_cache_context, overlap_uncached,
+        "overlap with a query cache context must match uncached overlap semantics",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        None,
+        "overlap must not populate the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        None,
+        "overlap must not populate the ordinary subtype slot",
+    );
+}
