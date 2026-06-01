@@ -99,7 +99,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn get_mapped_modifiers(
         &mut self,
         mapped: &MappedType,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         key_name: Atom,
     ) -> (bool, bool) {
@@ -125,7 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Delegate to centralized modifier computation in type_queries.
         crate::type_queries::compute_mapped_modifiers(
             mapped,
-            is_homomorphic,
+            inherits_modifiers,
             source_mods.0,
             source_mods.1,
         )
@@ -295,8 +295,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This handles both pre-evaluation form (constraint is `keyof T`) and
         // post-instantiation form (constraint eagerly evaluated to literal union).
         let homomorphic_source = self.homomorphic_mapped_source(mapped);
-        // True identity homomorphic: template is T[K] and constraint is keyof T.
-        // Used for declared-type substitution (avoid double-encoding optionality).
+        // True when constraint is `keyof T` AND template is `T[K]` (Method 1/2 matched).
+        // Used for declared-type substitution and for extending modifier inheritance to
+        // non-identity `as` clauses: `is_identity_homomorphic || is_homomorphic` is the
+        // full modifier-inheritance condition (see below).
         let is_identity_homomorphic = homomorphic_source.is_some();
 
         // For homomorphic types, source comes from the homomorphic check.
@@ -317,9 +319,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
-        // inheritance — the source T's optional/readonly flags propagate to the
-        // output even when the template is NOT `T[K]`. For example:
+        // tsc treats `{ [K in keyof T]: ... }` (no as-clause or identity as K) as
+        // homomorphic for modifier inheritance — the source T's optional/readonly flags
+        // propagate to the output even when the template is NOT `T[K]`. For example:
         //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
         // inherits optionality from Partial<M0>'s properties, even though the
         // template is `M0[K]`, not `Partial<M0>[K]`. Key remapping still breaks
@@ -572,7 +574,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -704,7 +706,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -798,7 +800,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::STRING,
-                        is_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -819,7 +821,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::NUMBER,
-                        is_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -837,7 +839,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(self.build_index_signature_for_mapped(
                 *mapped,
                 key_type,
-                is_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_object,
                 empty_atom,
             ))
@@ -862,7 +864,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &mut self,
         mapped: MappedType,
         key_type: TypeId,
-        is_homomorphic: bool,
+        inherits_modifiers: bool,
         source_object: Option<TypeId>,
         empty_atom: Atom,
     ) -> IndexSignature {
@@ -870,7 +872,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
-            self.get_mapped_modifiers(&mapped, is_homomorphic, source_object, empty_atom);
+            self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, empty_atom);
         if idx_optional {
             value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
         }
@@ -1773,40 +1775,38 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             ) {
                 return None;
             }
-            // Verify: the constraint is the keys of obj (exact match or subset).
-            // Exact match handles `{ [P in keyof T]: T[P] }` after instantiation.
-            // Subset match handles Pick/Omit where constraint is a filtered subset
-            // of `keyof T` (e.g., `Exclude<keyof T, K>` evaluates to a subset of keys).
-            // In both cases, the mapped type is homomorphic w.r.t. obj so modifiers
-            // (readonly, optional) should be inherited from source properties.
             let expected_keys = self.evaluate_keyof(obj);
+            // Exact match: safe for all as-clauses including non-identity remapping.
+            // For a renaming as-clause like `as Uppercase<K>`, the constraint is still
+            // the original keyof obj (before renaming), so the exact match holds.
             if expected_keys == mapped.constraint {
                 return Some(obj);
             }
-            // Subset check: all constraint keys must exist in keyof obj.
-            // Use the already-evaluated keys (from evaluate_keyof_or_constraint
-            // at the top of evaluate_mapped) rather than the raw constraint.
-            // The raw constraint may be an unevaluated Application type (e.g.,
-            // Exclude<keyof T, K>) that extract_mapped_keys can't handle,
-            // but the evaluated keys are a concrete union of string literals.
-            let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
-            if let (Some(constraint_keys), Some(expected_key_set)) = (
-                self.extract_mapped_keys(evaluated_constraint),
-                self.extract_mapped_keys(expected_keys),
-            ) {
-                // Only do subset check for pure string literal keys (no string/number index)
-                if !constraint_keys.has_string
-                    && !constraint_keys.has_number
-                    && !constraint_keys.keys.is_empty()
-                {
-                    let expected_set: rustc_hash::FxHashSet<Atom> =
-                        expected_key_set.keys.iter().map(|k| k.name).collect();
-                    let is_subset = constraint_keys
-                        .keys
-                        .iter()
-                        .all(|k| expected_set.contains(&k.name));
-                    if is_subset {
-                        return Some(obj);
+            // Subset check: only safe for identity/no-name mappings. A non-identity
+            // as-clause could produce a proper subset for unrelated reasons (e.g.,
+            // filtering), making it unsafe to infer source from a subset constraint.
+            if crate::type_queries::mapped::is_identity_name_mapping(self.interner(), mapped) {
+                // Subset match handles Pick/Omit where constraint is a filtered subset
+                // of `keyof T` (e.g., `Exclude<keyof T, K>` evaluates to a subset of keys).
+                let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
+                if let (Some(constraint_keys), Some(expected_key_set)) = (
+                    self.extract_mapped_keys(evaluated_constraint),
+                    self.extract_mapped_keys(expected_keys),
+                ) {
+                    // Only do subset check for pure string literal keys (no string/number index)
+                    if !constraint_keys.has_string
+                        && !constraint_keys.has_number
+                        && !constraint_keys.keys.is_empty()
+                    {
+                        let expected_set: rustc_hash::FxHashSet<Atom> =
+                            expected_key_set.keys.iter().map(|k| k.name).collect();
+                        let is_subset = constraint_keys
+                            .keys
+                            .iter()
+                            .all(|k| expected_set.contains(&k.name));
+                        if is_subset {
+                            return Some(obj);
+                        }
                     }
                 }
             }
