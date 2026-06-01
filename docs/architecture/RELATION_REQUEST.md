@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion`, `call_elaboration_mutual`, `call_display_overlap`, `call_generator_yield` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion`, `call_elaboration_mutual`, `call_display_overlap`, `call_generator_yield`, `call_adapter_compatibility`, `call_adapter_identity` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -214,6 +214,14 @@ through `call_generator_yield_relation_outcome` when probing whether actual and
 expected generator yield components are mutually compatible before forcing a
 callback return mismatch diagnostic. The checker owns diagnostic filtering while
 the request names the relation role.
+
+The call checker assignability adapter builds
+`RelationRequest::call_adapter_compatibility` and
+`RelationRequest::call_adapter_identity` through dedicated relation outcome
+helpers when call-resolution asks the checker for default compatibility truth or
+lazy-resolution identity fallback truth. The adapter owns checker-only
+fallbacks such as temporal rounding options while the requests name the relation
+roles.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.

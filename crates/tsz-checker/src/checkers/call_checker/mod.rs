@@ -68,7 +68,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self.state.assign_relation_outcome(source, target).related {
+        if self
+            .state
+            .call_adapter_compatibility_relation_outcome(source, target)
+            .related
+        {
             return true;
         }
         if self
@@ -159,11 +163,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.ensure_relation_input_ready(a_resolved);
         self.state.ensure_relation_input_ready(b_resolved);
         self.state
-            .assign_relation_outcome(a_resolved, b_resolved)
+            .call_adapter_identity_relation_outcome(a_resolved, b_resolved)
             .related
             && self
                 .state
-                .assign_relation_outcome(b_resolved, a_resolved)
+                .call_adapter_identity_relation_outcome(b_resolved, a_resolved)
                 .related
     }
 

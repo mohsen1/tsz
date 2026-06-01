@@ -400,6 +400,36 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing call-adapter compatibility relation for
+    /// raw checker types, preserving the canonical call-adapter request shape.
+    pub(crate) fn call_adapter_compatibility_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::call_adapter_compatibility(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing call-adapter identity fallback relation for
+    /// raw checker types, preserving the canonical call-adapter identity shape.
+    pub(crate) fn call_adapter_identity_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::call_adapter_identity(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing `satisfies` relation for raw checker
     /// types, preserving the canonical satisfies relation request shape.
     pub(crate) fn satisfies_relation_outcome(

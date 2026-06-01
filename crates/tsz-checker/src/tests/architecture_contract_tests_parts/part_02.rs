@@ -184,6 +184,14 @@ fn test_relation_request_constructors_encode_relation_kind() {
             "fn call_generator_yield",
             "RelationKind::CallGeneratorYield",
         ),
+        (
+            "fn call_adapter_compatibility",
+            "RelationKind::CallAdapterCompatibility",
+        ),
+        (
+            "fn call_adapter_identity",
+            "RelationKind::CallAdapterIdentity",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

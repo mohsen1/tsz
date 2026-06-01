@@ -85,12 +85,25 @@ fn call_checker_adapter_uses_relation_outcome_boundary() {
     let adapter = &source[adapter_start..adapter_end];
 
     assert!(
-        adapter.matches("assign_relation_outcome(").count() >= 3,
-        "call checker adapter should route default assignability probes through RelationOutcome"
+        adapter.contains("call_adapter_compatibility_relation_outcome(source, target)")
+            && adapter.contains(".related"),
+        "call checker adapter should route default compatibility probes through a dedicated RelationOutcome helper"
+    );
+    assert!(
+        adapter.contains("call_adapter_identity_relation_outcome(a_resolved, b_resolved)")
+            && adapter.contains("call_adapter_identity_relation_outcome(b_resolved, a_resolved)")
+            && adapter.contains(".related"),
+        "call checker adapter should route lazy identity fallback probes through a dedicated RelationOutcome helper"
     );
     assert!(
         adapter.matches(".related").count() >= 3,
         "call checker adapter should use relation outcome decisions"
+    );
+    assert!(
+        !adapter.contains("assign_relation_outcome(source, target)")
+            && !adapter.contains("assign_relation_outcome(a_resolved, b_resolved)")
+            && !adapter.contains("assign_relation_outcome(b_resolved, a_resolved)"),
+        "call checker adapter should not use the generic assignment request for call-adapter probes"
     );
     assert!(
         !adapter.contains("state.is_assignable_to(source, target)"),
@@ -116,5 +129,24 @@ fn call_checker_adapter_uses_relation_outcome_boundary() {
     assert!(
         !adapter.contains("state.is_assignable_to_bivariant(source, target)"),
         "call checker adapter bivariant callback probes should not regress to raw bivariant assignability"
+    );
+}
+
+#[test]
+fn call_checker_adapter_relation_outcomes_use_dedicated_requests() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assignability/relation_outcome_helpers.rs"),
+    )
+    .expect("failed to read relation outcome helpers");
+
+    assert!(
+        source.contains("fn call_adapter_compatibility_relation_outcome(")
+            && source.contains("RelationRequest::call_adapter_compatibility("),
+        "call checker adapter default compatibility probes should have a dedicated RelationRequest helper"
+    );
+    assert!(
+        source.contains("fn call_adapter_identity_relation_outcome(")
+            && source.contains("RelationRequest::call_adapter_identity("),
+        "call checker adapter identity fallback probes should have a dedicated RelationRequest helper"
     );
 }
