@@ -39,6 +39,24 @@ impl<'a> AsyncES5Transformer<'a> {
 
         self.helpers_needed.mark_async_values();
 
+        // tsc allocates the for-await state temps in two different orders
+        // depending on whether the loop is preceded by executable statements in
+        // the same async body. The structural condition is identical to the one
+        // that decides whether the lowered `try` must start in a fresh
+        // generator case (`try_start_label` below):
+        //
+        // * No preceding executable statements (the for-await is the first
+        //   meaningful statement, so the implicit `try` starts at the function
+        //   entry label): tsc allocates the loop guard first, then the
+        //   iterator/result temps, all in the first hoisted-var group, and
+        //   places `done`/`error`/`return`/`value` in the second group.
+        // * Preceding executable statements (the lowering opens a new `try`
+        //   case after the leading work): tsc allocates
+        //   `done`/`error`/`return`/`value`/loop-guard in that order and places
+        //   the loop guard plus iterator/result temps in the second group.
+        //
+        // Reproducing both orders keeps the plain `for await` form and the
+        // spread/sync-loop-before-`for await` form byte-for-byte with tsc.
         let has_pending_executable_statements = current_statements.iter().any(|statement| {
             !matches!(
                 statement,
@@ -48,33 +66,77 @@ impl<'a> AsyncES5Transformer<'a> {
                 } | IRNode::HoistedVarGroupBreak
             )
         });
-        let (iterator_name, result_name) = self.for_await_iterator_names(for_in_of.expression, 1);
-        let catch_value_name = self.fresh_reserved_name("e_1_1");
 
-        if let Some(loop_fn) = &captured_loop_fn {
-            current_statements.push(IRNode::var_decl(loop_fn.clone(), None));
-        }
-        if declared_name.is_some() && captured_loop_fn.is_none() {
-            current_statements.push(IRNode::var_decl(target_name.clone(), None));
-        }
-        current_statements.push(IRNode::var_decl(catch_value_name.clone(), None));
+        let done_name;
+        let error_name;
+        let return_name;
+        let value_name;
+        let loop_guard_name;
+        let iterator_name;
+        let result_name;
+        let catch_value_name;
 
-        current_statements.push(IRNode::HoistedVarGroupBreak);
-        let done_name = self.generate_hoisted_temp();
-        let error_name = self.fresh_reserved_name("e_1");
-        let return_name = self.generate_hoisted_temp();
-        let value_name = self.generate_hoisted_temp();
-        let loop_guard_name = self.generate_hoisted_temp();
-        for name in [
-            &done_name,
-            &error_name,
-            &return_name,
-            &value_name,
-            &loop_guard_name,
-            &iterator_name,
-            &result_name,
-        ] {
-            current_statements.push(IRNode::var_decl(name.clone(), None));
+        if has_pending_executable_statements {
+            // Leading-statement order: iterator/result names are reserved
+            // before the state temps, then `done`/`error`/`return`/`value`/guard
+            // are allocated and grouped after the `var`-group break together
+            // with the iterator/result temps.
+            (iterator_name, result_name) = self.for_await_iterator_names(for_in_of.expression, 1);
+            catch_value_name = self.fresh_reserved_name("e_1_1");
+
+            if let Some(loop_fn) = &captured_loop_fn {
+                current_statements.push(IRNode::var_decl(loop_fn.clone(), None));
+            }
+            if declared_name.is_some() && captured_loop_fn.is_none() {
+                current_statements.push(IRNode::var_decl(target_name.clone(), None));
+            }
+            current_statements.push(IRNode::var_decl(catch_value_name.clone(), None));
+
+            current_statements.push(IRNode::HoistedVarGroupBreak);
+            done_name = self.generate_hoisted_temp();
+            error_name = self.fresh_reserved_name("e_1");
+            return_name = self.generate_hoisted_temp();
+            value_name = self.generate_hoisted_temp();
+            loop_guard_name = self.generate_hoisted_temp();
+            for name in [
+                &done_name,
+                &error_name,
+                &return_name,
+                &value_name,
+                &loop_guard_name,
+                &iterator_name,
+                &result_name,
+            ] {
+                current_statements.push(IRNode::var_decl(name.clone(), None));
+            }
+        } else {
+            // Leading-statement-free order: the loop guard is allocated first so
+            // it claims the first generator-state temp, the iterator/result
+            // temps and guard live in the first `var`-group, and
+            // `done`/`error`/`return`/`value` follow in the second group.
+            loop_guard_name = self.generate_hoisted_temp();
+            (iterator_name, result_name) = self.for_await_iterator_names(for_in_of.expression, 1);
+            catch_value_name = self.fresh_reserved_name("e_1_1");
+
+            if let Some(loop_fn) = &captured_loop_fn {
+                current_statements.push(IRNode::var_decl(loop_fn.clone(), None));
+            }
+            for name in [&loop_guard_name, &iterator_name, &result_name] {
+                current_statements.push(IRNode::var_decl(name.clone(), None));
+            }
+            if declared_name.is_some() && captured_loop_fn.is_none() {
+                current_statements.push(IRNode::var_decl(target_name.clone(), None));
+            }
+            current_statements.push(IRNode::var_decl(catch_value_name.clone(), None));
+
+            current_statements.push(IRNode::HoistedVarGroupBreak);
+            done_name = self.generate_hoisted_temp();
+            error_name = self.fresh_reserved_name("e_1");
+            return_name = self.generate_hoisted_temp();
+            value_name = self.generate_hoisted_temp();
+            for name in [&done_name, &error_name, &return_name, &value_name] {
+                current_statements.push(IRNode::var_decl(name.clone(), None));
+            }
         }
         let captured_loop_assignment = if let Some(loop_fn) = &captured_loop_fn {
             let Some(loop_assignment) = self.captured_for_await_loop_function_assignment(
