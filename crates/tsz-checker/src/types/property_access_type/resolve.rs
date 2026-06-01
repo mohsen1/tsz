@@ -614,7 +614,16 @@ impl<'a> CheckerState<'a> {
                 .resolve_class_for_access(access.expression, non_nullish_base)
                 .is_none()
             {
-                let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                // Lazy single-member fast path: resolve only the accessed own
+                // property of an eligible simple lib interface (e.g.
+                // `document.title`); materialize on a miss. See `lazy_lib_member`.
+                let lazy_member_fast =
+                    self.try_lazy_lib_member_property_access(non_nullish_base, property_name);
+                let resolved_base = if lazy_member_fast.is_some() {
+                    non_nullish_base
+                } else {
+                    self.resolve_property_access_base_materialized(non_nullish_base)
+                };
                 let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
                 let cache_key = |base, name| (base, resolver_generation, name);
 
@@ -656,16 +665,20 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                let fast_result = self.ctx.types.resolve_property_access_with_options(
-                    resolved_base,
-                    property_name,
-                    self.ctx.compiler_options.no_unchecked_indexed_access,
-                );
-                let result = self.resolve_property_access_with_env_post_query(
-                    resolved_base,
-                    property_name,
-                    fast_result,
-                );
+                let result = if let Some(lazy_result) = lazy_member_fast {
+                    lazy_result
+                } else {
+                    let fast_result = self.ctx.types.resolve_property_access_with_options(
+                        resolved_base,
+                        property_name,
+                        self.ctx.compiler_options.no_unchecked_indexed_access,
+                    );
+                    self.resolve_property_access_with_env_post_query(
+                        resolved_base,
+                        property_name,
+                        fast_result,
+                    )
+                };
                 match result {
                     PropertyAccessResult::Success {
                         type_id,

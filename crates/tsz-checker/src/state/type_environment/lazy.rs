@@ -830,6 +830,17 @@ impl<'a> CheckerState<'a> {
         changed.then(|| self.ctx.types.union(resolved))
     }
 
+    /// Like [`Self::resolve_type_for_property_access`] but always materializes an
+    /// eligible lib-interface `Lazy` receiver instead of leaving it lazy. Used by
+    /// the property-access path when the lazy single-member fast path missed
+    /// (e.g. a heritage-inherited member) and the full structural shape is needed.
+    pub(crate) fn resolve_type_for_property_access_force(&mut self, type_id: TypeId) -> TypeId {
+        use rustc_hash::FxHashSet;
+        self.ensure_relation_input_ready(type_id);
+        let mut visited = FxHashSet::default();
+        self.resolve_type_for_property_access_inner(type_id, &mut visited)
+    }
+
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
 
@@ -847,6 +858,19 @@ impl<'a> CheckerState<'a> {
         // entry recorded on an earlier pass before the members were resolvable.
         if let Some(resolved) = self.resolve_union_application_members(type_id) {
             return self.resolve_type_for_property_access(resolved);
+        }
+
+        // Lazy single-member fast path: a bare `Lazy(DefId)` reference to a
+        // simple lib interface is left unresolved here so the property-access
+        // member lookup can resolve only the accessed member instead of
+        // materializing the interface's full shape (e.g. `document.title`).
+        // The named-property lookup sites re-resolve the single member via
+        // `try_lazy_lib_member_property_access`; any consumer needing the full
+        // shape (keyof/spread/relation) still calls `ensure_relation_input_ready`
+        // on the bare Lazy itself. Eligibility is gated by the
+        // `TSZ_DISABLE_LAZY_MEMBER_ACCESS` kill-switch.
+        if self.lazy_lib_member_receiver_def_id(type_id).is_some() {
+            return type_id;
         }
 
         if let Some(&cached) = self
