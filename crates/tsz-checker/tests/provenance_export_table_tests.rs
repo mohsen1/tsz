@@ -1,23 +1,28 @@
 //! Provenance-aware export resolution table (Goal 4 throughput wall-breaker).
 //!
-//! Structural rule (one sentence):
+//! **Status: opt-in / default-OFF.** This was intended to ship always-on by
+//! memoizing full chain provenance (visited chain + symbol→file registration
+//! delta) rather than the bare endpoint that the predecessor experiment
+//! (#12054) found unsound. A large-ts-repo A/B disproved soundness: the table
+//! still flips diagnostics in both directions because the chain walk's endpoint
+//! is not a pure function of `(current_file_idx, sym_id)` — it reads the
+//! mutable, monotonically growing `symbol→file` overlay
+//! (`resolve_symbol_file_index` etc.) to choose which cross-file export a
+//! re-exported name resolves to. The first reference caches the resolution made
+//! under overlay state `S₁`; a later reference would re-walk under a richer
+//! `S₂ ⊇ S₁` and can reach a different endpoint. Replaying the registration
+//! delta reproduces the walk's *writes* but not its *reads*. See the
+//! `export_table_enabled` doc comment in
+//! `crates/tsz-checker/src/types/queries/lib_aliases.rs` for the full root cause
+//! and the 837-vs-967 `Graph<NodeId>` `TS2315` witness.
 //!
-//! > When a top-level `resolve_alias_symbol` walk over a re-export / `export =`
-//! > / alias chain completes cycle-free, the resolved endpoint **plus the full
-//! > chain provenance** (the ordered visited-alias set that anchors type-only
-//! > `import type`/`export type *` classification, and the symbol→file
-//! > registrations it produced) is a position-independent fact; tsz memoizes
-//! > that provenance and replays it on later references, so a cache hit is
-//! > byte-identical to re-walking — including the TS1361/TS1362/TS2693
-//! > type-only diagnostics that the prior endpoint-only memoization flipped.
-//!
-//! These tests pin the **table-on default path** (the table ships enabled;
-//! `TSZ_DISABLE_EXPORT_TABLE` is the A/B kill-switch verified byte-identical by
-//! the CLI harness). They prove the memoized resolution produces the correct
+//! These tests therefore pin the **shipped default (table OFF)** path: they
+//! assert the un-memoized `resolve_alias_symbol` walk produces the correct
 //! diagnostics across `export =`, named/wildcard re-exports, **type-only
-//! re-export chains** (the high-risk provenance path), renamed bound-variable
-//! and renamed-module variants, and re-export cycles. Each repeated reference
-//! primes the table; a later mismatch must still fire *through* the cache.
+//! re-export chains**, renamed bound-variable and renamed-module variants, and
+//! re-export cycles. They are parity-preserving regression coverage for the
+//! resolution shapes the table interacts with; they do not (and must not) claim
+//! the enabled table is byte-identical.
 //!
 //! Anti-hardcoding: every shape is exercised with at least two name/spelling
 //! choices, and the type-only path is repeated with a renamed module specifier,

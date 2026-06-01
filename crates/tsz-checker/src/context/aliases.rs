@@ -78,9 +78,9 @@ pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<Symb
 /// The previous endpoint-only memoization of `resolve_alias_symbol` was
 /// provenance-unsound: cross-file `import type` / `export type *` resolution is
 /// order-sensitive, so a bare endpoint `SymbolId` flips TS1361/TS1362/TS2693
-/// depending on file processing order. The fix is to memoize the **full
-/// provenance** the walk would otherwise reconstruct on every reference, so a
-/// cache hit is observationally identical to re-walking:
+/// depending on file processing order. This struct was the attempted fix —
+/// memoize the **full provenance** the walk reconstructs on every reference so a
+/// hit replays the walk's side effects:
 ///
 ///  * `endpoint` — the resolved chain-endpoint `SymbolId`.
 ///  * `chain` — every alias `SymbolId` the walk pushed onto its visiting set
@@ -113,9 +113,14 @@ pub struct ResolvedAliasProvenance {
 /// `switch_to_file`, exactly like [`ExportEqualsNamedCache`].
 ///
 /// Only cycle-clean, top-level resolutions are inserted, so a cached answer is
-/// never a position-dependent truncation. Because the value carries the full
-/// chain + registrations, a hit replays the same provenance the walk produced,
-/// making the table **order-independent and safe to keep always-on**.
+/// never a position-dependent *truncation*. The value carries the full chain +
+/// registration delta so a hit replays the walk's **writes** — but a
+/// large-ts-repo A/B proved this is **still not order-independent** and so the
+/// table is **opt-in / default-OFF** (`TSZ_ENABLE_EXPORT_TABLE`). The endpoint
+/// the walk picks depends on the mutable, growing `symbol→file` overlay it
+/// *reads* (`resolve_symbol_file_index`), which is not in the key; replaying the
+/// write delta cannot reconstruct that read. See `export_table_enabled` in
+/// `crates/tsz-checker/src/types/queries/lib_aliases.rs` for the proof.
 pub type AliasResolutionTable = FxHashMap<(usize, SymbolId), ResolvedAliasProvenance>;
 
 #[must_use]

@@ -6,19 +6,54 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::syntax_kind_ext;
 
-/// Kill-switch for the provenance-aware export resolution table (Goal 4).
+/// Opt-in switch for the provenance-aware export resolution table (Goal 4).
 ///
-/// The table is **on by default**: unlike the prior endpoint-only experiment,
-/// the memoized value carries the *full chain provenance* (visited chain +
-/// symbol→file registrations), so a cache hit is observationally identical to
-/// re-walking — order-independent and diagnostic-preserving for `import type` /
-/// `export type *` chains. `TSZ_DISABLE_EXPORT_TABLE` force-disables it for A/B
-/// kill-switch verification (the byte-identical correctness gate).
+/// **Default OFF.** This was intended to ship always-on by memoizing the *full*
+/// chain provenance (visited chain + symbol→file registration delta) instead of
+/// the bare endpoint, on the theory that replaying that provenance makes a cache
+/// hit observationally identical to re-walking. A large-ts-repo A/B
+/// (`TSZ_ENABLE_EXPORT_TABLE=1` vs default) **disproved** that: the table is
+/// still provenance-unsound, for a deeper reason than the endpoint-only attempt
+/// (#12054) hit.
+///
+/// Root cause (the precise remaining order-dependent factor): the chain walk's
+/// chosen *endpoint* is not a pure function of `(current_file_idx, sym_id)`. In
+/// `resolve_alias_symbol_inner` the walk **reads** mutable, monotonically
+/// growing `symbol→file` overlay state (`resolve_symbol_file_index`,
+/// `resolve_cross_file_export_from_file`, `symbol_is_namespace_only_tracked`)
+/// to pick which cross-file export a re-exported name resolves to. The first
+/// reference of `(file, sym)` resolves under overlay state `S₁` and is cached;
+/// a later reference would re-walk under a richer `S₂ ⊇ S₁` and can reach a
+/// *different* endpoint. The cache freezes the `S₁` answer. Capturing the
+/// registration *delta the walk wrote* (which this code does) replays the
+/// writes but cannot reconstruct the reads — the endpoint was already chosen
+/// against `S₁`. The order-affecting bit is the entire growing overlay, which
+/// cannot be a practical cache key.
+///
+/// Evidence (large-ts-repo `@e1b22bd`, dist-fast): on a 5-glob
+/// `recovery-orchestration-runtime` + `@shared/core` + `@shared/type-level`
+/// subset that completes cleanly under both modes (no fuel/cap leakage, zero
+/// raw `Type(N)` displays), ON reports 837 diagnostics and OFF reports 967 — a
+/// deterministic 130-diagnostic swing in *both* directions (errors appear and
+/// disappear). The cleanest witness is `adapter.ts:38` `Graph<NodeId, …>`:
+/// `@shared/core` defines `Graph<N, E>` (generic), so `tsc`/`tsgo` report no
+/// error; ON resolves to that generic `Graph` (correct), OFF resolves to a
+/// different non-generic `Graph` and emits a spurious `TS2315`. Neither mode is
+/// reliably correct because the *un-memoized* walk is itself order-dependent;
+/// the table merely relocates which resolution gets frozen.
+///
+/// Conclusion: memoizing this walk cannot be made byte-identical to the
+/// un-memoized walk until `resolve_alias_symbol_inner` is refactored to a pure
+/// function of stable inputs (the overlay reads must be made deterministic /
+/// hoisted out of resolution). Until then the table stays opt-in/off so the
+/// shipped default is byte-identical; `TSZ_ENABLE_EXPORT_TABLE=1` enables the
+/// (unsound) table for research/profiling only. See the PR body for the full
+/// A/B and #12054 for the predecessor endpoint-only finding.
 fn export_table_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        !std::env::var("TSZ_DISABLE_EXPORT_TABLE")
+        std::env::var("TSZ_ENABLE_EXPORT_TABLE")
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false)
     })
