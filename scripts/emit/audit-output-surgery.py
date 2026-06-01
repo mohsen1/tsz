@@ -385,6 +385,12 @@ def format_exhausted_category_metrics(file_summaries: list[dict[str, object]]) -
     return f"exhausted_category_count={len(names)}, exhausted_categories={formatted_names}"
 
 
+def format_warning_metrics(file_summaries: list[dict[str, object]]) -> str:
+    warning_count = len(exhausted_category_names(file_summaries))
+    warning_status = "warn" if warning_count else "clear"
+    return f"warning_count={warning_count}, warning_status={warning_status}"
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -476,6 +482,7 @@ def format_pass_summary(
         f"{format_budget_metrics(budget)}, "
         f"{format_category_budget_metrics(file_summaries)}, "
         f"{format_exhausted_category_metrics(file_summaries)}, "
+        f"{format_warning_metrics(file_summaries)}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
         f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
@@ -512,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{format_budget_metrics(budget)}, "
             f"{format_category_budget_metrics(file_summaries)}, "
             f"{format_exhausted_category_metrics(file_summaries)}, "
+            f"{format_warning_metrics(file_summaries)}, "
             f"unallowlisted_calls={summary.unallowlisted}, "
             f"unallowlisted_files={summary.unallowlisted_files}, "
             f"over_allowlist_files={summary.over_allowlist_files}, "

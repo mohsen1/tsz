@@ -227,6 +227,8 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "category_budgets=semantic-output-surgery=2/2:exhausted, "
             "exhausted_category_count=1, "
             "exhausted_categories=semantic-output-surgery, "
+            "warning_count=1, "
+            "warning_status=warn, "
             "unallowlisted_calls=0, "
             "over_allowlist_files=0, "
             "over_allowlist_excess_calls=0, "
@@ -302,6 +304,10 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(
             self.audit.format_exhausted_category_metrics(file_summaries),
             "exhausted_category_count=1, exhausted_categories=ir-output-surgery",
+        )
+        self.assertEqual(
+            self.audit.format_warning_metrics(file_summaries),
+            "warning_count=1, warning_status=warn",
         )
 
     def test_budget_status_classifies_budget_edges(self):
