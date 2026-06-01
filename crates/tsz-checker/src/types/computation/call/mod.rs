@@ -1040,7 +1040,7 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::CallResult::Success(ret) => {
                         let contextual_return = self.evaluate_contextual_type(ctx_type);
                         !self
-                            .assign_relation_outcome_with_env(*ret, contextual_return)
+                            .return_relation_outcome_with_env(*ret, contextual_return)
                             .related
                     }
                     _ => true,

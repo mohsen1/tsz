@@ -1022,7 +1022,7 @@ impl<'a> CheckerState<'a> {
                         self.rest_argument_element_type_with_env(expected);
                     if normalized_rest_expected != expected
                         && self
-                            .assign_relation_outcome_with_env(actual, normalized_rest_expected)
+                            .call_arg_relation_outcome_with_env(actual, normalized_rest_expected)
                             .related
                     {
                         return if fallback_return != TypeId::ERROR {

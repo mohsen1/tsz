@@ -168,10 +168,10 @@ fn contextual_generic_call_retry_uses_env_relation_outcome_boundary() {
 
         assert_eq!(
             retry_block
-                .matches("assign_relation_outcome_with_env(")
+                .matches("return_relation_outcome_with_env(")
                 .count(),
             1,
-            "contextual generic retry in {path} should route env-aware relation probes through RelationOutcome"
+            "contextual generic retry in {path} should route env-aware relation probes through return RelationOutcome"
         );
         assert!(
             retry_block.contains(".related"),
@@ -180,6 +180,10 @@ fn contextual_generic_call_retry_uses_env_relation_outcome_boundary() {
         assert!(
             !retry_block.contains("is_assignable_to_with_env("),
             "contextual generic retry in {path} should not regress to raw env boolean assignability"
+        );
+        assert!(
+            !retry_block.contains("assign_relation_outcome_with_env("),
+            "contextual generic retry in {path} should not use generic assignment request routing"
         );
     }
 }
@@ -198,9 +202,16 @@ fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
-        3,
-        "contextual return substitution should route env-aware relation probes through RelationOutcome"
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
+        1,
+        "contextual return substitution should route env-aware parameter probes through call-argument RelationOutcome"
+    );
+    assert_eq!(
+        helper.matches("return_relation_outcome_with_env(").count(),
+        2,
+        "contextual return substitution should route env-aware return probes through return RelationOutcome"
     );
     assert!(
         helper.matches(".related").count() >= 3,
@@ -209,6 +220,10 @@ fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "contextual return substitution should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "contextual return substitution should not use generic assignment request routing"
     );
 }
 
@@ -226,9 +241,9 @@ fn contextual_callback_return_retyping_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper.matches("return_relation_outcome_with_env(").count(),
         1,
-        "contextual callback return retyping should route env-aware relation probes through RelationOutcome"
+        "contextual callback return retyping should route env-aware relation probes through return RelationOutcome"
     );
     assert!(
         helper.contains(".related"),
@@ -237,5 +252,9 @@ fn contextual_callback_return_retyping_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "contextual callback return retyping should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "contextual callback return retyping should not use generic assignment request routing"
     );
 }

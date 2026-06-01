@@ -64,8 +64,9 @@ request when drilling into callback return expressions or return-source
 conditional branches. These callers reuse `RelationOutcome` to avoid
 separately recomputing weak-union and property-classification analysis.
 Call diagnostic display/recovery helpers use the env-aware call-argument
-request for contextual-signature, generator callback, and variadic tuple
-parameter probes.
+request for contextual-signature, generator callback, variadic tuple parameter,
+polymorphic-`this` rest-target, and aggregate/fresh/rest argument recovery
+probes.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
 
@@ -79,9 +80,11 @@ assignment diagnostics.
 Return diagnostics in `types/type_checking`, JSX component return checks,
 decorator checks, contextual return utilities, function-type helpers, and call
 checker callback-return recovery build `RelationRequest::return_stmt` through
-`return_relation_outcome`. Weak-type TS2560 suggestions also use the return
-request when probing whether a call or construct result would satisfy the weak
-target.
+`return_relation_outcome` or `return_relation_outcome_with_env`. Contextual
+generic call retry and callback-return retyping use the env-aware return request
+when comparing inferred or callback returns to contextual return targets.
+Weak-type TS2560 suggestions also use the return request when probing whether a
+call or construct result would satisfy the weak target.
 
 JSX props and attribute validation paths build `RelationRequest::jsx_props`
 through `jsx_props_relation_outcome` in the JSX props resolution, validation,

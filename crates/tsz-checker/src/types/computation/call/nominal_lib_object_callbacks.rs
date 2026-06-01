@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self
-                .assign_relation_outcome_with_env(actual_for_check, expected)
+                .return_relation_outcome_with_env(actual_for_check, expected)
                 .related
             {
                 continue;
