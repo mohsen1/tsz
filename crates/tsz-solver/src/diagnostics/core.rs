@@ -1059,37 +1059,22 @@ impl SubtypeFailureReason {
                 target_type,
                 member_type,
                 nested_reason,
-            } => {
-                // Top-level `Type 'A | B' is not assignable to type 'T'.`, then
-                // the first failing member's relation directly beneath it.
-                let mut diag = PendingDiagnostic::error(
-                    codes::TYPE_NOT_ASSIGNABLE,
-                    vec![(*source_type).into(), (*target_type).into()],
-                );
-                diag = diag.with_related(nested_reason.to_diagnostic(*member_type, *target_type));
-                diag
-            }
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            )
+            .with_related(nested_reason.to_diagnostic(*member_type, *target_type)),
             Self::ConditionalBranchMismatch {
                 source_type,
                 target_type,
                 branch_source,
                 branch_target,
                 nested_reason,
-            } => {
-                // Top-level `Type 'S' is not assignable to type 'T extends U ? X : Y'.`,
-                // then the failing branch relation directly beneath it. The
-                // structural conditional-vs-conditional/source/target rule is
-                // surfaced as a relation between the branch endpoints so the
-                // chain looks the same regardless of which side held the
-                // conditional shape.
-                let mut diag = PendingDiagnostic::error(
-                    codes::TYPE_NOT_ASSIGNABLE,
-                    vec![(*source_type).into(), (*target_type).into()],
-                );
-                diag =
-                    diag.with_related(nested_reason.to_diagnostic(*branch_source, *branch_target));
-                diag
-            }
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            )
+            .with_related(nested_reason.to_diagnostic(*branch_source, *branch_target)),
         }
     }
 }

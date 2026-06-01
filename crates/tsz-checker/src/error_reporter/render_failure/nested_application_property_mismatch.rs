@@ -696,15 +696,15 @@ impl<'a> CheckerState<'a> {
     /// elaborate it with the child relation `child_source <: child_target`,
     /// preserving the nested reason chain.
     ///
-    /// Shared by [`Self::render_union_source_mismatch`] and
-    /// [`Self::render_conditional_branch_mismatch`]: both shapes layer a
-    /// child branch relation one indent beneath the outer pair, with the
-    /// same depth handling and the same plain-leaf vs structural-recursion
-    /// split. The depth-0 outer line reuses `render_type_mismatch` so the
-    /// primary diagnostic keeps the standard source/target display
-    /// (e.g. preserving the full union surface). At deeper depths the
-    /// outer pair is formatted structurally.
-    fn render_parent_with_child_relation(
+    /// Used by [`Self::render_union_source_mismatch`] and the
+    /// `ConditionalBranchMismatch` dispatch arm: both shapes layer a child
+    /// branch relation one indent beneath the outer pair, with the same
+    /// depth handling and the same plain-leaf vs structural-recursion split.
+    /// The depth-0 outer line reuses `render_type_mismatch` so the primary
+    /// diagnostic keeps the standard source/target display (e.g. preserving
+    /// the full union surface). At deeper depths the outer pair is formatted
+    /// structurally.
+    pub(super) fn render_parent_with_child_relation(
         &mut self,
         ctx: &RenderContext,
         source_type: TypeId,
@@ -817,42 +817,6 @@ impl<'a> CheckerState<'a> {
                 depth: (depth + 1).min(u8::MAX as u32) as u8,
             });
         }
-    }
-
-    /// Render a `ConditionalBranchMismatch` failure: a deferred conditional
-    /// relation that failed because at least one branch fails the
-    /// corresponding branch relation.
-    ///
-    /// The shape mirrors `render_union_source_mismatch`: emit the
-    /// conditional-vs-target line as the parent, then elaborate the failing
-    /// branch relation directly beneath it. The full chain inside the branch
-    /// is preserved by recursing through `render_failure_reason`, so a
-    /// branch that itself fails because of (say) a missing property or a
-    /// deeper conditional keeps elaborating instead of stopping at the
-    /// branch line:
-    ///
-    /// ```text
-    /// Type 'S' is not assignable to type 'T extends U ? X : Y'.
-    ///   Type 'S' is not assignable to type 'X'.
-    ///     <deeper reason for 'S' vs 'X'>
-    /// ```
-    pub(super) fn render_conditional_branch_mismatch(
-        &mut self,
-        ctx: &RenderContext,
-        source_type: TypeId,
-        target_type: TypeId,
-        branch_source: TypeId,
-        branch_target: TypeId,
-        nested_reason: &tsz_solver::SubtypeFailureReason,
-    ) -> Diagnostic {
-        self.render_parent_with_child_relation(
-            ctx,
-            source_type,
-            target_type,
-            branch_source,
-            branch_target,
-            nested_reason,
-        )
     }
 
     /// Render an `IndexSignatureMismatch` failure.
