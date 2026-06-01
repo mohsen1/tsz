@@ -863,6 +863,24 @@ const number = valueMerge(123, (value: number | string) => {}, (value: 123) => {
 }
 
 #[test]
+fn declared_call_return_uses_annotation_for_composed_literal_result() {
+    let source = r#"
+declare function ff2<T extends string, U extends string>(x: T, y: U): `${T}-${U}`;
+const ts1 = ff2("foo", "bar");
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("declare const ts1: \"foo-bar\";"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("declare const ts1 = \"foo-bar\";"),
+        "{output}"
+    );
+}
+
+#[test]
 fn higher_order_type_parameter_parameter_blocks_direct_literal_initializer_reuse() {
     let source = r#"
 declare function direct<A>(value: A, callback: (value: A) => void): A;

@@ -639,7 +639,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && !self.variable_declaration_has_effective_export(decl_idx)
                     && Self::is_literal_type_text_for_const_call(&type_text)
-                    && self.call_expression_has_primitive_literal_argument(initializer)
+                    && self.call_expression_has_matching_primitive_literal_argument(
+                        initializer,
+                        &type_text,
+                    )
                 {
                     self.write(" = ");
                     self.write(&type_text);
@@ -1762,7 +1765,11 @@ impl<'a> DeclarationEmitter<'a> {
         tsz_solver::visitor::literal_value(interner, member_type)
     }
 
-    fn call_expression_has_primitive_literal_argument(&self, initializer: NodeIndex) -> bool {
+    fn call_expression_has_matching_primitive_literal_argument(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -1773,10 +1780,9 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         call.arguments.as_ref().is_some_and(|args| {
-            args.nodes
-                .iter()
-                .copied()
-                .any(|arg| self.primitive_literal_argument_type_text(arg).is_some())
+            args.nodes.iter().copied().any(|arg| {
+                self.primitive_literal_argument_type_text(arg).as_deref() == Some(type_text)
+            })
         })
     }
 }
