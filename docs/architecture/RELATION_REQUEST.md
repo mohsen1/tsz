@@ -66,9 +66,11 @@ separately recomputing weak-union and property-classification analysis.
 Call diagnostic display/recovery helpers use the env-aware call-argument
 request for contextual-signature, generator callback, variadic tuple parameter,
 polymorphic-`this` rest-target, and aggregate/fresh/rest argument recovery
-probes. Round-2 generic call argument rechecks also use the env-aware
-call-argument request when comparing refreshed argument types or synthetic
-spread markers against instantiated parameter/rest types.
+probes. Call-result recovery probes use the call-argument request when
+comparing actual argument types against parameter unions or polymorphic-`this`
+parameter targets. Round-2 generic call argument rechecks also use the
+env-aware call-argument request when comparing refreshed argument types or
+synthetic spread markers against instantiated parameter/rest types.
 Awaited thenable validation also uses the call-argument request when probing
 whether the awaited receiver satisfies a `then` signature's `this` type.
 

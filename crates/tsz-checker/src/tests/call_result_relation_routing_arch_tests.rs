@@ -15,12 +15,16 @@ fn call_result_recovery_uses_relation_outcome_boundary() {
     let recovery_helper = &source[recovery_start..recovery_end];
 
     assert!(
-        recovery_helper.contains("assign_relation_outcome(actual, param_union).related"),
-        "correlated union call recovery should route assignability through RelationOutcome.related"
+        recovery_helper.contains("call_arg_relation_outcome(actual, param_union).related"),
+        "correlated union call recovery should route assignability through call-argument RelationOutcome.related"
     );
     assert!(
         !recovery_helper.contains("diagnostic_relation_boolean_guard"),
         "correlated union call recovery should not regress to the raw boolean relation guard"
+    );
+    assert!(
+        !recovery_helper.contains("assign_relation_outcome(actual, param_union)"),
+        "correlated union call recovery should not use generic assignment request routing"
     );
 
     let argument_start = source
@@ -33,12 +37,16 @@ fn call_result_recovery_uses_relation_outcome_boundary() {
     let argument_helper = &source[argument_start..argument_end];
 
     assert!(
-        argument_helper.contains("assign_relation_outcome(arg_types[2], target).related"),
-        "polymorphic-this argument diagnostics should route assignability through RelationOutcome.related"
+        argument_helper.contains("call_arg_relation_outcome(arg_types[2], target).related"),
+        "polymorphic-this argument diagnostics should route assignability through call-argument RelationOutcome.related"
     );
     assert!(
         !argument_helper.contains("diagnostic_relation_boolean_guard"),
         "polymorphic-this argument diagnostics should not regress to the raw boolean relation guard"
+    );
+    assert!(
+        !argument_helper.contains("assign_relation_outcome(arg_types[2], target)"),
+        "polymorphic-this argument diagnostics should not use generic assignment request routing"
     );
 }
 
