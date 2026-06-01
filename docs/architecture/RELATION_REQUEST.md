@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `assignability_reason`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `generic_constraint_property`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `keyof_diagnostic_suppression`, `diagnostic_source_narrowing`, `class_implements_index_value`, `class_implements_whole_type`, `class_static_side`, `interface_heritage_index_value`, `interface_heritage_generic_method`, `interface_heritage_property_index`, `jsdoc_heritage_constraint`, `missing_property_read`, `missing_property_write`, `concrete_remapped_mapped_missing_property`, `exact_optional_source_filter`, `jsx_render_fallback`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion`, `call_elaboration_mutual`, `call_display_overlap`, `call_generator_yield`, `call_adapter_compatibility`, `call_adapter_identity`, `overload_implementation_parameter`, `binary_arithmetic_number`, `private_member_access`, `function_type_compatibility` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `assignability_reason`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter`, `import_attributes`, `computed_enum_member`, `type_parameter_default`, `index_signature`, `decorator_callee`, `jsdoc_type_constraint`, `generic_constraint_property`, `property_index_key`, `nullish_error_target`, `duplicate_identifier`, `variable_initializer`, `keyof_diagnostic_suppression`, `diagnostic_source_narrowing`, `class_extends_index_value`, `class_implements_index_value`, `class_implements_whole_type`, `class_static_side`, `interface_heritage_index_value`, `interface_heritage_generic_method`, `interface_heritage_property_index`, `jsdoc_heritage_constraint`, `missing_property_read`, `missing_property_write`, `concrete_remapped_mapped_missing_property`, `exact_optional_source_filter`, `jsx_render_fallback`, `object_literal_computed_key`, `contextual_symbol_index_value`, `in_operator_key`, `in_operator_primitive_constraint`, `compound_assignment`, `generic_element_write`, `property_receiver_element_display`, `property_receiver_index_value_display`, `element_access_number_index`, `element_access_method_suggestion`, `call_elaboration_mutual`, `call_display_overlap`, `call_generator_yield`, `call_adapter_compatibility`, `call_adapter_identity`, `overload_implementation_parameter`, `binary_arithmetic_number`, `private_member_access`, `function_type_compatibility` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -183,6 +183,7 @@ checker owns source-span and display selection while the request names the
 relation role.
 
 Class/interface heritage diagnostics build
+`RelationRequest::class_extends_index_value`,
 `RelationRequest::class_implements_index_value`,
 `RelationRequest::class_implements_whole_type`,
 `RelationRequest::class_static_side`,
@@ -190,10 +191,11 @@ Class/interface heritage diagnostics build
 `RelationRequest::interface_heritage_generic_method`,
 `RelationRequest::interface_heritage_property_index`, or
 `RelationRequest::jsdoc_heritage_constraint` through dedicated relation outcome
-helpers when probing index-signature values, namespace-merged static-side
-compatibility, inherited-base index conflicts, whole class-implements surfaces,
-generic method specialization, type-alias property compatibility with inherited
-string indexes, or JSDoc heritage object constraints. The checker owns
+helpers when probing class-extends index-signature values, namespace-merged
+static-side compatibility, inherited-base index conflicts, whole
+class-implements surfaces, generic method specialization, type-alias property
+compatibility with inherited string indexes, or JSDoc heritage object
+constraints. The checker owns
 heritage diagnostic anchoring and suppression order while the requests name the
 relation roles.
 

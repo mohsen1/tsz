@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         {
             let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
             if !self
-                .assign_relation_outcome(derived_type, base_type_instantiated)
+                .class_extends_index_value_relation_outcome(derived_type, base_type_instantiated)
                 .related
                 && !class_extends_error_reported
             {
@@ -149,7 +149,7 @@ impl<'a> CheckerState<'a> {
         {
             let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
             if !self
-                .assign_relation_outcome(derived_type, base_type_instantiated)
+                .class_extends_index_value_relation_outcome(derived_type, base_type_instantiated)
                 .related
                 && !class_extends_error_reported
             {

@@ -53,6 +53,8 @@ pub(crate) enum RelationKind {
     KeyofDiagnosticSuppression,
     /// Diagnostic-source narrowing display probes.
     DiagnosticSourceNarrowing,
+    /// Class extends index-signature value compatibility probes.
+    ClassExtendsIndexValue,
     /// Class implements index-signature value compatibility probes.
     ClassImplementsIndexValue,
     /// Class implements whole-type compatibility probes.
@@ -264,6 +266,10 @@ impl RelationRequest {
 
     pub(crate) const fn diagnostic_source_narrowing(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::DiagnosticSourceNarrowing)
+    }
+
+    pub(crate) const fn class_extends_index_value(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::ClassExtendsIndexValue)
     }
 
     pub(crate) const fn class_implements_index_value(source: TypeId, target: TypeId) -> Self {
