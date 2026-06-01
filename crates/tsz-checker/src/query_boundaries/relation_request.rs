@@ -45,6 +45,8 @@ pub(crate) enum RelationKind {
     ArrayLikeConstraintElement,
     /// Merged-interface sibling constraint compatibility probes.
     MergedInterfaceConstraint,
+    /// Recursive heritage property conflict compatibility probes.
+    RecursiveHeritageProperty,
     /// Base-union member constraint compatibility probes.
     UnionConstraintMember,
     /// Syntax-instantiated type-argument constraint compatibility probes.
@@ -296,6 +298,10 @@ impl RelationRequest {
 
     pub(crate) const fn merged_interface_constraint(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::MergedInterfaceConstraint)
+    }
+
+    pub(crate) const fn recursive_heritage_property(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::RecursiveHeritageProperty)
     }
 
     pub(crate) const fn union_constraint_member(source: TypeId, target: TypeId) -> Self {

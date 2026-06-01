@@ -47,10 +47,17 @@ fn recursive_heritage_property_conflicts_use_relation_outcome_boundary() {
         .expect("failed to locate recursive heritage property conflict helper");
 
     assert!(
-        helper.contains("assign_relation_outcome(member_type, constraint_type)")
-            && helper.contains("assign_relation_outcome(constraint_type, member_type)")
+        helper
+            .contains("recursive_heritage_property_relation_outcome(member_type, constraint_type)")
+            && helper.contains(
+                "recursive_heritage_property_relation_outcome(constraint_type, member_type)",
+            )
             && helper.contains(".related"),
-        "recursive heritage property conflicts must route relation truth through RelationOutcome"
+        "recursive heritage property conflicts must route relation truth through the recursive heritage property RelationRequest"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "recursive heritage property conflicts must not use generic assignment request routing"
     );
     assert!(
         !helper.contains("checker.is_assignable_to("),

@@ -82,10 +82,10 @@ pub(crate) fn recursive_heritage_property_types_conflict(
         return false;
     }
     if checker
-        .assign_relation_outcome(member_type, constraint_type)
+        .recursive_heritage_property_relation_outcome(member_type, constraint_type)
         .related
         || checker
-            .assign_relation_outcome(constraint_type, member_type)
+            .recursive_heritage_property_relation_outcome(constraint_type, member_type)
             .related
     {
         return false;
