@@ -295,10 +295,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This handles both pre-evaluation form (constraint is `keyof T`) and
         // post-instantiation form (constraint eagerly evaluated to literal union).
         let homomorphic_source = self.homomorphic_mapped_source(mapped);
-        // True when the constraint is `keyof T` (Method 1 matched). Used for two things:
-        // 1. Declared-type substitution (avoid double-encoding optionality).
-        // 2. Modifier inheritance: tsc inherits readonly/optional from the source whenever
-        //    the constraint is `keyof T`, even for non-identity `as` clauses.
+        // True when constraint is `keyof T` AND template is `T[K]` (Method 1/2 matched).
+        // Used for declared-type substitution and for extending modifier inheritance to
+        // non-identity `as` clauses: `is_identity_homomorphic || is_homomorphic` is the
+        // full modifier-inheritance condition (see below).
         let is_identity_homomorphic = homomorphic_source.is_some();
 
         // For homomorphic types, source comes from the homomorphic check.
@@ -578,7 +578,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_identity_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -710,7 +710,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
-                is_identity_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_optional,
                 source_readonly,
             );
@@ -804,7 +804,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::STRING,
-                        is_identity_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -825,7 +825,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.build_index_signature_for_mapped(
                         *mapped,
                         TypeId::NUMBER,
-                        is_identity_homomorphic,
+                        is_identity_homomorphic || is_homomorphic,
                         source_object,
                         empty_atom,
                     ))
@@ -843,7 +843,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(self.build_index_signature_for_mapped(
                 *mapped,
                 key_type,
-                is_identity_homomorphic,
+                is_identity_homomorphic || is_homomorphic,
                 source_object,
                 empty_atom,
             ))
