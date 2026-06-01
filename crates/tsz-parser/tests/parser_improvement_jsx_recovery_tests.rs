@@ -912,6 +912,30 @@ fn test_jsx_conditional_generic_component_type_args_no_errors() {
 }
 
 #[test]
+fn generic_component_type_and_spread_no_errors() {
+    // #11345: generic components that return a spread JSX attribute and are
+    // called in the same TSX module should parse without token-reset diagnostics.
+    for source in [
+        r#"
+type P<T> = { value: T };
+function Comp<T>(props: P<T>) {
+  return <div {...props} />;
+}
+Comp({ value: 1 });
+"#,
+        r#"
+type Payload<T> = { label: T };
+const Widget = function View<T>(payload: Payload<T>) {
+  return <article {...payload} />;
+};
+Widget({ label: "x" });
+"#,
+    ] {
+        assert_no_errors_named("test.tsx", source);
+    }
+}
+
+#[test]
 fn test_jsx_conditional_deeply_nested_no_errors() {
     assert_no_errors_named(
         "test.tsx",

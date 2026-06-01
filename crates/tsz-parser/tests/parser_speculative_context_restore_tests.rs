@@ -246,6 +246,13 @@ fn intersection_true_branch_with_parenthesized_union_no_errors() {
          type R<T> = U<T>;\n",
         "type Shape<X> = X extends unknown ? { left: X } & ({ right: X } | { right: never }) : never;\n\
          type Alias<Y> = Shape<Y>;\n",
+        "type MappedUnion<T> = {\n\
+            [K in keyof T]: T[K]\n\
+        };\n\
+        type Probe<T> = T extends unknown ? { a: T } & ({\n\
+            [K in keyof T]: T[K]\n\
+        } | MappedUnion<T>) : never;\n\
+        type Alias<T> = Probe<T>;",
     ] {
         assert_no_errors(source);
     }
