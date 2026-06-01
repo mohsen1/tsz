@@ -107,6 +107,8 @@ pub(crate) enum RelationKind {
     UnionExcessRequiredProperty,
     /// JSX construct-return render fallback required-property compatibility probes.
     JsxRenderFallback,
+    /// Object-literal mapped contextual property key compatibility probes.
+    ObjectLiteralMappedContextualKey,
     /// Object-literal computed-key routing probes for index-signature buckets.
     ObjectLiteralComputedKey,
     /// Contextual symbol-index value compatibility for object-literal diagnostics.
@@ -413,6 +415,17 @@ impl RelationRequest {
 
     pub(crate) const fn jsx_render_fallback(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::JsxRenderFallback)
+    }
+
+    pub(crate) const fn object_literal_mapped_contextual_key(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::ObjectLiteralMappedContextualKey,
+        )
     }
 
     pub(crate) const fn object_literal_computed_key(source: TypeId, target: TypeId) -> Self {

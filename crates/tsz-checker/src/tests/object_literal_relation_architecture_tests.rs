@@ -166,7 +166,7 @@ fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
 
 /// Mapped contextual object-literal property lookup should keep checker-owned
 /// template instantiation local, but route the key-space relation probes through
-/// relation outcomes.
+/// a named relation request.
 #[test]
 fn test_mapped_contextual_property_type_uses_relation_outcome_boundary() {
     let source = fs::read_to_string("src/types/computation/object_literal_context.rs")
@@ -181,17 +181,20 @@ fn test_mapped_contextual_property_type_uses_relation_outcome_boundary() {
         .expect("failed to locate mapped contextual property helper");
 
     assert_eq!(
-        helper.matches("assign_relation_outcome(key_type,").count(),
+        helper
+            .matches("object_literal_mapped_contextual_key_relation_outcome(")
+            .count(),
         2,
-        "mapped contextual property key checks must route through relation outcomes"
+        "mapped contextual property key checks must route through the mapped contextual key request"
     );
     assert!(
         helper.matches(".related").count() >= 2,
         "mapped contextual property key checks must use relation outcome decisions"
     );
     assert!(
-        !helper.contains("is_assignable_to(key_type,"),
-        "mapped contextual property key checks must not regress to raw boolean assignability"
+        !helper.contains("assign_relation_outcome(")
+            && !helper.contains("is_assignable_to(key_type,"),
+        "mapped contextual property key checks must not regress to raw assignability probes"
     );
 }
 
@@ -265,6 +268,11 @@ fn test_object_literal_symbol_key_helpers_use_dedicated_requests() {
         source.contains("fn object_literal_computed_key_relation_outcome(")
             && source.contains("RelationRequest::object_literal_computed_key("),
         "computed-key routing should have a dedicated RelationRequest helper"
+    );
+    assert!(
+        source.contains("fn object_literal_mapped_contextual_key_relation_outcome(")
+            && source.contains("RelationRequest::object_literal_mapped_contextual_key("),
+        "mapped contextual property key lookup should have a dedicated RelationRequest helper"
     );
     assert!(
         source.contains("fn contextual_symbol_index_value_relation_outcome(")
