@@ -309,7 +309,8 @@ impl<'a> Printer<'a> {
 
         self.write("<");
         self.emit(jsx.tag_name);
-        self.emit(jsx.attributes);
+        let tag_end = self.arena.get(jsx.tag_name).map_or(node.pos, |tag| tag.end);
+        self.emit_jsx_attributes_after_tag(jsx.attributes, tag_end);
         self.write(">");
     }
 
@@ -328,10 +329,75 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let mut gap_start = node.pos;
         for &attr in &attrs.properties.nodes {
-            self.write_space();
+            let Some(attr_node) = self.arena.get(attr) else {
+                continue;
+            };
+            if !self.emit_jsx_attribute_gap_comments(gap_start, attr_node.pos) {
+                self.write_space();
+            }
             self.emit(attr);
+            gap_start = attr_node.end;
         }
+    }
+
+    pub(in super::super) fn emit_jsx_attributes_after_tag(
+        &mut self,
+        attributes: tsz_parser::parser::NodeIndex,
+        tag_end: u32,
+    ) {
+        let Some(node) = self.arena.get(attributes) else {
+            return;
+        };
+        let Some(attrs) = self.arena.get_jsx_attributes(node) else {
+            return;
+        };
+
+        let mut gap_start = tag_end;
+        for &attr in &attrs.properties.nodes {
+            let Some(attr_node) = self.arena.get(attr) else {
+                continue;
+            };
+            if !self.emit_jsx_attribute_gap_comments(gap_start, attr_node.pos) {
+                self.write_space();
+            }
+            self.emit(attr);
+            gap_start = attr_node.end;
+        }
+    }
+
+    fn emit_jsx_attribute_gap_comments(&mut self, start_pos: u32, end_pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+
+        let mut has_comment = false;
+        let mut last_comment_was_single_line_with_newline = false;
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.pos >= end_pos {
+                break;
+            }
+            if comment.end > start_pos {
+                has_comment = true;
+                last_comment_was_single_line_with_newline =
+                    !comment.is_multi_line && comment.has_trailing_new_line;
+            }
+            idx += 1;
+        }
+
+        if !has_comment {
+            return false;
+        }
+
+        self.write_space();
+        let (emitted, _, _) = self.emit_comments_in_range(start_pos, end_pos, false, true);
+        if emitted && last_comment_was_single_line_with_newline {
+            self.write_space();
+        }
+        emitted
     }
 
     pub(in super::super) fn emit_jsx_attribute(&mut self, node: &Node) {
