@@ -20,10 +20,16 @@ fn mapped_true_base_constraint_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "conditional true-base constraint relation decisions must use the shared relation outcome boundary"
     );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "conditional true-base constraint relation decisions should route through named RelationRequests"
+    );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("conditional_true_base_constraint_relation_outcome(")
+            .count(),
         2,
-        "evaluated and resolved true-base constraint relations should route through RelationOutcome"
+        "evaluated and resolved true-base constraint relations should route through the conditional true-base request helper"
     );
 }
 

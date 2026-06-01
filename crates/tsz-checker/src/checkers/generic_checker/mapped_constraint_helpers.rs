@@ -124,10 +124,16 @@ impl<'a> CheckerState<'a> {
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
         true_base_evaluated == constraint_evaluated
             || self
-                .assign_relation_outcome(true_base_evaluated, constraint_evaluated)
+                .conditional_true_base_constraint_relation_outcome(
+                    true_base_evaluated,
+                    constraint_evaluated,
+                )
                 .related
             || self
-                .assign_relation_outcome(true_base_resolved, constraint_resolved)
+                .conditional_true_base_constraint_relation_outcome(
+                    true_base_resolved,
+                    constraint_resolved,
+                )
                 .related
     }
 
