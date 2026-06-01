@@ -398,16 +398,65 @@ impl<'a> TypeFormatter<'a> {
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
+    ///
+    /// This is a thin entry wrapper that seeds a per-call visited set and
+    /// delegates to [`Self::get_source_position_for_type_guarded`]. The source-
+    /// position walk follows `Application` bases/args, display-alias origins, and
+    /// `Array`/`ReadonlyType` element types; a self-referential generic such as
+    /// `type Rec<T> = Foo<Rec<T>>` makes that walk cyclic, so without a visited
+    /// set the mutual recursion with [`Self::get_application_source_position`]
+    /// overflows the native stack (large-ts-repo infra glob, issue #7574).
     pub(super) fn get_source_position_for_type(
         &self,
         type_id: TypeId,
         def_store: &crate::def::DefinitionStore,
+    ) -> (u32, u32, u32) {
+        let mut visiting = rustc_hash::FxHashSet::default();
+        self.get_source_position_for_type_guarded(type_id, def_store, &mut visiting)
+    }
+
+    /// Recursive worker for [`Self::get_source_position_for_type`].
+    ///
+    /// `visiting` holds the `TypeIds` currently on the recursion stack. When a
+    /// type is re-entered (a structural cycle in the source-position graph), we
+    /// return the tier-2 "no source info" sentinel — the same value the function
+    /// already returns for anonymous types without source info — which sorts the
+    /// member last while preserving its relative order. On any acyclic input the
+    /// visited set never triggers, so display order is byte-identical to the
+    /// pre-guard behavior. The kill-switch
+    /// `TSZ_DISABLE_SOURCE_POSITION_CYCLE_GUARD` skips the visited-set bookkeeping
+    /// for parity verification.
+    fn get_source_position_for_type_guarded(
+        &self,
+        type_id: TypeId,
+        def_store: &crate::def::DefinitionStore,
+        visiting: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> (u32, u32, u32) {
         // Tier 0: Intrinsics have fixed position
         if let Some(key) = Self::builtin_sort_key(type_id) {
             return (0, 0, key);
         }
 
+        let guard_enabled = !source_position_cycle_guard_disabled();
+        if guard_enabled && !visiting.insert(type_id) {
+            // Re-entering a type already on the stack: a structural cycle in the
+            // source-position graph. Fall back to the tier-2 sentinel so the
+            // member keeps its original order instead of recursing forever.
+            return (2, u32::MAX, u32::MAX);
+        }
+        let result = self.get_source_position_for_type_inner(type_id, def_store, visiting);
+        if guard_enabled {
+            visiting.remove(&type_id);
+        }
+        result
+    }
+
+    fn get_source_position_for_type_inner(
+        &self,
+        type_id: TypeId,
+        def_store: &crate::def::DefinitionStore,
+        visiting: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> (u32, u32, u32) {
         let data = self.interner.lookup(type_id);
 
         // Type parameters are modeled as `TypeData::TypeParameter` and lose direct
@@ -437,6 +486,7 @@ impl<'a> TypeFormatter<'a> {
                         alias_app_id,
                         def_store,
                         Some(type_id),
+                        visiting,
                     );
                 }
                 Some(TypeData::Lazy(def_id)) => {
@@ -463,7 +513,7 @@ impl<'a> TypeFormatter<'a> {
         // (modeled as `Application(Container, [Cover])`) sort with their
         // user-defined element type rather than with a built-in/lib base.
         if let Some(TypeData::Application(app_id)) = &data {
-            return self.get_application_source_position(*app_id, def_store, Some(type_id));
+            return self.get_application_source_position(*app_id, def_store, Some(type_id), visiting);
         }
 
         // Try Array - structural shorthand for `Array<T>`. Use the element's
@@ -473,7 +523,8 @@ impl<'a> TypeFormatter<'a> {
         // the union doesn't matter because the element vs. array tie-break
         // is decided by this offset).
         if let Some(TypeData::Array(elem)) = &data {
-            let (tier, file, span) = self.get_source_position_for_type(*elem, def_store);
+            let (tier, file, span) =
+                self.get_source_position_for_type_guarded(*elem, def_store, visiting);
             if tier == 0 {
                 return (tier, file, span.saturating_add(100));
             }
@@ -483,7 +534,8 @@ impl<'a> TypeFormatter<'a> {
         // Try ReadonlyType - `readonly T[]` modifier wrapping an inner type.
         // Use the inner type's position +1 for the same reason.
         if let Some(TypeData::ReadonlyType(inner)) = &data {
-            let (tier, file, span) = self.get_source_position_for_type(*inner, def_store);
+            let (tier, file, span) =
+                self.get_source_position_for_type_guarded(*inner, def_store, visiting);
             if tier == 0 {
                 return (tier, file, span.saturating_add(100));
             }
@@ -542,18 +594,35 @@ impl<'a> TypeFormatter<'a> {
         app_id: crate::types::TypeApplicationId,
         def_store: &crate::def::DefinitionStore,
         skip_type: Option<TypeId>,
+        visiting: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> (u32, u32, u32) {
         let app = self.interner.type_application(app_id);
-        let mut best = self.get_source_position_for_type(app.base, def_store);
+        let mut best = self.get_source_position_for_type_guarded(app.base, def_store, visiting);
         for &arg in &app.args {
             if Some(arg) == skip_type {
                 continue;
             }
-            let candidate = self.get_source_position_for_type(arg, def_store);
+            let candidate = self.get_source_position_for_type_guarded(arg, def_store, visiting);
             if candidate > best {
                 best = candidate;
             }
         }
         best
     }
+}
+
+/// Kill-switch: set `TSZ_DISABLE_SOURCE_POSITION_CYCLE_GUARD` to a non-empty,
+/// non-`0` value to bypass the source-position visited-set guard. The guard only
+/// short-circuits when the source-position walk re-enters a `TypeId` already on
+/// the recursion stack (a structural cycle), which no acyclic type graph
+/// reaches, so disabling it must leave display order byte-identical for every
+/// non-crashing input.
+fn source_position_cycle_guard_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_SOURCE_POSITION_CYCLE_GUARD")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
 }
