@@ -39,7 +39,7 @@
 //! byte-for-byte with the fast path on vs off.
 
 use crate::state::CheckerState;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::symbol_flags;
 use tsz_solver::DefId;
 
 /// Kill-switch for the lazy single-member lib-interface property-access fast
@@ -136,21 +136,6 @@ impl CheckerState<'_> {
             .global_augmentations
             .get(name)
             .is_some_and(|decls| !decls.is_empty())
-    }
-
-    /// Look up `prop_name` as an **own** member symbol of an interface, returning
-    /// its member `SymbolId` when present.
-    ///
-    /// This is the binder-table primitive the single-member lowering builds on:
-    /// it answers "does this interface declare `prop_name` directly?" in O(1)
-    /// without lowering any member types.
-    pub(crate) fn lib_interface_own_member_symbol(
-        &self,
-        interface_sym_id: SymbolId,
-        prop_name: &str,
-    ) -> Option<SymbolId> {
-        let symbol = self.ctx.binder.get_symbol(interface_sym_id)?;
-        symbol.members.as_ref()?.get(prop_name)
     }
 
     /// Try to resolve `prop_name` on an eligible simple lib-interface receiver by
