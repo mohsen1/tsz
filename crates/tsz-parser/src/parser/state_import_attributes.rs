@@ -23,20 +23,17 @@ impl ParserState {
             return false;
         }
 
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        if self.is_token(SyntaxKind::StringLiteral) {
-            self.parse_string_literal();
-        } else {
-            self.parse_identifier_name();
-        }
-
-        let result = self.is_token(SyntaxKind::ColonToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        result
+        // Lookahead invokes real `parse_*` routines that push arena nodes;
+        // `speculate` rolls back every parser-state field, not just the
+        // scanner cursor.
+        self.speculate(|p| {
+            if p.is_token(SyntaxKind::StringLiteral) {
+                p.parse_string_literal();
+            } else {
+                p.parse_identifier_name();
+            }
+            p.is_token(SyntaxKind::ColonToken)
+        })
     }
 
     fn import_property_name_matches(&self, name: NodeIndex, expected: &str) -> bool {

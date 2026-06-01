@@ -485,8 +485,9 @@ impl ParserState {
                 self.current_token = current;
                 return false;
             }
-            let saved_arena_len = self.arena.nodes.len();
-            let saved_diagnostics_len = self.parse_diagnostics.len();
+            // Full checkpoint — `parse_return_type` can toggle flags.
+            // See `speculation.rs`.
+            let return_type_checkpoint = self.speculation_checkpoint();
             let type_start = self.token_pos();
             let type_node = self.parse_return_type();
             let parsed_return_type = self.token_pos() != type_start
@@ -514,27 +515,25 @@ impl ParserState {
             // leaves a `:` token. This matches TypeScript's disambiguation.
             if (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0 {
                 if result && self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-                    let body_snapshot = self.scanner.save_state();
-                    let body_token = self.current_token;
-                    let body_arena_len = self.arena.nodes.len();
-                    let body_diagnostics_len = self.parse_diagnostics.len();
+                    // Full checkpoint — see `speculation.rs`.
+                    let body_checkpoint = self.speculation_checkpoint();
 
                     self.next_token();
                     let _ = self.parse_assignment_expression();
                     result = self.is_token(SyntaxKind::ColonToken)
                         && !self.scanner.has_preceding_line_break();
 
-                    self.arena.nodes.truncate(body_arena_len);
-                    self.parse_diagnostics.truncate(body_diagnostics_len);
-                    self.scanner.restore_state(body_snapshot);
-                    self.current_token = body_token;
+                    self.restore_speculation_checkpoint(body_checkpoint);
                 } else {
                     result = false;
                 }
             }
 
-            self.arena.nodes.truncate(saved_arena_len);
-            self.parse_diagnostics.truncate(saved_diagnostics_len);
+            // Roll back everything `parse_return_type` may have touched:
+            // arena nodes, diagnostics, context flags, recovery flags. The
+            // outer scanner+token restore at the function's tail rewinds the
+            // scanner position separately.
+            self.restore_speculation_checkpoint(return_type_checkpoint);
 
             result
         } else if has_line_break {

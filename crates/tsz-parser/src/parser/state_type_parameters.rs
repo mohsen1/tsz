@@ -118,9 +118,10 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional default: = DefaultType
+        // Parse optional default: = DefaultType (complete-type-expression
+        // scope — see `allow_conditional_types_and_parse_type`).
         let default = if self.parse_optional(SyntaxKind::EqualsToken) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };

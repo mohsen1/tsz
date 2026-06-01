@@ -28,13 +28,11 @@ impl ParserState {
 
         let start_pos = self.token_pos();
         self.next_token();
-        // Re-enable conditional types inside parentheses, even if they were disabled
-        // for an outer `infer T extends X` disambiguation. Matches tsc's
+        // Parenthesized type is a complete-type-expression scope: re-enable
+        // conditional types even if they were disabled for an outer
+        // `infer T extends X` disambiguation. Matches tsc's
         // `allowConditionalTypesAnd(parseType)` in `parseParenthesizedType`.
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let inner = self.parse_type();
-        self.context_flags = saved_flags;
+        let inner = self.allow_conditional_types_and_parse_type();
         self.parse_expected(SyntaxKind::CloseParenToken);
         let end_pos = self.token_full_start();
         self.arena.add_wrapped_type(
@@ -735,11 +733,9 @@ impl ParserState {
                 & crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES)
                 != 0;
 
-            // Save full parser state for backtracking
-            let snapshot = self.scanner.save_state();
-            let saved_token = self.current_token;
-            let arena_len = self.arena.nodes.len();
-            let diag_len = self.parse_diagnostics.len();
+            // Full checkpoint — `parse_type` can toggle flags/recovery
+            // state. See `speculation.rs`.
+            let checkpoint = self.speculation_checkpoint();
 
             self.next_token(); // consume `extends`
 
@@ -762,11 +758,9 @@ impl ParserState {
             // then this `extends` belongs to an outer conditional type, not the infer constraint.
             // Backtrack in that case.
             if !already_disallowed && self.is_token(SyntaxKind::QuestionToken) {
-                // Backtrack: restore scanner, token, arena, and diagnostics
-                self.scanner.restore_state(snapshot);
-                self.current_token = saved_token;
-                self.arena.nodes.truncate(arena_len);
-                self.parse_diagnostics.truncate(diag_len);
+                // Full rollback of every field a speculative `parse_*` is
+                // allowed to touch.
+                self.restore_speculation_checkpoint(checkpoint);
                 NodeIndex::NONE
             } else {
                 constraint_type
@@ -815,9 +809,14 @@ impl ParserState {
         let head = self.parse_template_literal_head();
         let mut spans = Vec::new();
 
+        // Each `${...}` is a complete-type-expression scope: clear the
+        // scope-barrier flags once before the loop and restore once after.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !(crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT
+            | crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES);
+
         // After the head, we need to parse: type, then middle/tail, repeat until tail
         loop {
-            // Parse the type inside ${...}
             let type_node = self.parse_type();
 
             // Now we need to rescan for the template continuation
@@ -849,6 +848,8 @@ impl ParserState {
                 break;
             }
         }
+
+        self.context_flags = saved_flags;
 
         let end_pos = self.token_full_start();
 
@@ -1019,20 +1020,17 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        // Re-enable conditional types inside mapped type bracket.
-        // The outer `T extends { [P in ...] }` may have disabled them,
-        // but inside the mapped type we need them again.
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // The mapped-type constraint and `as` clause are complete-type-
+        // expression scopes: re-enable conditional types even if the outer
+        // context (e.g. an `infer T extends X` ancestor) disabled them.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         // Parse optional 'as' clause for key remapping: [K in T as NewKey]
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1068,9 +1066,11 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional : and type (type can be omitted for implicit any)
+        // Parse optional : and value type (type can be omitted for implicit
+        // any). Complete-type-expression scope —
+        // see `allow_conditional_types_and_parse_type`.
         let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
@@ -1136,16 +1136,14 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // Complete-type-expression scopes — see `parse_mapped_type_rest`.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1173,9 +1171,10 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional : and type
+        // Parse optional : and type. Same complete-type-expression scope
+        // as the canonical mapped-type path above.
         let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
@@ -1217,16 +1216,14 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
-        let saved_flags = self.context_flags;
-        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
-        let constraint = self.parse_type();
+        // Complete-type-expression scopes — see `parse_mapped_type_rest`.
+        let constraint = self.allow_conditional_types_and_parse_type();
 
         let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
-        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
@@ -1254,9 +1251,10 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional : and type
+        // Parse optional : and type. Complete-type-expression scope per
+        // tsc's `allowConditionalTypesAnd(parseType)`.
         let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            self.allow_conditional_types_and_parse_type()
         } else {
             NodeIndex::NONE
         };
@@ -1502,11 +1500,9 @@ impl ParserState {
     /// Returns Some(NodeList) if successful, None if this is not type arguments.
     /// Uses look-ahead to distinguish from comparison operators.
     pub(crate) fn try_parse_type_arguments_for_call(&mut self) -> Option<NodeList> {
-        // Save state for potential rollback
-        let snapshot = self.scanner.save_state();
-        let saved_token = self.current_token;
-        let saved_arena_len = self.arena.nodes.len();
-        let saved_diagnostics_len = self.parse_diagnostics.len();
+        // Full checkpoint — `parse_type_argument_in_type_arguments` can
+        // toggle flags/recovery state. See `speculation.rs`.
+        let checkpoint = self.speculation_checkpoint();
 
         // Save the `<` position before consuming it so TS1099 points at `<`, not `>`
         let less_than_start = self.u32_from_usize(self.scanner.get_token_start());
@@ -1532,11 +1528,8 @@ impl ParserState {
             if !self.is_token(SyntaxKind::OpenParenToken)
                 && !self.can_follow_type_arguments_in_expression()
             {
-                // Not a call or instantiation expression - rollback
-                self.scanner.restore_state(snapshot);
-                self.current_token = saved_token;
-                self.arena.nodes.truncate(saved_arena_len);
-                self.parse_diagnostics.truncate(saved_diagnostics_len);
+                // Not a call or instantiation expression - full rollback
+                self.restore_speculation_checkpoint(checkpoint);
                 return None;
             }
             return Some(self.make_node_list(Vec::new()));
@@ -1599,13 +1592,9 @@ impl ParserState {
             }
         }
 
-        // Not type arguments - restore state
-        self.scanner.restore_state(snapshot);
-        self.current_token = saved_token;
-        // Truncate arena to remove any nodes we added
-        self.arena.nodes.truncate(saved_arena_len);
-        // Drop any speculative diagnostics from the failed parse
-        self.parse_diagnostics.truncate(saved_diagnostics_len);
+        // Not type arguments - full rollback to undo any context-flag or
+        // recovery-flag mutations the speculative type parses may have made.
+        self.restore_speculation_checkpoint(checkpoint);
         None
     }
 
