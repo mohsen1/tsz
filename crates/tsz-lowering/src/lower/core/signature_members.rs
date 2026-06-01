@@ -485,6 +485,42 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Lower an own method member's full overload set to its merged callable
+    /// type, byte-identically to the full interface path.
+    ///
+    /// `member_idxs` must be every `MethodSignature` declaration of a single
+    /// method name across the interface's (merged) declarations, in source
+    /// order. Each is lowered as a method call signature (`is_method = true`,
+    /// matching [`Self::collect_interface_members`]) and assembled into a
+    /// `callable` whose `call_signatures` are the overloads in order — exactly
+    /// the shape [`Self::finish_interface_parts`] builds for a
+    /// [`PropertyMerge::Method`] entry.
+    ///
+    /// Returns `None` when `member_idxs` is empty or any element is not a
+    /// method-signature node, so the caller falls back to full materialization.
+    pub fn lower_method_overload_set_type(&self, member_idxs: &[NodeIndex]) -> Option<TypeId> {
+        if member_idxs.is_empty() {
+            return None;
+        }
+        let mut call_signatures = Vec::with_capacity(member_idxs.len());
+        for &member_idx in member_idxs {
+            let member = self.arena.get(member_idx)?;
+            if member.kind != syntax_kind_ext::METHOD_SIGNATURE {
+                return None;
+            }
+            let sig = self.arena.get_signature(member)?;
+            let mut signature = self.lower_call_signature(sig);
+            signature.is_method = true;
+            call_signatures.push(signature);
+        }
+        Some(self.interner.callable(CallableShape {
+            call_signatures,
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            ..Default::default()
+        }))
+    }
+
     pub fn lower_interface_members_simple_types(
         &self,
         interface_idx: NodeIndex,

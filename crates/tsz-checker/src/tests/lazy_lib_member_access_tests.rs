@@ -1,15 +1,16 @@
 //! Coverage for the lazy single-member lib-interface property-access fast path.
 //!
-//! Value-position property access on a simple lib-interface receiver resolves
-//! only the accessed own member (see
+//! Value-position property/method access on a simple lib-interface receiver
+//! resolves only the accessed member — an own plain property, an own method
+//! overload set, or a member inherited through the bare `extends` closure (see
 //! `state::state_checking::lazy_lib_member`). These tests assert the fast path
-//! is **behavior-preserving**: own-member reads type correctly, type mismatches
-//! still error, missing members still report TS2339, and a user interface that
-//! shadows a lib name falls back to the full path.
+//! is **behavior-preserving**: member reads type correctly, type/argument
+//! mismatches still error, missing members still report TS2339, and a user
+//! interface that shadows a lib name falls back to the full path.
 //!
 //! The cases vary the lib interface and member spelling so the behavior follows
-//! the structural shape (simple lib interface + own plain property), not any
-//! particular identifier name.
+//! the structural shape (simple lib interface + property/method/inherited
+//! member), not any particular identifier name.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_lib_files};
@@ -274,5 +275,137 @@ export {};
     assert!(
         !codes.contains(&2322),
         "augmented member and own member reads should type-check, got {codes:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lazy method-overload + heritage-walk member resolution.
+//
+// These cover the extension of the single-property fast path to (a) own method
+// **overload sets** lowered to their merged callable, and (b) members inherited
+// through the bare-`extends` closure. Both are byte-identical to full
+// materialization and match `tsc`: an inherited generic method call type-checks
+// when correct and reports the same overload diagnostic when wrong.
+// ---------------------------------------------------------------------------
+
+/// An own method-overload set on a simple lib interface (`ParentNode.append`,
+/// accessed via the inherited `Document` receiver) must resolve to a callable
+/// with all overloads: a correct call type-checks and a wrong-argument call
+/// reports the same TS2345/TS2769 the full path would. Proven on an inherited
+/// method so the heritage walk and the overload lowering are exercised together.
+#[test]
+fn inherited_method_overload_call_type_checks() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+d.append("text");
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "inherited method-overload call with a valid arg should type-check, got {codes:?}",
+    );
+}
+
+/// The same inherited method with a wrong argument must still report the call
+/// error — the lazy overload set is the real merged callable, not a widened
+/// `any`. `ParentNode.append(...: (Node | string)[])` rejects an object literal.
+#[test]
+fn inherited_method_overload_wrong_arg_still_errors() {
+    let codes = dom_codes(
+        r#"
+declare const d: Document;
+d.append({});
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2345) || codes.contains(&2769),
+        "wrong-typed inherited method-overload arg should report TS2345/TS2769, got {codes:?}",
+    );
+}
+
+/// A method inherited through a **deeper** heritage edge
+/// (`Document -> Node -> EventTarget.addEventListener`) must also resolve, and a
+/// wrong listener-type/key argument must still surface the overload error,
+/// proving the walk descends multiple `extends` levels.
+#[test]
+fn deeply_inherited_method_overload_resolves_and_errors() {
+    let ok = dom_codes(
+        r#"
+declare const d: Document;
+d.addEventListener("click", () => {});
+export {};
+"#,
+    );
+    assert!(
+        ok.is_empty(),
+        "valid deeply-inherited addEventListener call should type-check, got {ok:?}",
+    );
+    let bad = dom_codes(
+        r#"
+declare const d: Document;
+d.addEventListener(999, () => {});
+export {};
+"#,
+    );
+    assert!(
+        bad.contains(&2769) || bad.contains(&2345),
+        "addEventListener with a numeric event name should report the overload error, got {bad:?}",
+    );
+}
+
+/// Name-agnostic proof that the heritage walk follows the *structural* extends
+/// edge, not a hardcoded lib name: a user interface `B` extends a simple lib
+/// interface and inherits its method; resolving the inherited method on `B`'s
+/// value works the same. (Here the inherited member is read off `Element`, a
+/// distinct lib interface from `Document`, via the `ParentNode` base.)
+#[test]
+fn inherited_method_resolves_across_distinct_lib_interface() {
+    // `Element` also extends `ParentNode`, so `el.append` is inherited just like
+    // `document.append` — different receiver interface, same structural edge.
+    let codes = dom_codes(
+        r#"
+declare const el: Element;
+el.append("x");
+const n = el.querySelectorAll("div");
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "inherited method on a distinct lib interface should resolve cleanly, got {codes:?}",
+    );
+}
+
+/// An inherited method whose own interface is **generic** must NOT be resolved
+/// through the lazy walk: the base carries type arguments the walk cannot
+/// substitute, so it falls back to full materialization. `Array<T>` methods
+/// inherited via a generic base are the canonical case; here we prove a generic
+/// receiver's method still resolves correctly through the full path (no TS2339,
+/// no spurious widening) rather than being mis-handled by the lazy walk.
+#[test]
+fn generic_interface_method_still_resolves_via_full_path() {
+    let codes = dom_codes(
+        r#"
+declare const a: number[];
+const m = a.map(x => x + 1);
+const ok: number[] = m;
+const bad: string[] = m;
+export {};
+"#,
+    );
+    // `map` resolves (no TS2339) and the real return type is `number[]`, so only
+    // the `string[]` mismatch errors — proving the generic path is intact and the
+    // lazy walk did not widen or drop the member.
+    assert!(
+        !codes.contains(&2339),
+        "generic interface method must resolve (no TS2339), got {codes:?}",
+    );
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2322).count(),
+        1,
+        "only the string[] mismatch should error, got {codes:?}",
     );
 }

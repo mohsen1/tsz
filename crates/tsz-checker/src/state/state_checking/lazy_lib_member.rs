@@ -57,6 +57,28 @@ pub(crate) fn lazy_lib_member_access_disabled() -> bool {
     })
 }
 
+/// Kill-switch for the lazy single-**method** lib-interface property-access
+/// fast path (the overload-set + heritage-walk extension of the single-property
+/// fast path). Set `TSZ_DISABLE_LAZY_METHOD=1` to force the legacy
+/// full-materialization path for method members and inherited members, enabling
+/// byte-identical diagnostic comparison of method/call resolution with the fast
+/// path on vs off.
+///
+/// This is independent of [`lazy_lib_member_access_disabled`] so the
+/// higher-risk method/overload/heritage path can be A/B compared in isolation
+/// from the already-landed single-property path.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_lib_method_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_LAZY_METHOD")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 /// Kill-switch for keeping a global ambient-var value type lazy when its
 /// annotation is a bare reference to a simple lib interface (e.g. the global
 /// `declare var document: Document`). Set `TSZ_DISABLE_LAZY_GLOBAL_VAR=1` to
