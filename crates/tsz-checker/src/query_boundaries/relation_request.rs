@@ -63,6 +63,8 @@ pub(crate) enum RelationKind {
     MissingPropertyRead,
     /// Missing-property write compatibility probes for assignability diagnostics.
     MissingPropertyWrite,
+    /// Evaluated remapped mapped source compatibility before missing-property reporting.
+    ConcreteRemappedMappedMissingProperty,
     /// Exact-optional source-member filtering probes for assignability diagnostics.
     ExactOptionalSourceFilter,
     /// JSX construct-return render fallback required-property compatibility probes.
@@ -271,6 +273,17 @@ impl RelationRequest {
 
     pub(crate) const fn missing_property_write(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::MissingPropertyWrite)
+    }
+
+    pub(crate) const fn concrete_remapped_mapped_missing_property(
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self::new(
+            source,
+            target,
+            RelationKind::ConcreteRemappedMappedMissingProperty,
+        )
     }
 
     pub(crate) const fn exact_optional_source_filter(source: TypeId, target: TypeId) -> Self {

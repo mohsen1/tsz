@@ -1087,7 +1087,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
-        if evaluated == resolved || self.assign_relation_outcome(evaluated, target).related {
+        if evaluated == resolved
+            || self
+                .concrete_remapped_mapped_missing_property_relation_outcome(evaluated, target)
+                .related
+        {
             return false;
         }
         let analysis = self.analyze_assignability_failure(evaluated, target);

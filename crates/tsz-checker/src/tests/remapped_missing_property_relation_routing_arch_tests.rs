@@ -18,8 +18,14 @@ fn remapped_missing_property_skip_uses_relation_outcome_boundary() {
         .expect("failed to isolate remapped missing-property helper");
 
     assert!(
-        helper.contains("assign_relation_outcome(evaluated, target).related"),
-        "remapped missing-property diagnostic skip should route through assign_relation_outcome"
+        helper.contains(
+            "concrete_remapped_mapped_missing_property_relation_outcome(evaluated, target)"
+        ),
+        "remapped missing-property diagnostic skip should route through its dedicated relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(evaluated, target).related"),
+        "remapped missing-property diagnostic skip should not use the generic assign request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard(evaluated, target)"),

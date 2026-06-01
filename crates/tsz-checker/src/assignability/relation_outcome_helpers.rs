@@ -344,6 +344,22 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a diagnostic-bearing concrete remapped mapped missing-property
+    /// relation for raw checker types, preserving the canonical
+    /// remapped-mapped request shape.
+    pub(crate) fn concrete_remapped_mapped_missing_property_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::concrete_remapped_mapped_missing_property(
+                source, target,
+            );
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing exact-optional source filtering relation
     /// for raw checker types, preserving the canonical exact-optional request shape.
     pub(crate) fn exact_optional_source_filter_relation_outcome(

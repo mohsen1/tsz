@@ -80,6 +80,10 @@ fn assignability_reporter_relation_outcomes_use_dedicated_requests() {
             "RelationRequest::missing_property_write(",
         ),
         (
+            "fn concrete_remapped_mapped_missing_property_relation_outcome(",
+            "RelationRequest::concrete_remapped_mapped_missing_property(",
+        ),
+        (
             "fn exact_optional_source_filter_relation_outcome(",
             "RelationRequest::exact_optional_source_filter(",
         ),
