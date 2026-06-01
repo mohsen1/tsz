@@ -1,17 +1,20 @@
 //! Assignability relation execution and relation-specific fast paths.
 
 use crate::query_boundaries::assignability::{
-    AssignabilityQueryInputs, are_types_overlapping_with_env, assignability_cache_key,
-    check_application_variance_assignability, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, intersection_source_has_target_constituent,
-    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
-    object_shape_for_type,
+    AssignabilityQueryInputs, RelationRequest, are_types_overlapping_with_env,
+    assignability_cache_key, check_application_variance_assignability, get_allowed_keys,
+    get_keyof_type, get_string_literal_value, get_union_members,
+    intersection_source_has_target_constituent, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, object_shape_for_type,
 };
 use crate::query_boundaries::common::{
     intersection_members, object_shape_id, object_with_index_shape_id, union_members,
 };
 use crate::query_boundaries::state::type_resolution::get_lazy_def_id;
 use crate::state::{CheckerOverrideProvider, CheckerState};
+use crate::state_domain::type_environment::lazy::{
+    global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
+};
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_solver::TypeId;
@@ -203,7 +206,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let related = self.is_assignable_to(source, target);
+        let related = self.diagnostic_relation_boolean_guard(source, target);
         if related {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
@@ -218,9 +221,7 @@ impl<'a> CheckerState<'a> {
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
-        let mut outcome = self.execute_relation_request(&request);
-        outcome.related = false;
-        outcome
+        self.execute_relation_request(&request)
     }
 
     /// Execute a diagnostic-bearing assignment relation using the current
@@ -314,8 +315,6 @@ impl<'a> CheckerState<'a> {
                 relation_outcome.related = false;
             }
         }
-
-        relation_outcome.related = false;
         relation_outcome
     }
 
@@ -356,7 +355,36 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        self.is_assignable_to(source, target)
+        let related = self.is_assignable_to(source, target);
+        let source_name = self.format_type_diagnostic(source);
+        let target_name = self.format_type_diagnostic(target);
+        trace!(
+            source = source.0,
+            target = target.0,
+            source_name = source_name,
+            target_name = target_name,
+            related,
+            global_exhausted = global_resolution_fuel_exhausted(),
+            refs_exhausted = refs_resolution_fuel_exhausted(),
+            "diagnostic_relation_boolean_guard"
+        );
+        if related
+            && (global_resolution_fuel_exhausted() || refs_resolution_fuel_exhausted())
+            && !is_relation_cacheable(self.ctx.types, source, target)
+        {
+            let (source, target) = self.prepare_assignability_inputs(source, target);
+            let request = RelationRequest::assign(source, target);
+            let relation_result = self.execute_relation_request(&request);
+            trace!(
+                source = source.0,
+                target = target.0,
+                relation_result = relation_result.related,
+                "diagnostic_relation_boolean_guard refetched through RelationRequest"
+            );
+            return relation_result.related;
+        }
+
+        related
     }
 
     /// Environment-aware boolean relation guard for diagnostic code paths.
