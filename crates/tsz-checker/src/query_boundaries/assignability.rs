@@ -595,6 +595,8 @@ pub(crate) enum RelationKind {
     JsxChildren,
     /// Destructuring: `const { a, b } = expr`
     Destructuring,
+    /// Rest parameter array compatibility: `function f(...args: T)`
+    RestParameter,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
@@ -626,15 +628,6 @@ pub(crate) enum MissingPropertyMode {
 /// Encodes all the policy dimensions that affect how the checker interprets
 /// a relation result. The checker builds a request, invokes the boundary,
 /// and uses the result + failure info for diagnostics.
-///
-/// Current field ownership:
-/// - `source` and `target` are semantic solver inputs and diagnostic inputs.
-/// - `kind` is diagnostic/tracing context today; it does not alter solver flags.
-/// - `allow_erased_generic_signature_retry` is translated to a solver relation flag.
-/// - `source_is_fresh`, `excess_property_mode`, and `missing_property_mode` are
-///   request-level policy descriptors. They are preserved for callers and tests,
-///   but `execute_relation` does not yet branch on them; EPC and missing-property
-///   diagnostics still have caller-side checks.
 #[derive(Debug, Clone)]
 pub(crate) struct RelationRequest {
     /// Prepared source type for the relation.
@@ -694,6 +687,10 @@ impl RelationRequest {
 
     pub(crate) const fn destructuring(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Destructuring)
+    }
+
+    pub(crate) const fn rest_parameter(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::RestParameter)
     }
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {

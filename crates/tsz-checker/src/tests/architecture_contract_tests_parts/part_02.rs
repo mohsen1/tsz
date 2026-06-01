@@ -109,6 +109,7 @@ fn test_relation_request_constructors_encode_relation_kind() {
         ("fn jsx_children", "RelationKind::JsxChildren"),
         ("fn satisfies", "RelationKind::Satisfies"),
         ("fn destructuring", "RelationKind::Destructuring"),
+        ("fn rest_parameter", "RelationKind::RestParameter"),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

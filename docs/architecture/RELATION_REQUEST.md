@@ -39,7 +39,7 @@ shapes suppress EPC now lives in the assignability boundary.
 
 | Field | Constructors / builders | Current consumers | Effect today |
 | --- | --- | --- | --- |
-| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
+| `source` | `assign`, `for_in_lhs`, `call_arg`, `return_stmt`, `jsx_props`, `jsx_children`, `satisfies`, `destructuring`, `rest_parameter` | `execute_relation`, failure analysis, weak-union analysis, property classification, checker-only post-check | Semantic solver input, diagnostic input, and classification input |
 | `target` | Same constructors as `source` | Same consumers as `source` | Semantic solver input, diagnostic input, and classification input |
 | `kind` | Same constructors as `source` | `execute_relation` debug span | Diagnostic/tracing context only; no solver or cache policy change today |
 | `excess_property_mode` | Defaults to `Skip`; `with_fresh_source`, `with_spread_source`, `with_excess_property_mode` | No direct `execute_relation` branch today | Advisory request descriptor; caller-side EPC logic still emits or suppresses diagnostics |
@@ -94,6 +94,10 @@ assignment diagnostics.
 `state/variable_checking/for_loop.rs` builds `RelationRequest::for_in_lhs`
 for TS2405 `for...in` initializer target checks, where the source key type
 must be assignable to the valid LHS target type.
+
+`checkers/parameter_checker.rs` builds `RelationRequest::rest_parameter` for
+TS2370 rest-parameter array checks, where a declared, resolved, or initializer
+type must be assignable to readonly `any[]`.
 
 `assignability_diagnostics.rs` builds `RelationRequest::satisfies` for
 `expr satisfies T` diagnostics.
