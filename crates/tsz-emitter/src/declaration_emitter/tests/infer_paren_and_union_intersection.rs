@@ -207,6 +207,19 @@ fn parenthesized_recursive_array_alias_reference_keeps_parens_renamed() {
     );
 }
 
+#[test]
+fn parenthesized_array_element_type_parameter_same_name_as_alias_strips_parens() {
+    // The alias name and type parameter intentionally share spelling. The
+    // array element resolves to the type parameter symbol, not the alias
+    // symbol, so tsc strips the unnecessary source parens.
+    let output = emit_dts_with_binding("export type Recursive<Recursive> = (Recursive)[];");
+    assert!(
+        output.contains("type Recursive<Recursive> = Recursive[];")
+            && !output.contains("= (Recursive)[];"),
+        "same-spelled non-alias symbol must not keep recursive-alias parens: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Fix C: a *bare* intersection member of a union keeps its source spelling
 // (`T | T & undefined` stays unparenthesized), while a *source-parenthesized*

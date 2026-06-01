@@ -54,7 +54,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write(" = ");
-        self.emit_type_alias_rhs(alias.name, alias.type_node);
+        self.emit_type_alias_rhs(alias_idx, alias.type_node);
         self.write(";");
         self.write_line();
     }
