@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
 
             let constraint = common::instantiate_type(self.ctx.types, raw_constraint, &constrained);
             if !self
-                .assign_relation_outcome_with_env(candidate, constraint)
+                .type_arg_constraint_relation_outcome_with_env(candidate, constraint)
                 .related
             {
                 constrained.insert(tp.name, constraint);

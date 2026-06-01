@@ -46,9 +46,11 @@ fn source_constraint_substitution_fallback_uses_env_relation_outcome_boundary() 
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("type_arg_constraint_relation_outcome_with_env(")
+            .count(),
         1,
-        "source constraint substitution fallback should route env-aware relation probes through RelationOutcome"
+        "source constraint substitution fallback should route env-aware relation probes through the type-argument constraint request"
     );
     assert!(
         helper.contains(".related"),
@@ -57,6 +59,10 @@ fn source_constraint_substitution_fallback_uses_env_relation_outcome_boundary() 
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "source constraint substitution fallback should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "source constraint substitution fallback should not use the generic assignment request"
     );
 }
 

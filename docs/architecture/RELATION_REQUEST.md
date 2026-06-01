@@ -169,12 +169,14 @@ role.
 
 Generic type-argument constraint diagnostics build
 `RelationRequest::type_arg_constraint` through
-`type_arg_constraint_relation_outcome` when probing whether a
-substituted, evaluated, base-constraint, or primitive-key witness satisfies an
-instantiated TS2344 constraint. The checker owns type-argument evaluation,
-scoped-parameter substitution, base fallback selection, primitive key witness
-selection, weak-type fallback choice, and diagnostic anchoring while the request
-names the relation role.
+`type_arg_constraint_relation_outcome` or
+`type_arg_constraint_relation_outcome_with_env` when probing whether a
+substituted, evaluated, base-constraint, inferred substitution, or primitive-key
+witness satisfies an instantiated TS2344 constraint. The checker owns
+type-argument evaluation, scoped-parameter substitution, source-constraint
+fallback selection, base fallback selection, primitive key witness selection,
+weak-type fallback choice, and diagnostic anchoring while the request names the
+relation role.
 
 Mapped-key constraint diagnostics build
 `RelationRequest::mapped_key_constraint` through
