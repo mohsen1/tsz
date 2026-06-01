@@ -223,11 +223,16 @@ for agent in "${SELECTED[@]}"; do
     )"
   else
     prs="$(
-      gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url,labels \
+      gh pr list --state open --limit 100 --label "$label" --json number,title,isDraft,url,labels,autoMergeRequest \
         --jq '
           def merge_queue_label:
             if any(.labels[]?; .name == "merge-queue") then "mergeQueue=on" else "mergeQueue=off" end;
-          .[] | "#\(.number) " + (if .isDraft then "draft" else "ready" end) + " " + merge_queue_label + " " + .title + " " + .url
+          .[] |
+            "#\(.number) " +
+            (if .isDraft then "draft" else "ready" end) +
+            " autoMerge=" + (if .autoMergeRequest then "on" else "off" end) +
+            " " + merge_queue_label +
+            " " + .title + " " + .url
         ' \
         2>/dev/null ||
         list_owned_items_rest "$label" pr
@@ -241,6 +246,7 @@ for agent in "${SELECTED[@]}"; do
   pr_count="$(count_rows "$prs")"
   ready_pr_count="$(count_pr_state_rows "$prs" ready)"
   draft_pr_count="$(count_pr_state_rows "$prs" draft)"
+  auto_merge_pr_count="$(count_pr_token_rows "$prs" "autoMerge=on")"
   merge_queue_pr_count="$(count_pr_token_rows "$prs" "mergeQueue=on")"
   ready_unqueued_pr_count="$(count_ready_unqueued_pr_rows "$prs")"
   echo ""
@@ -267,6 +273,7 @@ for agent in "${SELECTED[@]}"; do
   echo "owned_pr_count=$pr_count"
   echo "owned_ready_pr_count=$ready_pr_count"
   echo "owned_draft_pr_count=$draft_pr_count"
+  echo "owned_auto_merge_pr_count=$auto_merge_pr_count"
   echo "owned_merge_queue_pr_count=$merge_queue_pr_count"
   echo "owned_ready_unqueued_pr_count=$ready_unqueued_pr_count"
   echo "owned_issue_count=$issue_count"
@@ -282,6 +289,7 @@ for agent in "${SELECTED[@]}"; do
       ROW_PR_COUNT="$pr_count" \
       ROW_READY_PR_COUNT="$ready_pr_count" \
       ROW_DRAFT_PR_COUNT="$draft_pr_count" \
+      ROW_AUTO_MERGE_PR_COUNT="$auto_merge_pr_count" \
       ROW_MERGE_QUEUE_PR_COUNT="$merge_queue_pr_count" \
       ROW_READY_UNQUEUED_PR_COUNT="$ready_unqueued_pr_count" \
       ROW_ISSUE_COUNT="$issue_count" \
@@ -297,6 +305,7 @@ const row = {
   pr_count: Number(process.env.ROW_PR_COUNT ?? 0),
   ready_pr_count: Number(process.env.ROW_READY_PR_COUNT ?? 0),
   draft_pr_count: Number(process.env.ROW_DRAFT_PR_COUNT ?? 0),
+  auto_merge_pr_count: Number(process.env.ROW_AUTO_MERGE_PR_COUNT ?? 0),
   merge_queue_pr_count: Number(process.env.ROW_MERGE_QUEUE_PR_COUNT ?? 0),
   ready_unqueued_pr_count: Number(process.env.ROW_READY_UNQUEUED_PR_COUNT ?? 0),
   issue_count: Number(process.env.ROW_ISSUE_COUNT ?? 0),
@@ -336,6 +345,10 @@ const totalMergeQueuePrCount = agents.reduce(
   (sum, agent) => sum + Number(agent.merge_queue_pr_count ?? 0),
   0,
 );
+const totalAutoMergePrCount = agents.reduce(
+  (sum, agent) => sum + Number(agent.auto_merge_pr_count ?? 0),
+  0,
+);
 const totalReadyUnqueuedPrCount = agents.reduce(
   (sum, agent) => sum + Number(agent.ready_unqueued_pr_count ?? 0),
   0,
@@ -358,6 +371,7 @@ const report = {
   total_pr_count: totalPrCount,
   total_ready_pr_count: totalReadyPrCount,
   total_draft_pr_count: totalDraftPrCount,
+  total_auto_merge_pr_count: totalAutoMergePrCount,
   total_merge_queue_pr_count: totalMergeQueuePrCount,
   total_ready_unqueued_pr_count: totalReadyUnqueuedPrCount,
   total_issue_count: totalIssueCount,
