@@ -786,6 +786,17 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute the structural-subtype fallback for array-literal contextual
+    /// collapse through a named outcome helper instead of a raw type-computation
+    /// relation call.
+    pub(crate) fn array_literal_contextual_collapse_subtype_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.diagnostic_subtype_outcome(source, target)
+    }
+
     /// Execute a diagnostic-bearing JSX render-fallback relation for raw
     /// checker types, preserving the canonical JSX fallback request shape.
     pub(crate) fn jsx_render_fallback_relation_outcome(

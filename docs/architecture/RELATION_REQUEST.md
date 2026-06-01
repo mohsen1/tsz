@@ -377,10 +377,12 @@ relation role.
 Array-literal contextual collapse builds
 `RelationRequest::array_literal_contextual_collapse` through
 `array_literal_contextual_collapse_relation_outcome` for construct-signature or
-abstract-class override probes before collapsing an array literal to its
-contextual element type. The checker owns contextual element discovery,
-structural-subtype fallback selection, and excess-property timing while the
-request names the override relation role.
+abstract-class override probes, and routes the normal structural-subtype
+fallback through `array_literal_contextual_collapse_subtype_outcome` before
+collapsing an array literal to its contextual element type. The checker owns
+contextual element discovery, structural-subtype fallback selection, and
+excess-property timing while the named helpers keep raw relation calls out of
+type-computation code.
 
 JSX render fallback selection builds `RelationRequest::jsx_render_fallback`
 through `jsx_render_fallback_relation_outcome` when probing whether a construct

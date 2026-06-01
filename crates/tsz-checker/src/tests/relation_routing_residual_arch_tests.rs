@@ -50,8 +50,7 @@ fn allowed_raw_relation(relative_path: &str, line: &str) -> bool {
         return true;
     }
 
-    relative_path == "src/types/computation/array_literal.rs"
-        && line.contains("self.is_subtype_of(elem_type, context_element_type)")
+    false
 }
 
 fn inline_arch_test_relation_assertion(relative_path: &str, line: &str) -> bool {

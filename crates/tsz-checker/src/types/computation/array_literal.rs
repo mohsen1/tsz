@@ -1184,7 +1184,11 @@ impl<'a> CheckerState<'a> {
                         )
                         .related
                     } else {
-                        self.is_subtype_of(elem_type, context_element_type)
+                        self.array_literal_contextual_collapse_subtype_outcome(
+                            elem_type,
+                            context_element_type,
+                        )
+                        .related
                     }
                 })
             {
