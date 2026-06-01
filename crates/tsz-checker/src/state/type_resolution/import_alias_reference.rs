@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
             .as_deref()
             .unwrap_or(&alias.escaped_name)
             .to_owned();
-        if import_name != expected_name {
+        if alias.escaped_name != expected_name {
             return Vec::new();
         }
 

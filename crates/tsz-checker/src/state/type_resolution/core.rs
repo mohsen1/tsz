@@ -881,7 +881,7 @@ impl<'a> CheckerState<'a> {
                     if let Some((instance_type, params)) =
                         self.class_instance_type_with_params_from_symbol(target_sym_id)
                     {
-                        return crate::query_boundaries::common::instantiate_generic(
+                        return query::instantiate_generic(
                             self.ctx.types,
                             instance_type,
                             &params,

@@ -372,6 +372,71 @@ db.selectFrom("sys.tables as tables")
 
 #[test]
 fn kysely_wrapped_instance_field_preserves_inherited_select_callback_context() {
+    let diagnostics = wrapped_kysely_instance_field_diagnostics(
+        r#"
+import type { Kysely } from "./kysely.js";
+
+type MssqlSysTables = {
+  "sys.tables": { name: string; type: "U" };
+};
+
+class MssqlIntrospector {
+  private readonly db: Kysely<MssqlSysTables>;
+
+  constructor(db: Kysely<any>) {
+    this.db = db;
+  }
+
+  tables() {
+    this.db.selectFrom("sys.tables").select((row) => {
+      const name: string = row.name;
+      return name;
+    });
+  }
+}
+"#,
+    );
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 7006, 2347]),
+        "wrapped Kysely instance field should keep inherited selectFrom and callback context. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_kysely_import_preserves_inherited_select_callback_context() {
+    let diagnostics = wrapped_kysely_instance_field_diagnostics(
+        r#"
+import type { Kysely as DBClient } from "./kysely.js";
+
+type MssqlSysTables = {
+  "sys.tables": { name: string; type: "U" };
+};
+
+class MssqlIntrospector {
+  private readonly db: DBClient<MssqlSysTables>;
+
+  constructor(db: DBClient<any>) {
+    this.db = db;
+  }
+
+  tables() {
+    this.db.selectFrom("sys.tables").select((row) => {
+      const name: string = row.name;
+      return name;
+    });
+  }
+}
+"#,
+    );
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 7006, 2347]),
+        "renamed Kysely import should keep inherited selectFrom and callback context. Got: {diagnostics:#?}"
+    );
+}
+
+fn wrapped_kysely_instance_field_diagnostics(main_source: &'static str) -> Vec<Diagnostic> {
     let lib_files = load_default_lib_files();
     let options = CheckerOptions {
         strict: true,
@@ -400,41 +465,13 @@ import { QueryCreator } from "./query-creator.js";
 export class Kysely<DB> extends QueryCreator<DB> {}
 "#,
         ),
-        (
-            "src/main.ts",
-            r#"
-import type { Kysely } from "./kysely.js";
-
-type MssqlSysTables = {
-  "sys.tables": { name: string; type: "U" };
-};
-
-class MssqlIntrospector {
-  private readonly db: Kysely<MssqlSysTables>;
-
-  constructor(db: Kysely<any>) {
-    this.db = db;
-  }
-
-  tables() {
-    this.db.selectFrom("sys.tables").select((row) => {
-      const name: string = row.name;
-      return name;
-    });
-  }
-}
-"#,
-        ),
+        ("src/main.ts", main_source),
     ];
 
-    let diagnostics = check_multi_file_with_libs(&files, "src/main.ts", options, &lib_files)
+    check_multi_file_with_libs(&files, "src/main.ts", options, &lib_files)
         .into_iter()
         .filter(|diagnostic| diagnostic.code != 2318)
-        .collect::<Vec<_>>();
-    assert!(
-        lacks_any_diagnostic_code(&diagnostics, &[2339, 7006, 2347]),
-        "wrapped Kysely instance field should keep inherited selectFrom and callback context. Got: {diagnostics:#?}"
-    );
+        .collect::<Vec<_>>()
 }
 
 #[test]

@@ -3,7 +3,7 @@ use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
 pub(crate) use super::super::common::{
-    callable_shape_for_type, intersection_members, is_type_parameter_like,
+    callable_shape_for_type, instantiate_generic, intersection_members, is_type_parameter_like,
 };
 pub(crate) use tsz_solver::type_queries::{
     BaseInstanceMergeKind, ConstructorTypeKind, SignatureTypeKind, StaticPropertySource,
