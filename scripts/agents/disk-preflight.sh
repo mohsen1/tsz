@@ -219,7 +219,7 @@ while IFS= read -r wt; do
   [[ "$wt" != "$ROOT" ]] || continue
   if [[ -d "$wt/TypeScript/tests/cases" ]]; then
     TS_SOURCE_COUNT=$((TS_SOURCE_COUNT + 1))
-    line="source=$wt"
+    line="source=$wt ts-populated"
     TYPESCRIPT_REUSE_OUTPUT+="$line"$'\n'
     echo "$line"
   fi
