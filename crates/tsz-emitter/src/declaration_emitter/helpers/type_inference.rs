@@ -1636,7 +1636,7 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// The `type_arguments.is_some_and(...)` guard rejects `T<X>` shapes: a
     /// bare type parameter cannot syntactically carry type arguments, so a
-    /// TypeReference that does is necessarily an alias or generic, not the
+    /// `TypeReference` that does is necessarily an alias or generic, not the
     /// identity reference we accept.
     pub(in crate::declaration_emitter) fn call_expression_returns_bare_type_parameter_reference(
         &self,
