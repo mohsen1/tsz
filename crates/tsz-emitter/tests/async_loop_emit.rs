@@ -366,3 +366,71 @@ fn async_es5_for_await_iterator_names_skip_sync_for_of_temps() {
         "For-await iterator setup must not reuse the sync for-of temp name.\nOutput:\n{output}"
     );
 }
+
+/// When the `for await` is the first meaningful statement in the async body
+/// (no preceding executable statements, so the lowered `try` opens at the
+/// function entry label), tsc allocates the loop guard as the first
+/// generator-state temp: `_a = true, <iter> = __asyncValues(...)`.
+#[test]
+fn async_es5_for_await_first_statement_allocates_loop_guard_first() {
+    let output = emit_es5(
+        "async function f(src: any) {
+            for await (const item of src) {
+                item;
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("_a = true, src_1 = __asyncValues(src)"),
+        "A leading `for await` should claim `_a` for the loop guard and the identifier-derived `src_1` iterator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = false"),
+        "The loop guard reset must reuse the first state temp `_a`.\nOutput:\n{output}"
+    );
+}
+
+/// Renaming every user identifier must not change the allocation order: the
+/// rule is keyed on whether executable statements precede the loop, not on any
+/// spelling. This guards against hardcoding identifier names (§25).
+#[test]
+fn async_es5_for_await_first_statement_loop_guard_is_name_independent() {
+    let output = emit_es5(
+        "async function g(values: any) {
+            for await (const v of values) {
+                v;
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("_a = true, values_1 = __asyncValues(values)"),
+        "Renamed leading `for await` should still allocate `_a` for the loop guard and `values_1` for the iterator.\nOutput:\n{output}"
+    );
+}
+
+/// When executable statements precede the `for await` (here a leading array
+/// spread, so the lowered `try` opens in a fresh generator case), tsc allocates
+/// `done`/`error`/`return`/`value`/loop-guard in that order, leaving the loop
+/// guard after `value`: `_d = true, <iter> = __asyncValues(...)`.
+#[test]
+fn async_es5_for_await_after_statements_allocates_loop_guard_after_state_temps() {
+    let output = emit_es5(
+        "async function f(c: any[]) {
+            [...c];
+            for await (const s of c) {
+                s;
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("_d = true, c_1 = __asyncValues(c)"),
+        "A `for await` preceded by executable statements should allocate the loop guard after the state temps (`_d`).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = c_1_1.done"),
+        "The `done` temp should claim the first state name `_a` when statements precede the loop.\nOutput:\n{output}"
+    );
+}
