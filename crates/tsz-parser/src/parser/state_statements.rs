@@ -1051,6 +1051,19 @@ impl ParserState {
         )
     }
 
+    fn variable_declaration_has_missing_typeof_target(&self, decl: NodeIndex) -> bool {
+        self.arena
+            .get(decl)
+            .and_then(|node| self.arena.get_variable_declaration(node))
+            .and_then(|decl| self.arena.get(decl.type_annotation))
+            .filter(|type_node| type_node.kind == syntax_kind_ext::TYPE_QUERY)
+            .and_then(|type_node| self.arena.get_type_query(type_node))
+            .is_some_and(|type_query| {
+                self.arena
+                    .is_missing_recovery_identifier(type_query.expr_name)
+            })
+    }
+
     /// Parse variable declaration list
     pub(crate) fn parse_variable_declaration_list(&mut self) -> NodeIndex {
         use crate::parser::node_flags;
@@ -1346,6 +1359,9 @@ impl ParserState {
                 // of a new declarator so the `n` produces TS1005 "',' expected"
                 // at the right position, matching tsc.
                 if decl_had_error && !self.is_token(SyntaxKind::CloseBracketToken) {
+                    let recover_typeof_object_target_as_declarator = self
+                        .is_token(SyntaxKind::OpenBraceToken)
+                        && self.variable_declaration_has_missing_typeof_target(decl);
                     let next_starts_declarator = (self.is_identifier_or_keyword()
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
@@ -1354,7 +1370,8 @@ impl ParserState {
                         || self.current_unknown_starts_invalid_unicode_identifier_debris();
                     if !(next_starts_declarator
                         && (decl_only_literal_value_errors
-                            || self.is_token(SyntaxKind::PrivateIdentifier)))
+                            || self.is_token(SyntaxKind::PrivateIdentifier)
+                            || recover_typeof_object_target_as_declarator))
                     {
                         break;
                     }
