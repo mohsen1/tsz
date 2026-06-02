@@ -174,9 +174,19 @@ pub enum SubtypeFailureReason {
         multi_element: bool,
     },
     /// Array element type mismatch.
+    ///
+    /// Like a single-element tuple, an array relation fails through its element
+    /// type, and `tsc` elaborates the failure by relating the element types
+    /// directly beneath the `Type 'se[]' …'te[]'` line — recursing into the
+    /// element's own reason via `nested_reason` (e.g. `number[][]` →
+    /// `string[][]` walks one array level at a time, and `{ b: T }[]` drills
+    /// into the offending property). When the element relation is a terminal
+    /// scalar leaf, `nested_reason` is `None` and the renderer emits the plain
+    /// `Type 'se' …'te'` line.
     ArrayElementMismatch {
         source_element: TypeId,
         target_element: TypeId,
+        nested_reason: Option<Box<Self>>,
     },
     /// Index signature value type mismatch.
     IndexSignatureMismatch {
@@ -889,14 +899,23 @@ impl SubtypeFailureReason {
             Self::ArrayElementMismatch {
                 source_element,
                 target_element,
-            } => PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![source.into(), target.into()],
-            )
-            .with_related(PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![(*source_element).into(), (*target_element).into()],
-            )),
+                nested_reason,
+            } => {
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                );
+                if let Some(nested) = nested_reason {
+                    diag =
+                        diag.with_related(nested.to_diagnostic(*source_element, *target_element));
+                } else {
+                    diag = diag.with_related(PendingDiagnostic::error(
+                        codes::TYPE_NOT_ASSIGNABLE,
+                        vec![(*source_element).into(), (*target_element).into()],
+                    ));
+                }
+                diag
+            }
 
             Self::IndexSignatureMismatch {
                 index_kind: _,

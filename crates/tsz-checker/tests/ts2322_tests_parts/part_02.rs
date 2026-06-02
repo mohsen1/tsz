@@ -526,12 +526,15 @@ fn test_ts2345_array_element_mismatch_includes_related_detail() {
         })
         .expect("expected TS2345 for array-element mismatch");
 
+    // tsc relates the element types directly beneath the argument message
+    // (which already names both array types) — there is no tsz-specific
+    // "Array element type ..." wrapper line.
     assert!(
-        ts2345.related_information.iter().any(|info| {
-            info.message_text
-                .contains("Array element type 'string' is not assignable to 'number'.")
-        }),
-        "Expected TS2345 to include array-element elaboration, got: {ts2345:?}"
+        !ts2345
+            .related_information
+            .iter()
+            .any(|info| info.message_text.starts_with("Array element type")),
+        "TS2345 must not emit the non-tsc 'Array element type ...' wrapper, got: {ts2345:?}"
     );
     assert!(
         ts2345.related_information.iter().any(|info| {
@@ -540,7 +543,7 @@ fn test_ts2345_array_element_mismatch_includes_related_detail() {
                     .message_text
                     .contains("Type 'string' is not assignable to type 'number'.")
         }),
-        "Expected TS2345 to include nested type mismatch under array-element elaboration, got: {ts2345:?}"
+        "Expected TS2345 to relate the element types directly, got: {ts2345:?}"
     );
 }
 
@@ -565,7 +568,7 @@ fn test_ts2345_array_element_mismatch_related_detail_qualifies_same_named_elemen
     assert!(
         ts2345.related_information.iter().any(|info| {
             info.message_text
-                .contains("Array element type 'N.Token' is not assignable to 'M.Token'.")
+                .contains("Type 'N.Token' is not assignable to type 'M.Token'.")
         }),
         "Expected TS2345 related info to qualify same-named element types, got: {ts2345:?}"
     );

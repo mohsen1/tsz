@@ -693,49 +693,29 @@ impl<'a> CheckerState<'a> {
                     },
                 ]
             }
-            SubtypeFailureReason::ArrayElementMismatch {
-                source_element,
-                target_element,
-            } => {
-                let source_str = self.format_type_for_diagnostic_role(
-                    *source_element,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let target_str = self.format_type_for_diagnostic_role(
-                    *target_element,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                    *source_element,
-                    *target_element,
-                    source_str,
-                    target_str,
-                );
-                vec![
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: format!(
-                            "Array element type '{source_str}' is not assignable to '{target_str}'."
-                        ),
-                        depth: 0,
-                    },
-                    DiagnosticRelatedInformation {
+            SubtypeFailureReason::ArrayElementMismatch { .. } => {
+                // tsc names both array types in the head message (e.g.
+                // `Argument of type 'se[]' is not assignable to parameter of
+                // type 'te[]'.`) and then relates the *element* types directly
+                // beneath it, recursing into the element's own failure — there
+                // is no separate "array element" wrapper line. Reuse the shared
+                // array renderer (single source of truth) and keep only the
+                // element elaboration beneath its array-to-array header, which
+                // the call's head message already conveys.
+                let array_diag = self.render_failure_reason(reason, source, target, anchor_idx, 0);
+                array_diag
+                    .related_information
+                    .into_iter()
+                    .map(|rel| DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        code: rel.code,
                         file: self.ctx.file_name.clone(),
                         start,
                         length,
-                        message_text: format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&source_str, &target_str],
-                        ),
-                        depth: 1,
-                    },
-                ]
+                        message_text: rel.message_text,
+                        depth: rel.depth,
+                    })
+                    .collect()
             }
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {
                 vec![DiagnosticRelatedInformation {

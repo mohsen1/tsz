@@ -656,9 +656,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             array_element_type(self.interner, target),
         ) {
             if !self.check_subtype(s_elem, t_elem).is_true() {
+                // Recurse into the element failure so the rendered chain carries
+                // the inner reason (matching tsc, which walks an array element
+                // exactly like a single-element tuple / numerically keyed
+                // property: `number[][]` -> `string[][]` peels one array level
+                // at a time, `{ b: T }[]` drills into the offending property).
+                let nested_reason = self.explain_failure(s_elem, t_elem).map(Box::new);
                 return Some(SubtypeFailureReason::ArrayElementMismatch {
                     source_element: s_elem,
                     target_element: t_elem,
+                    nested_reason,
                 });
             }
             return None;

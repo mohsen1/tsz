@@ -136,11 +136,17 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
                 ..
-            }
-            | tsz_solver::SubtypeFailureReason::ArrayElementMismatch {
-                source_element,
-                target_element,
             } => (*source_element, *target_element),
+            // `ArrayElementMismatch` self-heads with the *array* types (`se[]`
+            // vs `te[]`), not its element types, so the nested render must keep
+            // the parent-supplied array types rather than drilling to the
+            // element pair (which would render `Type 'number' …'string'` in
+            // place of `Type 'number[]' …'string[]'`). Keep the fallback, which
+            // carries the array types. Explicit (not an implicit `_` gap) so it
+            // is not mistakenly "fixed" to mirror the tuple arm above.
+            tsz_solver::SubtypeFailureReason::ArrayElementMismatch { .. } => {
+                (fallback_source, fallback_target)
+            }
             tsz_solver::SubtypeFailureReason::IndexSignatureMismatch {
                 source_value_type,
                 target_value_type,
@@ -763,7 +769,6 @@ impl<'a> CheckerState<'a> {
                 | tsz_solver::SubtypeFailureReason::MissingProperty { .. }
                 | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
                 | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
-                | tsz_solver::SubtypeFailureReason::ArrayElementMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ParameterTypeMismatch { .. }
         )
@@ -1142,5 +1147,139 @@ impl<'a> CheckerState<'a> {
         });
         diag.related_information
             .extend(nested_diag.related_information);
+    }
+
+    /// Render an array element-type mismatch (`se[]` vs `te[]`).
+    ///
+    /// `tsc` elaborates an array relation exactly like a single numerically
+    /// keyed element: it leads with the `Type 'se[]' is not assignable to type
+    /// 'te[]'.` line (the array types themselves — unlike a single-element
+    /// tuple, the array relation never collapses to its element line), then
+    /// relates the element types directly beneath it, recursing through the
+    /// element's own failure reason. Examples:
+    ///
+    /// ```text
+    /// Type 'number[]' is not assignable to type 'string[]'.
+    ///   Type 'number' is not assignable to type 'string'.
+    ///
+    /// Type 'number[][]' is not assignable to type 'string[][]'.
+    ///   Type 'number[]' is not assignable to type 'string[]'.
+    ///     Type 'number' is not assignable to type 'string'.
+    /// ```
+    ///
+    /// The element drill is shared with the tuple/index-signature renderers via
+    /// [`Self::push_tuple_element_inner_failure`]; only the header (always the
+    /// array types) is array-specific.
+    pub(super) fn render_array_element_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let depth = ctx.depth;
+
+        // Header: the array types themselves (`se[]` vs `te[]`), at every depth.
+        // Unlike a single-element tuple, an array relation never collapses to
+        // its element line — `tsc` always shows the array-to-array line first.
+        let (source_str, target_str) = if depth == 0 {
+            self.format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx)
+        } else {
+            (
+                self.format_type_diagnostic(ctx.source),
+                self.format_type_diagnostic(ctx.target),
+            )
+        };
+        let base = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            ctx.file_name.clone(),
+            ctx.start,
+            ctx.length,
+            base,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+
+        if depth >= 5 {
+            return diag;
+        }
+
+        // The element relation `se -> te` sits directly beneath the array
+        // header (no intermediate line, exactly like a single-element tuple).
+        // It occupies related-depth `elem_depth`; its own drill goes one deeper.
+        let elem_depth = if depth == 0 { 0 } else { depth + 1 };
+
+        match nested_reason {
+            // Self-heading element (scalar leaf, union, nested array, …): the
+            // nested reason emits the `Type 'se' …'te'` element line itself.
+            // Render it one level deeper and rebase its message down to sit
+            // directly beneath the array header.
+            Some(nested) if !Self::tuple_element_nested_needs_header(nested) => {
+                let element_diag = self.render_failure_reason(
+                    nested,
+                    source_element,
+                    target_element,
+                    ctx.idx,
+                    elem_depth + 1,
+                );
+                Self::push_rebased_subdiagnostic(
+                    &mut diag,
+                    element_diag,
+                    elem_depth + 1,
+                    elem_depth,
+                );
+            }
+            // Structural element (object property, index signature, …) or a
+            // terminal scalar pair: emit the `Type 'se' …'te'` element header,
+            // then drill into the structural reason when one is present.
+            other => {
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start: ctx.start,
+                    length: ctx.length,
+                    message_text: self.element_mismatch_message(source_element, target_element),
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth: elem_depth.min(u8::MAX as u32) as u8,
+                });
+                if let Some(nested) = other {
+                    let nested_diag = self.render_failure_reason(
+                        nested,
+                        source_element,
+                        target_element,
+                        ctx.idx,
+                        elem_depth + 1,
+                    );
+                    Self::push_nested_chain(&mut diag, nested_diag, elem_depth + 1);
+                }
+            }
+        }
+
+        diag
+    }
+
+    /// Format the `Type 'se' is not assignable to type 'te'.` line for an
+    /// element-type pair, disambiguating same-named types (e.g. `N.Token` vs
+    /// `M.Token`) so the line is never the ambiguous
+    /// `Type 'Token' is not assignable to type 'Token'.`, matching `tsc`.
+    fn element_mismatch_message(
+        &mut self,
+        source_element: TypeId,
+        target_element: TypeId,
+    ) -> String {
+        let source_str = self.format_type_diagnostic(source_element);
+        let target_str = self.format_type_diagnostic(target_element);
+        let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+            source_element,
+            target_element,
+            source_str,
+            target_str,
+        );
+        format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        )
     }
 }
