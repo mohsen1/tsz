@@ -5,6 +5,11 @@ use crate::instantiation::instantiate::instantiate_generic_cached;
 
 use super::*;
 
+/// Maximum alias-chain hops when transitively normalising a `Lazy` type arg.
+/// TypeScript disallows circular aliases, so real chains are 1–3 levels deep;
+/// this ceiling only fires for malformed or pathological input.
+const MAX_LAZY_CHAIN_DEPTH: usize = 32;
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(super) fn cached_generic_instantiation(
@@ -285,11 +290,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.evaluate(arg)
             }
             TypeData::Lazy(def_id) => {
-                // Resolve Lazy types in type arguments
-                // This helps with generic instantiation accuracy
-                self.resolver
-                    .resolve_lazy(def_id, self.interner)
-                    .unwrap_or(arg)
+                // Transitively resolve alias chains to their canonical structural
+                // body so that `A = B = T` and direct `T` produce the same
+                // expanded arg and share the `application_eval_cache` entry,
+                // preventing alias fan-out from triggering repeated evaluations
+                // of the same logical type (#10826).
+                let mut current_def = def_id;
+                for _ in 0..MAX_LAZY_CHAIN_DEPTH {
+                    let Some(body) = self.resolver.resolve_lazy(current_def, self.interner) else {
+                        return arg;
+                    };
+                    match self.interner.lookup(body) {
+                        Some(TypeData::Lazy(next_def)) => current_def = next_def,
+                        _ => return body,
+                    }
+                }
+                // Circular or unusually deep alias chain.
+                arg
             }
             _ => arg,
         }
