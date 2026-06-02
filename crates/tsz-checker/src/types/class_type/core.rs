@@ -140,6 +140,7 @@ impl<'a> CheckerState<'a> {
         {
             // PERF: Single pass over class members for prescan (was 3 separate loops).
             let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
+            let mut needs_inherited_prescan_this = false;
             for (member_pos, &member_idx) in class.members.nodes.iter().enumerate() {
                 let declaration_order = class_member_order(member_pos);
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -152,6 +153,14 @@ impl<'a> CheckerState<'a> {
                         };
                         if self.has_static_modifier(&prop.modifiers) {
                             continue;
+                        }
+                        if prop.initializer.is_some()
+                            && tsz_parser::syntax::transform_utils::contains_this_reference(
+                                self.ctx.arena,
+                                prop.initializer,
+                            )
+                        {
+                            needs_inherited_prescan_this = true;
                         }
                         let declared_type = if let Some(dt) =
                             self.effective_class_property_declared_type(member_idx, prop)
@@ -358,13 +367,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Also include the base class's already-cached instance type in the prescan
-            // so that `this.inheritedProp` in a derived class initializer doesn't produce
-            // a false TS2339. For example: `class B extends A { x = this.a; }` where `a`
-            // is declared in A — without this, `this` would only have B's own properties.
-            let base_prescan_type = self
-                .get_base_class_idx(class_idx)
-                .and_then(|base_idx| self.ctx.class_instance_type_cache.get(&base_idx).copied());
+            let base_prescan_type =
+                self.inherited_prescan_this_base_type(class, needs_inherited_prescan_this);
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {

@@ -38,6 +38,59 @@ fn messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
     diagnostics.iter().map(|(_, msg)| msg.as_str()).collect()
 }
 
+#[test]
+fn field_initializer_prescan_uses_substituted_generic_base_this() {
+    let source = r#"
+class Base<T> {
+    value!: T;
+    get(): T { return this.value; }
+}
+
+class Derived extends Base<number> {
+    field = this.get();
+}
+
+const ok: number = new Derived().field;
+const bad: string = new Derived().field;
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322_errors = errors_with_code(&diagnostics, 2322);
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "Expected exactly one TS2322 for assigning inherited number field to string; got {diagnostics:?}"
+    );
+    assert!(
+        errors_with_code(&diagnostics, 2339).is_empty(),
+        "Inherited generic base `this` member should be visible in field initializer; got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn class_prescan_does_not_evaluate_invalid_heritage_without_this_initializer() {
+    let diagnostics = compile_and_get_diagnostics("class C extends A extends B {}");
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'A'")),
+        "Expected existing TS2304 for missing base `A`; got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'B'")),
+        "Prescan must not evaluate the invalid right-hand heritage expression `B`; got {diagnostics:?}"
+    );
+}
+
 /// Fluent method chaining: `c.foo().bar().baz()` where foo/bar/baz are defined
 /// on classes A/B/C in a hierarchy and each returns `this` implicitly.
 ///
