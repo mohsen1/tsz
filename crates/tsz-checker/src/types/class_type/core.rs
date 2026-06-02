@@ -140,6 +140,7 @@ impl<'a> CheckerState<'a> {
         {
             // PERF: Single pass over class members for prescan (was 3 separate loops).
             let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
+            let mut needs_inherited_prescan_this = false;
             for (member_pos, &member_idx) in class.members.nodes.iter().enumerate() {
                 let declaration_order = class_member_order(member_pos);
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -152,6 +153,14 @@ impl<'a> CheckerState<'a> {
                         };
                         if self.has_static_modifier(&prop.modifiers) {
                             continue;
+                        }
+                        if prop.initializer.is_some()
+                            && tsz_parser::syntax::transform_utils::contains_this_reference(
+                                self.ctx.arena,
+                                prop.initializer,
+                            )
+                        {
+                            needs_inherited_prescan_this = true;
                         }
                         let declared_type = if let Some(dt) =
                             self.effective_class_property_declared_type(member_idx, prop)
@@ -358,31 +367,35 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let base_prescan_type = class
-                .heritage_clauses
-                .as_ref()
-                .and_then(|heritage_clauses| {
-                    heritage_clauses.nodes.iter().find_map(|&clause_idx| {
-                        let clause_node = self.ctx.arena.get(clause_idx)?;
-                        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
-                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                            return None;
-                        }
-                        let &type_idx = heritage.types.nodes.first()?;
-                        let type_node = self.ctx.arena.get(type_idx)?;
-                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
-                            self.ctx.arena.get_expr_type_args(type_node)
-                        {
-                            (
-                                expr_type_args.expression,
-                                expr_type_args.type_arguments.as_ref(),
-                            )
-                        } else {
-                            (type_idx, None)
-                        };
-                        self.base_instance_type_from_expression(expr_idx, type_arguments)
+            let base_prescan_type = if needs_inherited_prescan_this {
+                class
+                    .heritage_clauses
+                    .as_ref()
+                    .and_then(|heritage_clauses| {
+                        heritage_clauses.nodes.iter().find_map(|&clause_idx| {
+                            let clause_node = self.ctx.arena.get(clause_idx)?;
+                            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                                return None;
+                            }
+                            let &type_idx = heritage.types.nodes.first()?;
+                            let type_node = self.ctx.arena.get(type_idx)?;
+                            let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                                self.ctx.arena.get_expr_type_args(type_node)
+                            {
+                                (
+                                    expr_type_args.expression,
+                                    expr_type_args.type_arguments.as_ref(),
+                                )
+                            } else {
+                                (type_idx, None)
+                            };
+                            self.base_instance_type_from_expression(expr_idx, type_arguments)
+                        })
                     })
-                });
+            } else {
+                None
+            };
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {
