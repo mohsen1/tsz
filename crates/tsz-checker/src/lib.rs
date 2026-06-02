@@ -207,6 +207,9 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/instantiation_expression_inline_utility_modifier_tests.rs"]
+mod instantiation_expression_inline_utility_modifier_tests;
+#[cfg(test)]
 #[path = "tests/instantiation_expression_lib_display_tests.rs"]
 mod instantiation_expression_lib_display_tests;
 #[cfg(test)]
