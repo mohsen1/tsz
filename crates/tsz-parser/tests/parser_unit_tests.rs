@@ -31,6 +31,18 @@ fn assert_has_errors(parser: &ParserState, context: &str) {
     );
 }
 
+fn parse_clean_source(source: &str, context: &str) -> (ParserState, NodeIndex) {
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, context);
+    (parser, root)
+}
+
+fn parse_clean_var_initializer(source: &str, context: &str) -> (ParserState, NodeIndex) {
+    let (parser, root) = parse_clean_source(source, context);
+    let init = get_var_initializer(parser.get_arena(), root);
+    (parser, init)
+}
+
 fn get_first_statement(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
     let sf = arena.get_source_file_at(root).expect("missing source file");
     assert!(

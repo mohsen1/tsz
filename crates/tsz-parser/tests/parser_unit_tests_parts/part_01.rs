@@ -49,8 +49,10 @@ fn computed_field_followed_by_bare_block_reports_ts1068() {
 #[test]
 fn class_getter_setter() {
     // `class Foo { get x() { return 1; } set x(v: number) {} }`
-    let (parser, root) = parse_source("class Foo { get x() { return 1; } set x(v: number) {} }");
-    assert_no_errors(&parser, "getter/setter");
+    let (parser, root) = parse_clean_source(
+        "class Foo { get x() { return 1; } set x(v: number) {} }",
+        "getter/setter",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -73,8 +75,10 @@ fn class_getter_setter() {
 #[test]
 fn class_extends_implements() {
     // `class Foo extends Bar implements Baz {}`
-    let (parser, root) = parse_source("class Foo extends Bar implements Baz {}");
-    assert_no_errors(&parser, "extends implements");
+    let (parser, root) = parse_clean_source(
+        "class Foo extends Bar implements Baz {}",
+        "extends implements",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -296,8 +300,7 @@ fn class_extends_object_literal_recovery_keeps_body_and_uses_ts1005() {
 #[test]
 fn class_extends_array_literal_expression_keeps_body() {
     let source = "class C extends [] { method() {} }";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "class extends array literal");
+    let (parser, root) = parse_clean_source(source, "class extends array literal");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -405,8 +408,7 @@ fn interface_extends_array_literal_reports_interface_heritage_error() {
 #[test]
 fn stmt_labeled() {
     // `label: for (;;) {}`
-    let (parser, root) = parse_source("label: for (;;) {}");
-    assert_no_errors(&parser, "labeled statement");
+    let (parser, root) = parse_clean_source("label: for (;;) {}", "labeled statement");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -427,8 +429,10 @@ fn stmt_labeled() {
 #[test]
 fn stmt_for_await_of() {
     // `for await (const x of iter) {}`
-    let (parser, root) = parse_source("async function f() { for await (const x of iter) {} }");
-    assert_no_errors(&parser, "for await of");
+    let (parser, root) = parse_clean_source(
+        "async function f() { for await (const x of iter) {} }",
+        "for await of",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let func_node = arena.get(stmt_idx).expect("func");
@@ -448,8 +452,10 @@ fn stmt_for_await_of() {
 #[test]
 fn stmt_switch_with_fallthrough() {
     // Switch with fallthrough
-    let (parser, root) = parse_source("switch (x) { case 1: case 2: break; default: break; }");
-    assert_no_errors(&parser, "switch with fallthrough");
+    let (parser, root) = parse_clean_source(
+        "switch (x) { case 1: case 2: break; default: break; }",
+        "switch with fallthrough",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -459,8 +465,7 @@ fn stmt_switch_with_fallthrough() {
 #[test]
 fn stmt_try_catch_finally() {
     // `try {} catch (e) {} finally {}`
-    let (parser, root) = parse_source("try {} catch (e) {} finally {}");
-    assert_no_errors(&parser, "try/catch/finally");
+    let (parser, root) = parse_clean_source("try {} catch (e) {} finally {}", "try/catch/finally");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -477,8 +482,7 @@ fn stmt_try_catch_finally() {
 #[test]
 fn stmt_try_finally_no_catch() {
     // `try {} finally {}`
-    let (parser, root) = parse_source("try {} finally {}");
-    assert_no_errors(&parser, "try/finally no catch");
+    let (parser, root) = parse_clean_source("try {} finally {}", "try/finally no catch");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -490,8 +494,7 @@ fn stmt_try_finally_no_catch() {
 #[test]
 fn stmt_catch_without_binding() {
     // `try {} catch {}`  (ES2019 optional catch binding)
-    let (parser, root) = parse_source("try {} catch {}");
-    assert_no_errors(&parser, "catch without binding");
+    let (parser, root) = parse_clean_source("try {} catch {}", "catch without binding");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -507,8 +510,7 @@ fn stmt_catch_without_binding() {
 #[test]
 fn stmt_with() {
     // `with (obj) { x; }` (legacy)
-    let (parser, root) = parse_source("with (obj) { x; }");
-    assert_no_errors(&parser, "with statement");
+    let (parser, root) = parse_clean_source("with (obj) { x; }", "with statement");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -522,8 +524,7 @@ fn stmt_with() {
 #[test]
 fn stmt_empty() {
     // `;` (empty statement)
-    let (parser, root) = parse_source(";");
-    assert_no_errors(&parser, "empty statement");
+    let (parser, root) = parse_clean_source(";", "empty statement");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -537,8 +538,7 @@ fn stmt_empty() {
 #[test]
 fn stmt_debugger() {
     // `debugger;`
-    let (parser, root) = parse_source("debugger;");
-    assert_no_errors(&parser, "debugger statement");
+    let (parser, root) = parse_clean_source("debugger;", "debugger statement");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -552,8 +552,7 @@ fn stmt_debugger() {
 #[test]
 fn stmt_for_in() {
     // `for (const k in obj) {}`
-    let (parser, root) = parse_source("for (const k in obj) {}");
-    assert_no_errors(&parser, "for-in");
+    let (parser, root) = parse_clean_source("for (const k in obj) {}", "for-in");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -567,8 +566,7 @@ fn stmt_for_in() {
 #[test]
 fn stmt_for_of() {
     // `for (const x of arr) {}`
-    let (parser, root) = parse_source("for (const x of arr) {}");
-    assert_no_errors(&parser, "for-of");
+    let (parser, root) = parse_clean_source("for (const x of arr) {}", "for-of");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -582,8 +580,7 @@ fn stmt_for_of() {
 #[test]
 fn stmt_do_while() {
     // `do { x++; } while (x < 10);`
-    let (parser, root) = parse_source("do { x++; } while (x < 10);");
-    assert_no_errors(&parser, "do-while");
+    let (parser, root) = parse_clean_source("do { x++; } while (x < 10);", "do-while");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -613,8 +610,7 @@ fn stmt_break_continue_with_label() {
 #[test]
 fn error_recovery_missing_semicolon_asi() {
     // ASI should insert semicolons
-    let (parser, root) = parse_source("const x = 1\nconst y = 2");
-    assert_no_errors(&parser, "ASI");
+    let (parser, root) = parse_clean_source("const x = 1\nconst y = 2", "ASI");
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     assert_eq!(stmts.len(), 2, "should have 2 statements via ASI");
@@ -656,8 +652,7 @@ fn error_recovery_multiple_errors_continue_parsing() {
 #[test]
 fn error_recovery_no_panic_on_empty_input() {
     // Empty input should not panic
-    let (parser, root) = parse_source("");
-    assert_no_errors(&parser, "empty input");
+    let (parser, root) = parse_clean_source("", "empty input");
     let arena = parser.get_arena();
     let sf = arena.get_source_file_at(root).expect("source file");
     assert!(sf.statements.nodes.is_empty(), "should have no statements");
@@ -665,8 +660,7 @@ fn error_recovery_no_panic_on_empty_input() {
 
 #[test]
 fn error_recovery_no_panic_on_only_whitespace() {
-    let (parser, root) = parse_source("   \n\n  \t  ");
-    assert_no_errors(&parser, "whitespace only");
+    let (parser, root) = parse_clean_source("   \n\n  \t  ", "whitespace only");
     let arena = parser.get_arena();
     let sf = arena.get_source_file_at(root).expect("source file");
     assert!(sf.statements.nodes.is_empty());
@@ -698,10 +692,8 @@ fn error_recovery_deeply_nested_parens() {
 #[test]
 fn expr_new_expression() {
     // `new Foo(1, 2)`
-    let (parser, root) = parse_source("const x = new Foo(1, 2);");
-    assert_no_errors(&parser, "new expression");
+    let (parser, init) = parse_clean_var_initializer("const x = new Foo(1, 2);", "new expression");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -716,10 +708,8 @@ fn expr_new_expression() {
 #[test]
 fn expr_new_without_parens() {
     // `new Foo` (without arguments)
-    let (parser, root) = parse_source("const x = new Foo;");
-    assert_no_errors(&parser, "new without parens");
+    let (parser, init) = parse_clean_var_initializer("const x = new Foo;", "new without parens");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::NEW_EXPRESSION);
 }
@@ -727,10 +717,9 @@ fn expr_new_without_parens() {
 #[test]
 fn expr_tagged_template() {
     // tag`hello ${x} world`
-    let (parser, root) = parse_source("const x = tag`hello ${y} world`;");
-    assert_no_errors(&parser, "tagged template");
+    let (parser, init) =
+        parse_clean_var_initializer("const x = tag`hello ${y} world`;", "tagged template");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -781,10 +770,8 @@ fn expr_tagged_template_with_type_arguments() {
 #[test]
 fn expr_spread_element() {
     // `[1, ...arr, 2]`
-    let (parser, root) = parse_source("const x = [1, ...arr, 2];");
-    assert_no_errors(&parser, "spread element");
+    let (parser, init) = parse_clean_var_initializer("const x = [1, ...arr, 2];", "spread element");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -804,8 +791,8 @@ fn expr_spread_element() {
 #[test]
 fn expr_object_literal() {
     // `{ a: 1, b, ...c, [d]: 2 }`
-    let (parser, root) = parse_source("const x = { a: 1, b, ...c, [d]: 2 };");
-    assert_no_errors(&parser, "object literal");
+    let (parser, root) =
+        parse_clean_source("const x = { a: 1, b, ...c, [d]: 2 };", "object literal");
     let arena = parser.get_arena();
     let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
@@ -941,10 +928,12 @@ fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() 
     // The trailing "':' expected." must land at the closing `}` position.
     let close_brace_pos = source.rfind('}').expect("closing brace") as u32;
     assert!(
-        parser.get_diagnostics().iter().any(|diag| diag.code
-            == diagnostic_codes::EXPECTED
-            && diag.start == close_brace_pos
-            && diag.message == "':' expected."),
+        parser
+            .get_diagnostics()
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == close_brace_pos
+                && diag.message == "':' expected."),
         "expected TS1005 \"':' expected.\" at the closing brace, got {:?}",
         parser.get_diagnostics()
     );
@@ -1045,16 +1034,18 @@ fn object_literal_well_formed_computed_member_is_not_split() {
 #[test]
 fn expr_yield() {
     // `function* gen() { yield 1; yield* other(); }`
-    let (parser, _) = parse_source("function* gen() { yield 1; yield* other(); }");
-    assert_no_errors(&parser, "yield expression");
+    let (_parser, _) = parse_clean_source(
+        "function* gen() { yield 1; yield* other(); }",
+        "yield expression",
+    );
 }
 
 #[test]
 fn expr_void_typeof_delete() {
     // `void 0; typeof x; delete obj.x;`
     // These are parsed as PREFIX_UNARY_EXPRESSION with the keyword as operator
-    let (parser, root) = parse_source("void 0; typeof x; delete obj.x;");
-    assert_no_errors(&parser, "void/typeof/delete");
+    let (parser, root) =
+        parse_clean_source("void 0; typeof x; delete obj.x;", "void/typeof/delete");
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     assert_eq!(stmts.len(), 3);
@@ -1096,8 +1087,7 @@ fn expr_void_typeof_delete() {
 #[test]
 fn expr_prefix_postfix_unary() {
     // `++x; x--;`
-    let (parser, root) = parse_source("++x; x--;");
-    assert_no_errors(&parser, "prefix/postfix unary");
+    let (parser, root) = parse_clean_source("++x; x--;", "prefix/postfix unary");
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     let s0 = arena.get(stmts[0]).expect("s0");
@@ -1373,10 +1363,8 @@ fn expr_prefix_update_repeated_operator_after_line_break_matches_sputnik_shape()
 #[test]
 fn expr_element_access() {
     // `a[0]`
-    let (parser, root) = parse_source("const x = a[0];");
-    assert_no_errors(&parser, "element access");
+    let (parser, init) = parse_clean_var_initializer("const x = a[0];", "element access");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -1388,10 +1376,9 @@ fn expr_element_access() {
 #[test]
 fn expr_optional_element_access() {
     // `a?.[0]`
-    let (parser, root) = parse_source("const x = a?.[0];");
-    assert_no_errors(&parser, "optional element access");
+    let (parser, init) =
+        parse_clean_var_initializer("const x = a?.[0];", "optional element access");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
     let access = arena.get_access_expr(node).expect("access");
@@ -1401,10 +1388,8 @@ fn expr_optional_element_access() {
 #[test]
 fn expr_optional_call() {
     // `a?.(1)`
-    let (parser, root) = parse_source("const x = a?.(1);");
-    assert_no_errors(&parser, "optional call");
+    let (parser, init) = parse_clean_var_initializer("const x = a?.(1);", "optional call");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
 }
@@ -1413,11 +1398,12 @@ fn expr_optional_call() {
 fn expr_call_type_arguments_allow_trailing_comma() {
     // `id<number,>("x")` should parse as a call expression with one type
     // argument and a trailing comma marker, not as a relational expression.
-    let (parser, root) = parse_source("const x = id<number,>(\"x\");");
-    assert_no_errors(&parser, "call type arguments with trailing comma");
+    let (parser, init) = parse_clean_var_initializer(
+        "const x = id<number,>(\"x\");",
+        "call type arguments with trailing comma",
+    );
 
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
 
@@ -1451,8 +1437,10 @@ fn expr_call_type_arguments_recover_missing_leading_argument() {
 
 #[test]
 fn expr_new_type_arguments_allow_trailing_comma() {
-    let (parser, root) = parse_source("const x = new Box<string,>();");
-    assert_no_errors(&parser, "new expression type arguments with trailing comma");
+    let (parser, root) = parse_clean_source(
+        "const x = new Box<string,>();",
+        "new expression type arguments with trailing comma",
+    );
 
     let arena = parser.get_arena();
     let init = get_var_initializer(arena, root);
@@ -1492,8 +1480,8 @@ fn expr_tagged_template_type_arguments_recover_missing_leading_argument() {
 #[test]
 fn destructuring_object() {
     // `const { a, b: c, ...rest } = obj;`
-    let (parser, root) = parse_source("const { a, b: c, ...rest } = obj;");
-    assert_no_errors(&parser, "object destructuring");
+    let (parser, root) =
+        parse_clean_source("const { a, b: c, ...rest } = obj;", "object destructuring");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1515,8 +1503,8 @@ fn destructuring_object() {
 #[test]
 fn destructuring_array() {
     // `const [a, , b, ...rest] = arr;`
-    let (parser, root) = parse_source("const [a, , b, ...rest] = arr;");
-    assert_no_errors(&parser, "array destructuring");
+    let (parser, root) =
+        parse_clean_source("const [a, , b, ...rest] = arr;", "array destructuring");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1579,15 +1567,16 @@ fn array_rest_initializer_preserves_in_expression_in_for_header_recovery() {
 #[test]
 fn destructuring_nested() {
     // `const { a: { b } } = obj;`
-    let (parser, _) = parse_source("const { a: { b } } = obj;");
-    assert_no_errors(&parser, "nested destructuring");
+    let (_parser, _) = parse_clean_source("const { a: { b } } = obj;", "nested destructuring");
 }
 
 #[test]
 fn destructuring_with_defaults() {
     // `const { a = 1, b = 2 } = obj;`
-    let (parser, _) = parse_source("const { a = 1, b = 2 } = obj;");
-    assert_no_errors(&parser, "destructuring with defaults");
+    let (_parser, _) = parse_clean_source(
+        "const { a = 1, b = 2 } = obj;",
+        "destructuring with defaults",
+    );
 }
 
 // =============================================================================
@@ -1597,8 +1586,7 @@ fn destructuring_with_defaults() {
 #[test]
 fn type_import() {
     // `type T = import('module').Foo`
-    let (parser, root) = parse_source("type T = import('module').Foo;");
-    assert_no_errors(&parser, "import type");
+    let (parser, root) = parse_clean_source("type T = import('module').Foo;", "import type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1610,8 +1598,7 @@ fn type_import() {
 #[test]
 fn type_reference_qualified_name_span_excludes_type_arguments() {
     let source = "type T = Foo.Bar<Baz>;";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "qualified type reference span");
+    let (parser, root) = parse_clean_source(source, "qualified type reference span");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -1628,8 +1615,7 @@ fn type_reference_qualified_name_span_excludes_type_arguments() {
 #[test]
 fn type_query_qualified_name_span_excludes_type_arguments() {
     let source = "type T = typeof ns.Foo<Bar>;";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "type query span");
+    let (parser, root) = parse_clean_source(source, "type query span");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -1649,8 +1635,7 @@ fn type_query_qualified_name_span_excludes_type_arguments() {
 #[test]
 fn import_type_qualified_name_span_excludes_type_arguments() {
     let source = "type T = import('m').Foo<Bar>;";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "import type span");
+    let (parser, root) = parse_clean_source(source, "import type span");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -1695,8 +1680,7 @@ fn intrinsic_type_keyword_recovery_stops_before_qualified_name() {
 #[test]
 fn unique_symbol_keeps_symbol_as_type_reference() {
     let source = "type T = unique symbol;";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "unique symbol");
+    let (parser, root) = parse_clean_source(source, "unique symbol");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -1758,8 +1742,7 @@ fn super_type_arguments_report_parser_error_and_recover_to_call() {
 #[test]
 fn accessor_children_include_body_once() {
     let source = "class C { get x() { return 1; } }";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "class accessor");
+    let (parser, root) = parse_clean_source(source, "class accessor");
 
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
@@ -1822,8 +1805,10 @@ fn class_field_type_annotation_call_reports_ts1441() {
 #[test]
 fn type_mapped_with_modifiers() {
     // `type T = { readonly [K in keyof T]-?: T[K] }`
-    let (parser, root) = parse_source("type T = { readonly [K in keyof T]-?: T[K] };");
-    assert_no_errors(&parser, "mapped type with modifiers");
+    let (parser, root) = parse_clean_source(
+        "type T = { readonly [K in keyof T]-?: T[K] };",
+        "mapped type with modifiers",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1838,8 +1823,7 @@ fn type_mapped_with_modifiers() {
 #[test]
 fn type_type_literal() {
     // `type T = { x: string; y: number }`
-    let (parser, root) = parse_source("type T = { x: string; y: number };");
-    assert_no_errors(&parser, "type literal");
+    let (parser, root) = parse_clean_source("type T = { x: string; y: number };", "type literal");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1859,8 +1843,8 @@ fn type_type_literal() {
 #[test]
 fn type_union_intersection_precedence() {
     // `A & B | C & D` should parse as `(A & B) | (C & D)` — intersection binds tighter
-    let (parser, root) = parse_source("type T = A & B | C & D;");
-    assert_no_errors(&parser, "union/intersection precedence");
+    let (parser, root) =
+        parse_clean_source("type T = A & B | C & D;", "union/intersection precedence");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1899,10 +1883,8 @@ fn type_union_intersection_precedence() {
 #[test]
 fn template_no_substitution() {
     // `const x = \`hello\``
-    let (parser, root) = parse_source("const x = `hello`;");
-    assert_no_errors(&parser, "no-sub template");
+    let (parser, init) = parse_clean_var_initializer("const x = `hello`;", "no-sub template");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -1914,10 +1896,11 @@ fn template_no_substitution() {
 #[test]
 fn template_with_substitution() {
     // `const x = \`hello ${name} world\``
-    let (parser, root) = parse_source("const x = `hello ${name} world`;");
-    assert_no_errors(&parser, "template with substitution");
+    let (parser, init) = parse_clean_var_initializer(
+        "const x = `hello ${name} world`;",
+        "template with substitution",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,

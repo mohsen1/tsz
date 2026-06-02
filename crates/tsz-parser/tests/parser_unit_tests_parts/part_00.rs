@@ -1,10 +1,8 @@
 #[test]
 fn precedence_multiplication_binds_tighter_than_addition() {
     // `1 + 2 * 3` should parse as `1 + (2 * 3)`
-    let (parser, root) = parse_source("const x = 1 + 2 * 3;");
-    assert_no_errors(&parser, "1 + 2 * 3");
+    let (parser, init) = parse_clean_var_initializer("const x = 1 + 2 * 3;", "1 + 2 * 3");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (left, op, right) = get_binary(arena, init);
     assert_eq!(op, SyntaxKind::PlusToken as u16, "top should be +");
     // left should be numeric literal 1
@@ -35,10 +33,8 @@ fn precedence_nullish_coalescing_vs_logical_or() {
 #[test]
 fn precedence_logical_and_vs_logical_or() {
     // `a || b && c` should parse as `a || (b && c)` since && binds tighter
-    let (parser, root) = parse_source("const x = a || b && c;");
-    assert_no_errors(&parser, "a || b && c");
+    let (parser, init) = parse_clean_var_initializer("const x = a || b && c;", "a || b && c");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (_, op, right) = get_binary(arena, init);
     assert_eq!(op, SyntaxKind::BarBarToken as u16, "top should be ||");
     let right_node = arena.get(right).expect("right node");
@@ -58,10 +54,9 @@ fn precedence_logical_and_vs_logical_or() {
 #[test]
 fn precedence_ternary_nesting_right_associative() {
     // `a ? b : c ? d : e` should parse as `a ? b : (c ? d : e)`
-    let (parser, root) = parse_source("const x = a ? b : c ? d : e;");
-    assert_no_errors(&parser, "ternary nesting");
+    let (parser, init) =
+        parse_clean_var_initializer("const x = a ? b : c ? d : e;", "ternary nesting");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init node");
     assert_eq!(
         node.kind,
@@ -80,8 +75,10 @@ fn precedence_ternary_nesting_right_associative() {
 
 #[test]
 fn await_call_in_non_async_function_parses_as_identifier_call() {
-    let (parser, root) = parse_source("function f() { const x = await(Promise.resolve(1)); }");
-    assert_no_errors(&parser, "await call identifier parse");
+    let (parser, root) = parse_clean_source(
+        "function f() { const x = await(Promise.resolve(1)); }",
+        "await call identifier parse",
+    );
 
     let arena = parser.get_arena();
     let init = get_first_function_var_initializer(arena, root);
@@ -95,8 +92,10 @@ fn await_call_in_non_async_function_parses_as_identifier_call() {
 
 #[test]
 fn await_operand_in_non_async_function_stays_await_expression() {
-    let (parser, root) = parse_source("function f() { const x = await Promise.resolve(1); }");
-    assert_no_errors(&parser, "await operand expression parse");
+    let (parser, root) = parse_clean_source(
+        "function f() { const x = await Promise.resolve(1); }",
+        "await operand expression parse",
+    );
 
     let arena = parser.get_arena();
     let init = get_first_function_var_initializer(arena, root);
@@ -107,8 +106,7 @@ fn await_operand_in_non_async_function_stays_await_expression() {
 #[test]
 fn precedence_comma_operator_vs_argument_separator() {
     // In `f(a, b)`, comma separates arguments, not comma operator
-    let (parser, root) = parse_source("f(a, b);");
-    assert_no_errors(&parser, "f(a, b)");
+    let (parser, root) = parse_clean_source("f(a, b);", "f(a, b)");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt node");
@@ -122,10 +120,8 @@ fn precedence_comma_operator_vs_argument_separator() {
 #[test]
 fn precedence_comma_operator_in_expression() {
     // `const x = (1, 2, 3)` — the comma operator inside parens
-    let (parser, root) = parse_source("const x = (1, 2, 3);");
-    assert_no_errors(&parser, "comma operator");
+    let (parser, init) = parse_clean_var_initializer("const x = (1, 2, 3);", "comma operator");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     // Should be parenthesized
     let paren_node = arena.get(init).expect("node");
     assert_eq!(paren_node.kind, syntax_kind_ext::PARENTHESIZED_EXPRESSION);
@@ -175,8 +171,7 @@ fn comma_expression_with_missing_rhs_preserves_binary_shape() {
 #[test]
 fn precedence_assignment_right_associativity() {
     // `a = b = c` should parse as `a = (b = c)`
-    let (parser, root) = parse_source("a = b = c;");
-    assert_no_errors(&parser, "a = b = c");
+    let (parser, root) = parse_clean_source("a = b = c;", "a = b = c");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -202,10 +197,8 @@ fn precedence_assignment_right_associativity() {
 #[test]
 fn precedence_exponentiation_right_associative() {
     // `2 ** 3 ** 4` should parse as `2 ** (3 ** 4)`
-    let (parser, root) = parse_source("const x = 2 ** 3 ** 4;");
-    assert_no_errors(&parser, "2 ** 3 ** 4");
+    let (parser, init) = parse_clean_var_initializer("const x = 2 ** 3 ** 4;", "2 ** 3 ** 4");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (left, op, right) = get_binary(arena, init);
     assert_eq!(
         op,
@@ -229,8 +222,7 @@ fn precedence_exponentiation_right_associative() {
 #[test]
 fn precedence_optional_chaining_with_call() {
     // `a?.b()` should parse as call on optional property access
-    let (parser, root) = parse_source("a?.b();");
-    assert_no_errors(&parser, "a?.b()");
+    let (parser, root) = parse_clean_source("a?.b();", "a?.b()");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -255,10 +247,9 @@ fn precedence_optional_chaining_with_call() {
 #[test]
 fn precedence_comparison_operators() {
     // `a < b === c > d` should parse as `(a < b) === (c > d)`
-    let (parser, root) = parse_source("const x = a < b === c > d;");
-    assert_no_errors(&parser, "comparison operators");
+    let (parser, init) =
+        parse_clean_var_initializer("const x = a < b === c > d;", "comparison operators");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (_, op, _) = get_binary(arena, init);
     assert_eq!(
         op,
@@ -270,10 +261,8 @@ fn precedence_comparison_operators() {
 #[test]
 fn precedence_bitwise_and_vs_equality() {
     // `a === b & c`: & has lower precedence than ===, so it's `(a === b) & c`
-    let (parser, root) = parse_source("const x = a === b & c;");
-    assert_no_errors(&parser, "=== vs &");
+    let (parser, init) = parse_clean_var_initializer("const x = a === b & c;", "=== vs &");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (_, op, _) = get_binary(arena, init);
     assert_eq!(
         op,
@@ -285,10 +274,8 @@ fn precedence_bitwise_and_vs_equality() {
 #[test]
 fn precedence_as_expression() {
     // `a as T` produces an AsExpression
-    let (parser, root) = parse_source("const x = a as number;");
-    assert_no_errors(&parser, "as expression");
+    let (parser, init) = parse_clean_var_initializer("const x = a as number;", "as expression");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -300,8 +287,8 @@ fn precedence_as_expression() {
 #[test]
 fn precedence_satisfies_expression() {
     // `a satisfies T` produces a SatisfiesExpression
-    let (parser, root) = parse_source("const x = a satisfies number;");
-    assert_no_errors(&parser, "satisfies expression");
+    let (parser, root) =
+        parse_clean_source("const x = a satisfies number;", "satisfies expression");
     let arena = parser.get_arena();
     let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
@@ -367,10 +354,8 @@ fn precedence_as_const_after_satisfies_wraps_satisfies_expression() {
 #[test]
 fn precedence_non_null_assertion() {
     // `a!` produces a NonNullExpression
-    let (parser, root) = parse_source("const x = a!;");
-    assert_no_errors(&parser, "non-null assertion");
+    let (parser, init) = parse_clean_var_initializer("const x = a!;", "non-null assertion");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -382,10 +367,8 @@ fn precedence_non_null_assertion() {
 #[test]
 fn precedence_type_assertion_angle_bracket() {
     // `<number>a` produces a TypeAssertion
-    let (parser, root) = parse_source("const x = <number>a;");
-    assert_no_errors(&parser, "type assertion");
+    let (parser, init) = parse_clean_var_initializer("const x = <number>a;", "type assertion");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -489,15 +472,16 @@ fn type_assertion_does_not_consume_yield_in_generator() {
 #[test]
 fn precedence_instanceof_and_in() {
     // `a instanceof B` and `a in b` should parse without errors
-    let (parser, _) = parse_source("const x = a instanceof B; const y = 'a' in b;");
-    assert_no_errors(&parser, "instanceof and in");
+    let (_parser, _) = parse_clean_source(
+        "const x = a instanceof B; const y = 'a' in b;",
+        "instanceof and in",
+    );
 }
 
 #[test]
 fn precedence_ternary_with_assignment() {
     // `a ? b = 1 : c = 2` should parse correctly
-    let (parser, root) = parse_source("a ? b = 1 : c = 2;");
-    assert_no_errors(&parser, "ternary with assignment");
+    let (parser, root) = parse_clean_source("a ? b = 1 : c = 2;", "ternary with assignment");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -513,10 +497,8 @@ fn precedence_ternary_with_assignment() {
 #[test]
 fn precedence_addition_left_associative() {
     // `1 + 2 + 3` should parse as `(1 + 2) + 3`
-    let (parser, root) = parse_source("const x = 1 + 2 + 3;");
-    assert_no_errors(&parser, "1 + 2 + 3");
+    let (parser, init) = parse_clean_var_initializer("const x = 1 + 2 + 3;", "1 + 2 + 3");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let (left, op, right) = get_binary(arena, init);
     assert_eq!(op, SyntaxKind::PlusToken as u16, "top should be +");
     // right should be a numeric literal (3), left should be binary
@@ -541,10 +523,8 @@ fn precedence_addition_left_associative() {
 #[test]
 fn arrow_single_param_no_parens() {
     // `x => x`
-    let (parser, root) = parse_source("const f = x => x;");
-    assert_no_errors(&parser, "x => x");
+    let (parser, init) = parse_clean_var_initializer("const f = x => x;", "x => x");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -559,10 +539,9 @@ fn arrow_single_param_no_parens() {
 #[test]
 fn arrow_multi_param() {
     // `(x, y) => x + y`
-    let (parser, root) = parse_source("const f = (x, y) => x + y;");
-    assert_no_errors(&parser, "(x, y) => x + y");
+    let (parser, init) =
+        parse_clean_var_initializer("const f = (x, y) => x + y;", "(x, y) => x + y");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -572,10 +551,8 @@ fn arrow_multi_param() {
 #[test]
 fn arrow_no_params() {
     // `() => 42`
-    let (parser, root) = parse_source("const f = () => 42;");
-    assert_no_errors(&parser, "() => 42");
+    let (parser, init) = parse_clean_var_initializer("const f = () => 42;", "() => 42");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -585,10 +562,8 @@ fn arrow_no_params() {
 #[test]
 fn arrow_object_literal_body_needs_parens() {
     // `() => ({})` — object literal body must be parenthesized
-    let (parser, root) = parse_source("const f = () => ({});");
-    assert_no_errors(&parser, "() => ({})");
+    let (parser, init) = parse_clean_var_initializer("const f = () => ({});", "() => ({})");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -604,10 +579,9 @@ fn arrow_object_literal_body_needs_parens() {
 #[test]
 fn arrow_async() {
     // `async x => await x`
-    let (parser, root) = parse_source("const f = async x => await x;");
-    assert_no_errors(&parser, "async arrow");
+    let (parser, init) =
+        parse_clean_var_initializer("const f = async x => await x;", "async arrow");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -617,10 +591,11 @@ fn arrow_async() {
 #[test]
 fn arrow_async_multi_param() {
     // `async (a, b) => a + b`
-    let (parser, root) = parse_source("const f = async (a, b) => a + b;");
-    assert_no_errors(&parser, "async multi param arrow");
+    let (parser, init) = parse_clean_var_initializer(
+        "const f = async (a, b) => a + b;",
+        "async multi param arrow",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -631,8 +606,8 @@ fn arrow_async_multi_param() {
 #[test]
 fn arrow_with_block_body() {
     // `(x) => { return x; }`
-    let (parser, root) = parse_source("const f = (x) => { return x; };");
-    assert_no_errors(&parser, "arrow with block body");
+    let (parser, root) =
+        parse_clean_source("const f = (x) => { return x; };", "arrow with block body");
     let arena = parser.get_arena();
     let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
@@ -645,10 +620,11 @@ fn arrow_with_block_body() {
 #[test]
 fn arrow_with_type_annotation() {
     // `(x: number): string => x.toString()`
-    let (parser, root) = parse_source("const f = (x: number): string => x.toString();");
-    assert_no_errors(&parser, "arrow with type annotation");
+    let (parser, init) = parse_clean_var_initializer(
+        "const f = (x: number): string => x.toString();",
+        "arrow with type annotation",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -658,8 +634,8 @@ fn arrow_with_type_annotation() {
 #[test]
 fn arrow_in_ternary() {
     // `cond ? x => x : y => y` — arrows in ternary branches
-    let (parser, root) = parse_source("const f = cond ? x => x : y => y;");
-    assert_no_errors(&parser, "arrow in ternary");
+    let (parser, root) =
+        parse_clean_source("const f = cond ? x => x : y => y;", "arrow in ternary");
     let arena = parser.get_arena();
     let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
@@ -686,10 +662,9 @@ fn arrow_in_ternary() {
 #[test]
 fn arrow_generic_in_ts_file() {
     // `<T>(x: T) => x` — generic arrow in .ts file (not TSX)
-    let (parser, root) = parse_source("const f = <T>(x: T) => x;");
-    assert_no_errors(&parser, "generic arrow .ts");
+    let (parser, init) =
+        parse_clean_var_initializer("const f = <T>(x: T) => x;", "generic arrow .ts");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -706,10 +681,11 @@ fn arrow_generic_in_ts_file() {
 #[test]
 fn arrow_generic_with_constraint() {
     // `<T extends string>(x: T) => x`
-    let (parser, root) = parse_source("const f = <T extends string>(x: T) => x;");
-    assert_no_errors(&parser, "generic arrow with constraint");
+    let (parser, init) = parse_clean_var_initializer(
+        "const f = <T extends string>(x: T) => x;",
+        "generic arrow with constraint",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
 }
@@ -717,10 +693,9 @@ fn arrow_generic_with_constraint() {
 #[test]
 fn arrow_nested() {
     // `(a) => (b) => a + b` — curried arrow
-    let (parser, root) = parse_source("const f = (a) => (b) => a + b;");
-    assert_no_errors(&parser, "nested arrow");
+    let (parser, init) =
+        parse_clean_var_initializer("const f = (a) => (b) => a + b;", "nested arrow");
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::ARROW_FUNCTION);
     let func = arena.get_function(node).expect("function data");
@@ -758,8 +733,7 @@ fn js_optional_parameter_span_starts_at_question_token() {
 #[test]
 fn type_union() {
     // `type T = A | B | C`
-    let (parser, root) = parse_source("type T = A | B | C;");
-    assert_no_errors(&parser, "union type");
+    let (parser, root) = parse_clean_source("type T = A | B | C;", "union type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -777,8 +751,7 @@ fn type_union() {
 #[test]
 fn type_intersection() {
     // `type T = A & B & C`
-    let (parser, root) = parse_source("type T = A & B & C;");
-    assert_no_errors(&parser, "intersection type");
+    let (parser, root) = parse_clean_source("type T = A & B & C;", "intersection type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -796,8 +769,7 @@ fn type_intersection() {
 #[test]
 fn type_conditional() {
     // `type T = X extends Y ? A : B`
-    let (parser, root) = parse_source("type T = X extends Y ? A : B;");
-    assert_no_errors(&parser, "conditional type");
+    let (parser, root) = parse_clean_source("type T = X extends Y ? A : B;", "conditional type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -818,8 +790,10 @@ fn type_conditional() {
 #[test]
 fn type_conditional_nested() {
     // `type T = X extends A ? B extends C ? D : E : F`
-    let (parser, root) = parse_source("type T = X extends A ? B extends C ? D : E : F;");
-    assert_no_errors(&parser, "nested conditional type");
+    let (parser, root) = parse_clean_source(
+        "type T = X extends A ? B extends C ? D : E : F;",
+        "nested conditional type",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -839,8 +813,7 @@ fn type_conditional_nested() {
 #[test]
 fn type_mapped() {
     // `type T = { [K in keyof O]: O[K] }`
-    let (parser, root) = parse_source("type T = { [K in keyof O]: O[K] };");
-    assert_no_errors(&parser, "mapped type");
+    let (parser, root) = parse_clean_source("type T = { [K in keyof O]: O[K] };", "mapped type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -859,8 +832,7 @@ fn type_mapped() {
 #[test]
 fn type_template_literal() {
     // type T = `${string}px`
-    let (parser, root) = parse_source("type T = `${string}px`;");
-    assert_no_errors(&parser, "template literal type");
+    let (parser, root) = parse_clean_source("type T = `${string}px`;", "template literal type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -876,8 +848,8 @@ fn type_template_literal() {
 #[test]
 fn type_tuple_with_labels() {
     // `type T = [name: string, age: number]`
-    let (parser, root) = parse_source("type T = [name: string, age: number];");
-    assert_no_errors(&parser, "tuple with labels");
+    let (parser, root) =
+        parse_clean_source("type T = [name: string, age: number];", "tuple with labels");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -902,8 +874,8 @@ fn type_tuple_with_labels() {
 #[test]
 fn type_tuple_optional_element() {
     // `type T = [string, number?]`
-    let (parser, root) = parse_source("type T = [string, number?];");
-    assert_no_errors(&parser, "tuple optional element");
+    let (parser, root) =
+        parse_clean_source("type T = [string, number?];", "tuple optional element");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -924,8 +896,8 @@ fn type_tuple_optional_element() {
 #[test]
 fn type_tuple_rest_element() {
     // `type T = [string, ...number[]]`
-    let (parser, root) = parse_source("type T = [string, ...number[]];");
-    assert_no_errors(&parser, "tuple rest element");
+    let (parser, root) =
+        parse_clean_source("type T = [string, ...number[]];", "tuple rest element");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -946,8 +918,10 @@ fn type_tuple_rest_element() {
 #[test]
 fn type_infer_in_conditional() {
     // `type T = X extends Array<infer U> ? U : never`
-    let (parser, root) = parse_source("type T = X extends Array<infer U> ? U : never;");
-    assert_no_errors(&parser, "infer in conditional");
+    let (parser, root) = parse_clean_source(
+        "type T = X extends Array<infer U> ? U : never;",
+        "infer in conditional",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -972,8 +946,7 @@ fn type_infer_in_conditional() {
 #[test]
 fn type_index_access() {
     // `type T = Foo["key"]`
-    let (parser, root) = parse_source("type T = Foo[\"key\"];");
-    assert_no_errors(&parser, "index access type");
+    let (parser, root) = parse_clean_source("type T = Foo[\"key\"];", "index access type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -989,8 +962,7 @@ fn type_index_access() {
 #[test]
 fn type_index_access_allows_line_break_before_bracket() {
     let source = "type T = Foo\n[\"key\"];";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "line-broken index access type alias");
+    let (parser, root) = parse_clean_source(source, "line-broken index access type alias");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1006,8 +978,7 @@ fn type_index_access_allows_line_break_before_bracket() {
 #[test]
 fn type_annotation_index_access_allows_line_break_before_bracket() {
     let source = "let value: Foo\n[\"key\"];";
-    let (parser, root) = parse_source(source);
-    assert_no_errors(&parser, "line-broken index access type annotation");
+    let (parser, root) = parse_clean_source(source, "line-broken index access type annotation");
     let arena = parser.get_arena();
     let type_annotation = get_var_type_annotation(arena, root);
     let type_node = arena.get(type_annotation).expect("type node");
@@ -1021,8 +992,7 @@ fn type_annotation_index_access_allows_line_break_before_bracket() {
 #[test]
 fn type_index_access_number() {
     // `type T = Arr[number]`
-    let (parser, root) = parse_source("type T = Arr[number];");
-    assert_no_errors(&parser, "index access type number");
+    let (parser, root) = parse_clean_source("type T = Arr[number];", "index access type number");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1034,8 +1004,7 @@ fn type_index_access_number() {
 #[test]
 fn type_typeof() {
     // `type T = typeof x`
-    let (parser, root) = parse_source("type T = typeof x;");
-    assert_no_errors(&parser, "typeof type");
+    let (parser, root) = parse_clean_source("type T = typeof x;", "typeof type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1051,8 +1020,7 @@ fn type_typeof() {
 #[test]
 fn type_keyof() {
     // `type T = keyof X`
-    let (parser, root) = parse_source("type T = keyof X;");
-    assert_no_errors(&parser, "keyof type");
+    let (parser, root) = parse_clean_source("type T = keyof X;", "keyof type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1074,8 +1042,7 @@ fn type_keyof() {
 #[test]
 fn type_function_type() {
     // `type T = (x: number) => string`
-    let (parser, root) = parse_source("type T = (x: number) => string;");
-    assert_no_errors(&parser, "function type");
+    let (parser, root) = parse_clean_source("type T = (x: number) => string;", "function type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1097,8 +1064,7 @@ fn type_function_type() {
 #[test]
 fn type_constructor_type() {
     // `type T = new (x: number) => Foo`
-    let (parser, root) = parse_source("type T = new (x: number) => Foo;");
-    assert_no_errors(&parser, "constructor type");
+    let (parser, root) = parse_clean_source("type T = new (x: number) => Foo;", "constructor type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1114,8 +1080,7 @@ fn type_constructor_type() {
 #[test]
 fn type_array() {
     // `type T = number[]`
-    let (parser, root) = parse_source("type T = number[];");
-    assert_no_errors(&parser, "array type");
+    let (parser, root) = parse_clean_source("type T = number[];", "array type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1131,8 +1096,7 @@ fn type_array() {
 #[test]
 fn type_parenthesized() {
     // `type T = (A | B) & C`
-    let (parser, root) = parse_source("type T = (A | B) & C;");
-    assert_no_errors(&parser, "parenthesized type");
+    let (parser, root) = parse_clean_source("type T = (A | B) & C;", "parenthesized type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1148,8 +1112,7 @@ fn type_parenthesized() {
 #[test]
 fn type_readonly_array() {
     // `type T = readonly number[]`
-    let (parser, root) = parse_source("type T = readonly number[];");
-    assert_no_errors(&parser, "readonly array");
+    let (parser, root) = parse_clean_source("type T = readonly number[];", "readonly array");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1171,8 +1134,7 @@ fn type_readonly_array() {
 #[test]
 fn type_this() {
     // `interface I { get(): this }`
-    let (parser, root) = parse_source("interface I { get(): this; }");
-    assert_no_errors(&parser, "this type");
+    let (parser, root) = parse_clean_source("interface I { get(): this; }", "this type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1190,8 +1152,7 @@ fn type_this() {
 #[test]
 fn type_literal_string() {
     // `type T = "hello"`
-    let (parser, root) = parse_source("type T = \"hello\";");
-    assert_no_errors(&parser, "literal type string");
+    let (parser, root) = parse_clean_source("type T = \"hello\";", "literal type string");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1211,8 +1172,10 @@ fn type_literal_string() {
 #[test]
 fn decl_export_default_function_anonymous() {
     // `export default function() {}` — wraps function in export declaration
-    let (parser, root) = parse_source("export default function() {}");
-    assert_no_errors(&parser, "export default function anonymous");
+    let (parser, root) = parse_clean_source(
+        "export default function() {}",
+        "export default function anonymous",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1228,8 +1191,10 @@ fn decl_export_default_function_anonymous() {
 #[test]
 fn decl_export_as_default() {
     // `export { x as default }`
-    let (parser, root) = parse_source("const x = 1; export { x as default };");
-    assert_no_errors(&parser, "export { x as default }");
+    let (parser, root) = parse_clean_source(
+        "const x = 1; export { x as default };",
+        "export { x as default }",
+    );
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     assert_eq!(stmts.len(), 2);
@@ -1240,8 +1205,7 @@ fn decl_export_as_default() {
 #[test]
 fn decl_import_type() {
     // `import type { Foo } from 'bar'`
-    let (parser, root) = parse_source("import type { Foo } from 'bar';");
-    assert_no_errors(&parser, "import type");
+    let (parser, root) = parse_clean_source("import type { Foo } from 'bar';", "import type");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1255,8 +1219,7 @@ fn decl_import_type() {
 #[test]
 fn decl_declare_module_string_literal() {
     // `declare module 'foo' {}`
-    let (parser, root) = parse_source("declare module 'foo' {}");
-    assert_no_errors(&parser, "declare module");
+    let (parser, root) = parse_clean_source("declare module 'foo' {}", "declare module");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1270,8 +1233,7 @@ fn decl_declare_module_string_literal() {
 #[test]
 fn decl_ambient_function() {
     // `declare function f(): void`
-    let (parser, root) = parse_source("declare function f(): void;");
-    assert_no_errors(&parser, "ambient function");
+    let (parser, root) = parse_clean_source("declare function f(): void;", "ambient function");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1283,8 +1245,7 @@ fn decl_ambient_function() {
 #[test]
 fn decl_enum_basic() {
     // `enum Color { Red, Green, Blue }`
-    let (parser, root) = parse_source("enum Color { Red, Green, Blue }");
-    assert_no_errors(&parser, "enum");
+    let (parser, root) = parse_clean_source("enum Color { Red, Green, Blue }", "enum");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1296,8 +1257,8 @@ fn decl_enum_basic() {
 #[test]
 fn decl_enum_with_initializers() {
     // `enum Dir { Up = 1, Down = 2 }`
-    let (parser, root) = parse_source("enum Dir { Up = 1, Down = 2 }");
-    assert_no_errors(&parser, "enum with initializers");
+    let (parser, root) =
+        parse_clean_source("enum Dir { Up = 1, Down = 2 }", "enum with initializers");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1409,8 +1370,7 @@ fn decl_enum_reserved_name_recovery_keeps_reserved_statement() {
 #[test]
 fn decl_const_enum() {
     // `const enum Flags { A, B }`
-    let (parser, root) = parse_source("const enum Flags { A, B }");
-    assert_no_errors(&parser, "const enum");
+    let (parser, root) = parse_clean_source("const enum Flags { A, B }", "const enum");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1420,8 +1380,7 @@ fn decl_const_enum() {
 #[test]
 fn decl_namespace() {
     // `namespace Foo { export const x = 1; }`
-    let (parser, root) = parse_source("namespace Foo { export const x = 1; }");
-    assert_no_errors(&parser, "namespace");
+    let (parser, root) = parse_clean_source("namespace Foo { export const x = 1; }", "namespace");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1431,8 +1390,7 @@ fn decl_namespace() {
 #[test]
 fn decl_export_equals() {
     // `export = x`
-    let (parser, root) = parse_source("export = x;");
-    assert_no_errors(&parser, "export equals");
+    let (parser, root) = parse_clean_source("export = x;", "export equals");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1448,8 +1406,7 @@ fn decl_export_equals() {
 #[test]
 fn decl_export_default_expression() {
     // `export default 42` — parsed as EXPORT_DECLARATION with default flag
-    let (parser, root) = parse_source("export default 42;");
-    assert_no_errors(&parser, "export default expression");
+    let (parser, root) = parse_clean_source("export default 42;", "export default expression");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1465,8 +1422,10 @@ fn decl_export_default_expression() {
 #[test]
 fn decl_interface_with_extends() {
     // `interface Foo extends Bar, Baz { x: number; }`
-    let (parser, root) = parse_source("interface Foo extends Bar, Baz { x: number; }");
-    assert_no_errors(&parser, "interface extends");
+    let (parser, root) = parse_clean_source(
+        "interface Foo extends Bar, Baz { x: number; }",
+        "interface extends",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1479,8 +1438,7 @@ fn decl_interface_with_extends() {
 #[test]
 fn decl_type_alias_generic() {
     // `type Box<T> = { value: T }`
-    let (parser, root) = parse_source("type Box<T> = { value: T };");
-    assert_no_errors(&parser, "generic type alias");
+    let (parser, root) = parse_clean_source("type Box<T> = { value: T };", "generic type alias");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1499,8 +1457,7 @@ fn decl_type_alias_generic() {
 #[test]
 fn class_basic() {
     // `class Foo { x: number; }`
-    let (parser, root) = parse_source("class Foo { x: number; }");
-    assert_no_errors(&parser, "basic class");
+    let (parser, root) = parse_clean_source("class Foo { x: number; }", "basic class");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1512,8 +1469,7 @@ fn class_basic() {
 #[test]
 fn class_private_field() {
     // `class Foo { #x: number; }`
-    let (parser, root) = parse_source("class Foo { #x: number; }");
-    assert_no_errors(&parser, "private field");
+    let (parser, root) = parse_clean_source("class Foo { #x: number; }", "private field");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1536,8 +1492,10 @@ fn class_private_field() {
 #[test]
 fn class_static_block() {
     // `class Foo { static { console.log("init"); } }`
-    let (parser, root) = parse_source("class Foo { static { console.log(\"init\"); } }");
-    assert_no_errors(&parser, "static block");
+    let (parser, root) = parse_clean_source(
+        "class Foo { static { console.log(\"init\"); } }",
+        "static block",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1554,8 +1512,10 @@ fn class_static_block() {
 #[test]
 fn class_abstract_method() {
     // `abstract class Foo { abstract bar(): void; }`
-    let (parser, root) = parse_source("abstract class Foo { abstract bar(): void; }");
-    assert_no_errors(&parser, "abstract method");
+    let (parser, root) = parse_clean_source(
+        "abstract class Foo { abstract bar(): void; }",
+        "abstract method",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1576,8 +1536,10 @@ fn class_abstract_method() {
 #[test]
 fn class_parameter_property() {
     // `class Foo { constructor(public x: number) {} }`
-    let (parser, root) = parse_source("class Foo { constructor(public x: number) {} }");
-    assert_no_errors(&parser, "parameter property");
+    let (parser, root) = parse_clean_source(
+        "class Foo { constructor(public x: number) {} }",
+        "parameter property",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1684,8 +1646,8 @@ fn constructor_return_colon_recovers_following_overload_pair() {
 #[test]
 fn class_decorator() {
     // `@dec class Foo {}`
-    let (parser, root) = parse_source("declare var dec: any; @dec class Foo {}");
-    assert_no_errors(&parser, "class decorator");
+    let (parser, root) =
+        parse_clean_source("declare var dec: any; @dec class Foo {}", "class decorator");
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     let class_node = arena.get(stmts[1]).expect("class node");
@@ -1704,8 +1666,10 @@ fn class_decorator() {
 #[test]
 fn class_multiple_decorators() {
     // `@a @b class Foo {}`
-    let (parser, root) = parse_source("declare var a: any; declare var b: any; @a @b class Foo {}");
-    assert_no_errors(&parser, "multiple decorators");
+    let (parser, root) = parse_clean_source(
+        "declare var a: any; declare var b: any; @a @b class Foo {}",
+        "multiple decorators",
+    );
     let arena = parser.get_arena();
     let stmts = get_statements(arena, root);
     let class_node = arena.get(stmts[2]).expect("class node");
@@ -1726,8 +1690,10 @@ fn class_multiple_decorators() {
 #[test]
 fn class_index_signature() {
     // `class Foo { [key: string]: number; }`
-    let (parser, root) = parse_source("class Foo { [key: string]: number; }");
-    assert_no_errors(&parser, "class index signature");
+    let (parser, root) = parse_clean_source(
+        "class Foo { [key: string]: number; }",
+        "class index signature",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1743,8 +1709,10 @@ fn class_index_signature() {
 #[test]
 fn class_computed_property() {
     // `class Foo { [Symbol.iterator]() {} }`
-    let (parser, root) = parse_source("class Foo { [Symbol.iterator]() {} }");
-    assert_no_errors(&parser, "computed property name");
+    let (parser, root) = parse_clean_source(
+        "class Foo { [Symbol.iterator]() {} }",
+        "computed property name",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -1787,4 +1755,3 @@ fn computed_field_typed_initializer_continuation_reports_ts1005() {
         "continuation type annotation should not cascade into TS1068, got {diagnostics:?}"
     );
 }
-
