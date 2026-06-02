@@ -397,12 +397,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
-            // Create a unique placeholder type for this inference variable
-            // We use a TypeParameter with a special name to track it during constraint collection.
-            // The id is program-unique to prevent collisions when nested generic
-            // calls create overlapping placeholder sets, and (under the checker
-            // adapter) deterministic so any placeholder name that leaks into a
-            // diagnostic is stable across runs and parallel file checks.
+            // Unique, deterministic placeholder type for this inference variable,
+            // tracked by name during constraint collection (see naming helpers).
             let placeholder_id = self.checker.next_inference_placeholder_id();
             write_placeholder_name(&mut placeholder_buf, placeholder_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);

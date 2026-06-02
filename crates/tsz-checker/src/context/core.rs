@@ -894,8 +894,9 @@ impl<'a> CheckerContext<'a> {
     /// not on the transient `current_file_idx` switches that cross-file import
     /// resolution performs.
     pub fn begin_file_inference_placeholders(&mut self) {
-        self.inference_placeholder_namespace = self.current_file_idx as u32;
-        self.inference_placeholder_seq.set(0);
+        // High 32 bits = file namespace, low 32 bits = sequence (reset to 0).
+        self.inference_placeholder_state
+            .set((self.current_file_idx as u64) << 32);
     }
 
     /// Allocate the next deterministic, program-unique inference-placeholder id
@@ -903,9 +904,11 @@ impl<'a> CheckerContext<'a> {
     /// low 32 bits the per-file sequence, so distinct files never share an id.
     #[must_use]
     pub fn next_inference_placeholder_id(&self) -> u64 {
-        let seq = self.inference_placeholder_seq.get();
-        self.inference_placeholder_seq.set(seq.wrapping_add(1));
-        (u64::from(self.inference_placeholder_namespace) << 32) | u64::from(seq)
+        let id = self.inference_placeholder_state.get();
+        // Incrementing the packed value advances only the low (sequence) half;
+        // a file would need 2^32 placeholders to overflow into the namespace.
+        self.inference_placeholder_state.set(id.wrapping_add(1));
+        id
     }
 
     /// Set the deprecation diagnostics state on the capability boundary.
