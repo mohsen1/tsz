@@ -74,6 +74,8 @@ assert.match(svg, /fill="#cf222e"/);
 assert.match(renderReadmePerfSvg(artifact, { theme: "dark" }), /fill="#ff8182"/);
 assert.doesNotMatch(svg, /stroke="/);
 assert.doesNotMatch(svg, /rx="/);
+assert.doesNotMatch(svg, /fill="#ffffff"/);
+assert.doesNotMatch(renderReadmePerfSvg(artifact, { theme: "dark" }), /fill="#0d1117"/);
 assert.doesNotMatch(svg, />Latest benchmark snapshot</);
 assert.doesNotMatch(svg, />2 successful micro rows</);
 assert.doesNotMatch(svg, />tsz 3\.0x faster</);
