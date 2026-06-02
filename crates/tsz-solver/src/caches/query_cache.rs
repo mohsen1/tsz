@@ -76,6 +76,17 @@ impl CachedPolicyRelation {
             }
         }
     }
+
+    #[inline]
+    const fn shared_slot(
+        self,
+        shared: &SharedQueryCache,
+    ) -> &DashMap<RelationCacheKey, bool, FxBuildHasher> {
+        match self {
+            Self::Subtype => &shared.subtype_cache,
+            Self::Assignability => &shared.assignability_cache,
+        }
+    }
 }
 
 /// Thread-safe shared query cache for cross-file type checking.
@@ -94,6 +105,15 @@ impl CachedPolicyRelation {
 /// - `eval_cache`: type evaluation (conditional types, mapped types, etc.)
 /// - `subtype_cache`: subtype relation results
 /// - `assignability_cache`: assignability relation results
+///
+/// For the relation caches the sharing covers *both* the top-level
+/// `is_cached_policy_relation` entry and the inner `QueryDatabase` entries
+/// driven by the `SubtypeChecker`'s recursive descent. The latter is the
+/// dominant cache traffic in deep mapped/conditional utility-type code, and
+/// without it sibling per-file checkers re-derive the same subtree relation
+/// in every file. Inner writes are gated by `cache_definitive!` in the
+/// `SubtypeChecker`, so only lazy-resolution-stable results reach the
+/// shared store (#10921).
 ///
 /// `application_eval_cache` and `instantiation_cache` are intentionally NOT
 /// shared cross-file: parallel file checking can observe incomplete lib-merge
@@ -695,6 +715,7 @@ impl<'a> QueryCache<'a> {
         None
     }
 
+    #[inline]
     const fn relation_local_cache(
         &self,
         relation: CachedPolicyRelation,
@@ -705,6 +726,7 @@ impl<'a> QueryCache<'a> {
         }
     }
 
+    #[inline]
     const fn relation_cache_hit_counter(&self, relation: CachedPolicyRelation) -> &Cell<u64> {
         match relation {
             CachedPolicyRelation::Subtype => &self.subtype_cache_hits,
@@ -712,6 +734,7 @@ impl<'a> QueryCache<'a> {
         }
     }
 
+    #[inline]
     const fn relation_cache_miss_counter(&self, relation: CachedPolicyRelation) -> &Cell<u64> {
         match relation {
             CachedPolicyRelation::Subtype => &self.subtype_cache_misses,
@@ -735,21 +758,15 @@ impl<'a> QueryCache<'a> {
             return Some(result);
         }
 
-        if let Some(shared) = self.shared {
-            let result = match relation {
-                CachedPolicyRelation::Subtype => shared.subtype_cache.get(&key).map(|r| *r),
-                CachedPolicyRelation::Assignability => {
-                    shared.assignability_cache.get(&key).map(|r| *r)
-                }
-            };
-            if let Some(result) = result {
-                self.relation_local_cache(relation)
-                    .borrow_mut()
-                    .insert(key, result);
-                let hits = self.relation_cache_hit_counter(relation);
-                hits.set(hits.get() + 1);
-                return Some(result);
-            }
+        if let Some(shared) = self.shared
+            && let Some(result) = relation.shared_slot(shared).get(&key).map(|r| *r)
+        {
+            self.relation_local_cache(relation)
+                .borrow_mut()
+                .insert(key, result);
+            let hits = self.relation_cache_hit_counter(relation);
+            hits.set(hits.get() + 1);
+            return Some(result);
         }
 
         let misses = self.relation_cache_miss_counter(relation);
@@ -767,14 +784,7 @@ impl<'a> QueryCache<'a> {
             .borrow_mut()
             .insert(key, result);
         if let Some(shared) = self.shared {
-            match relation {
-                CachedPolicyRelation::Subtype => {
-                    shared.subtype_cache.insert(key, result);
-                }
-                CachedPolicyRelation::Assignability => {
-                    shared.assignability_cache.insert(key, result);
-                }
-            }
+            relation.shared_slot(shared).insert(key, result);
         }
     }
 
@@ -1765,35 +1775,19 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = self.subtype_cache.borrow().get(&key).copied();
-        if result.is_some() {
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
-        } else {
-            self.subtype_cache_misses
-                .set(self.subtype_cache_misses.get() + 1);
-        }
-        result
+        self.lookup_policy_relation_cache(CachedPolicyRelation::Subtype, key)
     }
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
-        self.subtype_cache.borrow_mut().insert(key, result);
+        self.insert_policy_relation_cache(CachedPolicyRelation::Subtype, key, result);
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = self.assignability_cache.borrow().get(&key).copied();
-        if result.is_some() {
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
-        } else {
-            self.assignability_cache_misses
-                .set(self.assignability_cache_misses.get() + 1);
-        }
-        result
+        self.lookup_policy_relation_cache(CachedPolicyRelation::Assignability, key)
     }
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
-        self.assignability_cache.borrow_mut().insert(key, result);
+        self.insert_policy_relation_cache(CachedPolicyRelation::Assignability, key, result);
     }
 
     fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
