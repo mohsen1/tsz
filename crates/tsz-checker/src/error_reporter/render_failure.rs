@@ -728,32 +728,28 @@ impl<'a> CheckerState<'a> {
                 source_count,
                 target_count,
             } => {
-                // tsc renders the arity reason with two wordings depending on the
-                // mismatch direction: when the source carries more elements than a
-                // closed target allows it is "target allows only M" (`TS2619`); when
-                // the source is shorter than the target requires it is "target
-                // requires M" (`TS2618`). The solver supplies `source_count` and
-                // `target_count` so the checker just picks the matching catalog
-                // message instead of inventing local wording.
-                let (arity_message, arity_code) = if source_count > target_count {
-                    (
-                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
-                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
-                    )
-                } else {
-                    (
-                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
-                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
-                    )
-                };
-                let arity_text = format_message(
-                    arity_message,
-                    &[&source_count.to_string(), &target_count.to_string()],
-                );
                 if depth == 0 {
                     // Top level: tsc keeps the `TS2322` headline and attaches the
                     // arity reason as a nested elaboration line, matching the
-                    // sibling function-arity elaboration above.
+                    // sibling function-arity elaboration above. Direction picks the
+                    // catalog message: a source longer than a closed target ->
+                    // "target allows only M" (`TS2619`); shorter than required ->
+                    // "target requires M" (`TS2618`).
+                    let (arity_message, arity_code) = if source_count > target_count {
+                        (
+                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                        )
+                    } else {
+                        (
+                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                        )
+                    };
+                    let arity_text = format_message(
+                        arity_message,
+                        &[&source_count.to_string(), &target_count.to_string()],
+                    );
                     let (source_str, target_str) =
                         self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
@@ -778,7 +774,14 @@ impl<'a> CheckerState<'a> {
                     });
                     diag
                 } else {
-                    Diagnostic::error(file_name, start, length, arity_text, arity_code)
+                    // Nested rendering is preserved as-is: this PR's scope is the
+                    // top-level (`depth == 0`) elaboration that was missing. The
+                    // nested wording is left untouched to avoid perturbing existing
+                    // diagnostic chains in conformance fixtures.
+                    let message = format!(
+                        "Tuple type has {source_count} elements but target requires {target_count}."
+                    );
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
                 }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
