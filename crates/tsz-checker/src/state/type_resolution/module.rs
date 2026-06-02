@@ -2066,8 +2066,9 @@ impl<'a> CheckerState<'a> {
         let cache_miss = visited_aliases.len() == 0;
         if let Some(cached) = self
             .ctx
-            .export_equals_named_cache
+            .export_resolution_caches
             .borrow()
+            .export_equals_named
             .get(&cache_key)
             .copied()
             && (cached.is_some() || cache_miss)
@@ -2084,8 +2085,9 @@ impl<'a> CheckerState<'a> {
         });
         if resolved.is_some() || cache_miss {
             self.ctx
-                .export_equals_named_cache
+                .export_resolution_caches
                 .borrow_mut()
+                .export_equals_named
                 .insert(cache_key, resolved);
         }
         resolved

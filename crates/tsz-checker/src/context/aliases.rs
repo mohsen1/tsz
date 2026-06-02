@@ -123,6 +123,16 @@ pub struct ResolvedAliasProvenance {
 /// `crates/tsz-checker/src/types/queries/lib_aliases.rs` for the proof.
 pub type AliasResolutionTable = FxHashMap<(usize, SymbolId), ResolvedAliasProvenance>;
 
+/// File-local export-resolution caches grouped behind one `CheckerContext`
+/// slot. Both tables are keyed by the consuming file index and are safe to
+/// carry into child checkers for the same reason: entries for different
+/// `switch_to_file` consumers cannot collide.
+#[derive(Clone, Debug, Default)]
+pub struct ExportResolutionCaches {
+    pub export_equals_named: ExportEqualsNamedCache,
+    pub alias_resolution_table: AliasResolutionTable,
+}
+
 #[must_use]
 pub(crate) fn export_equals_named_cache_entries(cache: &ExportEqualsNamedCache) -> usize {
     cache.len()

@@ -178,7 +178,12 @@ impl<'a> CheckerState<'a> {
         &self,
         key: (usize, tsz_binder::SymbolId),
     ) -> Option<ResolvedAliasProvenance> {
-        self.ctx.alias_resolution_table.borrow().get(&key).cloned()
+        self.ctx
+            .export_resolution_caches
+            .borrow()
+            .alias_resolution_table
+            .get(&key)
+            .cloned()
     }
 
     fn alias_table_insert(
@@ -187,8 +192,9 @@ impl<'a> CheckerState<'a> {
         provenance: ResolvedAliasProvenance,
     ) {
         self.ctx
-            .alias_resolution_table
+            .export_resolution_caches
             .borrow_mut()
+            .alias_resolution_table
             .insert(key, provenance);
     }
 
