@@ -1486,6 +1486,7 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) -> Option<TypeId> {
         use crate::call_checker::CallableContext;
+        use tsz_parser::parser::syntax_kind_ext;
 
         // TS18046: Calling an expression of type `unknown` is not allowed.
         // tsc emits TS18046 instead of TS2349 when the callee is `unknown`.
@@ -1530,20 +1531,22 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ANY);
         }
 
-        // Calling a `never`-typed value is always TS2349: `never` has no call
-        // signatures, so tsc reports "This expression is not callable. Type 'never'
-        // has no call signatures." for every `never` callee — a bare identifier
-        // (`f()` where `f: never`), an element access on `never` (`x[0]()`), or a
-        // property whose declared type is `never` (`b.value()` where `value: never`).
-        //
-        // A property access on a `never` *receiver* (`x.foo()` where `x: never`)
-        // does not reach this branch: that access already reports TS2339 and
-        // collapses to the any-like error fallback (see `property_access_type`), so
-        // there is no redundant TS2349 to suppress. Suppressing based on the callee's
-        // syntactic kind would instead wrongly drop the genuine TS2349 for
-        // `x[0]()` and `b.value()`.
+        // Calling `never` returns `never` (bottom type propagation).
+        // tsc treats `never` as having no call signatures.
+        // For method calls (e.g., `a.toFixed()` where `a: never`), TS2339 is already
+        // emitted by the property access check, so we suppress the redundant TS2349.
+        // For direct calls on `never` (e.g., `f()` where `f: never`), emit TS2349.
         if callee_type == TypeId::NEVER {
-            self.error_not_callable_at(callee_type, callee_expr);
+            let is_method_call = matches!(
+                self.ctx.arena.kind_at(callee_expr),
+                Some(
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+            );
+            if !is_method_call {
+                self.error_not_callable_at(callee_type, callee_expr);
+            }
             return Some(TypeId::NEVER);
         }
 

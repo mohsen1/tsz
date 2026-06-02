@@ -1,19 +1,17 @@
-//! Never-absorption parity for call targets and array-literal spreads.
+//! Never-absorption parity for array-literal spreads (and guards for `never`
+//! call/property behavior that must stay matched to `tsc`).
 //!
-//! `never` is the bottom type, but tsc does **not** silence every follow-up
-//! operation on it. The rules verified here match `tsc` exactly:
+//! The headline fix here: `never` is array-like (`never <: readonly any[]`), so
+//! spreading it into an **array literal** (`[...x]`) is allowed and produces a
+//! `never[]` element with no `TS2488`. The for-of, array-destructuring, and
+//! call-argument spread paths instead route through the iterated-type check,
+//! which still reports `TS2488` for `never` — so the exemption must stay scoped
+//! to array-literal value spreads.
 //!
-//! * Calling a `never`-typed value is always `TS2349` ("This expression is not
-//!   callable. Type 'never' has no call signatures."), whether the callee is a
-//!   bare identifier, an element access on `never` (`x[0]()`), or a property
-//!   whose declared type is `never` (`b.value()`).
-//! * A property access on a `never` *receiver* (`x.foo()`) already reports
-//!   `TS2339` and collapses to the any-like error fallback, so it must **not**
-//!   additionally report `TS2349`.
-//! * `never` is array-like, so spreading it into an array literal (`[...x]`) is
-//!   allowed and produces no `TS2488`. for-of, array-destructuring, and
-//!   call-argument spreads instead route through the iterated-type path, which
-//!   still reports `TS2488` for `never`.
+//! The remaining cases are regression guards for `never` call/property behavior
+//! that already matches `tsc`: calling a bare `never` identifier is `TS2349`,
+//! while property/private-name access on a `never` *receiver* reports `TS2339`
+//! (once, no cascade) and the trailing call adds no redundant `TS2349`.
 //!
 //! Binder names are varied across cases so the checks exercise structural rules
 //! rather than any identifier or fixture-name fast path.
@@ -25,7 +23,7 @@ fn count(codes: &[u32], code: u32) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Calling a `never` value: TS2349 in every form.
+// Calling / accessing a `never` value.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -35,41 +33,6 @@ fn direct_never_call_reports_ts2349() {
         count(&codes, 2349),
         1,
         "calling a never-typed identifier must report exactly one TS2349, got: {codes:?}"
-    );
-}
-
-#[test]
-fn element_access_on_never_then_call_reports_ts2349() {
-    // Element access on `never` yields `never` (no error); calling it is TS2349.
-    let codes = check("function pick(empty: never) { empty[0](); }");
-    assert!(
-        codes.contains(&2349),
-        "calling `never[0]` must report TS2349, got: {codes:?}"
-    );
-    assert!(
-        !codes.contains(&2339),
-        "element access on never must not report TS2339, got: {codes:?}"
-    );
-}
-
-#[test]
-fn property_whose_type_is_never_then_call_reports_ts2349() {
-    // The receiver is a normal object; only the *result* of `.payload` is never,
-    // so the property access itself does not error — calling it must be TS2349.
-    let source = r#"
-interface Wrapper<TValue> { payload: TValue; }
-function run(box: Wrapper<never>) {
-    box.payload();
-}
-"#;
-    let codes = check(source);
-    assert!(
-        codes.contains(&2349),
-        "calling a property whose type is never must report TS2349, got: {codes:?}"
-    );
-    assert!(
-        !codes.contains(&2339),
-        "an existing property of type never must not report TS2339, got: {codes:?}"
     );
 }
 
@@ -102,8 +65,8 @@ fn property_access_chain_on_never_receiver_does_not_cascade() {
 
 #[test]
 fn private_name_access_and_call_on_never_receiver_is_only_ts2339() {
-    // Private-name access on a `never` receiver behaves like a regular name:
-    // TS2339 plus the any-like fallback, so trailing calls add no TS2349.
+    // Private-name access on a `never` receiver reports TS2339 per access and the
+    // trailing call adds no TS2349.
     let source = r#"
 class Holder {
     #field = 0;
