@@ -771,6 +771,10 @@ name = "keyof_mapped_as_clause_tests"
 path = "tests/keyof_mapped_as_clause_tests.rs"
 
 [[test]]
+name = "mapped_as_clause_identity_modifier_tests"
+path = "tests/mapped_as_clause_identity_modifier_tests.rs"
+
+[[test]]
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::recursion::RecursionResult;
-use crate::types::{TupleElement, TypeParamInfo};
+use crate::types::{PropertyInfo, TupleElement, TypeParamInfo};
 
 #[test]
 fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
@@ -705,4 +705,204 @@ fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
         TypeId::ERROR,
         "self-stable union must terminate without ERROR"
     );
+}
+
+/// `{ [K in keyof T as K]: T[K] }` applied to `{ readonly a?: number; b?: string; c: boolean }`
+/// must preserve optional and readonly modifiers from the source type — matching tsc behavior.
+///
+/// Covers the structural rule: when a homomorphic mapped type has an identity `as K` remap
+/// clause (where K is the same as the iteration variable), tsz must treat the type as
+/// homomorphic and inherit source property modifiers, the same as with no `as` clause.
+///
+/// Verified for multiple iteration variable names to prove the rule is structural, not
+/// keyed on the spelling `K`.
+#[test]
+fn identity_as_clause_mapped_over_object_preserves_optional_and_readonly_modifiers() {
+    let interner = TypeInterner::new();
+
+    let a_atom = interner.intern_string("a");
+    let b_atom = interner.intern_string("b");
+    let c_atom = interner.intern_string("c");
+
+    // source: { readonly a?: number; b?: string; c: boolean }
+    let source = interner.object(vec![
+        PropertyInfo {
+            name: a_atom,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: true,
+            ..Default::default()
+        },
+        PropertyInfo {
+            name: b_atom,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            ..Default::default()
+        },
+        PropertyInfo::new(c_atom, TypeId::BOOLEAN),
+    ]);
+
+    // The same structural fix must apply regardless of iteration-variable spelling.
+    for iter_name in ["K", "P", "X", "Key"] {
+        let iter_atom = interner.intern_string(iter_name);
+        let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+        let original_constraint = interner.keyof(outer_t);
+        let iter_param = interner.type_param(TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        });
+        let template = interner.index_access(source, iter_param);
+        // name_type is the iteration variable itself — identity `as K` remap.
+        let name_type_param = interner.type_param(TypeParamInfo::simple(iter_atom));
+
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: iter_atom,
+                constraint: Some(original_constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(source),
+            name_type: Some(name_type_param),
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        assert_ne!(
+            result,
+            TypeId::ERROR,
+            "iter `{iter_name}`: identity as-clause mapped type must not produce ERROR"
+        );
+        assert_ne!(
+            result,
+            TypeId::NEVER,
+            "iter `{iter_name}`: identity as-clause mapped type must not produce NEVER"
+        );
+
+        let shape_id = match interner.lookup(result) {
+            Some(TypeData::Object(id)) => id,
+            other => panic!(
+                "iter `{iter_name}`: expected Object result, got {other:?} (TypeId={result:?})"
+            ),
+        };
+        let shape = interner.object_shape(shape_id);
+
+        let find_prop = |atom: Atom| shape.properties.iter().find(|p| p.name == atom).cloned();
+
+        let prop_a = find_prop(a_atom)
+            .unwrap_or_else(|| panic!("iter `{iter_name}`: property 'a' must exist"));
+        assert!(
+            prop_a.optional,
+            "iter `{iter_name}`: property 'a' must be optional (source was `a?: number`)"
+        );
+        assert!(
+            prop_a.readonly,
+            "iter `{iter_name}`: property 'a' must be readonly (source was `readonly a?`)"
+        );
+
+        let prop_b = find_prop(b_atom)
+            .unwrap_or_else(|| panic!("iter `{iter_name}`: property 'b' must exist"));
+        assert!(
+            prop_b.optional,
+            "iter `{iter_name}`: property 'b' must be optional (source was `b?: string`)"
+        );
+        assert!(
+            !prop_b.readonly,
+            "iter `{iter_name}`: property 'b' must not be readonly"
+        );
+
+        let prop_c = find_prop(c_atom)
+            .unwrap_or_else(|| panic!("iter `{iter_name}`: property 'c' must exist"));
+        assert!(
+            !prop_c.optional,
+            "iter `{iter_name}`: property 'c' must not be optional (source was `c: boolean`)"
+        );
+        assert!(
+            !prop_c.readonly,
+            "iter `{iter_name}`: property 'c' must not be readonly"
+        );
+    }
+}
+
+/// When the source type has been evaluated to a concrete object through an alias,
+/// the identity `as K` mapped type must still preserve modifiers.
+///
+/// Structural rule: modifier preservation through identity `as K` must hold even
+/// when the source is accessed indirectly (e.g., through an alias-like evaluation).
+#[test]
+fn identity_as_clause_with_renamed_iter_var_is_name_agnostic() {
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+
+    // source: { readonly x?: boolean }
+    let source = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: true,
+        readonly: true,
+        ..Default::default()
+    }]);
+
+    // Build with two different variable names to confirm name-agnostic behaviour.
+    for (iter_name, outer_name) in [("K", "T"), ("Prop", "Source"), ("Item", "Obj")] {
+        let iter_atom = interner.intern_string(iter_name);
+        let outer_t =
+            interner.type_param(TypeParamInfo::simple(interner.intern_string(outer_name)));
+        let original_constraint = interner.keyof(outer_t);
+        let iter_param = interner.type_param(TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        });
+        let template = interner.index_access(source, iter_param);
+        let name_type_param = interner.type_param(TypeParamInfo::simple(iter_atom));
+
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: iter_atom,
+                constraint: Some(original_constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(source),
+            name_type: Some(name_type_param),
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let shape_id = match interner.lookup(result) {
+            Some(TypeData::Object(id)) => id,
+            other => panic!("iter `{iter_name}`: expected Object, got {other:?}"),
+        };
+        let shape = interner.object_shape(shape_id);
+        let prop = shape
+            .properties
+            .iter()
+            .find(|p| p.name == x_atom)
+            .unwrap_or_else(|| panic!("iter `{iter_name}`: property 'x' must exist"));
+
+        assert!(
+            prop.optional,
+            "iter `{iter_name}`: property 'x' must remain optional through identity as-clause"
+        );
+        assert!(
+            prop.readonly,
+            "iter `{iter_name}`: property 'x' must remain readonly through identity as-clause"
+        );
+    }
 }
