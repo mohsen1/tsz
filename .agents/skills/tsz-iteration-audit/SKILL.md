@@ -23,6 +23,7 @@ durable project direction truly changes.
 2. Inventory existing guardrails before proposing new ones:
 
    ```bash
+   scripts/agents/llm-context-audit.py
    find .agents/skills .claude/skills scripts/agents scripts/ci scripts/arch scripts/bench scripts/conformance scripts/emit -maxdepth 3 -type f | sort
    ```
 
@@ -45,6 +46,9 @@ durable project direction truly changes.
    - `duplication`: the same policy lives in multiple scripts/docs/skills.
    - `behavior debt`: compiler code violates an architecture rule and needs a
      focused owner, not process cleanup.
+   - `context debt`: startup hooks, settings, or duplicated instruction
+     surfaces make every LLM session spend tokens before it has task-specific
+     evidence.
 
 5. Choose the smallest aligned change:
 

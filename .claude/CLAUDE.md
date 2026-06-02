@@ -526,6 +526,22 @@ scripts/safe-run.sh --verbose -- cargo build
   already rebuild stale binaries, such as `scripts/emit/run.sh`; otherwise
   rebuild the narrow binary once and rerun the focused command.
 
+## 20.9) LLM Context And Startup Hygiene
+- Keep always-loaded project instructions small enough to be useful at startup.
+  Put repeatable detailed workflows in repo-local skills, scripts, or focused
+  docs, and load them only when the task matches.
+- Do not make startup hooks print `AGENTS.md`, `.claude/CLAUDE.md`,
+  `docs/plan/ROADMAP.md`, large JSON artifacts, or broad command output. The
+  client already loads its durable instruction surface; hooks should emit short
+  reminders or machine-readable checks only.
+- Do not make startup hooks mutate git state with `pull`, `rebase`, `merge`,
+  checkout, label changes, or PR updates. Intake commands decide when to fetch
+  or rebase after the agent has inspected the current task and branch.
+- Avoid project-level output-token overrides unless a lane has measured need.
+  Forced large outputs make context management worse for ordinary coding work.
+- Run `scripts/agents/llm-context-audit.py` after editing `.codex/`,
+  `.claude/`, `AGENTS.md`, or agent startup hooks.
+
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
 - Architecture direction is one-way; no cross-layer semantic leakage.
