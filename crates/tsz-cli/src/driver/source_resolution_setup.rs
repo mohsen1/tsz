@@ -18,7 +18,7 @@ pub(super) struct SourceResolutionSetupInput<'a> {
     pub(super) base_dir: &'a Path,
     pub(super) source_module_resolutions:
         Option<&'a FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>>,
-    pub(super) canonical_to_file_idx: &'a FxHashMap<PathBuf, usize>,
+    pub(super) program_file_index: &'a ProgramFileIndex,
     pub(super) program_paths: &'a FxHashSet<PathBuf>,
     pub(super) package_redirects: &'a FxHashMap<PathBuf, PathBuf>,
     pub(super) resolution_cache: &'a mut ModuleResolutionCache,
@@ -32,7 +32,7 @@ pub(super) fn prepare_source_resolution_setup(
         options,
         base_dir,
         source_module_resolutions,
-        canonical_to_file_idx,
+        program_file_index,
         program_paths,
         package_redirects,
         resolution_cache,
@@ -171,7 +171,9 @@ pub(super) fn prepare_source_resolution_setup(
                     } else {
                         discovered.canonical_path.clone()
                     };
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                    if let Some(target_idx) = program_file_index
+                        .get_with_symlink_fallback(&canonical, &canonical, options)
+                    {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                         resolved_module_request_paths.insert(
                             (
@@ -283,7 +285,11 @@ pub(super) fn prepare_source_resolution_setup(
                         } else {
                             canonical
                         };
-                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        if let Some(target_idx) = program_file_index.get_with_symlink_fallback(
+                            &canonical,
+                            resolved_path,
+                            options,
+                        ) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
                                 (

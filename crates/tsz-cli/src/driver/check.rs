@@ -353,8 +353,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     let mut program_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
     let mut canonical_to_file_name: FxHashMap<PathBuf, String> =
         FxHashMap::with_capacity_and_hasher(file_count, Default::default());
-    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
-        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
+    let mut program_file_index = ProgramFileIndex::with_capacity(file_count);
     let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
     let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
 
@@ -402,10 +401,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     {
         let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
         for (idx, file) in program.files.iter().enumerate() {
-            let canonical = normalize_resolved_path(Path::new(&file.file_name), options);
+            let canonical = program_file_index.insert(&file.file_name, idx, options);
             program_paths.insert(canonical.clone());
-            canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
-            canonical_to_file_idx.insert(canonical, idx);
+            canonical_to_file_name.insert(canonical, file.file_name.clone());
         }
     }
 
@@ -427,7 +425,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         options,
         base_dir,
         source_module_resolutions,
-        canonical_to_file_idx: &canonical_to_file_idx,
+        program_file_index: &program_file_index,
         program_paths: &program_paths,
         package_redirects: &package_redirects,
         resolution_cache: &mut resolution_cache,
@@ -1504,7 +1502,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     } else {
                         canonical
                     };
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                    if let Some(target_idx) =
+                        program_file_index.get_with_symlink_fallback(&canonical, &resolved, options)
+                    {
                         propagate_module_export_maps(
                             &mut binder,
                             specifier,
@@ -1727,7 +1727,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     && let Some(dependents) = c.reverse_dependencies.get(&file_path)
                 {
                     for dep_path in dependents {
-                        if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path)
+                        if let Some(dep_idx) = program_file_index.get(dep_path)
                             && checked_files.insert(dep_idx)
                         {
                             work_queue.push_back(dep_idx);
