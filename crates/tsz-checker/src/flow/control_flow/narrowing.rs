@@ -333,10 +333,15 @@ impl<'a> FlowAnalyzer<'a> {
         };
         match classify_for_predicate_signature(self.interner, resolved_type) {
             PredicateSignatureKind::Function(_) | PredicateSignatureKind::Callable(_) => {
-                // Delegate to solver query for Function and Callable types.
-                // For Callable, this picks the first signature with a predicate (heuristic).
-                let extracted =
-                    flow_query::extract_predicate_signature(self.interner, resolved_type)?;
+                // For overloaded callables the predicate must come from the
+                // resolved-call record, not from scanning every overload, so the
+                // narrowing query returns `None` for them: this suppresses both
+                // false narrowing (resolved overload has no predicate) and
+                // wrong-predicate narrowing (a non-selected overload carries one).
+                let extracted = flow_query::extract_predicate_signature_for_narrowing(
+                    self.interner,
+                    resolved_type,
+                )?;
                 Some(PredicateSignature {
                     predicate: extracted.predicate,
                     params: extracted.params,

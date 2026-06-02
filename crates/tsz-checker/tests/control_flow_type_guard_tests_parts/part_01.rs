@@ -1387,3 +1387,144 @@ function f(d: Deep) {
         "Triple-nested destructured discriminant must not narrow root binding; got {diagnostics:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Overload-resolved type-predicate narrowing (issue #10902).
+//
+// A type predicate is a property of one specific call signature. For an
+// overloaded callee the predicate that applies is the one on the signature
+// overload resolution selected, not "the first overload that happens to carry a
+// predicate". The narrowing path must read the resolved-call predicate and must
+// never re-derive a predicate by scanning the whole overload set.
+// ---------------------------------------------------------------------------
+
+/// The selected overload returns plain `boolean` (no predicate), so the call
+/// must NOT narrow even though a *different* overload carries `x is string`.
+#[test]
+fn overload_selecting_non_predicate_signature_does_not_narrow() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function g(x: unknown): boolean;
+function g(x: unknown, deep: boolean): x is string;
+function g(x: unknown, deep?: boolean): boolean { return true; }
+declare let v: string | number;
+if (g(v)) {
+    const a: string = v;
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "selecting the non-predicate overload must leave `v` as `string | number`; got {diagnostics:#?}"
+    );
+}
+
+/// Same defect through an overloaded interface method rather than a free
+/// function: the first listed overload returns `boolean`, so `c.check(w)` must
+/// not narrow.
+#[test]
+fn overloaded_method_selecting_non_predicate_signature_does_not_narrow() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface Validator {
+    check(value: unknown): boolean;
+    check(value: unknown, deep: boolean): value is string;
+}
+declare const validator: Validator;
+declare let w: string | number;
+if (validator.check(w)) {
+    const a: string = w;
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "overloaded method selecting the boolean overload must not narrow `w`; got {diagnostics:#?}"
+    );
+}
+
+/// When overloads carry *different* predicates the resolved overload wins and
+/// the non-selected predicate must not compose into it. Regression for the
+/// observed `x is string` ∩ `x is number` → `never` collapse.
+#[test]
+fn overload_with_distinct_predicates_uses_only_the_selected_one() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function h(x: unknown): x is string;
+function h(x: unknown, deep: boolean): x is number;
+function h(x: unknown, deep?: boolean): boolean { return true; }
+declare let u: string | number;
+if (h(u, true)) {
+    u.toFixed(2);
+    const a: string = u;
+}
+"#,
+    );
+    // Resolved overload is `x is number`: `toFixed` exists (no TS2339 / no
+    // collapse to `never`), and assigning `number` to `string` is TS2322.
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "`u` must narrow to `number`, not collapse to `never`; got {diagnostics:#?}"
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "narrowed `number` must not be assignable to `string`; got {diagnostics:#?}"
+    );
+}
+
+/// The positive direction still narrows: when the selected overload carries a
+/// predicate, the resolved-call predicate drives narrowing. Binder names are
+/// varied from the negative cases to keep the assertion structural.
+#[test]
+fn overload_selecting_predicate_signature_narrows() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function probe(input: unknown): boolean;
+function probe(input: unknown, strict: boolean): input is string;
+function probe(input: unknown, strict?: boolean): boolean { return true; }
+declare let candidate: string | number;
+if (probe(candidate, true)) {
+    const widened: number = candidate;
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "selecting the `input is string` overload must narrow to `string`; got {diagnostics:#?}"
+    );
+}
+
+/// Overloads that all share the same predicate still narrow, regardless of
+/// which one resolution selects (the resolved predicate is recorded per call).
+#[test]
+fn overloads_sharing_one_predicate_narrow_for_every_arity() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function f(value: unknown): value is string;
+function f(value: unknown, extra: number): value is string;
+function f(value: unknown, extra?: number): boolean { return true; }
+declare let item: string | number;
+if (f(item)) {
+    const a: number = item;
+}
+if (f(item, 1)) {
+    const b: number = item;
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "both arities resolve to `value is string`; got {diagnostics:#?}"
+    );
+}

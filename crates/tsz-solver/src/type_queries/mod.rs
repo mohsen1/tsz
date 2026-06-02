@@ -38,6 +38,7 @@ pub mod iterable;
 pub mod mapped;
 pub mod mapped_declaration_surface;
 pub mod mapped_display_order;
+pub mod predicate_narrowing;
 pub mod shape_queries;
 pub mod traversal;
 
@@ -96,6 +97,7 @@ pub use iterable::*;
 pub use mapped::*;
 pub use mapped_declaration_surface::*;
 pub use mapped_display_order::*;
+pub use predicate_narrowing::*;
 pub use shape_queries::*;
 pub use traversal::*;
 
