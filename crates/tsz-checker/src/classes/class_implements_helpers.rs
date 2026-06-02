@@ -3,6 +3,7 @@
 //! - Private/protected member detection
 //! - Inherited public member collection
 
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use tsz_common::Visibility;
 use tsz_parser::parser::NodeIndex;
@@ -396,8 +397,7 @@ impl<'a> CheckerState<'a> {
         // base's open type parameters through the chain to the implementing
         // class's context. This mirrors `tsc`'s `getTypeOfPropertyOfType` on an
         // instantiated heritage type.
-        let mut step_substitutions: Vec<crate::query_boundaries::common::TypeSubstitution> =
-            Vec::new();
+        let mut step_substitutions: Vec<TypeSubstitution> = Vec::new();
 
         while let Some(ref heritage_clauses) = current_heritage {
             let mut next_heritage = None;
@@ -477,13 +477,11 @@ impl<'a> CheckerState<'a> {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    step_substitutions.push(
-                        crate::query_boundaries::common::TypeSubstitution::from_args(
-                            self.ctx.types,
-                            &base_type_params,
-                            &step_type_args,
-                        ),
-                    );
+                    step_substitutions.push(TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &base_type_params,
+                        &step_type_args,
+                    ));
                 }
 
                 // Collect public members from the base class
@@ -558,11 +556,10 @@ impl<'a> CheckerState<'a> {
     fn apply_inherited_member_substitutions(
         &mut self,
         mut member_type: TypeId,
-        step_substitutions: &[crate::query_boundaries::common::TypeSubstitution],
+        step_substitutions: &[TypeSubstitution],
     ) -> TypeId {
         for sub in step_substitutions.iter().rev() {
-            member_type =
-                crate::query_boundaries::common::instantiate_type(self.ctx.types, member_type, sub);
+            member_type = instantiate_type(self.ctx.types, member_type, sub);
         }
         member_type
     }

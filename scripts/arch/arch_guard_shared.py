@@ -1168,7 +1168,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Re-pinned after neighboring queued PRs changed the current-main
         # live direct-reference count during the merge queue.
-        3280,
+        #
+        # Bumped by 1 for the mixed-inheritance implements-clause member
+        # substitution fix (#10861): `collect_inherited_public_members` adds a
+        # single `use crate::query_boundaries::common::{TypeSubstitution,
+        # instantiate_type};` line. Both names are existing request-shaped
+        # boundary re-exports already used throughout the checker; the new
+        # call site walks the `extends` chain and substitutes inherited
+        # member types via `instantiate_type`. No new quarantine entry.
+        3281,
     ),
 ]
 
