@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::context::{CheckerContext, DiagnosticIndices, TypeCache};
+use crate::context::{CheckerContext, DiagnosticIndices, PendingCircularReturnSites, TypeCache};
 use crate::control_flow::FlowGraph;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::BinderState;
@@ -178,7 +178,7 @@ impl<'a> CheckerContext<'a> {
             jsdoc_enum_resolution_set: FxHashSet::default(),
             circular_class_symbols: FxHashSet::default(),
             pending_implicit_any_vars: FxHashMap::default(),
-            pending_circular_return_sites: FxHashMap::default(),
+            pending_circular_return_sites: PendingCircularReturnSites::default(),
             non_closure_circular_return_tracking_depth: 0,
             reported_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph::new(),

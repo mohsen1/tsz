@@ -1124,22 +1124,13 @@ impl<'a> CheckerState<'a> {
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;
-                if let Some(ref name) = var_name {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        var_decl.name,
-                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
-                        &[name],
-                    );
-                    for &site_idx in &circular_return_sites {
-                        self.emit_circular_return_site_diagnostic(
-                            site_idx,
-                            Some(name.as_str()),
-                            var_decl.name,
-                            var_decl.initializer,
-                        );
-                    }
-                }
+                self.emit_circular_initializer_diagnostic_unless_lazy(
+                    var_name.as_deref(),
+                    var_decl.name,
+                    var_decl.initializer,
+                    sym_id,
+                    &circular_return_sites,
+                );
             } else if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()

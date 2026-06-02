@@ -572,7 +572,11 @@ impl<'a> CheckerState<'a> {
                         | syntax_kind_ext::SET_ACCESSOR
                 ));
             if should_record {
-                self.record_pending_circular_return_sites(function_idx, body_idx);
+                self.record_pending_circular_return_sites(
+                    function_idx,
+                    body_idx,
+                    return_context.is_none(),
+                );
             }
         }
 

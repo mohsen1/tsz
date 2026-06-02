@@ -61,6 +61,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<NodeIndex> {
         self.ctx
             .pending_circular_return_sites
+            .sites
             .remove(&sym_id)
             .unwrap_or_default()
     }
@@ -107,6 +108,36 @@ impl<'a> CheckerState<'a> {
                 matches!(diag.code, 2322 | 2345 | 2769) && in_initializer;
             !is_downstream_relation_noise
         });
+    }
+
+    /// Emit the TS7022 "implicitly has type any" diagnostic (and per-site
+    /// TS7023/TS7024 return-type diagnostics) for a circular variable
+    /// initializer — unless every recorded circular-return site is a benign
+    /// lazy deferred self-reference, in which case `tsc` reports nothing and we
+    /// suppress emission while the variable still widens to `any`. See #10675.
+    pub(super) fn emit_circular_initializer_diagnostic_unless_lazy(
+        &mut self,
+        var_name: Option<&str>,
+        var_name_idx: NodeIndex,
+        init_idx: NodeIndex,
+        sym_id: SymbolId,
+        circular_return_sites: &[NodeIndex],
+    ) {
+        let Some(name) = var_name else {
+            return;
+        };
+        if self.all_circular_return_sites_are_lazy(sym_id, circular_return_sites) {
+            return;
+        }
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            var_name_idx,
+            diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+            &[name],
+        );
+        for &site_idx in circular_return_sites {
+            self.emit_circular_return_site_diagnostic(site_idx, Some(name), var_name_idx, init_idx);
+        }
     }
 
     pub(super) fn emit_circular_return_site_diagnostic(
