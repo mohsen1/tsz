@@ -54,7 +54,7 @@ pub(crate) fn collect_unresolved_application_names(
             return;
         };
         if seen.insert(atom) {
-            names.push(types.resolve_atom(atom).to_string());
+            names.push(types.resolve_atom(atom));
         }
     });
     names
