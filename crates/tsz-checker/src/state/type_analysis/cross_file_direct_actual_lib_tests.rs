@@ -187,6 +187,69 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
 }
 
 #[test]
+fn direct_actual_lib_symbol_type_keeps_dom_alias_bodies_on_fallback() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    for name in [
+        "DOMHighResTimeStamp",
+        "GLenum",
+        "Base64URLString",
+        "BigInteger",
+        "BlobPart",
+        "EventListenerOrEventListenerObject",
+    ] {
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} should resolve to a dom lib alias"));
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
+        assert!(
+            state
+                .direct_actual_lib_symbol_type(
+                    sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    Some(delegate_arena),
+                    false,
+                )
+                .is_none(),
+            "{name} should stay on child-checker fallback until DOM alias direct answers preserve conformance fingerprints",
+        );
+    }
+}
+
+#[test]
 fn direct_builtin_dom_interface_uses_declaration_provenance_without_lib_symbol_flag() {
     let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
