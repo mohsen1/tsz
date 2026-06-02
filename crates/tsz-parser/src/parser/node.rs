@@ -990,6 +990,122 @@ where
 }
 
 // =============================================================================
+// Arena pool checkpoint
+// =============================================================================
+
+/// Lengths of every typed data pool in a [`NodeArena`] at a point in time.
+///
+/// The speculation machinery in `speculation.rs` captures this snapshot before
+/// a speculative `parse_*` call and restores it on rollback. Without this,
+/// failed speculations leave orphaned entries in every typed pool (identifiers,
+/// type_refs, etc.) even though the corresponding node headers are truncated.
+/// The orphaned data inflates peak memory and degrades cache efficiency,
+/// causing super-linear slowdowns on files with many complex recursive types
+/// such as the `utility-types-project` benchmark row.
+///
+/// Every field is a `usize` (the pool's `Vec::len()`). The struct is cheap to
+/// construct (`O(1)` field reads) and cheap to restore (`truncate` on each
+/// pool, which is `O(dropped)` but the drop cost is paid at the moment of
+/// rollback rather than deferred to the arena's `clear()` call).
+///
+/// Every field must also appear in the `impl_pool_checkpoints!` invocation on
+/// [`NodeArena`] — see that macro for the canonical field list.
+#[derive(Default)]
+pub(crate) struct NodeArenaPoolLengths {
+    pub identifiers: usize,
+    pub qualified_names: usize,
+    pub computed_properties: usize,
+    pub literals: usize,
+    pub binary_exprs: usize,
+    pub unary_exprs: usize,
+    pub call_exprs: usize,
+    pub access_exprs: usize,
+    pub conditional_exprs: usize,
+    pub literal_exprs: usize,
+    pub parenthesized: usize,
+    pub unary_exprs_ex: usize,
+    pub type_assertions: usize,
+    pub template_exprs: usize,
+    pub template_spans: usize,
+    pub tagged_templates: usize,
+    pub functions: usize,
+    pub classes: usize,
+    pub interfaces: usize,
+    pub type_aliases: usize,
+    pub enums: usize,
+    pub enum_members: usize,
+    pub modules: usize,
+    pub module_blocks: usize,
+    pub signatures: usize,
+    pub index_signatures: usize,
+    pub property_decls: usize,
+    pub method_decls: usize,
+    pub constructors: usize,
+    pub accessors: usize,
+    pub parameters: usize,
+    pub type_parameters: usize,
+    pub decorators: usize,
+    pub heritage_clauses: usize,
+    pub expr_with_type_args: usize,
+    pub if_statements: usize,
+    pub loops: usize,
+    pub blocks: usize,
+    pub variables: usize,
+    pub return_data: usize,
+    pub expr_statements: usize,
+    pub switch_data: usize,
+    pub case_clauses: usize,
+    pub try_data: usize,
+    pub catch_clauses: usize,
+    pub labeled_data: usize,
+    pub jump_data: usize,
+    pub with_data: usize,
+    pub type_refs: usize,
+    pub composite_types: usize,
+    pub function_types: usize,
+    pub type_queries: usize,
+    pub type_literals: usize,
+    pub array_types: usize,
+    pub tuple_types: usize,
+    pub wrapped_types: usize,
+    pub conditional_types: usize,
+    pub infer_types: usize,
+    pub type_operators: usize,
+    pub indexed_access_types: usize,
+    pub mapped_types: usize,
+    pub literal_types: usize,
+    pub template_literal_types: usize,
+    pub named_tuple_members: usize,
+    pub type_predicates: usize,
+    pub import_decls: usize,
+    pub import_clauses: usize,
+    pub named_imports: usize,
+    pub specifiers: usize,
+    pub export_decls: usize,
+    pub export_assignments: usize,
+    pub import_attributes: usize,
+    pub import_attribute: usize,
+    pub binding_patterns: usize,
+    pub binding_elements: usize,
+    pub property_assignments: usize,
+    pub shorthand_properties: usize,
+    pub spread_data: usize,
+    pub variable_declarations: usize,
+    pub for_in_of: usize,
+    pub jsx_elements: usize,
+    pub jsx_opening: usize,
+    pub jsx_closing: usize,
+    pub jsx_fragments: usize,
+    pub jsx_attributes: usize,
+    pub jsx_attribute: usize,
+    pub jsx_spread_attributes: usize,
+    pub jsx_expressions: usize,
+    pub jsx_text: usize,
+    pub jsx_namespaced_names: usize,
+    pub source_files: usize,
+}
+
+// =============================================================================
 // Thin Node Arena
 // =============================================================================
 
@@ -1136,7 +1252,127 @@ pub struct NodeArena {
     pub extended_info: Vec<ExtendedNodeInfo>,
 }
 
+/// Generate `pool_checkpoint` and `restore_pool_checkpoint` on `NodeArena`
+/// from a single canonical field list. Adding a new pool requires updating
+/// the field list here and in `NodeArenaPoolLengths`.
+macro_rules! impl_pool_checkpoints {
+    ($($f:ident),+ $(,)?) => {
+        /// Capture the current length of every typed data pool.
+        ///
+        /// Paired with [`Self::restore_pool_checkpoint`] in the speculation system
+        /// to reclaim orphaned pool entries when a speculative parse is rolled back.
+        #[must_use]
+        pub(crate) fn pool_checkpoint(&self) -> NodeArenaPoolLengths {
+            NodeArenaPoolLengths { $($f: self.$f.len(),)+ }
+        }
+
+        /// Truncate every typed data pool back to the lengths captured by
+        /// [`Self::pool_checkpoint`].
+        ///
+        /// This reclaims any pool entries allocated during a failed speculation,
+        /// preventing unbounded memory growth in files with many speculative parses
+        /// (e.g. complex generic types, arrow function lookaheads).
+        pub(crate) fn restore_pool_checkpoint(&mut self, c: &NodeArenaPoolLengths) {
+            $(self.$f.truncate(c.$f);)+
+        }
+    };
+}
+
 impl NodeArena {
+    impl_pool_checkpoints!(
+        identifiers,
+        qualified_names,
+        computed_properties,
+        literals,
+        binary_exprs,
+        unary_exprs,
+        call_exprs,
+        access_exprs,
+        conditional_exprs,
+        literal_exprs,
+        parenthesized,
+        unary_exprs_ex,
+        type_assertions,
+        template_exprs,
+        template_spans,
+        tagged_templates,
+        functions,
+        classes,
+        interfaces,
+        type_aliases,
+        enums,
+        enum_members,
+        modules,
+        module_blocks,
+        signatures,
+        index_signatures,
+        property_decls,
+        method_decls,
+        constructors,
+        accessors,
+        parameters,
+        type_parameters,
+        decorators,
+        heritage_clauses,
+        expr_with_type_args,
+        if_statements,
+        loops,
+        blocks,
+        variables,
+        return_data,
+        expr_statements,
+        switch_data,
+        case_clauses,
+        try_data,
+        catch_clauses,
+        labeled_data,
+        jump_data,
+        with_data,
+        type_refs,
+        composite_types,
+        function_types,
+        type_queries,
+        type_literals,
+        array_types,
+        tuple_types,
+        wrapped_types,
+        conditional_types,
+        infer_types,
+        type_operators,
+        indexed_access_types,
+        mapped_types,
+        literal_types,
+        template_literal_types,
+        named_tuple_members,
+        type_predicates,
+        import_decls,
+        import_clauses,
+        named_imports,
+        specifiers,
+        export_decls,
+        export_assignments,
+        import_attributes,
+        import_attribute,
+        binding_patterns,
+        binding_elements,
+        property_assignments,
+        shorthand_properties,
+        spread_data,
+        variable_declarations,
+        for_in_of,
+        jsx_elements,
+        jsx_opening,
+        jsx_closing,
+        jsx_fragments,
+        jsx_attributes,
+        jsx_attribute,
+        jsx_spread_attributes,
+        jsx_expressions,
+        jsx_text,
+        jsx_namespaced_names,
+        source_files,
+    );
+
     /// Estimate the total heap memory footprint of this arena in bytes.
     ///
     /// Accounts for the struct itself, all typed data pool capacities,
