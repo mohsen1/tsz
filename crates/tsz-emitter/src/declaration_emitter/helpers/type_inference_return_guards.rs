@@ -464,7 +464,7 @@ impl<'a> DeclarationEmitter<'a> {
             .is_none_or(|_| self.value_reference_symbol(expr_idx).is_none())
     }
 
-    pub(in crate::declaration_emitter) fn undefined_identifier_type_text(
+    pub(in crate::declaration_emitter) const fn undefined_identifier_type_text(
         &self,
         _expr_idx: NodeIndex,
     ) -> Option<String> {
