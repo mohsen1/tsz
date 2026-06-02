@@ -5,81 +5,47 @@ description: Work on TSZ benchmark and project-corpus compatibility. Use when in
 
 # TSZ Project Bench
 
-Use this skill for project-corpus and benchmark work. The benchmark dashboard is
-only meaningful when compatibility metadata is trustworthy; a red project row is
-a correctness blocker before it is a speed problem.
+Use for project-corpus rows, benchmark harness, fixture metadata, PGO bench
+setup, and website benchmark data.
 
-## Ground Rules
+## Rules
 
-- Read `AGENTS.md` and `docs/plan/ROADMAP.md` before durable benchmark,
-  performance, project-corpus, or website benchmark work.
-- Inspect open PRs/issues for overlapping benchmark blockers.
-- Do not treat timing as useful until the row is green or the failure is
-  explicitly runtime, residency, timeout, or OOM.
-- Keep fixture definitions shared between `scripts/bench/project-fixtures.sh`,
-  `scripts/bench/bench-vs-tsgo.sh`, and
-  `scripts/ci/project-compile-guard.sh`.
-- Wrap long or memory-heavy local commands with `scripts/safe-run.sh`.
+- Read `AGENTS.md` and `docs/plan/ROADMAP.md` for durable benchmark/project
+  work.
+- Inspect overlapping PRs/issues.
+- Red row = correctness blocker before speed problem unless failure is runtime,
+  residency, timeout, or OOM.
+- Keep fixture metadata shared across `project-fixtures.sh`,
+  `bench-vs-tsgo.sh`, and `project-compile-guard.sh`.
+- Wrap long/heavy local commands with `scripts/safe-run.sh`.
 
-## Source Files
+## Sources
 
-- `scripts/bench/project-fixtures.sh`: pinned repos, refs, and config writers.
-- `scripts/bench/bench-vs-tsgo.sh`: benchmark runner, PGO, metadata emission.
-- `scripts/ci/project-compile-guard.sh`: CI project compatibility smoke gate.
-- `crates/tsz-website/src/_data/benchmark_data.js`: website row ingestion.
-- `.github/workflows/bench.yml`: benchmark publication and daily latest runs.
+- `scripts/bench/project-fixtures.sh`
+- `scripts/bench/bench-vs-tsgo.sh`
+- `scripts/ci/project-compile-guard.sh`
+- `crates/tsz-website/src/_data/benchmark_data.js`
+- `.github/workflows/bench.yml`
 
-## Debug Workflow
+## Workflow
 
-1. Identify the row, phase, and first failure class: prepare, tsc validation,
-   tsz check, emit scope, crash, timeout, OOM, metadata, website ingestion, or
-   timing.
-2. Confirm whether the row is required or canary:
-   `TSZ_PROJECT_COMPILE_SET=required`, `canary`, or `all`.
-3. Reproduce with the narrowest project filter. Avoid full benchmark runs unless
-   the task is specifically about benchmark harness behavior.
-4. If the project fails to typecheck, reduce to the owning compiler operation
-   before optimizing.
-5. For speed work, identify the repeated operation and expected complexity
-   change. Do not special-case fixture names.
+1. Identify row, phase, and first failure: prepare, `tsc` validation, tsz check,
+   emit scope, crash, timeout, OOM, metadata, website ingestion, timing.
+2. Required/canary/all set: `TSZ_PROJECT_COMPILE_SET=<required|canary|all>`.
+3. Reproduce with the narrowest filter.
+4. If typecheck fails, reduce to owning compiler operation before optimizing.
+5. For speed work, name repeated operation and complexity change. No
+   fixture-name special cases.
 
-## Useful Commands
-
-Prepare benchmark dependencies without running measurements:
+## Commands
 
 ```bash
 ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+./scripts/bench/bench-vs-tsgo.sh --quick --filter "<row>" --json-file /tmp/bench.json
+TSZ_PROJECT_COMPILE_FILTER="<row>" TSZ_PROJECT_COMPILE_SET=required scripts/ci/project-compile-guard.sh
+TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 TSZ_PROJECT_COMPILE_SET=all scripts/ci/project-compile-guard.sh
 ```
 
-Run a narrow benchmark smoke:
-
-```bash
-./scripts/bench/bench-vs-tsgo.sh --quick --filter "utility-types" --json-file /tmp/bench.json
-```
-
-Run a filtered project compile guard after a dist-fast binary exists:
-
-```bash
-TSZ_PROJECT_COMPILE_FILTER="utility-types-project" \
-TSZ_PROJECT_COMPILE_SET=required \
-scripts/ci/project-compile-guard.sh
-```
-
-Continue through known failures only when collecting a matrix:
-
-```bash
-TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1 \
-TSZ_PROJECT_COMPILE_SET=all \
-scripts/ci/project-compile-guard.sh
-```
-
-## PR Notes
-
-Benchmark PRs should state:
-
-- project row and before/after failure class,
-- first broken phase and owner layer,
-- fixture metadata changes, if any,
-- whether timing is meaningful,
-- targeted local commands or CI run links,
-- `AgentName`.
+PR notes: row, before/after failure class, first broken phase, owner layer,
+fixture metadata changes, whether timing is meaningful, commands/CI links,
+`AgentName`.

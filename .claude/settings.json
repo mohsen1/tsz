@@ -1,6 +1,5 @@
 {
   "env": {
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "attribution": {
@@ -79,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}\"; git -C \"$root\" pull --rebase origin main 2>/dev/null || true; cat \"$root/AGENTS.md\""
+            "command": "echo 'TSZ startup: run tsz-worktree-intake, then scripts/agents/show-goal.sh <AgentName> when a lane goal applies.'"
           }
         ]
       }
