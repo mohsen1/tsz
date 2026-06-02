@@ -728,3 +728,99 @@ a.b;
         ts2339.message_text
     );
 }
+
+// Diagnostic chain order stability for related-information chains (issue
+// #10918). The normalization sort used to alphabetize same-anchor entries
+// by `message_text`, which placed a `Type 'X' is not assignable to type
+// 'Y'.` leaf above its `Types of property 'P' are incompatible.` header
+// because the space in `"Type "` sorts before `'s'` in `"Types"`. The fix
+// adds `depth` to the sort key before the textual tiebreaker.
+
+#[track_caller]
+fn property_chain_indices(
+    related: &[tsz_checker::diagnostics::DiagnosticRelatedInformation],
+    property_name: &str,
+) -> (usize, usize) {
+    let header = related
+        .iter()
+        .position(|info| {
+            info.message_text.contains("Types of property")
+                && info.message_text.contains(&format!("'{property_name}'"))
+        })
+        .unwrap_or_else(|| {
+            panic!("expected `Types of property '{property_name}'` header, got: {related:?}")
+        });
+    let leaf = related
+        .iter()
+        .position(|info| {
+            info.message_text.starts_with("Type ")
+                && info.message_text.contains("is not assignable to type")
+        })
+        .unwrap_or_else(|| panic!("expected leaf relation line, got: {related:?}"));
+    (header, leaf)
+}
+
+/// Header precedes leaf in `related_information`; leaf indents at least one
+/// level deeper. Varies property names so the rule is structural, not a
+/// fixture spelling. Uses `declare const arg: ...` so the call goes through
+/// `related_from_failure_reason`; an object literal would hit a different
+/// emit path with no chain.
+#[test]
+fn ts2345_property_chain_keeps_header_before_leaf_and_indents_leaf() {
+    for (prop_name, prop_ty, arg_ty) in [
+        ("p", "string", "number"),
+        ("key", "string", "boolean"),
+        ("alpha", "boolean", "string"),
+    ] {
+        let source = format!(
+            "declare const arg: {{ {prop_name}: {arg_ty} }};\n\
+             function take(o: {{ {prop_name}: {prop_ty} }}) {{}}\n\
+             take(arg);\n"
+        );
+        let diagnostics = check_source_diagnostics(&source);
+        let ts2345 = diagnostics
+            .iter()
+            .find(|d| d.code == 2345)
+            .unwrap_or_else(|| panic!("expected TS2345 for `{source}`, got: {diagnostics:?}"));
+
+        let (header_idx, leaf_idx) = property_chain_indices(&ts2345.related_information, prop_name);
+        assert!(
+            header_idx < leaf_idx,
+            "header must precede leaf in `{source}`, got header={header_idx}, leaf={leaf_idx}, related={:?}",
+            ts2345.related_information
+        );
+        assert_eq!(
+            ts2345.related_information[header_idx].depth, 0,
+            "header sits at the first elaboration level; chain: {:?}",
+            ts2345.related_information
+        );
+        assert!(
+            ts2345.related_information[leaf_idx].depth >= 1,
+            "leaf must indent at least one level beneath its header; chain: {:?}",
+            ts2345.related_information
+        );
+    }
+}
+
+/// The chain must remain stable across repeated checks of the same source —
+/// two independent compiles must produce the same ordered related-info
+/// entries.
+#[test]
+fn ts2345_property_chain_is_stable_across_repeated_checks() {
+    let source = "declare const arg: { p: number };\n\
+                  function take(o: { p: string }) {}\n\
+                  take(arg);\n";
+    let chain = |diags: &[tsz_checker::diagnostics::Diagnostic]| {
+        diags
+            .iter()
+            .find(|d| d.code == 2345)
+            .expect("expected a TS2345 chain to compare against")
+            .related_information
+            .iter()
+            .map(|r| (r.depth, r.message_text.clone()))
+            .collect::<Vec<_>>()
+    };
+    let first = chain(&check_source_diagnostics(source));
+    let second = chain(&check_source_diagnostics(source));
+    assert_eq!(first, second, "chain drifted between independent runs");
+}
