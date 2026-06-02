@@ -3,6 +3,7 @@
 //! - Private/protected member detection
 //! - Inherited public member collection
 
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use tsz_common::Visibility;
 use tsz_parser::parser::NodeIndex;
@@ -390,6 +391,13 @@ impl<'a> CheckerState<'a> {
     ) {
         let mut visited = rustc_hash::FxHashSet::default();
         let mut current_heritage = class_data.heritage_clauses.clone();
+        // Accumulated substitutions, in walk order (outermost step first). When
+        // collecting a member from a base, applying these in reverse order
+        // (innermost / closest to the base first, outermost last) maps the
+        // base's open type parameters through the chain to the implementing
+        // class's context. This mirrors `tsc`'s `getTypeOfPropertyOfType` on an
+        // instantiated heritage type.
+        let mut step_substitutions: Vec<TypeSubstitution> = Vec::new();
 
         while let Some(ref heritage_clauses) = current_heritage {
             let mut next_heritage = None;
@@ -412,11 +420,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let expr_idx =
+                let (expr_idx, heritage_type_arg_nodes) =
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                        expr_type_args.expression
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
                     } else {
-                        type_idx
+                        (type_idx, None)
                     };
 
                 let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
@@ -451,12 +462,34 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                // Push the per-step substitution for this `extends BaseClass<...>`
+                // line: base's type parameters → resolved type arguments expressed
+                // in the CURRENT class's context. The arguments themselves may
+                // reference outer-class type parameters; outer steps in
+                // `step_substitutions` will substitute those when applied.
+                let base_type_params = self.get_type_params_for_symbol(sym_id);
+                if !base_type_params.is_empty() {
+                    let step_type_args: Vec<TypeId> = heritage_type_arg_nodes
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    step_substitutions.push(TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &base_type_params,
+                        &step_type_args,
+                    ));
+                }
+
                 // Collect public members from the base class
                 for &member_idx in &base_class.members.nodes {
-                    if let Some(name) = self.get_member_name(member_idx) {
-                        if direct_members.contains_key(&name) || result.contains_key(&name) {
-                            continue;
-                        }
+                    if let Some(name) = self.get_member_name(member_idx)
+                        && !direct_members.contains_key(&name)
+                        && !result.contains_key(&name)
+                    {
                         let sym_flags = self
                             .ctx
                             .binder
@@ -464,13 +497,18 @@ impl<'a> CheckerState<'a> {
                             .and_then(|sid| self.ctx.binder.get_symbol(sid))
                             .map(|s| s.flags)
                             .unwrap_or(0);
-                        if (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0
-                            || (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0
-                        {
-                            continue;
+                        let visibility_mask =
+                            tsz_binder::symbol_flags::PRIVATE | tsz_binder::symbol_flags::PROTECTED;
+                        if sym_flags & visibility_mask == 0 {
+                            let member_type = self.get_type_of_class_member(member_idx);
+                            result.insert(
+                                name,
+                                self.apply_inherited_member_substitutions(
+                                    member_type,
+                                    &step_substitutions,
+                                ),
+                            );
                         }
-                        let member_type = self.get_type_of_class_member(member_idx);
-                        result.insert(name, member_type);
                     }
 
                     // Also handle constructor parameter properties
@@ -489,7 +527,13 @@ impl<'a> CheckerState<'a> {
                                 && !result.contains_key(&name)
                             {
                                 let member_type = self.get_type_of_class_member(param_idx);
-                                result.insert(name, member_type);
+                                result.insert(
+                                    name,
+                                    self.apply_inherited_member_substitutions(
+                                        member_type,
+                                        &step_substitutions,
+                                    ),
+                                );
                             }
                         }
                     }
@@ -502,6 +546,22 @@ impl<'a> CheckerState<'a> {
 
             current_heritage = next_heritage;
         }
+    }
+
+    /// Apply per-step substitutions accumulated while walking up the extends
+    /// chain to a member type from a base class. The substitutions are applied
+    /// innermost-first (closest to the base class declaring the member) and
+    /// outermost-last, so each level's type-argument bindings resolve into the
+    /// next level's context until the implementing class's context is reached.
+    fn apply_inherited_member_substitutions(
+        &mut self,
+        mut member_type: TypeId,
+        step_substitutions: &[TypeSubstitution],
+    ) -> TypeId {
+        for sub in step_substitutions.iter().rev() {
+            member_type = instantiate_type(self.ctx.types, member_type, sub);
+        }
+        member_type
     }
 
     /// Collect inherited PRIVATE/PROTECTED members from the base class chain.

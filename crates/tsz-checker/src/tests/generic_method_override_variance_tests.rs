@@ -157,3 +157,92 @@ fn keeps_2430_outer_param_member_overrides_bare_generic_member_renamed() {
          interface I<U> extends A { a: (x: U) => U[]; }",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Mixed inheritance chain: class `extends GenericBase<Concrete>` and
+// `implements I` — the inherited method's open base type parameter must be
+// substituted with the extends-clause type argument before being compared to
+// the interface member. (Issue #10861.)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_2416_inherited_method_substitutes_extends_type_argument() {
+    assert_no_2416(
+        "interface IRepo<T> { save(item: T): T; }
+         interface IUserRepo extends IRepo<{ id: number }> {}
+         abstract class BaseRepo<T> { save(item: T): T { return item; } }
+         class UserRepo extends BaseRepo<{ id: number }> implements IUserRepo {}",
+    );
+}
+
+// Same structural rule with a renamed base type parameter — proves the fix
+// is not keyed on the identifier name (§25).
+#[test]
+fn no_false_2416_inherited_method_substitutes_extends_type_argument_renamed() {
+    assert_no_2416(
+        "interface IRepo<K> { save(item: K): K; }
+         interface IUserRepo extends IRepo<{ id: number }> {}
+         abstract class BaseRepo<K> { save(item: K): K { return item; } }
+         class UserRepo extends BaseRepo<{ id: number }> implements IUserRepo {}",
+    );
+}
+
+// Multi-level extends chain: each level contributes a substitution; an open
+// base type parameter must be threaded through every intermediate
+// substitution. `T → U[]` from Level1→Level2 then `U → string` from
+// Level2→Level3 means an inherited `method(x: T): T` from Level1 must read as
+// `(x: string[]) => string[]` when checked against `IFoo<string[]>`.
+#[test]
+fn no_false_2416_multi_level_extends_chain_substitutes_through() {
+    assert_no_2416(
+        "interface IFoo<T> { method(x: T): T; }
+         class Level1<T> { method(x: T): T { return x; } }
+         class Level2<U> extends Level1<U[]> {}
+         class Level3 extends Level2<string> implements IFoo<string[]> {}",
+    );
+}
+
+// Same multi-level shape with renamed type parameters at every level.
+#[test]
+fn no_false_2416_multi_level_extends_chain_substitutes_through_renamed() {
+    assert_no_2416(
+        "interface IFoo<A> { method(x: A): A; }
+         class Level1<X> { method(x: X): X { return x; } }
+         class Level2<Y> extends Level1<Y[]> {}
+         class Level3 extends Level2<string> implements IFoo<string[]> {}",
+    );
+}
+
+// Constructor parameter property inherited from a generic base must also
+// have its declared type substituted via the extends clause type argument.
+#[test]
+fn no_false_2416_inherited_ctor_param_property_substitutes_extends_type_argument() {
+    assert_no_2416(
+        "interface IHolder<T> { value: T; }
+         class BaseHolder<T> { constructor(public value: T) {} }
+         class StringHolder extends BaseHolder<string> implements IHolder<string> {}",
+    );
+}
+
+// Negative case: keep the diagnostic when the inherited method's signature is
+// genuinely incompatible with the interface after substitution. (Here the
+// inherited `do` returns `number`, not `T`, so even with `T = { id: number }`
+// the signatures do not match.) The fix must not silently accept this.
+#[test]
+fn keeps_diagnostic_for_genuinely_incompatible_inherited_method() {
+    let codes = crate::test_utils::check_source_codes(
+        "interface IBad<T> { do(x: T): T; }
+         interface IBadUser extends IBad<{ id: number }> {}
+         abstract class BaseBad<T> { do(x: number): number { return 0; } }
+         class BadUser extends BaseBad<{ id: number }> implements IBadUser {}",
+    );
+    // tsc emits TS2420 for inherited-member shape mismatches here, but the
+    // structural rule is that the diagnostic family must fire — either TS2416
+    // (property type mismatch) or TS2420 (class incorrectly implements). The
+    // critical regression guard is that *some* diagnostic survives, not
+    // silent acceptance from substitution-aware collection.
+    assert!(
+        codes.contains(&2416) || codes.contains(&2420),
+        "expected TS2416 or TS2420 for genuinely incompatible inherited method; got {codes:?}"
+    );
+}
