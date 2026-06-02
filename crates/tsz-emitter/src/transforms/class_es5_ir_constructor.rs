@@ -1383,9 +1383,9 @@ impl<'a> ES5ClassTransformer<'a> {
         )));
     }
 
-    /// Emit private field initializations using `WeakMap.set()`
+    /// Emit private field initializations using `__classPrivateFieldSet`.
     fn emit_private_field_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
-        let key = if use_this {
+        let receiver = if use_this {
             IRNode::id("_this")
         } else {
             IRNode::this()
@@ -1402,11 +1402,15 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 IRNode::Undefined
             };
-            body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
-                weakmap_name: field.weakmap_name.clone().into(),
-                key: Box::new(key.clone()),
-                value: Box::new(value),
-            }));
+            body.push(IRNode::expr_stmt(IRNode::call(
+                IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldSet")),
+                vec![
+                    receiver.clone(),
+                    IRNode::id(field.weakmap_name.clone()),
+                    value,
+                    IRNode::StringLiteral("f".into()),
+                ],
+            )));
         }
     }
 

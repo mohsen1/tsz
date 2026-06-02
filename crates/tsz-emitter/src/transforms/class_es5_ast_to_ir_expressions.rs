@@ -417,6 +417,31 @@ impl<'a> AstToIr<'a> {
                 };
             }
 
+            // Private field/accessor read: `this.#x` → `__classPrivateFieldGet(this, _C_x, "f")`
+            if let Some(name_node) = self.arena.get(access.name_or_argument)
+                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    let raw = &ident.escaped_text;
+                    let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
+                    if let Some((storage_var, kind)) = self.private_read_info(clean) {
+                        let object = self.convert_expression(access.expression);
+                        return IRNode::call(
+                            IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
+                                "__classPrivateFieldGet",
+                            )),
+                            vec![
+                                object,
+                                IRNode::id(storage_var),
+                                IRNode::StringLiteral(kind.into()),
+                            ],
+                        );
+                    }
+                }
+                // Unknown private name — fall through to ASTRef
+                return IRNode::ASTRef(idx);
+            }
+
             if let Some(name) = get_identifier_text(self.arena, access.name_or_argument) {
                 // Optional chain: `R?.prop` short-circuits when `R` is nullish.
                 // The IR has no optional-access node, so lower the guard here the
@@ -528,6 +553,36 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(bin) = self.arena.get_binary_expr(node) {
+            // Private field write: `this.#x = value` → `__classPrivateFieldSet(this, _C_x, value, "f")`
+            if bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                if let Some(lhs_node) = self.arena.get(bin.left)
+                    && lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(lhs_access) = self.arena.get_access_expr(lhs_node)
+                    && let Some(name_node) = self.arena.get(lhs_access.name_or_argument)
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        let raw = &ident.escaped_text;
+                        let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
+                        if let Some((storage_var, kind)) = self.private_write_info(clean) {
+                            let receiver = self.convert_expression(lhs_access.expression);
+                            let value = self.convert_expression(bin.right);
+                            return IRNode::call(
+                                IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
+                                    "__classPrivateFieldSet",
+                                )),
+                                vec![
+                                    receiver,
+                                    IRNode::id(storage_var),
+                                    value,
+                                    IRNode::StringLiteral(kind.into()),
+                                ],
+                            );
+                        }
+                    }
+                }
+            }
+
             let left = self.convert_expression(bin.left);
             let right = self.convert_expression(bin.right);
             let op = self.get_binary_operator(bin.operator_token);
