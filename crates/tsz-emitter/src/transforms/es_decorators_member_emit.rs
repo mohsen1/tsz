@@ -144,25 +144,53 @@ impl<'a> TC39DecoratorEmitter<'a> {
                             format!(", {}", fi.initializer_text)
                         };
 
-                        let rhs = if let Some(prev_member_var_index) =
+                        let member = &decorated_members[fi.member_var_index];
+                        // Private WeakMap fields must not embed the flush in a comma
+                        // expression inside `.set(this, ...)`. Emit it as a separate
+                        // statement before the assignment instead.
+                        let is_private_weakmap = !self.use_static_blocks && member.is_private;
+                        let (flush_stmt, rhs) = if let Some(prev_member_var_index) =
                             previous_decorated_field_member_var_index
                         {
                             let prev_extra = member_vars[prev_member_var_index]
                                 .extra_initializers_var
                                 .as_deref()
                                 .unwrap_or("_extra");
-                            format!(
-                                "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
-                            )
+                            if is_private_weakmap {
+                                (
+                                    Some(format!(
+                                        "{inner_indent}{run_init}(this, {prev_extra});\n"
+                                    )),
+                                    format!("{run_init}(this, {init_var}{init_arg})"),
+                                )
+                            } else {
+                                (
+                                    None,
+                                    format!(
+                                        "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                                    ),
+                                )
+                            }
                         } else if has_instance_method {
-                            format!(
-                                "({run_init}(this, {instance_extra_initializers_var}), {run_init}(this, {init_var}{init_arg}))"
-                            )
+                            if is_private_weakmap {
+                                (
+                                    Some(format!(
+                                        "{inner_indent}{run_init}(this, {instance_extra_initializers_var});\n"
+                                    )),
+                                    format!("{run_init}(this, {init_var}{init_arg})"),
+                                )
+                            } else {
+                                (
+                                    None,
+                                    format!(
+                                        "({run_init}(this, {instance_extra_initializers_var}), {run_init}(this, {init_var}{init_arg}))"
+                                    ),
+                                )
+                            }
                         } else {
-                            format!("{run_init}(this, {init_var}{init_arg})")
+                            (None, format!("{run_init}(this, {init_var}{init_arg})"))
                         };
 
-                        let member = &decorated_members[fi.member_var_index];
                         let mut assignment = String::new();
                         if let Some(comment) = self.leading_member_comment(member.member_idx) {
                             assignment.push_str(inner_indent);
@@ -180,6 +208,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                             ));
                         } else if !self.use_static_blocks && member.is_private {
                             let storage_name = self.private_field_storage_name(class_name, member);
+                            if let Some(flush) = flush_stmt {
+                                assignment.push_str(&flush);
+                            }
                             assignment.push_str(&format!(
                                 "{inner_indent}{storage_name}.set(this, {rhs});\n"
                             ));
@@ -324,15 +355,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = self.auto_accessor_initializer_arg(info);
                     let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
+                    let is_private = decorated_members[info.member_var_index].is_private;
+                    // Private WeakMap auto-accessors must flush extra-initializers as
+                    // separate statements; public ones use the comma expression pattern.
                     let value = if let Some(prev_extra) = self
                         .previous_decorated_element_extra_initializers(
                             decorated_members,
                             member_vars,
                             info.member_var_index,
                         ) {
-                        format!(
-                            "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
-                        )
+                        if is_private {
+                            ctor_init_calls
+                                .push(format!("{inner_indent}{run_init}(this, {prev_extra});\n"));
+                            format!("{run_init}(this, {init_var}{init_arg})")
+                        } else {
+                            format!(
+                                "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                            )
+                        }
                     } else {
                         format!("{run_init}(this, {init_var}{init_arg})")
                     };

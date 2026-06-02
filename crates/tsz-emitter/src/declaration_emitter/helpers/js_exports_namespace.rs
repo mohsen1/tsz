@@ -569,7 +569,11 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) {
-        let Some(alias) = self.js_require_property_import_alias_for_value_expression(expr_idx)
+        // Use the unchecked variant so that namespace members that reference
+        // require()-imported types still record the alias even when the file
+        // also has native ESM exports (e.g. `export { ns }`).
+        let Some(alias) =
+            self.js_require_property_import_alias_for_value_expression_unchecked(expr_idx)
         else {
             return;
         };
