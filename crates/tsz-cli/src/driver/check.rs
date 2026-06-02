@@ -565,7 +565,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                             })
                         }
                     };
-                    (file.file_name.clone(), file_is_esm)
+                    (file.file_name.replace('\\', "/"), file_is_esm)
                 })
                 .collect()
         } else {
@@ -769,7 +769,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program
             .files
             .iter()
-            .map(|file| (file.file_name.clone(), file.is_external_module))
+            .map(|file| (file.file_name.replace('\\', "/"), file.is_external_module))
             .collect(),
     );
 
