@@ -207,7 +207,6 @@ impl<'a> CheckerContext<'a> {
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
             relation_overflow: Cell::new(crate::context::RelationOverflowFlags::default()),
-            in_jsx_props_check: Cell::new(false),
             skip_callable_type_param_suppression: Cell::new(false),
             eval_session: Rc::new(tsz_solver::evaluation::session::EvaluationSession::new()),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(

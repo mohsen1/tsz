@@ -256,7 +256,6 @@ impl<'a> CheckerContext<'a> {
         self.depth_exceeded.set(false);
         self.relation_overflow
             .set(crate::context::RelationOverflowFlags::default());
-        self.in_jsx_props_check.set(false);
         self.skip_callable_type_param_suppression.set(false);
         self.heritage_merge_depth.set(0);
         self.type_resolution_fuel

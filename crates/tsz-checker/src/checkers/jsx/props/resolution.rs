@@ -265,7 +265,6 @@ impl<'a> CheckerState<'a> {
         if self.ctx.deferred_jsx_import_source_error.is_some() {
             return;
         }
-        let previous_jsx_props_check = self.ctx.in_jsx_props_check.replace(true);
 
         // Normalize managed/evaluated JSX props before any checks so conditional,
         // mapped, and application-based surfaces (e.g.
@@ -291,7 +290,6 @@ impl<'a> CheckerState<'a> {
                 opts.tag_name_idx,
                 opts.children_ctx,
             );
-            self.ctx.in_jsx_props_check.set(previous_jsx_props_check);
             return;
         }
 
@@ -302,7 +300,6 @@ impl<'a> CheckerState<'a> {
         self.emit_deferred_jsx_spread_diagnostics(&opts, &ctx, &mut outcome);
         self.emit_jsx_children_synthesis_diagnostics(&opts, &ctx, &mut outcome);
         self.emit_jsx_attr_final_assignability_diagnostics(&opts, &ctx, &outcome);
-        self.ctx.in_jsx_props_check.set(previous_jsx_props_check);
     }
 
     /// Phase 2 of `check_jsx_attributes_against_props`: walk every JSX

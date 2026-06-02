@@ -121,13 +121,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.type_member_declared_type_annotation_text(type_sym_id, &member_name)?;
             Some(type_text)
         })
-        .and_then(|type_text| {
-            if candidate.replace(type_text.clone()).is_some() {
-                None
-            } else {
-                Some(type_text)
-            }
-        })
+        .filter(|type_text| !candidate.replace(type_text.clone()).is_some())
     }
 
     fn simple_type_reference_name_from_arena(

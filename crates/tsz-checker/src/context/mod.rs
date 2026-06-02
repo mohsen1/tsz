@@ -986,9 +986,6 @@ pub struct CheckerContext<'a> {
     /// checks that feed diagnostics.
     pub relation_overflow: Cell<RelationOverflowFlags>,
 
-    /// Whether JSX attribute-to-props comparison is currently active.
-    pub(crate) in_jsx_props_check: Cell<bool>,
-
     /// When true, `should_suppress_assignability_diagnostic` skips the callable-
     /// with-type-params suppression. Set by variable declaration checking to
     /// avoid hiding genuine TS2322 errors for callable types with outer-scope

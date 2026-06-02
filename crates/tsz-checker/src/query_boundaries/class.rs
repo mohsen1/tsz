@@ -893,12 +893,9 @@ pub(crate) fn combine_overloaded_method_callable(
                 type_predicate: shape.type_predicate,
                 is_method: shape.is_method,
             });
-        } else if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(tdb, fn_ty)
-        {
-            call_signatures.extend(shape.call_signatures.iter().cloned());
         } else {
-            return None;
+            let shape = crate::query_boundaries::common::callable_shape_for_type(tdb, fn_ty)?;
+            call_signatures.extend(shape.call_signatures.iter().cloned());
         }
     }
     if call_signatures.len() < 2 {
