@@ -3,7 +3,7 @@ use crate::test_utils::check_multi_file;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 
 /// Core repro: exported function whose parameter type is Parameters<typeof LocalFn>[0]
-/// where LocalFn is NOT exported. Cross-file callers should see the concrete type.
+/// where `LocalFn` is NOT exported. Cross-file callers should see the concrete type.
 #[test]
 fn probe_use_client_parameters_typeof_local_fn() {
     let diagnostics = check_multi_file(
@@ -83,7 +83,7 @@ Widget({ name: "hello", count: 42 });
     );
 }
 
-/// With exported LocalFn, there should be no issue (control case).
+/// With exported `LocalFn`, there should be no issue (control case).
 #[test]
 fn probe_parameters_typeof_exported_fn_works() {
     let diagnostics = check_multi_file(
