@@ -18,12 +18,12 @@ const workflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 const shardCloudbuild = fs.readFileSync(BENCH_SHARD_CLOUDBUILD, "utf8");
 
 const successGraceWindows = workflow.match(
-  /success_seen_at=""[\s\S]+?success_grace_seconds=600/g,
+  /success_seen_at=""[\s\S]+?success_grace_seconds=7200/g,
 ) ?? [];
 assert.equal(
   successGraceWindows.length,
   2,
-  "both Cloud Build prep artifact paths should use a bounded post-success artifact visibility grace window",
+  "both Cloud Build prep artifact paths should use the extended post-success artifact visibility grace window",
 );
 
 const postSuccessMessages = workflow.match(
@@ -51,6 +51,21 @@ assert.equal(
   unusableArtifactMessages.length,
   2,
   "both Cloud Build prep artifact paths should fail after the bounded post-success grace window when no usable prep artifacts appear",
+);
+
+const prepLogCaptureHelpers = workflow.match(
+  /capture_cloudbuild_log\(\) \{[\s\S]+?bench-prep-cloudbuild\.log 2>&1 \|\| true[\s\S]+?\}/g,
+) ?? [];
+assert.equal(
+  prepLogCaptureHelpers.length,
+  2,
+  "both Cloud Build prep artifact paths should capture the prep build log before terminal handoff failures",
+);
+
+assert.match(
+  workflow,
+  /- name: Upload benchmark prep diagnostics[\s\S]+if: failure\(\)[\s\S]+name: bench-prep-diagnostics[\s\S]+bench-prep-cloudbuild\.log[\s\S]+cloudbuild-artifacts\.json[\s\S]+latest-bench-prep\.env/,
+  "bench-prep-artifact should upload Cloud Build handoff diagnostics when prep artifact polling fails",
 );
 
 assert.match(
