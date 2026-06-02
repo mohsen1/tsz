@@ -8,9 +8,9 @@ use super::{
     ResolutionFailure, ResolvedModule,
 };
 use crate::config::ModuleResolutionKind;
-use crate::module_resolver_helpers::KNOWN_EXTENSIONS;
+use crate::module_resolver_helpers::{KNOWN_EXTENSIONS, normalize_path_segments};
 use crate::span::Span;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 impl ModuleResolver {
     const fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
@@ -279,8 +279,9 @@ impl ModuleResolver {
         }
 
         let containing_dir = normalize_path_segments(containing_dir);
-        let direct_candidate = normalize_path_segments(&containing_dir.join(specifier));
-        let mut candidates = Vec::new();
+        let joined = containing_dir.join(specifier);
+        let direct_candidate = normalize_path_segments(&joined);
+        let mut candidates: Vec<PathBuf> = Vec::new();
 
         for origin_root in &self.root_dirs {
             let origin_root = normalize_path_segments(origin_root);
@@ -292,12 +293,14 @@ impl ModuleResolver {
             };
 
             for target_root in &self.root_dirs {
-                let candidate = normalize_path_segments(&target_root.join(virtual_path));
-                if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate)
+                let joined = target_root.join(virtual_path);
+                let candidate = normalize_path_segments(&joined);
+                if *candidate == *direct_candidate
+                    || candidates.iter().any(|seen| seen.as_path() == &*candidate)
                 {
                     continue;
                 }
-                candidates.push(candidate);
+                candidates.push(candidate.into_owned());
             }
         }
 
@@ -331,20 +334,4 @@ impl ModuleResolver {
             span: specifier_span,
         })
     }
-}
-
-fn normalize_path_segments(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }

@@ -382,3 +382,146 @@ fn test_path_mapping_extensionless_alias_follows_tsc_group_order() {
         );
     }
 }
+
+// ── path segment normalization (issue #10896) ────────────────────────────────
+//
+// Tests vary alias spelling, target shape, and entry point to keep the fix
+// structural rather than name-keyed. See `normalize_path_segments` docs.
+
+#[test]
+fn test_path_mapping_target_canonicalised_into_resolved_path() {
+    // Rule covers `./X` (leading curdir), `./X/../Y` (embedded parent), and
+    // non-wildcard `./X/../Y/Z` (no `*` in target). Each must produce a
+    // resolved path with no surviving CurDir/ParentDir components.
+    let rows: &[(&str, &str, &str, &[&str], &str)] = &[
+        (
+            "@app/*",
+            "@app/",
+            "@app/widget",
+            &["./src/*"],
+            "src/widget.ts",
+        ),
+        (
+            "@util/*",
+            "@util/",
+            "@util/helpers",
+            &["./lib/../shared/*"],
+            "shared/helpers.ts",
+        ),
+        (
+            "pkg-alias",
+            "pkg-alias",
+            "pkg-alias",
+            &["./sub/../pkg/index"],
+            "pkg/index.ts",
+        ),
+    ];
+    for (pattern, prefix, specifier, targets, file) in rows {
+        let fx = TempFixture::new();
+        fx.write(file, "export const v = 1;");
+        fx.write("index.ts", "");
+
+        let options = make_options(fx.path(), vec![pm(pattern, prefix, targets)]);
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve(specifier, &fx.join("index.ts"), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{specifier} should resolve via {targets:?}"));
+
+        assert_eq!(resolved.resolved_path, fx.join(file));
+        assert!(
+            !resolved.resolved_path.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            }),
+            "{specifier}: no `.`/`..` in {:?}",
+            resolved.resolved_path,
+        );
+    }
+}
+
+#[test]
+fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
+    // Two resolutions of one physical file — via different alias branches or
+    // via an alias and a relative import — must produce identical
+    // `resolved_path`s. Splits in this invariant fork declaration identity
+    // in the project file graph.
+    struct Row {
+        file: &'static str,
+        mappings: Vec<PathMapping>,
+        a: (&'static str, &'static str), // (specifier, importer_rel)
+        b: (&'static str, &'static str),
+    }
+    let rows = [
+        // Two distinct alias keys reach the same `.d.ts`, one via `./` and
+        // one via an embedded `..` detour.
+        Row {
+            file: "shared/api.d.ts",
+            mappings: vec![
+                pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
+                pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
+            ],
+            a: ("@alpha/api", "index.ts"),
+            b: ("@beta/api", "index.ts"),
+        },
+        // Alias resolution and relative-import resolution converge on the
+        // same file; the relative import climbs through a parent directory.
+        Row {
+            file: "src/api.ts",
+            mappings: vec![pm("@app/*", "@app/", &["./src/*"])],
+            a: ("@app/api", "index.ts"),
+            b: ("../api", "src/sub/index.ts"),
+        },
+    ];
+    for row in rows {
+        let fx = TempFixture::new();
+        fx.write(row.file, "export const v = 1;");
+        for (_, importer) in [row.a, row.b] {
+            fx.write(importer, "");
+        }
+
+        let options = make_options(fx.path(), row.mappings);
+        let mut resolver = ModuleResolver::new(&options);
+        let via_a = resolver
+            .resolve(row.a.0, &fx.join(row.a.1), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{} must resolve", row.a.0));
+        let via_b = resolver
+            .resolve(row.b.0, &fx.join(row.b.1), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{} must resolve", row.b.0));
+
+        assert_eq!(
+            via_a.resolved_path, via_b.resolved_path,
+            "{} and {} must produce equal resolved_path",
+            row.a.0, row.b.0,
+        );
+        assert_eq!(via_a.resolved_path, fx.join(row.file));
+    }
+}
+
+#[test]
+fn test_path_mapping_unbalanced_parent_dirs_preserve_leading_dotdot() {
+    // When there is nothing to pop, the leading `..` must be preserved. The
+    // earlier `relative_resolution.rs` copy silently dropped these, which
+    // would have mis-resolved alias targets that climb above the alias base.
+    // Normalization is filesystem-independent, so the intermediate
+    // `lib/inner/` need not exist on disk.
+    let fx = TempFixture::new();
+    fx.write("widget.ts", "export const w = 1;");
+    fx.write("alias-root.ts", "import 'p';");
+    let options = make_options(fx.path(), vec![pm("p", "p", &["./lib/inner/../../widget"])]);
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("p", &fx.join("alias-root.ts"), Span::new(0, 1))
+        .expect("p must resolve via canonicalised `..` chain");
+
+    assert_eq!(resolved.resolved_path, fx.join("widget.ts"));
+    assert!(
+        !resolved
+            .resolved_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir)),
+        "no surviving `..` in {:?}",
+        resolved.resolved_path,
+    );
+}
