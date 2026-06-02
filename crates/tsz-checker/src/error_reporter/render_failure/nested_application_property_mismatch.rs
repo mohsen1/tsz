@@ -506,7 +506,19 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+        multi_element: bool,
     ) -> Diagnostic {
+        // A single-element tuple has no position to disambiguate, so tsc omits
+        // the TS2626 positional line and relates the element types directly.
+        if !multi_element {
+            return self.render_single_element_tuple_mismatch(
+                ctx,
+                source_element,
+                target_element,
+                nested_reason,
+            );
+        }
+
         let source = ctx.source;
         let target = ctx.target;
         let idx = ctx.idx;
@@ -569,6 +581,192 @@ impl<'a> CheckerState<'a> {
         }
 
         diag
+    }
+
+    /// Render a single-element tuple element mismatch.
+    ///
+    /// With only one element there is no position to disambiguate, so tsc skips
+    /// the TS2626 positional line and relates the element types directly. The
+    /// element relation is rendered exactly like a top-level assignment failure
+    /// — `Type 'se' is not assignable to type 'te'.` followed by the element's
+    /// own elaboration.
+    ///
+    /// How the element relation is produced depends on whether the element's
+    /// failure reason *self-heads* with that `Type 'se' …'te'` line:
+    /// - **Self-heading** reasons (scalar leaves, unions, intersections,
+    ///   same-generic applications, …) already emit the `Type 'se' …'te'` line
+    ///   as their own top line, so the whole element relation is delegated to
+    ///   the nested reason's renderer — emitting our own header would duplicate
+    ///   it.
+    /// - **Structural-drill** reasons ([`Self::tuple_element_nested_needs_header`]
+    ///   — tuple/object/missing-property/index-signature) lead with a
+    ///   specialized line (`Types of property 'a' …`, the deeper element pair,
+    ///   …), so we emit the element-type header ourselves and then recurse.
+    fn render_single_element_tuple_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let depth = ctx.depth;
+        let element_message = {
+            let source_str = self.format_type_diagnostic(source_element);
+            let target_str = self.format_type_diagnostic(target_element);
+            format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            )
+        };
+        let needs_header = nested_reason.is_some_and(Self::tuple_element_nested_needs_header);
+
+        // Deeper levels (`depth > 0`) whose element self-heads: the nested
+        // reason *is* the element relation, so delegate entirely rather than
+        // wrapping it in a duplicate `Type 'se' …'te'` line.
+        if depth > 0
+            && !needs_header
+            && let Some(nested) = nested_reason
+        {
+            return self.render_failure_reason(
+                nested,
+                source_element,
+                target_element,
+                ctx.idx,
+                depth,
+            );
+        }
+
+        let mut diag = if depth == 0 {
+            let (source_str, target_str) = self
+                .format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            Diagnostic::error(
+                ctx.file_name.clone(),
+                ctx.start,
+                ctx.length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        } else {
+            Diagnostic::error(
+                ctx.file_name.clone(),
+                ctx.start,
+                ctx.length,
+                element_message.clone(),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        };
+
+        // Depth of the element's own elaboration (the drill beneath the
+        // element-type header). At `depth == 0` the header sits at related-depth
+        // 0, so the drill is at 1; deeper, this node's header *is* its message
+        // (placed by the parent at `depth`), so the drill is at `depth + 1`.
+        let drill_depth = if depth == 0 { 1 } else { depth + 1 };
+        if depth >= 5 {
+            return diag;
+        }
+
+        match nested_reason {
+            // Structural drill: emit the element-type header, then recurse the
+            // element's own elaboration one level deeper.
+            Some(nested) if needs_header => {
+                if depth == 0 {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: diag.file.clone(),
+                        start: ctx.start,
+                        length: ctx.length,
+                        message_text: element_message,
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        depth: 0,
+                    });
+                }
+                let nested_diag = self.render_failure_reason(
+                    nested,
+                    source_element,
+                    target_element,
+                    ctx.idx,
+                    drill_depth,
+                );
+                Self::push_nested_chain(&mut diag, nested_diag, drill_depth);
+            }
+            // Self-heading at `depth == 0`: the nested reason emits the
+            // `Type 'se' …'te'` element line itself. Render it at depth 1 (so
+            // the element types are formatted directly rather than recovered
+            // from the assignment anchor) and rebase its chain one level up to
+            // sit directly beneath the assignment line.
+            Some(nested) => {
+                let element_diag =
+                    self.render_failure_reason(nested, source_element, target_element, ctx.idx, 1);
+                Self::push_rebased_subdiagnostic(&mut diag, element_diag, 1, 0);
+            }
+            // No further structure: the element-type relation is terminal.
+            None => {
+                if depth == 0 {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: diag.file.clone(),
+                        start: ctx.start,
+                        length: ctx.length,
+                        message_text: element_message,
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        depth: 0,
+                    });
+                }
+            }
+        }
+        diag
+    }
+
+    /// Graft a sub-diagnostic (rendered at `sub_render_depth`) beneath `diag`,
+    /// placing its own message line at `base_depth` and rebasing every line of
+    /// its related chain by the same offset (`r.depth + base_depth -
+    /// sub_render_depth`). Used when a tuple element's failure is delegated to a
+    /// fresh sub-render that must be re-seated at a different chain level.
+    fn push_rebased_subdiagnostic(
+        diag: &mut Diagnostic,
+        sub: Diagnostic,
+        sub_render_depth: u32,
+        base_depth: u32,
+    ) {
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: sub.file,
+            start: sub.start,
+            length: sub.length,
+            message_text: sub.message_text,
+            category: DiagnosticCategory::Message,
+            code: sub.code,
+            depth: base_depth.min(u8::MAX as u32) as u8,
+        });
+        let delta = i64::from(base_depth) - i64::from(sub_render_depth);
+        for related in sub.related_information {
+            let rebased = (i64::from(related.depth) + delta).clamp(0, i64::from(u8::MAX)) as u8;
+            diag.related_information.push(DiagnosticRelatedInformation {
+                depth: rebased,
+                ..related
+            });
+        }
+    }
+
+    /// Whether a tuple element's nested failure reason leads with a specialized
+    /// elaboration line rather than self-heading with `Type 'se' …'te'`. Such
+    /// reasons need an explicit element-type header emitted before them;
+    /// everything else already emits that header itself.
+    const fn tuple_element_nested_needs_header(reason: &tsz_solver::SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+                | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::ArrayElementMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::ParameterTypeMismatch { .. }
+        )
     }
 
     /// Render a same-generic type-argument mismatch (`C<A..>` vs `C<B..>`).
@@ -794,6 +992,36 @@ impl<'a> CheckerState<'a> {
         target_element: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) {
+        // When a positional (multi-element) tuple's failing element is itself a
+        // single-element tuple, tsc relates the element types directly with the
+        // element-type header `Type 'se' is not assignable to type 'te'.` before
+        // drilling — exactly like a top-level single-element tuple relation.
+        // Route through the single-element renderer so the header is preserved.
+        if let Some(
+            nested @ tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch {
+                multi_element: false,
+                ..
+            },
+        ) = nested_reason
+        {
+            let element_ctx = RenderContext {
+                source: source_element,
+                target: target_element,
+                idx,
+                depth: depth + 1,
+                start: diag.start,
+                length: diag.length,
+                file_name: diag.file.clone(),
+            };
+            let element_diag = self.render_single_element_tuple_mismatch(
+                &element_ctx,
+                source_element,
+                target_element,
+                Some(nested),
+            );
+            Self::push_nested_chain(diag, element_diag, depth + 1);
+            return;
+        }
         if let Some(nested) = nested_reason {
             let (nested_source, nested_target) =
                 Self::nested_failure_display_types(nested, source_element, target_element);

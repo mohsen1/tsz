@@ -151,16 +151,27 @@ pub enum SubtypeFailureReason {
     },
     /// Tuple element type mismatch.
     ///
-    /// tsc elaborates a failing tuple element with the outer
-    /// `Type 'S' is not assignable to type 'T'.` line, then TS2626
+    /// When the related tuple has **more than one** element (`multi_element`),
+    /// tsc disambiguates the failing slot with TS2626
     /// `Type at position <index> in source is not compatible with type at
-    /// position <index> in target.`, then the inner element failure carried in
-    /// `nested_reason`.
+    /// position <index> in target.`, nested beneath the outer
+    /// `Type 'S' is not assignable to type 'T'.` line, then the inner element
+    /// failure carried in `nested_reason`.
+    ///
+    /// When the tuple has a **single** element there is no position to
+    /// disambiguate, so tsc omits the positional line and relates the element
+    /// types directly with the standard `Type 'se' is not assignable to type
+    /// 'te'.` message, recursing through `nested_reason`. `multi_element`
+    /// records this structural distinction (`source.len() > 1`) so the renderer
+    /// can reproduce the exact chain shape.
     TupleElementTypeMismatch {
         index: usize,
         source_element: TypeId,
         target_element: TypeId,
         nested_reason: Option<Box<Self>>,
+        /// `true` when the related tuple has more than one element and the
+        /// positional disambiguation line is warranted.
+        multi_element: bool,
     },
     /// Array element type mismatch.
     ArrayElementMismatch {
@@ -848,19 +859,21 @@ impl SubtypeFailureReason {
                 source_element,
                 target_element,
                 nested_reason,
+                multi_element,
             } => {
-                // tsc elaborates a failing tuple element with TS2626
-                // "Type at position N in source is not compatible with type at
-                // position N in target." (both positions are the element index
-                // for fixed tuples), followed by the inner element failure.
+                // Multi-element tuples disambiguate the failing slot with the
+                // TS2626 positional line; single-element tuples omit it and
+                // relate the element types directly (see the variant docs).
                 let mut diag = PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![source.into(), target.into()],
-                )
-                .with_related(PendingDiagnostic::error(
-                    codes::TUPLE_ELEMENT_POSITION_MISMATCH,
-                    vec![(*index).into(), (*index).into()],
-                ));
+                );
+                if *multi_element {
+                    diag = diag.with_related(PendingDiagnostic::error(
+                        codes::TUPLE_ELEMENT_POSITION_MISMATCH,
+                        vec![(*index).into(), (*index).into()],
+                    ));
+                }
                 if let Some(nested) = nested_reason {
                     diag =
                         diag.with_related(nested.to_diagnostic(*source_element, *target_element));
