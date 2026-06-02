@@ -1392,6 +1392,57 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
+    /// Resolve a simple (non-qualified) type-reference identifier to its `DefId`
+    /// **only** when it lexically resolves to a function- or block-local
+    /// declaration that shadows a same-named file-level type.
+    ///
+    /// Same-arena lowering resolves identifiers name-first (see
+    /// `prefer_name_def_id_resolution`), which honors imported/lib types but
+    /// consults only file/global scope. That ordering binds a `keyof T` /
+    /// `readonly T[]` operand — or a mapped-type `K` / `T[K]` reference — to an
+    /// outer same-named declaration instead of the local one. This resolver runs
+    /// ahead of the bare-name lookup and returns `Some` strictly for genuine
+    /// nested-local shadowing: the lexically resolved symbol must differ from both
+    /// the file-level binding and the file/global name lookup for the same name,
+    /// and must not be a lib symbol. Every other reference (the common case,
+    /// including lib globals and cross-file imports) yields `None`, leaving the
+    /// existing name-first resolution untouched.
+    pub(crate) fn resolve_local_shadow_def_id(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<tsz_solver::def::DefId> {
+        let name = self.entity_name_text(node_idx)?;
+        if name.contains('.') {
+            return None;
+        }
+        // Cheap, cached lexical resolution gates the heavier lookups below. A
+        // genuine nested-local shadow resolves to a symbol other than this name's
+        // file-level binding; the overwhelmingly common top-level reference
+        // resolves to the file-level symbol itself and exits here.
+        let lexical_sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, node_idx)?;
+        if self.ctx.binder.file_locals.get(&name) == Some(lexical_sym_id) {
+            return None;
+        }
+        // Confirm with the type-position resolver (it applies type/value filtering
+        // and alias following) and leave lib globals and file/global name lookups
+        // to the existing name-first resolution.
+        let scoped_sym_id = tsz_binder::SymbolId(self.resolve_type_symbol(node_idx)?);
+        if self.ctx.binder.file_locals.get(&name) == Some(scoped_sym_id)
+            || self.resolve_entity_name_text_symbol(&name) == Some(scoped_sym_id)
+            || self.ctx.symbol_is_from_lib(scoped_sym_id)
+        {
+            return None;
+        }
+        let def_id = self
+            .ctx
+            .get_or_create_def_id_for_symbol_name(scoped_sym_id, name.as_str());
+        self.ensure_type_alias_resolved(scoped_sym_id, def_id);
+        Some(def_id)
+    }
+
     /// Resolve a DefId with support for qualified names (e.g., `AnimalType.cat`).
     ///
     /// Used by the `compute_type` fallback path where template literal types may

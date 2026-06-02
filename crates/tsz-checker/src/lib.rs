@@ -255,6 +255,9 @@ mod lib_abstract_member_ts2515_tests;
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/local_type_alias_shadowing_tests.rs"]
+mod local_type_alias_shadowing_tests;
+#[cfg(test)]
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
