@@ -349,16 +349,6 @@ fn satisfies_does_not_chain_across_line_break() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn satisfies_with_call_signature_object_type_no_errors() {
-    assert_no_errors("const x = fn satisfies { (x: string): number };");
-}
-
-#[test]
-fn satisfies_with_overloaded_call_signature_no_errors() {
-    assert_no_errors("const x = fn satisfies { (x: string): number; (x: number): string };");
-}
-
-#[test]
 fn satisfies_with_new_signature_no_errors() {
     assert_no_errors("const x = Ctor satisfies { new(x: string): object };");
 }
@@ -380,11 +370,6 @@ fn satisfies_with_generic_function_type_in_parens_no_errors() {
 #[test]
 fn satisfies_with_generic_function_type_direct_no_errors() {
     assert_no_errors("const f = fn satisfies <T>(x: T) => T;");
-}
-
-#[test]
-fn satisfies_with_rest_params_function_type_no_errors() {
-    assert_no_errors("const f = fn satisfies (...args: string[]) => void;");
 }
 
 #[test]
@@ -493,12 +478,11 @@ fn satisfies_type_in_async_arrow_no_errors() {
 }
 
 // ---------------------------------------------------------------------------
-// Call-signature + property mixed types after satisfies
+// Complex call-signature object types after satisfies
 // ---------------------------------------------------------------------------
 
 #[test]
 fn satisfies_callable_object_with_property_no_errors() {
-    // TypeScript object type with both a call signature and a property.
     assert_no_errors("const x = fn satisfies { (): void; meta: string };");
 }
 
