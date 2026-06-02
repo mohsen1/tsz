@@ -450,6 +450,16 @@ impl<'a> CheckerState<'a> {
                         // reports TS2556 — and only TS2556. A fully fixed-length
                         // tuple (including fully-fixed nested tuple rests) keeps
                         // the normal positional expansion below.
+                        //
+                        // Exception: when the callee is an inline function/arrow
+                        // expression with un-annotated parameters, tsc
+                        // contextually types those parameters from the spread
+                        // tuple's elements (the `restTuplesFromContextualTypes`
+                        // behaviour), so the call is valid by construction and no
+                        // TS2556 is reported. That suppression is specific to
+                        // tuple spreads — a bare array/iterable spread carries no
+                        // per-position element types to infer from, so its
+                        // TS2556 path (below) still fires for such callees.
                         if let Some(variable_offset) =
                             tuple_slice_variable_rest_offset(self.ctx.types, &elems)
                         {
@@ -468,7 +478,12 @@ impl<'a> CheckerState<'a> {
                                 // large-index probe still resolves a param.
                                 expected_for_index(usize::MAX / 2, expanded_count).is_some()
                             };
-                            if !at_rest_position {
+                            if !at_rest_position
+                                && !self.spread_callee_infers_params_from_arguments(
+                                    arg_idx,
+                                    variable_index,
+                                )
+                            {
                                 if !emitted_ts2556 {
                                     self.error_spread_must_be_tuple_or_rest_at(arg_idx);
                                     emitted_ts2556 = true;

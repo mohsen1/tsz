@@ -253,3 +253,84 @@ fn open_ended_tuple_into_optional_trailing_no_ts2556() {
         diagnostic_codes(&diags)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Contextual `restTuplesFromContextualTypes` suppression: an inline function /
+// arrow expression whose parameter at the variable-rest position is
+// un-annotated gets that parameter contextually typed from the tuple's rest
+// element, so tsc (and tsz) report no TS2556. The suppression hinges on the
+// parameter AT the rest position being un-annotated, and is specific to tuple
+// spreads (a bare array spread still errors).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_ended_tuple_into_iife_unannotated_param_no_ts2556() {
+    // `[number, boolean, ...string[]]` rest lands at index 2; param `c` is
+    // un-annotated, so it is contextually typed and absorbs the rest.
+    let src = "const t: [number, boolean, ...string[]] = [1, true];\n\
+               (function (a, b, c) {})(...t);\n";
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "inline function with un-annotated rest-position param must not emit TS2556: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn open_ended_tuple_into_iife_arrow_unannotated_param_no_ts2556() {
+    let src = "const t: [number, ...string[]] = [1];\n\
+               ((a, b) => {})(...t);\n";
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        0,
+        "inline arrow with un-annotated rest-position param must not emit TS2556: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn open_ended_tuple_into_iife_annotated_rest_position_emits_ts2556() {
+    // Param `c` at the rest position is annotated -> fixed type -> TS2556 fires,
+    // exactly as for a declared function.
+    let src = "const t: [number, boolean, ...string[]] = [1, true];\n\
+               (function (a, b, c: string) {})(...t);\n";
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        1,
+        "inline function with annotated rest-position param must emit TS2556: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn open_ended_tuple_into_iife_too_few_params_emits_ts2556() {
+    // Only two params; the rest at index 2 has no parameter to land on -> TS2556.
+    let src = "const t: [number, boolean, ...string[]] = [1, true];\n\
+               (function (a, b) {})(...t);\n";
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        1,
+        "inline function with no param at the rest position must emit TS2556: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
+
+#[test]
+fn open_ended_tuple_into_iife_all_annotated_emits_ts2556() {
+    // Every parameter annotated -> fixed signature -> behaves like a declared
+    // function -> TS2556.
+    let src = "const t: [number, boolean, ...string[]] = [1, true];\n\
+               (function (a: number, b: boolean, c: boolean) {})(...t);\n";
+    let diags = check_source_diagnostics(src);
+    assert_eq!(
+        diagnostic_count(&diags, 2556),
+        1,
+        "inline function with all-annotated params must emit TS2556: {:?}",
+        diagnostic_codes(&diags)
+    );
+}
