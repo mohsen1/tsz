@@ -23,15 +23,18 @@
 
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
+use tsz_parser::parser::syntax_kind_ext::{self, PROPERTY_SIGNATURE};
 use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::lib_decls::{collect_lib_decls_with_arenas_in_contexts, resolve_lib_fallback_arena};
+use super::lib_name_text::entity_name_text_in_arena;
 use super::lib_resolution::{lib_def_id_from_node, resolve_lib_node_in_arenas};
 use super::lib_resolution_selected::selected_lib_symbol_for_name;
 
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 
 impl CheckerState<'_> {
     /// Resolve a single **own plain property** `prop_name` of the simple lib
@@ -53,6 +56,19 @@ impl CheckerState<'_> {
         name: &str,
         prop_name: &str,
     ) -> Option<TypeId> {
+        let mut visited = FxHashSet::default();
+        self.resolve_simple_lib_interface_property(name, prop_name, &mut visited)
+    }
+
+    fn resolve_simple_lib_interface_property(
+        &mut self,
+        name: &str,
+        prop_name: &str,
+        visited: &mut FxHashSet<String>,
+    ) -> Option<TypeId> {
+        if !visited.insert(name.to_string()) {
+            return None;
+        }
         if self.ctx.skip_lib_type_resolution {
             return None;
         }
@@ -128,7 +144,67 @@ impl CheckerState<'_> {
             }
         }
 
-        let (member_idx, member_arena) = member?;
+        let (member_idx, member_arena) = if let Some(member) = member {
+            member
+        } else {
+            let mut heritage_bases = Vec::new();
+            for &(decl_idx, arena) in &decls_with_arenas {
+                let Some(node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = arena.get_interface(node) else {
+                    continue;
+                };
+                let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+                    continue;
+                };
+                for &clause_idx in &heritage_clauses.nodes {
+                    let Some(clause_node) = arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                        continue;
+                    };
+                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    for &type_idx in &heritage.types.nodes {
+                        let Some(type_node) = arena.get(type_idx) else {
+                            continue;
+                        };
+                        let (expr_idx, type_arguments) =
+                            if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                                (
+                                    expr_type_args.expression,
+                                    expr_type_args.type_arguments.as_ref(),
+                                )
+                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                if let Some(type_ref) = arena.get_type_ref(type_node) {
+                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
+                                } else {
+                                    (type_idx, None)
+                                }
+                            } else {
+                                (type_idx, None)
+                            };
+                        if type_arguments.is_some_and(|args| !args.nodes.is_empty()) {
+                            continue;
+                        }
+                        if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx) {
+                            heritage_bases.push(base_name.to_string());
+                        }
+                    }
+                }
+            }
+            for base_name in heritage_bases {
+                if let Some(member_type) =
+                    self.resolve_simple_lib_interface_property(&base_name, prop_name, visited)
+                {
+                    return Some(member_type);
+                }
+            }
+            return None;
+        };
         let member_node = member_arena.get(member_idx)?;
         let sig = member_arena.get_signature(member_node)?;
         if sig.type_annotation == NodeIndex::NONE {

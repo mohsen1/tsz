@@ -1,8 +1,10 @@
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::CrossArenaSymbolMissSource;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::cross_file_direct::{
@@ -53,6 +55,50 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
+    fn value_merged_dom_interface_has_only_lazy_safe_methods(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.declarations.iter().all(|&decl_idx| {
+            let arena = self
+                .ctx
+                .binder
+                .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+            let Some(interface) = arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_interface(node))
+            else {
+                return true;
+            };
+
+            interface.members.nodes.iter().all(|&member_idx| {
+                let Some(member) = arena.get(member_idx) else {
+                    return false;
+                };
+                match member.kind {
+                    kind if kind == syntax_kind_ext::CALL_SIGNATURE
+                        || kind == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                    {
+                        false
+                    }
+                    kind if kind == syntax_kind_ext::METHOD_SIGNATURE => {
+                        let Some(signature) = arena.get_signature(member) else {
+                            return false;
+                        };
+                        if signature.type_annotation == NodeIndex::NONE {
+                            return false;
+                        }
+                        arena
+                            .get(signature.type_annotation)
+                            .is_some_and(|node| node.kind == SyntaxKind::VoidKeyword as u16)
+                    }
+                    _ => true,
+                }
+            })
+        })
+    }
+
     fn symbol_has_builtin_lib_declaration_provenance(
         &self,
         sym_id: SymbolId,
@@ -162,28 +208,12 @@ impl<'a> CheckerState<'a> {
         if self.lib_name_locally_augmented(&name) {
             return None;
         }
-        // DOM value/interface pairs with declared methods can depend on
-        // inherited interface members and contextual callback parameter types.
-        // The direct type-position Lazy path below is safe only for body shapes
-        // that do not need the mature child/interface heritage path.
-        if symbol.declarations.iter().any(|&decl_idx| {
-            let arena = self
-                .ctx
-                .binder
-                .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
-            arena
-                .get(decl_idx)
-                .and_then(|node| arena.get_interface(node))
-                .is_some_and(|interface| {
-                    interface.members.nodes.iter().any(|&member_idx| {
-                        arena.get(member_idx).is_some_and(|member| {
-                            member.kind == syntax_kind_ext::CALL_SIGNATURE
-                                || member.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE
-                                || member.kind == syntax_kind_ext::METHOD_SIGNATURE
-                        })
-                    })
-                })
-        }) {
+        // DOM value/interface pairs used in type position can stay as lazy lib
+        // identities when their own method surface cannot contribute a
+        // non-void result shape. Method-heavy interfaces such as `Document`
+        // still need the child/interface path so overload return types and
+        // contextual callback parameters are fully materialized on demand.
+        if !self.value_merged_dom_interface_has_only_lazy_safe_methods(sym_id, &symbol) {
             return None;
         }
 
@@ -196,10 +226,8 @@ impl<'a> CheckerState<'a> {
         let def_id = self
             .resolve_actual_lib_name_to_def_id_for_lowering(&name)
             .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
-        if self.ctx.definition_store.get_body(def_id).is_none() {
-            self.ctx
-                .register_def_auto_params_in_envs(def_id, direct_type, params.clone());
-        }
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, direct_type, params.clone());
         let lazy_type = self.ctx.types.lazy(def_id);
         self.ctx.symbol_types.insert(sym_id, lazy_type);
         self.ctx
