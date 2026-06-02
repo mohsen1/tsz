@@ -207,6 +207,50 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Shared rest-element grammar check for a tuple type's `...X` element,
+    /// covering both bare `RestType` and dot-dot-dot `NamedTupleMember` forms.
+    ///
+    /// Mirrors the variadic arm of `tsc`'s `checkTupleType`: if the resolved
+    /// element type is not array-like, emit TS2574; otherwise, when it is a
+    /// variable-length array/tuple, track it for the TS1265 "rest after rest"
+    /// check. `type_node` is the inner (unwrapped) element type node, used only
+    /// to recognise the `...T[]` / `...Array<T>` surface forms that are always
+    /// variable-length. Once any ordering diagnostic has fired for the tuple
+    /// (`grammar_broke`), further ordering diagnostics are suppressed to match
+    /// `tsc`'s single-`break` loop.
+    pub(super) fn check_tuple_rest_element_grammar(
+        &mut self,
+        elem_type: TypeId,
+        type_node: NodeIndex,
+        pos: u32,
+        end: u32,
+        seen_rest: &mut bool,
+        grammar_broke: &mut bool,
+    ) {
+        if !self.rest_element_type_is_array_like(elem_type) {
+            if !*grammar_broke {
+                self.emit_rest_element_type_must_be_array(pos, end);
+                *grammar_broke = true;
+            }
+            return;
+        }
+
+        let is_variadic = self.is_variadic_array_or_tuple(elem_type)
+            || Self::ast_kind_is_obviously_array_or_tuple(self.ctx.arena, type_node);
+        if is_variadic {
+            if *seen_rest && !*grammar_broke {
+                self.ctx.error(
+                    pos,
+                    end.saturating_sub(pos),
+                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
+                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
+                );
+                *grammar_broke = true;
+            }
+            *seen_rest = true;
+        }
+    }
+
     pub(super) fn emit_rest_element_type_must_be_array(&mut self, pos: u32, end: u32) {
         self.ctx.error(
             pos,
@@ -582,72 +626,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         false
     }
 
-    /// Conservative AST-only check for "this rest-tuple element type is
-    /// obviously not an array type" (TS2574).
-    ///
-    /// Returns true only when the AST shape is unambiguously a non-array
-    /// primitive: `string`/`number`/`boolean`/`bigint`/`symbol`/`object`/
-    /// `null`/`undefined`/`void`/`never`/`unknown` keyword (parsed either
-    /// as a bare keyword node or as a `TYPE_REFERENCE` to one of those names),
-    /// or a literal type. Type parameters, conditional types, mapped types,
-    /// type applications, index access, infer, type aliases, and
-    /// unions/intersections all bypass this check because they may resolve
-    /// to array/tuple at solver time and we don't want to false-flag
-    /// variadic-tuple usage.
-    pub(super) fn ast_kind_is_obviously_non_array(
-        arena: &tsz_parser::parser::NodeArena,
-        idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = arena.get(idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == SyntaxKind::StringKeyword as u16 => true,
-            k if k == SyntaxKind::NumberKeyword as u16 => true,
-            k if k == SyntaxKind::BooleanKeyword as u16 => true,
-            k if k == SyntaxKind::BigIntKeyword as u16 => true,
-            k if k == SyntaxKind::SymbolKeyword as u16 => true,
-            k if k == SyntaxKind::ObjectKeyword as u16 => true,
-            k if k == SyntaxKind::NullKeyword as u16 => true,
-            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
-            k if k == SyntaxKind::VoidKeyword as u16 => true,
-            k if k == SyntaxKind::NeverKeyword as u16 => true,
-            k if k == SyntaxKind::UnknownKeyword as u16 => true,
-            k if k == syntax_kind_ext::LITERAL_TYPE => true,
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                // Detect bare-keyword forms parsed as TYPE_REFERENCE (the
-                // common path in our parser): `string`, `number`, etc.
-                if let Some(type_ref) = arena.get_type_ref(node)
-                    && let Some(name_node) = arena.get(type_ref.type_name)
-                    && let Some(ident) = arena.get_identifier(name_node)
-                {
-                    let has_type_args = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .is_some_and(|a| !a.nodes.is_empty());
-                    if !has_type_args {
-                        return matches!(
-                            ident.escaped_text.as_str(),
-                            "string"
-                                | "number"
-                                | "boolean"
-                                | "bigint"
-                                | "symbol"
-                                | "object"
-                                | "null"
-                                | "undefined"
-                                | "void"
-                                | "never"
-                                | "unknown"
-                        );
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
     /// Returns `true` for variadic (variable-length) array/tuple AST nodes: `T[]`,
     /// `Array<T>`, `ReadonlyArray<T>`, or a tuple that itself contains a rest element.
     /// Fixed-length tuple spreads (`...[1, 2]`) return `false`; they inline as individual
@@ -699,12 +677,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
-    pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
-        crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
-            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
-    }
-
     /// Returns `true` for arrays and variable-length tuples (tuples with a rest element).
     /// Fixed-length tuples return `false`. Used by TS1265/TS1266 to decide whether a
     /// spread counts as a "rest" element for "rest after rest" / "optional after rest".
@@ -720,6 +692,79 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             || (crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
                 && crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, type_id)
                     .is_none())
+    }
+
+    /// Mirror `tsc`'s `isArrayLikeType` for the rest-element grammar check
+    /// (TS2574). A rest element `...X` is only legal when the *resolved* type of
+    /// `X` is array-like: an array type, or — when not nullable — a type
+    /// assignable to `readonly any[]`.
+    ///
+    /// Resolving the type (rather than inspecting the AST shape) is what lets
+    /// generics (`...T` vs `...T extends any[]`), type aliases, conditional
+    /// types, indexed access, and unions all be classified the same way `tsc`
+    /// does. `any`/`never`/error types are assignable to `readonly any[]` and so
+    /// are accepted, matching `tsc`'s recovery behaviour.
+    pub(super) fn rest_element_type_is_array_like(&self, type_id: tsz_solver::TypeId) -> bool {
+        // Resolve lazy alias references and pending conditional/application
+        // evaluations so aliases-to-arrays (`type AL = number[]; [...AL]`) and
+        // utility conditionals (`[...Cond<number[]>]`) are classified by their
+        // resolved shape, exactly as `tsc`'s `getTypeFromTypeNode` would.
+        let type_id = self.resolve_type_for_rest_element_check(type_id);
+        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id) {
+            return true;
+        }
+        // tsc guards with `!(type.flags & TypeFlags.Nullable)` so that bare
+        // `null`/`undefined` rest elements are rejected even under
+        // non-strict-null modes where they would otherwise be assignable.
+        if crate::query_boundaries::common::is_nullish_type(self.ctx.types, type_id) {
+            return false;
+        }
+        let readonly_any_array = {
+            let factory = self.ctx.types.factory();
+            factory.readonly_type(factory.array(TypeId::ANY))
+        };
+        self.ctx.types.is_assignable_to(type_id, readonly_any_array)
+    }
+
+    /// Resolve a rest-element type to its inspectable shape for the TS2574
+    /// array-like check: alternately resolve `Lazy(DefId)` alias references
+    /// through the checker's `TypeEnvironment` (the solver's own resolver is a
+    /// no-op for lazy defs) and evaluate pending application/conditional types,
+    /// until a fixpoint. This lets alias chains and utility-type spreads be
+    /// classified by their resolved array/tuple shape.
+    fn resolve_type_for_rest_element_check(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        // Bounded to avoid spinning on pathological recursive aliases; a handful
+        // of rounds is enough for realistic alias/utility nesting.
+        const MAX_REST_ELEMENT_RESOLVE_ROUNDS: usize = 16;
+        let mut current = type_id;
+        for _ in 0..MAX_REST_ELEMENT_RESOLVE_ROUNDS {
+            let next = {
+                let env = self.ctx.type_environment.borrow();
+                // Resolve a bare `Lazy(DefId)` alias reference, then evaluate any
+                // resulting application/conditional through the env-backed
+                // `ApplicationEvaluator` (which can resolve lazy application
+                // heads such as `Cond<number[]>`, where the plain solver
+                // evaluator cannot).
+                let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                    self.ctx.types,
+                    Some(&env),
+                    current,
+                );
+                crate::query_boundaries::flow_analysis::evaluate_application_type(
+                    self.ctx.types,
+                    &env,
+                    resolved,
+                )
+            };
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        current
     }
 
     pub(super) fn fixed_tuple_spread_elements(
