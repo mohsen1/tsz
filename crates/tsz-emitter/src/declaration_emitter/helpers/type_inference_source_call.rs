@@ -328,6 +328,40 @@ impl<'a> DeclarationEmitter<'a> {
             if param_type_text.trim() != type_param_name {
                 continue;
             }
+            // When another parameter contains the type parameter in a non-callback
+            // position (e.g. `{ type?: T }` rather than `(x: T) => R`), there are
+            // multiple inference sites that may produce conflicting literals.  Don't
+            // lock in the direct literal — the caller falls back to the constraint.
+            let has_conflicting_site = func
+                .parameters
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&p| p != param_idx)
+                .any(|other_idx| {
+                    source_arena
+                        .get(other_idx)
+                        .and_then(|node| source_arena.get_parameter(node))
+                        .and_then(|other_param| {
+                            self.emit_type_node_text_from_arena(
+                                source_arena,
+                                other_param.type_annotation,
+                            )
+                            .or_else(|| {
+                                self.source_slice_from_arena(
+                                    source_arena,
+                                    other_param.type_annotation,
+                                )
+                            })
+                        })
+                        .is_some_and(|other_text| {
+                            Self::contains_whole_word_in_text(&other_text, type_param_name)
+                                && !other_text.contains("=>")
+                        })
+                });
+            if has_conflicting_site {
+                continue;
+            }
             if let Some(literal_text) = self.primitive_literal_argument_type_text(arg_idx) {
                 return Some(literal_text);
             }
