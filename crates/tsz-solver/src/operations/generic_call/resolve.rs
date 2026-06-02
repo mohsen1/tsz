@@ -44,7 +44,7 @@ fn is_substantive_inference_candidate(
 use super::{
     constraint_contains_primitive_constrained_type_param,
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
-    type_references_placeholder, unique_placeholder_name,
+    type_references_placeholder, write_placeholder_name,
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -399,9 +399,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Create a unique placeholder type for this inference variable
             // We use a TypeParameter with a special name to track it during constraint collection.
-            // Names are globally unique (via PLACEHOLDER_COUNTER) to prevent
-            // collisions when nested generic calls create overlapping placeholder sets.
-            unique_placeholder_name(&mut placeholder_buf);
+            // The id is program-unique to prevent collisions when nested generic
+            // calls create overlapping placeholder sets, and (under the checker
+            // adapter) deterministic so any placeholder name that leaks into a
+            // diagnostic is stable across runs and parallel file checks.
+            let placeholder_id = self.checker.next_inference_placeholder_id();
+            write_placeholder_name(&mut placeholder_buf, placeholder_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {

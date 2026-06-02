@@ -320,6 +320,10 @@ impl<'a> CheckerState<'a> {
     /// It traverses the entire AST and performs all type checking operations.
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
         let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
+        // Open a deterministic, per-file naming scope for inference placeholders
+        // so any `__infer_*` witness that surfaces in a diagnostic is stable
+        // across runs and across parallel file checks.
+        self.ctx.begin_file_inference_placeholders();
         let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
             return;
         };

@@ -1213,6 +1213,20 @@ pub struct CheckerContext<'a> {
     /// Used with `resolved_module_paths` to look up cross-file imports.
     pub current_file_idx: usize,
 
+    /// Namespace for deterministic inference-placeholder names. Captured from
+    /// `current_file_idx` at the start of each file check (see
+    /// `begin_file_inference_placeholders`) so that `__infer_*` names stay
+    /// program-unique even under parallel file checking, while remaining
+    /// independent of the temporary `current_file_idx` switches performed
+    /// during cross-file import resolution.
+    pub inference_placeholder_namespace: u32,
+
+    /// Per-file monotonic counter feeding deterministic inference-placeholder
+    /// names. Reset at the start of each file check so the names a given file
+    /// produces are identical on every run, regardless of thread scheduling or
+    /// how many placeholders other files allocated.
+    pub inference_placeholder_seq: Cell<u32>,
+
     /// Resolved module specifiers for this file (multi-file CLI mode).
     ///
     /// Wrapped in `Arc` so the CLI per-file driver can share the

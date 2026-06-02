@@ -97,6 +97,20 @@ pub trait AssignabilityChecker {
         }
         self.is_assignable_to(a, b) && self.is_assignable_to(b, a)
     }
+
+    /// Allocate the next id used to build an inference-placeholder name
+    /// (`__infer_*` / `__infer_src_*`).
+    ///
+    /// The default uses a process-global counter, which is adequate for
+    /// callers without a file-scoped checker (internal relation probes and
+    /// unit tests) where placeholder names never reach user diagnostics. The
+    /// checker adapter overrides this with a *deterministic* per-file counter
+    /// so that any placeholder name that does surface in a diagnostic is
+    /// stable across repeated runs and across parallel file checks, rather
+    /// than depending on thread scheduling or global allocation order.
+    fn next_inference_placeholder_id(&mut self) -> u64 {
+        crate::operations::generic_call::next_global_placeholder_id()
+    }
 }
 
 // =============================================================================
