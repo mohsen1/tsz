@@ -152,6 +152,16 @@ pub(crate) const fn compute_mapped_modifiers(
     )
 }
 
+/// Merge mapped properties whose `as` clause remaps multiple source keys onto
+/// the same output name, mirroring tsc's `resolveMappedTypeMembers`: the value
+/// contributions union while the first source key's modifiers are kept.
+pub(crate) fn merge_colliding_mapped_properties(
+    db: &dyn TypeDatabase,
+    properties: &mut Vec<tsz_solver::PropertyInfo>,
+) {
+    tsz_solver::type_queries::merge_colliding_mapped_properties(db, properties);
+}
+
 /// Collect source property info for a homomorphic mapped type.
 pub(crate) fn collect_homomorphic_source_properties(
     db: &dyn TypeDatabase,

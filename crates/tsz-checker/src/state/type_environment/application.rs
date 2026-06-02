@@ -1,4 +1,5 @@
 use crate::{query_boundaries::state::type_environment as query, state::CheckerState};
+use tsz_common::Atom;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 pub(crate) struct ApplicationBaseBody {
@@ -159,5 +160,43 @@ impl<'a> CheckerState<'a> {
             body_type,
             type_params,
         })
+    }
+
+    pub(crate) fn instantiate_mapped_property_template_with_env(
+        &mut self,
+        mapped: &tsz_solver::MappedType,
+        key_name: Atom,
+    ) -> TypeId {
+        let key_literal = self.ctx.types.literal_string_atom(key_name);
+        let property_type =
+            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
+                self.ctx.types,
+                mapped.template,
+                mapped.type_param.name,
+                key_literal,
+            );
+
+        // When the template produces an IndexAccess (e.g., T[K] → ObjType["key"]),
+        // resolve the object part through evaluate_type_with_resolution so that
+        // Lazy(DefId) references become concrete types.  Then attempt property
+        // access resolution with the resolved object.
+        if let Some((obj, _idx)) = query::index_access_types(self.ctx.types, property_type) {
+            let obj_type = self.evaluate_type_with_resolution(obj);
+
+            let prop_name_arc = self.ctx.types.resolve_atom_ref(key_name);
+            let prop_name: &str = &prop_name_arc;
+            match self.resolve_property_access_with_env(obj_type, prop_name) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id, ..
+                }
+                | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => return type_id,
+                _ => {}
+            }
+        }
+
+        self.evaluate_type_with_env(property_type)
     }
 }

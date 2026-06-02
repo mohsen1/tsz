@@ -1050,6 +1050,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if !properties.is_empty() {
+                query::merge_colliding_mapped_properties(self.ctx.types, &mut properties);
                 return factory.object(properties);
             }
         }
@@ -1174,6 +1175,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Collapse colliding remapped keys (e.g. `as 'x'` mapping several source
+        // keys to one name) before ordering: the value contributions union and the
+        // first source key's modifiers win, matching tsc.
+        query::merge_colliding_mapped_properties(self.ctx.types, &mut properties);
+
         if !source_decl_order.is_empty() {
             let order_map: rustc_hash::FxHashMap<tsz_common::Atom, usize> = source_decl_order
                 .iter()
@@ -1184,44 +1190,6 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.object(properties)
-    }
-
-    pub(crate) fn instantiate_mapped_property_template_with_env(
-        &mut self,
-        mapped: &tsz_solver::MappedType,
-        key_name: Atom,
-    ) -> TypeId {
-        let key_literal = self.ctx.types.literal_string_atom(key_name);
-        let property_type =
-            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
-                self.ctx.types,
-                mapped.template,
-                mapped.type_param.name,
-                key_literal,
-            );
-
-        // When the template produces an IndexAccess (e.g., T[K] → ObjType["key"]),
-        // resolve the object part through evaluate_type_with_resolution so that
-        // Lazy(DefId) references become concrete types.  Then attempt property
-        // access resolution with the resolved object.
-        if let Some((obj, _idx)) = query::index_access_types(self.ctx.types, property_type) {
-            let obj_type = self.evaluate_type_with_resolution(obj);
-
-            let prop_name_arc = self.ctx.types.resolve_atom_ref(key_name);
-            let prop_name: &str = &prop_name_arc;
-            match self.resolve_property_access_with_env(obj_type, prop_name) {
-                tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id, ..
-                }
-                | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
-                    property_type: Some(type_id),
-                    ..
-                } => return type_id,
-                _ => {}
-            }
-        }
-
-        self.evaluate_type_with_env(property_type)
     }
 
     /// Evaluate a mapped type constraint with symbol resolution.

@@ -210,6 +210,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // An `as` clause can remap several source keys onto the same output
+        // name (e.g. `{ [K in keyof S as 'x']: S[K] }`). tsc collapses those into
+        // one property: the value type is the union of the contributions and the
+        // optional/readonly modifiers come from the first source key. Without
+        // this, the expanded object carried duplicate properties, which lost the
+        // merged modifiers (so `readonly`/optional intent vanished) and produced
+        // incorrect assignability and type display.
+        crate::type_queries::merge_colliding_mapped_properties(self.interner, &mut properties);
+
         Some(self.interner.object(properties))
     }
 

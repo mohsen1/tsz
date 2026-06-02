@@ -1760,3 +1760,91 @@ fnUnion(value);
     );
 }
 
+
+#[test]
+fn mapped_as_clause_key_collision_keeps_first_source_modifiers() {
+    // Structural rule: when an `as` clause remaps several source keys onto the
+    // same output name, tsc unions the value contributions but keeps the
+    // optional/readonly modifiers of the FIRST source key in declaration order
+    // (see `resolveMappedTypeMembers`). The first key `a` here is
+    // `readonly a?`, so the merged `x` is readonly+optional and assigning to it
+    // is rejected with TS2540.
+    let source = r#"
+type Source = { readonly a?: number; b: string; c: boolean };
+type Merged = { [K in keyof Source as "x"]: Source[K] };
+declare const merged: Merged;
+merged.x = 1;
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2540),
+        "merged collision key inherits readonly from the first source key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_as_clause_key_collision_merges_value_union() {
+    // The merged collision key accepts any contribution of the unioned value
+    // type. `{ x: 1 }` satisfies `Merged` because `x` is
+    // `number | string | boolean | undefined` (optional, from first key `a`).
+    let source = r#"
+type Source = { readonly a?: number; b: string; c: boolean };
+type Merged = { [K in keyof Source as "x"]: Source[K] };
+const ok: Merged = { x: 1 };
+const ok2: Merged = { x: "s" };
+const ok3: Merged = {};
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "merged collision key value union should accept each contribution, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2741),
+        "merged collision key is optional, so empty object is allowed, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_as_clause_key_collision_first_key_not_readonly_allows_write() {
+    // When the first source key is neither readonly nor optional, the merged key
+    // is writable: renaming `Renamed` to guard against spelling-based fixes.
+    let source = r#"
+type Bag = { first: number; readonly second?: string };
+type Renamed = { [Slot in keyof Bag as "merged"]: Bag[Slot] };
+declare const bag: Renamed;
+bag.merged = 1;
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2540),
+        "merged key inherits writability from the first source key, got: {diagnostics:?}"
+    );
+}
