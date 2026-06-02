@@ -8,7 +8,7 @@ use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, contains_index_access_with_type_parameter_object,
     contains_index_access_with_variadic_tuple_object, is_type_parameter_type,
-    tuple_elements_for_type,
+    tuple_elements_for_type, tuple_slice_variable_rest_offset,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -441,6 +441,44 @@ impl<'a> CheckerState<'a> {
 
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                        // An open-ended tuple (one whose flattened rest is
+                        // array-backed, e.g. `[number, ...string[]]`) has an
+                        // indeterminate length, exactly like a bare array
+                        // spread. Its variable portion must land on a rest
+                        // parameter; when the parameter at that position is not
+                        // a rest (nor an optional trailing) position, tsc
+                        // reports TS2556 — and only TS2556. A fully fixed-length
+                        // tuple (including fully-fixed nested tuple rests) keeps
+                        // the normal positional expansion below.
+                        if let Some(variable_offset) =
+                            tuple_slice_variable_rest_offset(self.ctx.types, &elems)
+                        {
+                            let variable_index = effective_index + variable_offset;
+                            let at_rest_position = if let Some(callable_type) =
+                                callable_ctx.callable_type
+                            {
+                                let ctx = ContextualTypeContext::with_expected(
+                                    self.ctx.types,
+                                    callable_type,
+                                );
+                                ctx.allows_non_tuple_spread_position(variable_index, expanded_count)
+                            } else {
+                                // No callable type means callee is
+                                // any/error/unknown; accept the spread when a
+                                // large-index probe still resolves a param.
+                                expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                            };
+                            if !at_rest_position {
+                                if !emitted_ts2556 {
+                                    self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                    emitted_ts2556 = true;
+                                }
+                                // tsc reports only TS2556 here; do not expand the
+                                // tuple into positional args (which would cascade
+                                // into TS2345/TS2554).
+                                continue;
+                            }
+                        }
                         for elem in &elems {
                             if elem.rest {
                                 // Rest element (e.g., `...boolean[]` in `[number, string, ...boolean[]]`).

@@ -8,6 +8,7 @@ pub(crate) use super::super::common::array_element_type as array_element_type_fo
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
+pub(crate) use super::super::common::tuple_slice_variable_rest_offset;
 
 pub(crate) fn rest_array_element_type_for_type(
     db: &dyn TypeDatabase,

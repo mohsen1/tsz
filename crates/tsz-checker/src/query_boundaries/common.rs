@@ -317,6 +317,22 @@ pub(crate) fn tuple_elements(db: &dyn TypeDatabase, type_id: TypeId) -> Option<V
     tsz_solver::type_queries::get_tuple_elements(db, type_id)
 }
 
+/// Positional offset of the first variable-length rest element in a tuple
+/// spread, or `None` for a fully fixed-length tuple (or non-tuple). See
+/// `tsz_solver::type_queries::tuple_variable_rest_offset`.
+pub(crate) fn tuple_variable_rest_offset(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    tsz_solver::type_queries::tuple_variable_rest_offset(db, type_id)
+}
+
+/// Slice-taking form of [`tuple_variable_rest_offset`] for callers that already
+/// hold the tuple's elements (avoids a second tuple lookup).
+pub(crate) fn tuple_slice_variable_rest_offset(
+    db: &dyn TypeDatabase,
+    elements: &[TupleElement],
+) -> Option<usize> {
+    tsz_solver::type_queries::tuple_slice_variable_rest_offset(db, elements)
+}
+
 pub(crate) fn call_signatures_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
