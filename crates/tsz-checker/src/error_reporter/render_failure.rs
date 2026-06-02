@@ -188,19 +188,16 @@ impl<'a> CheckerState<'a> {
     /// leaf rendered directly. Parameters are contravariant, so the leaf is
     /// `Type '<target param>' is not assignable to type '<source param>'.`; the
     /// solver's `inner_reason` already carries that orientation.
-    #[allow(clippy::too_many_arguments)]
     fn push_parameter_mismatch_elaboration(
         &mut self,
         diag: &mut Diagnostic,
-        source: TypeId,
-        target: TypeId,
+        rctx: &RenderContext,
         param_index: usize,
         source_param: TypeId,
         target_param: TypeId,
         inner_reason: Option<&tsz_solver::SubtypeFailureReason>,
-        idx: NodeIndex,
-        depth: u32,
     ) {
+        let (source, target, idx, depth) = (rctx.source, rctx.target, rctx.idx, rctx.depth);
         if self
             .callable_type_after_display_evaluation(source)
             .is_none()
@@ -1141,14 +1138,11 @@ impl<'a> CheckerState<'a> {
                     // bare function line.
                     self.push_parameter_mismatch_elaboration(
                         &mut diag,
-                        source,
-                        target,
+                        &rctx,
                         *param_index,
                         *source_param,
                         *target_param,
                         inner_reason.as_deref(),
-                        idx,
-                        depth,
                     );
                     diag
                 }
