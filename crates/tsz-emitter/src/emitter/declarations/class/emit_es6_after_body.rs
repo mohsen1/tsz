@@ -21,6 +21,7 @@ pub(super) struct ClassEs6AfterBody<'a> {
     pub(super) externalized_static_initializer_uses_undefined_receiver: bool,
     pub(super) computed_side_effects_emitted_in_static_block: bool,
     pub(super) class_expr_comma_needs_parens: bool,
+    pub(super) needs_native_computed_prop_evaluator_comma_expr: bool,
     pub(super) needs_computed_prop_comma_expr: bool,
     pub(super) needs_static_comma_expr: bool,
     pub(super) needs_private_comma_expr: bool,
@@ -61,6 +62,7 @@ impl<'a> Printer<'a> {
             externalized_static_initializer_uses_undefined_receiver,
             computed_side_effects_emitted_in_static_block,
             class_expr_comma_needs_parens,
+            needs_native_computed_prop_evaluator_comma_expr,
             needs_computed_prop_comma_expr,
             needs_static_comma_expr,
             needs_private_comma_expr,
@@ -166,6 +168,15 @@ impl<'a> Printer<'a> {
                     self.emit_expression(*expr_idx);
                     self.write(";");
                 }
+            }
+        }
+        if needs_native_computed_prop_evaluator_comma_expr && class_expr_temp.is_none() {
+            self.decrease_indent();
+            if class_expr_comma_needs_parens {
+                self.write(")");
+            }
+            if assignment_prefix_is_some {
+                self.write(";");
             }
         }
 

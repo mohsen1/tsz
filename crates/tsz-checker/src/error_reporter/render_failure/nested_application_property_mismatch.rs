@@ -215,7 +215,7 @@ impl<'a> CheckerState<'a> {
     /// present so intrinsic/literal display stays accurate; otherwise renders a
     /// direct `Type 'S' is not assignable to type 'T'.` line for the deepest
     /// property's types.
-    fn push_property_chain_leaf(
+    pub(super) fn push_property_chain_leaf(
         &mut self,
         diag: &mut Diagnostic,
         leaf: Option<&tsz_solver::SubtypeFailureReason>,

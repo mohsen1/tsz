@@ -22,6 +22,7 @@ pub(super) struct ClassEs6MemberEmit<'a> {
     pub(super) target_supports_native_private_names: bool,
     pub(super) has_legacy_private_name_member_decorators: bool,
     pub(super) needs_computed_prop_hoisting: bool,
+    pub(super) native_computed_prop_evaluator: Option<&'a str>,
     pub(super) private_fields: &'a [PrivateFieldInfo],
     pub(super) private_duplicate_conflicts: &'a PrivateDuplicateConflictPlan,
     pub(super) auto_accessor_member_map: &'a FxHashMap<NodeIndex, (String, bool)>,
@@ -50,6 +51,7 @@ impl<'a> Printer<'a> {
             target_supports_native_private_names,
             has_legacy_private_name_member_decorators,
             needs_computed_prop_hoisting,
+            native_computed_prop_evaluator,
             private_fields,
             private_duplicate_conflicts,
             auto_accessor_member_map,
@@ -105,7 +107,18 @@ impl<'a> Printer<'a> {
             .unwrap_or(node.end);
 
         let mut field_init_comment_idx = 0usize;
+        let mut emitted_native_computed_prop_evaluator_call = false;
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
+            if let Some(evaluator) = native_computed_prop_evaluator
+                && !emitted_native_computed_prop_evaluator_call
+                && self.class_member_uses_computed_prop_temp(member_idx)
+            {
+                self.write("static { ");
+                self.write(evaluator);
+                self.write("(); }");
+                self.write_line();
+                emitted_native_computed_prop_evaluator_call = true;
+            }
             // Skip private field declarations entirely when lowering to WeakMap pattern
             if !private_fields.is_empty()
                 && let Some(member_node) = self.arena.get(member_idx)
@@ -664,5 +677,37 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    fn class_member_uses_computed_prop_temp(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let name_idx = match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .map(|prop| prop.name),
+            _ => None,
+        };
+        let Some(name_idx) = name_idx else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expression = self
+            .arena
+            .get(computed.expression)
+            .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+            .and_then(|node| self.arena.get_parenthesized(node))
+            .map_or(computed.expression, |paren| paren.expression);
+        self.computed_prop_temp_map.contains_key(&expression)
     }
 }

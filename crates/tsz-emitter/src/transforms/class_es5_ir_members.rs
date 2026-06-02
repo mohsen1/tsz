@@ -10,10 +10,10 @@ use crate::transforms::ir::{
 use crate::transforms::ir_printer::IRPrinter;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{
-    contains_async_arrow_function, contains_new_target_reference, is_private_identifier,
+    contains_async_arrow_function, contains_new_target_reference, contains_this_reference,
+    is_private_identifier,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -1621,7 +1621,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 // Async arrows in static initializers also need the class alias:
                 // tsc passes it to the downlevel `__generator` call as lexical `this`.
-                if self.contains_static_value_this_reference(prop_data.initializer)
+                if contains_this_reference(self.arena, prop_data.initializer)
                     || contains_async_arrow_function(self.arena, prop_data.initializer)
                 {
                     return true;
@@ -1630,7 +1630,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Check if the static block body contains `this`
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     for &stmt_idx in &block_data.statements.nodes {
-                        if self.contains_static_value_this_reference(stmt_idx)
+                        if contains_this_reference(self.arena, stmt_idx)
                             || contains_async_arrow_function(self.arena, stmt_idx)
                         {
                             return true;
@@ -1640,50 +1640,6 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         false
-    }
-
-    fn contains_static_value_this_reference(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if node.kind == SyntaxKind::ThisKeyword as u16 {
-            return true;
-        }
-
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
-            return false;
-        }
-
-        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-        {
-            let Some(var_data) = self.arena.get_variable(node) else {
-                return false;
-            };
-            return var_data
-                .declarations
-                .nodes
-                .iter()
-                .any(|&decl_idx| self.contains_static_value_this_reference(decl_idx));
-        }
-
-        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let Some(decl) = self.arena.get_variable_declaration(node) else {
-                return false;
-            };
-            return decl.initializer.is_some()
-                && self.contains_static_value_this_reference(decl.initializer);
-        }
-
-        self.arena
-            .get_children(idx)
-            .into_iter()
-            .any(|child_idx| self.contains_static_value_this_reference(child_idx))
     }
 
     pub(super) fn async_method_promise_constructor(

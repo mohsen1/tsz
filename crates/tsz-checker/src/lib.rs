@@ -630,6 +630,9 @@ mod for_in_narrowing_tests;
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
 #[cfg(test)]
+#[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
+mod function_parameter_mismatch_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]

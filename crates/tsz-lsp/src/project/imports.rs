@@ -8,21 +8,23 @@ use std::path::Path;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
-use crate::completions::{CompletionItem, CompletionItemKind, sort_priority};
 use crate::diagnostics::LspDiagnostic;
-use crate::symbols::document_symbols::SymbolKind;
 use crate::utils::find_node_at_offset;
 use tsz_common::position::{Location, Position, Range};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+use super::import_collect::{
+    AutoImportCandidateContext, ImportCandidateCollectionMode, ImportCandidateKey,
+    ImportCandidateSink,
+};
 use super::{ExportMatch, ImportKind, ImportTarget, Project, ProjectFile};
 
 #[derive(Default)]
-struct BareSpecifierSourceCache {
-    quoted_literal_match: FxHashMap<String, bool>,
-    import_like_match: FxHashMap<String, bool>,
+pub(super) struct BareSpecifierSourceCache {
+    pub(super) quoted_literal_match: FxHashMap<String, bool>,
+    pub(super) import_like_match: FxHashMap<String, bool>,
 }
 
 impl Project {
@@ -97,35 +99,17 @@ impl Project {
         missing_name: &str,
         is_namespace_missing: bool,
         output: &mut Vec<ImportCandidate>,
-        seen: &mut FxHashSet<(String, String, String, bool)>,
+        seen: &mut FxHashSet<ImportCandidateKey>,
     ) {
         if !self.auto_imports_allowed_for_file(from_file.file_name()) {
             return;
         }
-        let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
-        let existing_imported_packages = Self::imported_package_names(from_file);
-        let mut source_cache = BareSpecifierSourceCache::default();
-        let mut module_specifiers_cache: FxHashMap<String, Vec<String>> = FxHashMap::default();
         let all_files: Vec<String> = self.files.keys().cloned().collect();
         let wildcard_reexport_files: Vec<String> = all_files
             .iter()
             .filter(|file_name| self.file_has_wildcard_reexport(file_name))
             .cloned()
             .collect();
-
-        // Pre-compute the set of files whose paths match the auto-import exclude
-        // patterns. Building the set once amortizes the glob-matching cost across
-        // all files in the loop, avoiding O(files × patterns) repeated work.
-        let excluded_file_set: FxHashSet<String> =
-            if self.auto_import_file_exclude_matchers.is_empty() {
-                FxHashSet::default()
-            } else {
-                all_files
-                    .iter()
-                    .filter(|f| self.auto_import_path_is_excluded(f))
-                    .cloned()
-                    .collect()
-            };
 
         let files_to_check = self.files_to_check_for_symbol(
             missing_name,
@@ -134,150 +118,30 @@ impl Project {
             &wildcard_reexport_files,
         );
 
-        let mut collect_from_files = |files_to_check: Vec<String>| {
-            let before_len = output.len();
-
-            for file_name in files_to_check {
-                if file_name == from_file.file_name() {
-                    continue;
-                }
-
-                for (module_specifier, export_match) in
-                    self.matching_exports_in_ambient_modules(&file_name, missing_name)
-                {
-                    if self.is_ambient_module_candidate_excluded(
-                        &module_specifier,
-                        from_file.source_text(),
-                        allowed_packages.as_ref(),
-                        &existing_imported_packages,
-                        &mut source_cache,
-                    ) {
-                        continue;
-                    }
-
-                    let candidate = ImportCandidate {
-                        module_specifier,
-                        local_name: missing_name.to_string(),
-                        kind: export_match.kind.clone(),
-                        is_type_only: export_match.is_type_only,
-                    };
-
-                    let kind_key = match &candidate.kind {
-                        ImportCandidateKind::Named { export_name } => {
-                            format!("named:{export_name}")
-                        }
-                        ImportCandidateKind::Default => "default".to_string(),
-                        ImportCandidateKind::Namespace => "namespace".to_string(),
-                    };
-
-                    if seen.insert((
-                        candidate.module_specifier.clone(),
-                        candidate.local_name.clone(),
-                        kind_key,
-                        candidate.is_type_only,
-                    )) {
-                        output.push(candidate);
-                    }
-                }
-
-                // Skip this file for regular import candidates if its path matches
-                // an auto-import exclude pattern. The exclusion set was precomputed
-                // once above to avoid re-running glob matching per file per symbol.
-                if excluded_file_set.contains(&file_name) {
-                    continue;
-                }
-
-                let module_specifiers = module_specifiers_cache
-                    .entry(file_name.clone())
-                    .or_insert_with(|| {
-                        self.auto_import_module_specifiers_from_files(
-                            from_file.file_name(),
-                            &file_name,
-                        )
-                    });
-                if module_specifiers.is_empty() {
-                    continue;
-                }
-
-                let mut visited = FxHashSet::default();
-                let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
-                if matches.is_empty() && !is_namespace_missing {
-                    continue;
-                }
-
-                let Some(module_specifier) = module_specifiers
-                    .iter()
-                    .find(|module_specifier| {
-                        !self.is_auto_import_candidate_excluded(
-                            &file_name,
-                            module_specifier,
-                            from_file.source_text(),
-                            allowed_packages.as_ref(),
-                            &existing_imported_packages,
-                            &mut source_cache,
-                        )
-                    })
-                    .cloned()
-                else {
-                    continue;
-                };
-
-                for export_match in &matches {
-                    let candidate = ImportCandidate {
-                        module_specifier: module_specifier.clone(),
-                        local_name: missing_name.to_string(),
-                        kind: export_match.kind.clone(),
-                        is_type_only: export_match.is_type_only,
-                    };
-
-                    let kind_key = match &candidate.kind {
-                        ImportCandidateKind::Named { export_name } => {
-                            format!("named:{export_name}")
-                        }
-                        ImportCandidateKind::Default => "default".to_string(),
-                        ImportCandidateKind::Namespace => "namespace".to_string(),
-                    };
-
-                    if seen.insert((
-                        candidate.module_specifier.clone(),
-                        candidate.local_name.clone(),
-                        kind_key,
-                        candidate.is_type_only,
-                    )) {
-                        output.push(candidate);
-                    }
-                }
-
-                if is_namespace_missing
-                    && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
-                {
-                    let candidate = ImportCandidate {
-                        module_specifier: module_specifier.clone(),
-                        local_name: missing_name.to_string(),
-                        kind: ImportCandidateKind::Default,
-                        is_type_only,
-                    };
-                    let kind_key = "default".to_string();
-                    if seen.insert((
-                        candidate.module_specifier.clone(),
-                        candidate.local_name.clone(),
-                        kind_key,
-                        candidate.is_type_only,
-                    )) {
-                        output.push(candidate);
-                    }
-                }
-            }
-
-            output.len() > before_len
+        let mut context = AutoImportCandidateContext::new(self, from_file, &all_files);
+        let mut sink = ImportCandidateSink::new(output, seen);
+        let mode = ImportCandidateCollectionMode {
+            include_namespace_default: is_namespace_missing,
         };
 
-        if !collect_from_files(files_to_check) {
+        if !self.collect_import_candidates_for_symbol_from_files(
+            files_to_check,
+            missing_name,
+            mode,
+            &mut context,
+            &mut sink,
+        ) {
             let fallback_files = all_files
                 .into_iter()
                 .filter(|file_name| file_name != from_file.file_name())
                 .collect();
-            let _ = collect_from_files(fallback_files);
+            let _ = self.collect_import_candidates_for_symbol_from_files(
+                fallback_files,
+                missing_name,
+                mode,
+                &mut context,
+                &mut sink,
+            );
         }
     }
 
@@ -291,15 +155,11 @@ impl Project {
         prefix: &str,
         existing: &FxHashSet<String>,
         output: &mut Vec<ImportCandidate>,
-        seen: &mut FxHashSet<(String, String, String, bool)>,
+        seen: &mut FxHashSet<ImportCandidateKey>,
     ) {
         if !self.auto_imports_allowed_for_file(from_file.file_name()) {
             return;
         }
-        let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
-        let existing_imported_packages = Self::imported_package_names(from_file);
-        let mut source_cache = BareSpecifierSourceCache::default();
-        let mut module_specifiers_cache: FxHashMap<String, Vec<String>> = FxHashMap::default();
         let all_files: Vec<String> = self.files.keys().cloned().collect();
         let wildcard_reexport_files: Vec<String> = all_files
             .iter()
@@ -307,21 +167,12 @@ impl Project {
             .cloned()
             .collect();
 
-        // Pre-compute the set of files whose paths match the auto-import exclude
-        // patterns. This set is reused across all symbol iterations below, so
-        // glob-matching runs once per file rather than once per (symbol, file) pair.
-        let excluded_file_set: FxHashSet<String> =
-            if self.auto_import_file_exclude_matchers.is_empty() {
-                FxHashSet::default()
-            } else {
-                all_files
-                    .iter()
-                    .filter(|f| self.auto_import_path_is_excluded(f))
-                    .cloned()
-                    .collect()
-            };
-
         let mut supplemental_symbol_set = FxHashSet::default();
+        let mut context = AutoImportCandidateContext::new(self, from_file, &all_files);
+        let mut sink = ImportCandidateSink::new(output, seen);
+        let mode = ImportCandidateCollectionMode {
+            include_namespace_default: false,
+        };
 
         // Get all symbols that match the prefix using the sorted symbol index
         let mut matching_symbols = self.symbol_index.get_symbols_with_prefix(prefix);
@@ -364,117 +215,101 @@ impl Project {
                 files_to_check = all_files.clone();
             }
 
-            for file_name in files_to_check {
-                if file_name == from_file.file_name() {
-                    continue;
-                }
+            let _ = self.collect_import_candidates_for_symbol_from_files(
+                files_to_check,
+                &symbol_name,
+                mode,
+                &mut context,
+                &mut sink,
+            );
+        }
+    }
 
-                for (module_specifier, export_match) in
-                    self.matching_exports_in_ambient_modules(&file_name, &symbol_name)
-                {
-                    if self.is_ambient_module_candidate_excluded(
-                        &module_specifier,
-                        from_file.source_text(),
-                        allowed_packages.as_ref(),
-                        &existing_imported_packages,
-                        &mut source_cache,
-                    ) {
-                        continue;
-                    }
+    fn collect_import_candidates_for_symbol_from_files(
+        &self,
+        files_to_check: Vec<String>,
+        symbol_name: &str,
+        mode: ImportCandidateCollectionMode,
+        context: &mut AutoImportCandidateContext<'_>,
+        sink: &mut ImportCandidateSink<'_>,
+    ) -> bool {
+        let before_len = sink.len();
 
-                    let candidate = ImportCandidate {
-                        module_specifier,
-                        local_name: symbol_name.clone(),
-                        kind: export_match.kind.clone(),
-                        is_type_only: export_match.is_type_only,
-                    };
-
-                    let kind_key = match &candidate.kind {
-                        ImportCandidateKind::Named { export_name } => {
-                            format!("named:{export_name}")
-                        }
-                        ImportCandidateKind::Default => "default".to_string(),
-                        ImportCandidateKind::Namespace => "namespace".to_string(),
-                    };
-
-                    if seen.insert((
-                        candidate.module_specifier.clone(),
-                        candidate.local_name.clone(),
-                        kind_key,
-                        candidate.is_type_only,
-                    )) {
-                        output.push(candidate);
-                    }
-                }
-
-                // Skip this file for regular import candidates if its path matches
-                // an auto-import exclude pattern. The exclusion set is precomputed
-                // once per request to avoid re-running glob matching per (symbol, file).
-                if excluded_file_set.contains(&file_name) {
-                    continue;
-                }
-
-                let module_specifiers = module_specifiers_cache
-                    .entry(file_name.clone())
-                    .or_insert_with(|| {
-                        self.auto_import_module_specifiers_from_files(
-                            from_file.file_name(),
-                            &file_name,
-                        )
-                    });
-                if module_specifiers.is_empty() {
-                    continue;
-                }
-
-                let mut visited = FxHashSet::default();
-                let matches = self.matching_exports_in_file(&file_name, &symbol_name, &mut visited);
-                if matches.is_empty() {
-                    continue;
-                }
-
-                let Some(module_specifier) = module_specifiers
-                    .iter()
-                    .find(|module_specifier| {
-                        !self.is_auto_import_candidate_excluded(
-                            &file_name,
-                            module_specifier,
-                            from_file.source_text(),
-                            allowed_packages.as_ref(),
-                            &existing_imported_packages,
-                            &mut source_cache,
-                        )
-                    })
-                    .cloned()
-                else {
-                    continue;
-                };
-
-                for export_match in &matches {
-                    let candidate = ImportCandidate {
-                        module_specifier: module_specifier.clone(),
-                        local_name: symbol_name.clone(),
-                        kind: export_match.kind.clone(),
-                        is_type_only: export_match.is_type_only,
-                    };
-
-                    let kind_key = match &candidate.kind {
-                        ImportCandidateKind::Named { export_name } => {
-                            format!("named:{export_name}")
-                        }
-                        ImportCandidateKind::Default => "default".to_string(),
-                        ImportCandidateKind::Namespace => "namespace".to_string(),
-                    };
-
-                    if seen.insert((
-                        candidate.module_specifier.clone(),
-                        candidate.local_name.clone(),
-                        kind_key,
-                        candidate.is_type_only,
-                    )) {
-                        output.push(candidate);
-                    }
-                }
+        for file_name in files_to_check {
+            if file_name == context.request_file_name() {
+                continue;
             }
+
+            self.collect_ambient_import_candidates_for_symbol(
+                &file_name,
+                symbol_name,
+                context,
+                sink,
+            );
+
+            if context.is_regular_file_excluded(&file_name) {
+                continue;
+            }
+
+            if !context.has_module_specifiers_for(self, &file_name) {
+                continue;
+            }
+
+            let mut visited = FxHashSet::default();
+            let matches = self.matching_exports_in_file(&file_name, symbol_name, &mut visited);
+            if matches.is_empty() && !mode.include_namespace_default {
+                continue;
+            }
+
+            let Some(module_specifier) = context.first_allowed_module_specifier(self, &file_name)
+            else {
+                continue;
+            };
+
+            for export_match in &matches {
+                sink.push(ImportCandidate {
+                    module_specifier: module_specifier.clone(),
+                    local_name: symbol_name.to_string(),
+                    kind: export_match.kind.clone(),
+                    is_type_only: export_match.is_type_only,
+                });
+            }
+
+            if mode.include_namespace_default
+                && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
+            {
+                sink.push(ImportCandidate {
+                    module_specifier,
+                    local_name: symbol_name.to_string(),
+                    kind: ImportCandidateKind::Default,
+                    is_type_only,
+                });
+            }
+        }
+
+        sink.len() > before_len
+    }
+
+    fn collect_ambient_import_candidates_for_symbol(
+        &self,
+        file_name: &str,
+        symbol_name: &str,
+        context: &mut AutoImportCandidateContext<'_>,
+        sink: &mut ImportCandidateSink<'_>,
+    ) {
+        for (module_specifier, export_match) in
+            self.matching_exports_in_ambient_modules(file_name, symbol_name)
+        {
+            if context.is_ambient_module_candidate_excluded(self, &module_specifier) {
+                continue;
+            }
+
+            sink.push(ImportCandidate {
+                module_specifier,
+                local_name: symbol_name.to_string(),
+                kind: export_match.kind.clone(),
+                is_type_only: export_match.is_type_only,
+            });
         }
     }
 
@@ -601,7 +436,7 @@ impl Project {
         out
     }
 
-    fn auto_import_path_is_excluded(&self, path: &str) -> bool {
+    pub(super) fn auto_import_path_is_excluded(&self, path: &str) -> bool {
         if self.auto_import_file_exclude_matchers.is_empty() {
             return false;
         }
@@ -629,7 +464,10 @@ impl Project {
             .any(|matcher| matcher.is_match(module_specifier))
     }
 
-    fn allowed_dependency_package_names(&self, from_file: &str) -> Option<FxHashSet<String>> {
+    pub(super) fn allowed_dependency_package_names(
+        &self,
+        from_file: &str,
+    ) -> Option<FxHashSet<String>> {
         let mut allowed = FxHashSet::default();
         let mut saw_package_json = false;
         let mut current = Path::new(from_file).parent();
@@ -666,7 +504,7 @@ impl Project {
         saw_package_json.then_some(allowed)
     }
 
-    fn module_specifier_package_name(module_specifier: &str) -> Option<&str> {
+    pub(super) fn module_specifier_package_name(module_specifier: &str) -> Option<&str> {
         if module_specifier.is_empty()
             || module_specifier.starts_with('.')
             || module_specifier.starts_with('/')
@@ -732,7 +570,7 @@ impl Project {
         false
     }
 
-    fn imported_package_names(file: &ProjectFile) -> FxHashSet<String> {
+    pub(super) fn imported_package_names(file: &ProjectFile) -> FxHashSet<String> {
         let arena = file.arena();
         let Some(source_file) = arena.get_source_file_at(file.root()) else {
             return FxHashSet::default();
@@ -869,7 +707,7 @@ impl Project {
         self.files.keys().any(|k| k.ends_with(&needle))
     }
 
-    fn is_auto_import_candidate_excluded(
+    pub(super) fn is_auto_import_candidate_excluded(
         &self,
         target_file: &str,
         module_specifier: &str,
@@ -911,7 +749,7 @@ impl Project {
                 .auto_import_path_is_excluded(synthetic_node_modules_path.trim_start_matches('/'))
     }
 
-    fn is_ambient_module_candidate_excluded(
+    pub(super) fn is_ambient_module_candidate_excluded(
         &self,
         module_specifier: &str,
         from_source_text: &str,
@@ -994,117 +832,6 @@ impl Project {
         }
 
         false
-    }
-
-    pub(crate) fn completion_from_import_candidate(
-        &self,
-        candidate: &ImportCandidate,
-        from_file: &str,
-        import_statement_completion: bool,
-    ) -> CompletionItem {
-        let detail = self.auto_import_detail(candidate);
-        let documentation = self.auto_import_documentation(candidate);
-        let completion_kind = self.auto_import_completion_kind(candidate);
-
-        let mut item = CompletionItem::new(candidate.local_name.clone(), completion_kind)
-            .with_detail(detail)
-            .with_sort_text(if import_statement_completion {
-                // Inside `import { | }`: TypeScript uses LocationPriority ("11") so
-                // these rank above regular-code auto-import suggestions ("16").
-                sort_priority::LOCATION_PRIORITY
-            } else {
-                sort_priority::AUTO_IMPORT
-            })
-            .with_has_action()
-            .with_source(candidate.module_specifier.clone())
-            .with_source_display(candidate.module_specifier.clone())
-            .with_kind_modifiers("export".to_string());
-        if let Some(doc) = documentation {
-            item = item.with_documentation(doc);
-        }
-        if let Some(package_name) = Self::module_specifier_package_name(&candidate.module_specifier)
-            && let Some(allowed) = self.allowed_dependency_package_names(from_file)
-            && allowed.contains(package_name)
-        {
-            item = item.with_is_package_json_import();
-        }
-        item
-    }
-
-    fn auto_import_completion_kind(&self, candidate: &ImportCandidate) -> CompletionItemKind {
-        match self.symbol_index.get_definition_kind(&candidate.local_name) {
-            Some(SymbolKind::Class) => CompletionItemKind::Class,
-            Some(SymbolKind::Method) => CompletionItemKind::Method,
-            Some(SymbolKind::Property) | Some(SymbolKind::Field) | Some(SymbolKind::Key) => {
-                CompletionItemKind::Property
-            }
-            Some(SymbolKind::Constant | SymbolKind::String | SymbolKind::Number) => {
-                CompletionItemKind::Const
-            }
-            Some(SymbolKind::Constructor) => CompletionItemKind::Constructor,
-            Some(SymbolKind::Enum) => CompletionItemKind::Enum,
-            Some(SymbolKind::Interface) => CompletionItemKind::Interface,
-            Some(SymbolKind::Function) | Some(SymbolKind::Event) | Some(SymbolKind::Operator) => {
-                CompletionItemKind::Function
-            }
-            Some(SymbolKind::Module) | Some(SymbolKind::Namespace) | Some(SymbolKind::Package) => {
-                CompletionItemKind::Module
-            }
-            Some(SymbolKind::TypeParameter) => CompletionItemKind::TypeParameter,
-            Some(SymbolKind::Struct) => CompletionItemKind::TypeAlias,
-            _ => CompletionItemKind::Variable,
-        }
-    }
-
-    fn auto_import_detail(&self, candidate: &ImportCandidate) -> String {
-        let prefix = if candidate.is_type_only {
-            "auto-import type"
-        } else {
-            "auto-import"
-        };
-
-        match candidate.kind {
-            ImportCandidateKind::Named { .. } => {
-                format!("{} from {}", prefix, candidate.module_specifier)
-            }
-            ImportCandidateKind::Default => {
-                format!("{} default from {}", prefix, candidate.module_specifier)
-            }
-            ImportCandidateKind::Namespace => {
-                format!("{} namespace from {}", prefix, candidate.module_specifier)
-            }
-        }
-    }
-
-    fn auto_import_documentation(&self, candidate: &ImportCandidate) -> Option<String> {
-        let import_kw = if candidate.is_type_only {
-            "import type"
-        } else {
-            "import"
-        };
-
-        let snippet = match &candidate.kind {
-            ImportCandidateKind::Named { export_name } => {
-                format!(
-                    "{} {{ {} }} from \"{}\";",
-                    import_kw, export_name, candidate.module_specifier
-                )
-            }
-            ImportCandidateKind::Default => {
-                format!(
-                    "{} {} from \"{}\";",
-                    import_kw, candidate.local_name, candidate.module_specifier
-                )
-            }
-            ImportCandidateKind::Namespace => {
-                format!(
-                    "{} * as {} from \"{}\";",
-                    import_kw, candidate.local_name, candidate.module_specifier
-                )
-            }
-        };
-
-        Some(snippet)
     }
 
     fn matching_exports_in_file(

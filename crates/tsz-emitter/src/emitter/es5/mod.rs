@@ -19,6 +19,7 @@ mod helpers_async_promise;
 mod helpers_async_shadowing;
 mod helpers_class_expression_comments;
 mod helpers_class_expression_names;
+mod helpers_class_expression_static;
 mod helpers_object_literal;
 #[allow(dead_code)]
 pub(in crate::emitter) mod loop_capture;

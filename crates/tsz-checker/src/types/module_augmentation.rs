@@ -1206,26 +1206,39 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     self.merge_properties(&augmentation_members, &base_shape.properties);
-                factory.object(merged_properties)
+                // Preserve the base interface's nominal identity (symbol) and
+                // object-level flags so the augmented type keeps its canonical
+                // declaration name (e.g. `Tool` rather than an expanded
+                // `{ ... }` literal) and stays a single interned identity.
+                factory.object_with_flags_and_symbol(
+                    merged_properties,
+                    base_shape.flags,
+                    base_shape.symbol,
+                )
             }
             AugmentationTargetKind::ObjectWithIndex(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     self.merge_properties(&augmentation_members, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
+                    flags: base_shape.flags,
                     properties: merged_properties,
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,
-                    ..ObjectShape::default()
+                    symbol: base_shape.symbol,
                 })
             }
             AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
-                let prototype_name = self.ctx.types.intern_string("prototype");
-                if !base_shape.construct_signatures.is_empty() {
+                let properties = if base_shape.construct_signatures.is_empty() {
+                    // Non-constructor callable (namespace, function): merge
+                    // augmentation members as direct properties.
+                    self.merge_properties(&augmentation_members, &base_shape.properties)
+                } else {
                     // Class constructor: augmentation members belong on the
                     // prototype (instance type), not as static properties of
                     // the constructor itself.
+                    let prototype_name = self.ctx.types.intern_string("prototype");
                     let mut properties = base_shape.properties.clone();
                     if let Some(prototype_prop) = properties
                         .iter_mut()
@@ -1239,30 +1252,19 @@ impl<'a> CheckerState<'a> {
                         prototype_prop.type_id = augmented_prototype;
                         prototype_prop.write_type = augmented_prototype;
                     }
-                    factory.callable(CallableShape {
-                        call_signatures: base_shape.call_signatures.clone(),
-                        construct_signatures: base_shape.construct_signatures.clone(),
-                        properties,
-                        string_index: base_shape.string_index,
-                        number_index: base_shape.number_index,
-                        symbol: None,
-                        is_abstract: false,
-                    })
-                } else {
-                    // Non-constructor callable (namespace, function): merge
-                    // augmentation members as direct properties.
-                    let merged_properties =
-                        self.merge_properties(&augmentation_members, &base_shape.properties);
-                    factory.callable(CallableShape {
-                        call_signatures: base_shape.call_signatures.clone(),
-                        construct_signatures: base_shape.construct_signatures.clone(),
-                        properties: merged_properties,
-                        string_index: base_shape.string_index,
-                        number_index: base_shape.number_index,
-                        symbol: None,
-                        is_abstract: false,
-                    })
-                }
+                    properties
+                };
+                factory.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
+                    // Preserve the callable's nominal identity and abstractness
+                    // so the augmented class/namespace keeps its declaration name.
+                    symbol: base_shape.symbol,
+                    is_abstract: base_shape.is_abstract,
+                })
             }
             AugmentationTargetKind::Other => {
                 // For types that still can't be decomposed after evaluation (e.g.

@@ -92,6 +92,24 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            if is_computed
+                && let Some(name_node) = self.arena.get(name)
+                && let Some(computed) = self.arena.get_computed_property(name_node)
+            {
+                let expression = self
+                    .arena
+                    .get(computed.expression)
+                    .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+                    .and_then(|node| self.arena.get_parenthesized(node))
+                    .map_or(computed.expression, |paren| paren.expression);
+                if let Some(temp_name) = self.computed_prop_temp_map.get(&expression).cloned() {
+                    self.write("[");
+                    self.write(&temp_name);
+                    self.write("]");
+                    self.scoped_class_expression_self_alias = prev_alias;
+                    return;
+                }
+            }
             // Suppress namespace/CJS-export qualification only when emitting a
             // non-computed class member name. Object-literal methods and
             // computed class names are runtime expressions and must still pick
@@ -581,9 +599,21 @@ impl<'a> Printer<'a> {
                     if let Some(computed) =
                         name_node.and_then(|n| self.arena.get_computed_property(n))
                     {
-                        self.emit_class_member_name_preserving_class_expression_name(
-                            computed.expression,
-                        );
+                        let expression = self
+                            .arena
+                            .get(computed.expression)
+                            .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+                            .and_then(|node| self.arena.get_parenthesized(node))
+                            .map_or(computed.expression, |paren| paren.expression);
+                        if let Some(temp_name) =
+                            self.computed_prop_temp_map.get(&expression).cloned()
+                        {
+                            self.write(&temp_name);
+                        } else {
+                            self.emit_class_member_name_preserving_class_expression_name(
+                                computed.expression,
+                            );
+                        }
                     }
                 } else {
                     self.emit_class_member_name_preserving_class_expression_name(prop.name);
@@ -595,9 +625,12 @@ impl<'a> Printer<'a> {
                 self.emit_class_member_name_preserving_class_expression_name(prop.name);
                 self.write(" = ");
             }
-            self.with_scoped_static_initializer_context_cleared(|this| {
-                this.emit(prop.initializer);
-            });
+            self.emit_expression_with_scoped_static_initializer_mode(
+                prop.initializer,
+                Some("this"),
+                None,
+                true,
+            );
             self.write("; }");
             return;
         }

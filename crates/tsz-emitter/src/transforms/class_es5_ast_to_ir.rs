@@ -11,7 +11,8 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::node_flags;
 use tsz_parser::syntax::transform_utils::{
-    contains_new_target_reference, contains_super_reference,
+    collect_class_computed_name_this_references, contains_new_target_reference,
+    contains_super_reference,
 };
 
 #[path = "class_es5_ast_to_ir_classes.rs"]
@@ -83,6 +84,13 @@ pub struct AstToIr<'a> {
     /// lowering (e.g. `let x` → `var x_1` when shadowing an outer `x`).
     /// References inside class bodies must use the renamed form.
     outer_rename_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private field name → `WeakMap` variable name for `__classPrivateFieldGet/Set`.
+    /// Populated from the enclosing class's `PrivateFieldInfo` collection.
+    private_field_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private accessor name → getter `WeakMap` variable name.
+    private_get_accessor_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private accessor name → setter `WeakMap` variable name.
+    private_set_accessor_map: rustc_hash::FxHashMap<String, String>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -110,7 +118,58 @@ impl<'a> AstToIr<'a> {
             blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
             generated_disposable_env_names: RefCell::new(Vec::new()),
             outer_rename_map: rustc_hash::FxHashMap::default(),
+            private_field_map: rustc_hash::FxHashMap::default(),
+            private_get_accessor_map: rustc_hash::FxHashMap::default(),
+            private_set_accessor_map: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Provide private field and accessor storage maps so that `this.#x` references
+    /// inside method/accessor bodies lower to `__classPrivateFieldGet/Set` calls.
+    pub fn with_private_field_maps(
+        mut self,
+        fields: &[crate::transforms::private_fields_es5::PrivateFieldInfo],
+        accessors: &[crate::transforms::private_fields_es5::PrivateAccessorInfo],
+    ) -> Self {
+        for field in fields {
+            self.private_field_map
+                .insert(field.name.clone(), field.weakmap_name.clone());
+        }
+        for accessor in accessors {
+            if let Some(ref get_var) = accessor.get_var_name {
+                self.private_get_accessor_map
+                    .insert(accessor.name.clone(), get_var.clone());
+            }
+            if let Some(ref set_var) = accessor.set_var_name {
+                self.private_set_accessor_map
+                    .insert(accessor.name.clone(), set_var.clone());
+            }
+        }
+        self
+    }
+
+    /// Look up private-field storage info for a read of `this.#name`.
+    /// Returns `(weakmap_var, kind)` where kind is `"f"` for fields or `"a"` for accessors.
+    pub(super) fn private_read_info(&self, clean_name: &str) -> Option<(String, &'static str)> {
+        if let Some(var) = self.private_field_map.get(clean_name) {
+            return Some((var.clone(), "f"));
+        }
+        if let Some(var) = self.private_get_accessor_map.get(clean_name) {
+            return Some((var.clone(), "a"));
+        }
+        None
+    }
+
+    /// Look up private-field storage info for a write `this.#name = v`.
+    /// Returns `(weakmap_var, kind)` where kind is `"f"` for fields or `"a"` for accessors.
+    pub(super) fn private_write_info(&self, clean_name: &str) -> Option<(String, &'static str)> {
+        if let Some(var) = self.private_field_map.get(clean_name) {
+            return Some((var.clone(), "f"));
+        }
+        if let Some(var) = self.private_set_accessor_map.get(clean_name) {
+            return Some((var.clone(), "a"));
+        }
+        None
     }
 
     /// Set the outer rename map: original → emitted name for block-scoped
@@ -242,6 +301,17 @@ impl<'a> AstToIr<'a> {
         let has_substitution = substitution.is_some();
         self.current_this_substitution.set(substitution);
         has_substitution
+    }
+
+    fn current_this_substitution_text(&self) -> Option<String> {
+        let substitution = self.current_this_substitution.take();
+        let text = substitution
+            .as_ref()
+            .map(|substitution| match substitution {
+                ThisSubstitution::Identifier(alias) | ThisSubstitution::Raw(alias) => alias.clone(),
+            });
+        self.current_this_substitution.set(substitution);
+        text
     }
 
     fn current_this_ir(&self) -> IRNode {
@@ -492,6 +562,19 @@ impl<'a> AstToIr<'a> {
             }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
             k if k == syntax_kind_ext::CLASS_EXPRESSION
+                && self.class_expression_has_computed_name_this(idx)
+                && self.has_current_this_substitution() =>
+            {
+                if let Some(this_alias) = self.current_this_substitution_text() {
+                    IRNode::ASTRefWithInheritedComputedNameThis {
+                        node: idx,
+                        this_alias: this_alias.into(),
+                    }
+                } else {
+                    IRNode::ASTRef(idx)
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_EXPRESSION
                 && self.has_super
                 && !self.is_static.get()
                 && self.class_expression_has_computed_name_super(idx) =>
@@ -592,6 +675,11 @@ impl<'a> AstToIr<'a> {
         if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
             if self.is_destructuring_assignment_expr(expr_stmt.expression) {
                 return IRNode::ASTRef(idx);
+            }
+            // `this.#x++;` / `this.#x--;` discards its result, so use tsc's leaner
+            // statement form (no old-value temp).
+            if let Some(stmt) = self.try_private_postfix_statement(expr_stmt.expression) {
+                return IRNode::ExpressionStatement(Box::new(stmt));
             }
             IRNode::ExpressionStatement(Box::new(self.convert_expression(expr_stmt.expression)))
         } else {

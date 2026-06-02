@@ -417,6 +417,31 @@ impl<'a> AstToIr<'a> {
                 };
             }
 
+            // Private field/accessor read: `this.#x` → `__classPrivateFieldGet(this, _C_x, "f")`
+            if let Some(name_node) = self.arena.get(access.name_or_argument)
+                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    let raw = &ident.escaped_text;
+                    let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
+                    if let Some((storage_var, kind)) = self.private_read_info(clean) {
+                        let object = self.convert_expression(access.expression);
+                        return IRNode::call(
+                            IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
+                                "__classPrivateFieldGet",
+                            )),
+                            vec![
+                                object,
+                                IRNode::id(storage_var),
+                                IRNode::StringLiteral(kind.into()),
+                            ],
+                        );
+                    }
+                }
+                // Unknown private name — fall through to ASTRef
+                return IRNode::ASTRef(idx);
+            }
+
             if let Some(name) = get_identifier_text(self.arena, access.name_or_argument) {
                 // Optional chain: `R?.prop` short-circuits when `R` is nullish.
                 // The IR has no optional-access node, so lower the guard here the
@@ -522,12 +547,222 @@ impl<'a> AstToIr<'a> {
         }
     }
 
+    /// If `idx` is a `recv.#name` property access whose member is a private
+    /// field or accessor with **both** a read and a write slot, and whose
+    /// receiver is a simple, side-effect-free expression safe to evaluate more
+    /// than once, return `(receiver_idx, clean_name)`.
+    ///
+    /// Compound assignment (`this.#x += v`) and `++`/`--` mutation read the slot
+    /// and then write it, so they reference the receiver twice. A non-simple
+    /// receiver (which must be evaluated exactly once) and a private *method*
+    /// (no field slot) are intentionally rejected here and left to the existing
+    /// fallthrough. The rule keys on the member being a `PrivateIdentifier` with
+    /// a storage entry, never on its spelling.
+    fn private_mutation_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        let name_node = self.arena.get(access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+        let ident = self.arena.get_identifier(name_node)?;
+        let raw = &ident.escaped_text;
+        let clean = raw.strip_prefix('#').unwrap_or(raw.as_str()).to_string();
+        // Read-modify-write needs both a get slot and a set slot.
+        self.private_read_info(&clean)?;
+        self.private_write_info(&clean)?;
+        if !crate::transforms::emit_utils::is_simple_copiable_expression(
+            self.arena,
+            access.expression,
+        ) {
+            return None;
+        }
+        Some((access.expression, clean))
+    }
+
+    /// `__classPrivateFieldGet(receiver, <read_var>, "<read_kind>")` for a known
+    /// private field/accessor read. `None` when the name has no read slot.
+    fn private_field_get_ir(&self, receiver_idx: NodeIndex, clean_name: &str) -> Option<IRNode> {
+        let (storage_var, kind) = self.private_read_info(clean_name)?;
+        Some(IRNode::call(
+            IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldGet")),
+            vec![
+                self.convert_expression(receiver_idx),
+                IRNode::id(storage_var),
+                IRNode::StringLiteral(kind.into()),
+            ],
+        ))
+    }
+
+    /// `__classPrivateFieldSet(receiver, <write_var>, value, "<write_kind>")` for
+    /// a known private field/accessor write. `None` when the name has no write
+    /// slot (e.g. a getter-only accessor).
+    fn private_field_set_ir(
+        &self,
+        receiver_idx: NodeIndex,
+        clean_name: &str,
+        value: IRNode,
+    ) -> Option<IRNode> {
+        let (storage_var, kind) = self.private_write_info(clean_name)?;
+        Some(IRNode::call(
+            IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldSet")),
+            vec![
+                self.convert_expression(receiver_idx),
+                IRNode::id(storage_var),
+                value,
+                IRNode::StringLiteral(kind.into()),
+            ],
+        ))
+    }
+
+    /// Base operator for an ES5-lowerable private-field compound assignment
+    /// (`+=` -> `+`). Returns `None` for `=`, exponent (`**=`), and logical
+    /// (`&&= ||= ??=`) assignments: those need a different lowering (`Math.pow`
+    /// / short-circuit) and stay on the existing fallthrough as follow-ups.
+    const fn es5_private_compound_base_op(token: u16) -> Option<&'static str> {
+        Some(match token {
+            t if t == SyntaxKind::PlusEqualsToken as u16 => "+",
+            t if t == SyntaxKind::MinusEqualsToken as u16 => "-",
+            t if t == SyntaxKind::AsteriskEqualsToken as u16 => "*",
+            t if t == SyntaxKind::SlashEqualsToken as u16 => "/",
+            t if t == SyntaxKind::PercentEqualsToken as u16 => "%",
+            t if t == SyntaxKind::LessThanLessThanEqualsToken as u16 => "<<",
+            t if t == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => ">>",
+            t if t == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => ">>>",
+            t if t == SyntaxKind::AmpersandEqualsToken as u16 => "&",
+            t if t == SyntaxKind::CaretEqualsToken as u16 => "^",
+            t if t == SyntaxKind::BarEqualsToken as u16 => "|",
+            _ => return None,
+        })
+    }
+
+    /// Lower `recv.#x++` / `recv.#x--` for a known private field/accessor slot.
+    ///
+    /// `is_statement` selects tsc's two forms (`_a` = value temp, `_b` = old
+    /// value temp, allocated old-value-first to match tsc's `var _a, _b` order):
+    /// - statement (result discarded):
+    ///   `__classPrivateFieldSet(this, _C_x, (_a = get, _a++, _a), "f")`
+    /// - value position:
+    ///   `(__classPrivateFieldSet(this, _C_x, (_b = get, _a = _b++, _b), "f"), _a)`
+    fn private_postfix_mutation_ir(
+        &self,
+        receiver_idx: NodeIndex,
+        clean_name: &str,
+        operator: u16,
+        is_statement: bool,
+    ) -> Option<IRNode> {
+        let op: std::borrow::Cow<'static, str> = if operator == SyntaxKind::PlusPlusToken as u16 {
+            "++".into()
+        } else if operator == SyntaxKind::MinusMinusToken as u16 {
+            "--".into()
+        } else {
+            return None;
+        };
+        // Confirm the write slot before allocating any hoisted temp so a missing
+        // setter cannot leak a `var` declaration through the fallthrough path.
+        self.private_write_info(clean_name)?;
+
+        if is_statement {
+            let temp = self.generate_hoisted_temp();
+            let get_ir = self.private_field_get_ir(receiver_idx, clean_name)?;
+            let inner = IRNode::CommaExpr(vec![
+                IRNode::assign(IRNode::id(temp.clone()), get_ir),
+                IRNode::PostfixUnaryExpr {
+                    operand: Box::new(IRNode::id(temp.clone())),
+                    operator: op,
+                },
+                IRNode::id(temp),
+            ]);
+            self.private_field_set_ir(receiver_idx, clean_name, inner)
+        } else {
+            // old-value temp first (`_a`), then value temp (`_b`).
+            let old_val = self.generate_hoisted_temp();
+            let val = self.generate_hoisted_temp();
+            let get_ir = self.private_field_get_ir(receiver_idx, clean_name)?;
+            let inner = IRNode::CommaExpr(vec![
+                IRNode::assign(IRNode::id(val.clone()), get_ir),
+                IRNode::assign(
+                    IRNode::id(old_val.clone()),
+                    IRNode::PostfixUnaryExpr {
+                        operand: Box::new(IRNode::id(val.clone())),
+                        operator: op,
+                    },
+                ),
+                IRNode::id(val),
+            ]);
+            let set_ir = self.private_field_set_ir(receiver_idx, clean_name, inner)?;
+            Some(IRNode::CommaExpr(vec![set_ir, IRNode::id(old_val)]))
+        }
+    }
+
+    /// When `expr_idx` is `recv.#x++` / `recv.#x--` in statement (result-
+    /// discarded) position, build tsc's leaner statement form. `None` leaves the
+    /// expression to the generic statement conversion.
+    pub(super) fn try_private_postfix_statement(&self, expr_idx: NodeIndex) -> Option<IRNode> {
+        let node = self.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::POSTFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let unary = self.arena.get_unary_expr(node)?;
+        let (receiver_idx, clean) = self.private_mutation_target(unary.operand)?;
+        self.private_postfix_mutation_ir(receiver_idx, &clean, unary.operator, true)
+    }
+
     pub(super) fn convert_binary_expression(&self, idx: NodeIndex) -> IRNode {
         let node = self
             .arena
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(bin) = self.arena.get_binary_expr(node) {
+            // Private field write: `this.#x = value` → `__classPrivateFieldSet(this, _C_x, value, "f")`
+            if bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                if let Some(lhs_node) = self.arena.get(bin.left)
+                    && lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(lhs_access) = self.arena.get_access_expr(lhs_node)
+                    && let Some(name_node) = self.arena.get(lhs_access.name_or_argument)
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        let raw = &ident.escaped_text;
+                        let clean = raw.strip_prefix('#').unwrap_or(raw.as_str());
+                        if let Some((storage_var, kind)) = self.private_write_info(clean) {
+                            let receiver = self.convert_expression(lhs_access.expression);
+                            let value = self.convert_expression(bin.right);
+                            return IRNode::call(
+                                IRNode::RuntimeHelper(std::borrow::Cow::Borrowed(
+                                    "__classPrivateFieldSet",
+                                )),
+                                vec![
+                                    receiver,
+                                    IRNode::id(storage_var),
+                                    value,
+                                    IRNode::StringLiteral(kind.into()),
+                                ],
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Private field compound assignment: `this.#x += v` →
+            // `__classPrivateFieldSet(this, _C_x, __classPrivateFieldGet(this, _C_x, "f") + v, "f")`.
+            // Only the simple-base-operator compounds are lowered here; `**=`
+            // (needs `Math.pow`) and logical (`&&= ||= ??=`) assignments stay on
+            // the fallthrough as documented follow-ups.
+            if let Some(base_op) = Self::es5_private_compound_base_op(bin.operator_token)
+                && let Some((receiver_idx, clean)) = self.private_mutation_target(bin.left)
+                && let Some(get_ir) = self.private_field_get_ir(receiver_idx, &clean)
+            {
+                let rhs = self.convert_expression(bin.right);
+                let new_value = IRNode::binary(get_ir, base_op, rhs);
+                if let Some(set_ir) = self.private_field_set_ir(receiver_idx, &clean, new_value) {
+                    return set_ir;
+                }
+            }
+
             let left = self.convert_expression(bin.left);
             let right = self.convert_expression(bin.right);
             let op = self.get_binary_operator(bin.operator_token);
@@ -567,6 +802,31 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // PrefixUnaryExpression uses UnaryExprData
         if let Some(unary) = self.arena.get_unary_expr(node) {
+            // Private field prefix mutation: `++this.#x` →
+            // `__classPrivateFieldSet(this, _C_x, (_a = __classPrivateFieldGet(this, _C_x, "f"), ++_a), "f")`.
+            // tsc uses one form for both statement and value position because a
+            // prefix mutation already evaluates to the new value.
+            if (unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                && let Some((receiver_idx, clean)) = self.private_mutation_target(unary.operand)
+                && self.private_write_info(&clean).is_some()
+            {
+                let temp = self.generate_hoisted_temp();
+                let op = self.get_prefix_operator(unary.operator);
+                if let Some(get_ir) = self.private_field_get_ir(receiver_idx, &clean) {
+                    let bumped = IRNode::CommaExpr(vec![
+                        IRNode::assign(IRNode::id(temp.clone()), get_ir),
+                        IRNode::PrefixUnaryExpr {
+                            operator: op.into(),
+                            operand: Box::new(IRNode::id(temp)),
+                        },
+                    ]);
+                    if let Some(set_ir) = self.private_field_set_ir(receiver_idx, &clean, bumped) {
+                        return set_ir;
+                    }
+                }
+            }
+
             let operand = self.convert_expression(unary.operand);
             let op = self.get_prefix_operator(unary.operator);
             IRNode::PrefixUnaryExpr {
@@ -589,6 +849,17 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // PostfixUnaryExpression uses UnaryExprData
         if let Some(unary) = self.arena.get_unary_expr(node) {
+            // Private field postfix mutation in value position: `f(this.#x++)` →
+            // `(__classPrivateFieldSet(this, _C_x, (_b = get, _a = _b++, _b), "f"), _a)`.
+            // Statement position (`this.#x++;`) uses the leaner form routed via
+            // `try_private_postfix_statement` from `convert_expression_statement`.
+            if let Some((receiver_idx, clean)) = self.private_mutation_target(unary.operand)
+                && let Some(lowered) =
+                    self.private_postfix_mutation_ir(receiver_idx, &clean, unary.operator, false)
+            {
+                return lowered;
+            }
+
             let operand = self.convert_expression(unary.operand);
             let op = match unary.operator {
                 k if k == SyntaxKind::PlusPlusToken as u16 => "++".to_string(),
@@ -813,6 +1084,123 @@ mod optional_chain_in_class_member_tests {
         assert!(
             !output.contains("=== void 0 ? void 0 :"),
             "Non-optional `this.field` must not be lowered to a guard.\nOutput:\n{output}"
+        );
+    }
+
+    // Structural rule: when the ES5 class-IR converter lowers a read-modify-write
+    // on a private field/accessor (`this.#x op= v`, `++this.#x`, `this.#x++`), it
+    // must route the read through `__classPrivateFieldGet` and the write through
+    // `__classPrivateFieldSet` rather than emitting an un-assignable
+    // `__classPrivateFieldGet(...) op= v`. The rule keys on the member being a
+    // `PrivateIdentifier` with a known storage slot — so these tests vary class,
+    // member, operator, and member-kind (field vs accessor).
+
+    #[test]
+    fn private_field_compound_add_lowers_to_get_op_set() {
+        let output = emit_es5(
+            "class Acc {\n    #count = 0;\n    bump() {\n        this.#count += 2;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Acc_count, __classPrivateFieldGet(this, _Acc_count, \"f\") + 2, \"f\")"
+            ),
+            "Private `#count += 2` must lower to get-op-set.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("\"f\") += "),
+            "Must not emit an un-assignable `get(...) += v`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_compound_bitor_uses_base_operator() {
+        // Different class/member/operator: `|=` lowers with base `|`.
+        let output = emit_es5(
+            "class Flags {\n    #mask = 0;\n    set(b: number) {\n        this.#mask |= b;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Flags_mask, __classPrivateFieldGet(this, _Flags_mask, \"f\") | b, \"f\")"
+            ),
+            "Private `#mask |= b` must lower to get-`|`-set.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_prefix_increment_uses_single_form() {
+        let output =
+            emit_es5("class Pre {\n    #n = 0;\n    up() {\n        ++this.#n;\n    }\n}\n");
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Pre_n, (_a = __classPrivateFieldGet(this, _Pre_n, \"f\"), ++_a), \"f\")"
+            ),
+            "Prefix `++this.#n` must use the new-value comma form.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _a;"),
+            "Prefix mutation must hoist its temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_postfix_decrement_statement_uses_lean_form() {
+        // Statement position discards the result → no old-value temp.
+        let output =
+            emit_es5("class Pst {\n    #v = 5;\n    step() {\n        this.#v--;\n    }\n}\n");
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Pst_v, (_a = __classPrivateFieldGet(this, _Pst_v, \"f\"), _a--, _a), \"f\")"
+            ),
+            "Statement `this.#v--` must use the lean single-temp form.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _a, _b"),
+            "Statement postfix must not allocate an old-value temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_postfix_increment_value_keeps_old_value() {
+        // Value position (`return ...`) must yield the pre-mutation value.
+        let output = emit_es5(
+            "class Val {\n    #w = 0;\n    take() {\n        return this.#w++;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "return (__classPrivateFieldSet(this, _Val_w, (_b = __classPrivateFieldGet(this, _Val_w, \"f\"), _a = _b++, _b), \"f\"), _a)"
+            ),
+            "Value `return this.#w++` must return the old value via the two-temp form.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _a, _b;"),
+            "Value postfix must hoist both temps in tsc order (`_a`, `_b`).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_accessor_compound_uses_distinct_get_set_storage() {
+        // Accessor read/write use different storage vars and kind "a"; a compound
+        // assignment must thread the get-storage into the read and the
+        // set-storage into the write.
+        let output = emit_es5(
+            "class Box {\n    get #val() { return 1; }\n    set #val(v: number) {}\n    add() {\n        this.#val += 3;\n    }\n}\n",
+        );
+        assert!(
+            output.contains("__classPrivateFieldGet(this, _Box_val_get, \"a\")")
+                && output.contains("__classPrivateFieldSet(this, _Box_val_set, ")
+                && output.contains(", \"a\")"),
+            "Accessor `#val += 3` must read get-storage and write set-storage with kind \"a\".\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_plain_assignment_still_lowers() {
+        // Regression guard: the plain `=` write path (from #12180) is unchanged.
+        let output =
+            emit_es5("class Plain {\n    #p = 0;\n    reset() {\n        this.#p = 9;\n    }\n}\n");
+        assert!(
+            output.contains("__classPrivateFieldSet(this, _Plain_p, 9, \"f\")"),
+            "Plain `this.#p = 9` must still lower to a single set.\nOutput:\n{output}"
         );
     }
 }

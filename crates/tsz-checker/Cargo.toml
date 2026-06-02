@@ -471,6 +471,10 @@ name = "readonly_tuple_to_array_constraint_tests"
 path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 
 [[test]]
+name = "module_augmentation_declaration_identity_tests"
+path = "tests/module_augmentation_declaration_identity_tests.rs"
+
+[[test]]
 name = "module_augmentation_isolation_tests"
 path = "tests/module_augmentation_isolation_tests.rs"
 
@@ -1973,6 +1977,10 @@ path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]
 name = "polymorphic_this_display_tests"
 path = "tests/polymorphic_this_display_tests.rs"
+
+[[test]]
+name = "const_alias_discriminant_narrowing_tests"
+path = "tests/const_alias_discriminant_narrowing_tests.rs"
 
 [lints]
 workspace = true

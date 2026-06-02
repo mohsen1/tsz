@@ -561,6 +561,14 @@ pub enum IRNode {
         super_name: Cow<'static, str>,
     },
 
+    /// Reference to an original class expression whose computed property names
+    /// should inherit an enclosing static-initializer `this` binding while the
+    /// nested printer applies normal ES5 class-expression lowering.
+    ASTRefWithInheritedComputedNameThis {
+        node: NodeIndex,
+        this_alias: Cow<'static, str>,
+    },
+
     /// Reference to an original AST node with constrained source range.
     /// Used when the parser's node.end extends into a parent block's closing brace.
     ASTRefRange(NodeIndex, u32),
@@ -1237,6 +1245,7 @@ impl IRNode {
             | Self::ASTRefWithGeneratorThis { .. }
             | Self::ASTRefWithCapturedClassHeritageThis(_)
             | Self::ASTRefWithInheritedComputedNameSuper { .. }
+            | Self::ASTRefWithInheritedComputedNameThis { .. }
             | Self::ASTRefRange(..)
             | Self::UseStrict
             | Self::EsesModuleMarker => false,

@@ -7,6 +7,8 @@ mod core;
 pub(crate) mod eviction;
 pub(crate) mod features;
 pub(crate) mod file_context;
+mod import_collect;
+mod import_render;
 pub(crate) mod imports;
 pub(crate) mod module_specifiers;
 pub(crate) mod operations;
