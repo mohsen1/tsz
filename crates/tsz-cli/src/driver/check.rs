@@ -43,13 +43,14 @@ mod check_file;
 mod check_tests;
 mod checker_diagnostics;
 mod checker_lib_diagnostics;
+mod no_check_diagnostics;
 mod source_resolution_setup;
 mod wildcard_barrel_analysis;
 
 use check_file::{
     CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
     check_file_for_parallel, check_files_in_parallel_chunks_with_reuse,
-    check_files_sequentially_with_reuse, collect_no_check_file_diagnostics,
+    check_files_sequentially_with_reuse,
 };
 use checker_diagnostics::{
     keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
@@ -64,6 +65,7 @@ use checker_lib_diagnostics::{
     is_datetimeformatpart_spelling_baseline_diagnostic, retain_program_induced_lib_diagnostics,
     should_preserve_datetimeformatpart_spelling_baseline,
 };
+use no_check_diagnostics::{NoCheckDiagnosticsInput, collect_no_check_diagnostics_for_files};
 use source_resolution_setup::{
     SourceResolutionSetup, SourceResolutionSetupInput, prepare_source_resolution_setup,
 };
@@ -583,35 +585,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // errors via the `if !no_check` guard around `check_source_file`); the
     // type_caches it produces feed declaration emit.
     if options.no_check && !options.emit_declarations {
-        use rayon::prelude::*;
+        let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
 
-        let mut diagnostics: Vec<Diagnostic> = program
-            .files
-            .par_iter()
-            .map(|file| {
-                let mut file_diags = collect_no_check_file_diagnostics(
-                    file,
-                    options,
-                    program_has_real_syntax_errors,
-                );
-                // tsc still reports the `--isolatedDeclarations` grammar
-                // diagnostics (TS9007/TS9011/TS9012/etc.) under `--noCheck`
-                // because they gate declaration emission, not type checking
-                // (#3709). Run only the isolated-declaration grammar pass.
-                if options.checker.isolated_declarations {
-                    let mut binder = tsz_binder::state::BinderState::new();
-                    binder.bind_source_file(&file.arena, file.source_file);
-                    file_diags.extend(tsz::checker::run_isolated_declarations_pass(
-                        &file.arena,
-                        &binder,
-                        file.source_file,
-                        file.file_name.clone(),
-                        options.checker.clone(),
-                    ));
-                }
-                file_diags
+        let mut diagnostics: Vec<Diagnostic> =
+            collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
+                files: &program.files,
+                file_indices: &all_file_indices,
+                options,
+                program_has_real_syntax_errors,
+                include_isolated_declaration_diagnostics: true,
             })
-            .flatten()
+            .into_iter()
+            .flat_map(|file_diags| file_diags.diagnostics)
             .collect();
 
         for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
@@ -668,15 +653,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             .iter()
             .all(|file| is_declaration_file(&file.file_name))
     {
-        use rayon::prelude::*;
+        let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
 
-        let mut diagnostics: Vec<Diagnostic> = program
-            .files
-            .par_iter()
-            .map(|file| {
-                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+        let mut diagnostics: Vec<Diagnostic> =
+            collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
+                files: &program.files,
+                file_indices: &all_file_indices,
+                options,
+                program_has_real_syntax_errors,
+                include_isolated_declaration_diagnostics: false,
             })
-            .flatten()
+            .into_iter()
+            .flat_map(|file_diags| file_diags.diagnostics)
             .collect();
 
         for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
@@ -1165,22 +1153,29 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let mut work_items: Vec<usize> = Vec::with_capacity(work_queue.len());
-        let mut skipped_file_diagnostics: Vec<Vec<Diagnostic>> = Vec::new();
+        let mut skipped_file_indices: Vec<usize> = Vec::new();
         for file_idx in work_queue {
             let file = &program.files[file_idx];
             if should_skip_type_checking_for_file(&file.file_name, options, false) {
-                let mut file_diags = collect_no_check_file_diagnostics(
-                    file,
-                    options,
-                    program_has_real_syntax_errors,
-                );
-                file_diags.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
-                skipped_file_diagnostics.push(file_diags);
+                skipped_file_indices.push(file_idx);
             } else {
                 work_items.push(file_idx);
             }
         }
-        diagnostics.extend(skipped_file_diagnostics.into_iter().flatten());
+        for mut file_diags in collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
+            files: &program.files,
+            file_indices: &skipped_file_indices,
+            options,
+            program_has_real_syntax_errors,
+            include_isolated_declaration_diagnostics: false,
+        }) {
+            file_diags.diagnostics.extend(
+                per_file_ts7016_diagnostics[file_diags.file_idx]
+                    .iter()
+                    .cloned(),
+            );
+            diagnostics.extend(file_diags.diagnostics);
+        }
 
         let build_checker_binder = |file_idx: usize| {
             let file = &program.files[file_idx];
