@@ -265,6 +265,7 @@ impl RelationFailure {
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
+                ..
             }
             | SubtypeFailureReason::TupleElementTypeMismatch {
                 source_element,

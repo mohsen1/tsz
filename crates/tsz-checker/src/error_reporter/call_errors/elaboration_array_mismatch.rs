@@ -137,6 +137,7 @@ impl<'a> CheckerState<'a> {
             Some(SubtypeFailureReason::ArrayElementMismatch {
                 source_element: _,
                 target_element,
+                ..
             }) => {
                 for &elem_idx in &arr.elements.nodes {
                     let is_spread = self
