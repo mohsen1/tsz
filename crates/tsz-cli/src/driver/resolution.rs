@@ -11,6 +11,7 @@ mod discovery;
 mod exports_imports;
 mod package_resolution;
 mod path_resolution;
+mod program_file_index;
 mod type_packages;
 
 // Public API re-exports for `crate::driver::resolution::<item>` callers.
@@ -27,6 +28,7 @@ pub(crate) use path_resolution::{
     build_duplicate_package_redirects, normalize_path, normalize_resolved_path,
     resolve_module_specifier,
 };
+pub(crate) use program_file_index::ProgramFileIndex;
 pub(crate) use type_packages::{
     collect_type_packages_from_root, default_type_roots, resolve_type_package_entry_with_cache,
     resolve_type_package_entry_with_mode_and_cache, resolve_type_package_from_roots_with_cache,
