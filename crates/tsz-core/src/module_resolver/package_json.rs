@@ -7,7 +7,7 @@ use super::{ImportingModuleKind, ModuleResolver, PackageType};
 use crate::config::ModuleResolutionKind;
 use std::path::Path;
 
-use crate::module_resolver_helpers::PackageJson;
+use crate::module_resolver_helpers::{PackageJson, cached_is_file};
 
 /// Parse `package.json#type` into a [`PackageType`], or `None` when the
 /// field is missing or an unknown value. Shared by both
@@ -95,7 +95,7 @@ impl ModuleResolver {
 
             // Check for package.json
             let package_json_path = current.join("package.json");
-            if package_json_path.is_file()
+            if cached_is_file(&package_json_path)
                 && let Ok(pj) = self.read_package_json(&package_json_path)
             {
                 let package_type = parse_package_type_field(pj.package_type.as_deref());

@@ -107,7 +107,7 @@ impl ModuleResolver {
         loop {
             let package_json_path = current.join("package.json");
 
-            if package_json_path.is_file()
+            if cached_is_file(&package_json_path)
                 && let Ok(package_json) = self.read_package_json(&package_json_path)
                 && let Some(imports) = &package_json.imports
             {
