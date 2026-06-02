@@ -22,7 +22,7 @@ const TINY_BENCHMARK_MAX_LINES = 200;
 const MONOSPACE_FONT = "'SF Mono','Cascadia Code','JetBrains Mono','Fira Code',Menlo,Consolas,monospace";
 const THEMES = {
   light: {
-    background: "#ffffff",
+    background: "transparent",
     border: "#d1d9e0",
     title: "#1f2328",
     text: "#24292f",
@@ -32,7 +32,7 @@ const THEMES = {
     tsgo: "#0550ae",
   },
   dark: {
-    background: "#0d1117",
+    background: "transparent",
     border: "#30363d",
     title: "#f0f6fc",
     text: "#f0f6fc",
@@ -87,6 +87,9 @@ const FONT_5X7 = {
 };
 
 function hexToRgba(color) {
+  if (color === "transparent") {
+    return [0, 0, 0, 0];
+  }
   const normalized = color.replace(/^#/, "");
   const hex = normalized.length === 3
     ? normalized.split("").map((char) => char + char).join("")
@@ -346,6 +349,12 @@ function renderBar({ y, label, value, maxValue, color, duration, colors }) {
   <text x="${BAR_X + BAR_WIDTH + 16}" y="${y + 17}" fill="${colors.title}" font-size="15" font-weight="700">${escapeXml(duration)}</text>`;
 }
 
+function renderBackground(colors) {
+  return colors.background === "transparent"
+    ? ""
+    : `  <rect width="${SVG_WIDTH}" height="${SVG_HEIGHT}" fill="${colors.background}"/>\n`;
+}
+
 export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
   const colors = themeColors(theme);
   const summary = createReadmePerfSummary(data);
@@ -359,7 +368,7 @@ export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_WIDTH}" height="${SVG_HEIGHT}" viewBox="0 0 ${SVG_WIDTH} ${SVG_HEIGHT}" role="img" aria-labelledby="title desc">
   <title id="title">tsz benchmark performance</title>
   <desc id="desc">${escapeXml(desc)}</desc>
-  <rect width="${SVG_WIDTH}" height="${SVG_HEIGHT}" fill="${colors.background}"/>
+${renderBackground(colors)}\
   <g font-family="${MONOSPACE_FONT}">
   <text x="${BAR_LABEL_X}" y="28" fill="${colors.title}" font-size="18" font-weight="800">${escapeXml(headline)}</text>
   <text x="${SVG_WIDTH - BAR_LABEL_X}" y="28" text-anchor="end" fill="${colors.muted}" font-size="12" font-weight="700">${escapeXml(rowsLabel)}</text>
