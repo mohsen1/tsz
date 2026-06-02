@@ -1982,5 +1982,9 @@ path = "tests/polymorphic_this_display_tests.rs"
 name = "const_alias_discriminant_narrowing_tests"
 path = "tests/const_alias_discriminant_narrowing_tests.rs"
 
+[[test]]
+name = "recursive_utility_alias_fanout_tests"
+path = "tests/recursive_utility_alias_fanout_tests.rs"
+
 [lints]
 workspace = true
