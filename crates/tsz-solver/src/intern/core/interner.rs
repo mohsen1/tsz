@@ -660,13 +660,6 @@ pub struct TypeInterner {
     /// Unique identifier scoping this interner's entries in the thread-local
     /// lookup/intern cache. See `NEXT_INTERNER_INSTANCE_ID` for context.
     pub(super) instance_id: u32,
-    /// Origin file index for `TypeQuery` `TypeId`s.
-    ///
-    /// When a `TypeData::TypeQuery(SymbolRef(X))` is created, the file index of the
-    /// source file is recorded here. Cross-file resolution uses this to resolve
-    /// `SymbolRef(X)` against the correct binder rather than the calling file's binder,
-    /// preventing `SymbolId` collisions between files from causing incorrect type lookups.
-    pub(crate) type_query_origins: DashMap<TypeId, u32, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -726,7 +719,6 @@ impl TypeInterner {
             tuple_too_large: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
-            type_query_origins: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
