@@ -1734,6 +1734,42 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(in crate::error_reporter) fn broad_mapped_index_signature_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let mapped = crate::query_boundaries::common::mapped_type_info(self.ctx.types, source)?;
+        if mapped.name_type.is_some() || mapped.optional_modifier.is_some() {
+            return None;
+        }
+        let key_kind = match mapped.constraint {
+            TypeId::STRING => "string",
+            TypeId::NUMBER => "number",
+            _ => return None,
+        };
+        if crate::query_boundaries::common::contains_type_parameter_named(
+            self.ctx.types,
+            mapped.template,
+            mapped.type_param.name,
+        ) {
+            return None;
+        }
+        if self.assign_relation_outcome(source, target).related {
+            return None;
+        }
+
+        let readonly_prefix = match mapped.readonly_modifier {
+            Some(tsz_solver::MappedModifier::Add) => "readonly ",
+            Some(tsz_solver::MappedModifier::Remove) => "-readonly ",
+            None => "",
+        };
+        let value_display = self.format_type_for_assignability_message(mapped.template);
+        Some(format!(
+            "{{ {readonly_prefix}[x: {key_kind}]: {value_display}; }}"
+        ))
+    }
+
     fn type_assertion_mapped_alias_source_display(
         &mut self,
         expr_idx: NodeIndex,

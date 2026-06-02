@@ -411,8 +411,12 @@ impl<'a> TypeFormatter<'a> {
                 {
                     self.skip_application_display_alias_chase = true;
                 }
+                let previous_skip_application_alias_names = self.skip_application_alias_names;
                 if base_has_mapped_body && base_str.as_ref() != "Omit" {
                     self.skip_object_display_alias = true;
+                }
+                if self.is_recursive_type_alias_application_base(app.base) {
+                    self.skip_application_alias_names = true;
                 }
                 let previous_preserve_application_arg_index_alias_surface =
                     self.preserve_application_arg_index_alias_surface;
@@ -424,6 +428,7 @@ impl<'a> TypeFormatter<'a> {
                     .collect();
                 self.preserve_application_arg_index_alias_surface =
                     previous_preserve_application_arg_index_alias_surface;
+                self.skip_application_alias_names = previous_skip_application_alias_names;
                 self.skip_application_display_alias_chase =
                     previous_skip_application_display_alias_chase;
                 self.skip_object_display_alias = previous_skip_object_display_alias;

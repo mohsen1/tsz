@@ -616,14 +616,16 @@ impl<'a> CheckerState<'a> {
                 let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
                 src_str = da;
                 tgt_str_qualified = db;
-            } else {
-                let fmt_src_bare = self.format_type_diagnostic(widened_source);
-                let fmt_tgt_bare = self.format_type_diagnostic(target);
-                if fmt_src_bare == fmt_tgt_bare {
-                    let (_, db) = self.format_type_pair_diagnostic(widened_source, target);
-                    if db != tgt_str_qualified {
-                        tgt_str_qualified = db;
-                    }
+            } else if crate::query_boundaries::diagnostics::distinct_types_share_nominal_diagnostic_name(
+                self.ctx.types,
+                self.ctx.binder,
+                &self.ctx.definition_store,
+                widened_source,
+                target,
+            ) {
+                let (_, db) = self.format_type_pair_diagnostic(widened_source, target);
+                if db != tgt_str_qualified {
+                    tgt_str_qualified = db;
                 }
             }
         }

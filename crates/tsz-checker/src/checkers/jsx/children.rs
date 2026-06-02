@@ -1096,26 +1096,34 @@ impl<'a> CheckerState<'a> {
         let members =
             crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)?;
         let mut callable_candidates = Vec::new();
+        let mut multiple_candidates = Vec::new();
         let mut seen = rustc_hash::FxHashSet::default();
 
         for member in members {
             let Some(children_type) = self.get_direct_jsx_children_prop_type(member) else {
                 continue;
             };
-            if !self.type_has_jsx_children_callable_signature(children_type) {
-                continue;
-            }
-
             let key = self.format_type(children_type);
-            if seen.insert(key) {
-                callable_candidates.push(children_type);
+            if self.type_has_jsx_children_callable_signature(children_type) {
+                if seen.insert(key) {
+                    callable_candidates.push(children_type);
+                }
+            } else if self.type_requires_multiple_children(children_type) && seen.insert(key) {
+                multiple_candidates.push(children_type);
             }
         }
 
-        match callable_candidates.len() {
+        if !callable_candidates.is_empty() {
+            return match callable_candidates.len() {
+                1 => callable_candidates.into_iter().next(),
+                _ => Some(self.ctx.types.factory().union(callable_candidates)),
+            };
+        }
+
+        match multiple_candidates.len() {
             0 => None,
-            1 => callable_candidates.into_iter().next(),
-            _ => Some(self.ctx.types.factory().union(callable_candidates)),
+            1 => multiple_candidates.into_iter().next(),
+            _ => Some(self.ctx.types.factory().union(multiple_candidates)),
         }
     }
 

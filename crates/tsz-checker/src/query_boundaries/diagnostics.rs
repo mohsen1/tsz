@@ -2,11 +2,14 @@ use super::state::checking as state_checking;
 use tsz_solver::{TypeId, construction::TypeDatabase};
 
 pub(crate) use super::common::{
-    application_info, array_element_type, callable_shape_for_type, collect_referenced_types,
-    contains_type_parameter_named, contains_type_parameters, enum_def_id, intersection_list_id,
-    intersection_members, is_symbol_or_unique_symbol, is_template_literal_type, lazy_def_id,
-    literal_value, no_infer_inner_type, object_shape_for_type, union_list_id, union_members,
-    widen_literal_to_primitive, widen_type_deep,
+    PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
+    collect_referenced_types, contains_free_type_parameters, contains_type_parameter_named,
+    contains_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
+    intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
+    is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type,
+    object_shape_for_type, string_literal_value, type_has_displayable_name,
+    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
+    widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
@@ -62,6 +65,117 @@ pub(crate) fn object_shape_for_assignment_numeric_display(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
     tsz_solver::type_queries::object_shape_for_assignment_numeric_display(db, type_id)
+}
+
+pub(crate) fn is_global_object_interface_for_diagnostic(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if db
+        .get_boxed_type(tsz_solver::IntrinsicKind::Object)
+        .is_some_and(|object_type| object_type == type_id)
+    {
+        return true;
+    }
+    lazy_def_id(db, type_id)
+        .is_some_and(|def_id| db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Object))
+}
+
+pub(crate) fn simple_intersection_head_for_this_assignment_display(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let members = super::common::intersection_members(db, type_id)?;
+    let head = members.first().copied()?;
+    if super::common::type_application(db, head).is_some() {
+        return None;
+    }
+    if super::common::object_shape_for_type(db, head).is_some()
+        && !super::common::type_has_displayable_name(db, head)
+    {
+        return None;
+    }
+    Some(head)
+}
+
+pub(crate) fn distinct_type_parameters_share_declared_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    source_param: TypeId,
+    target_param: TypeId,
+) -> bool {
+    if source_param == target_param {
+        return false;
+    }
+    let Some(source_info) = super::common::type_param_info(db, source_param) else {
+        return false;
+    };
+    let Some(target_info) = super::common::type_param_info(db, target_param) else {
+        return false;
+    };
+    source_info.name == target_info.name
+}
+
+pub(crate) fn distinct_types_share_nominal_diagnostic_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    binder: &tsz_binder::BinderState,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let Some(source_name) = nominal_diagnostic_name(db, binder, def_store, source) else {
+        return false;
+    };
+    nominal_diagnostic_name(db, binder, def_store, target).is_some_and(|target_name| {
+        target_name == source_name && !is_primitive_diagnostic_name(&target_name)
+    })
+}
+
+fn nominal_diagnostic_name(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    binder: &tsz_binder::BinderState,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<String> {
+    if let Some(app) = type_application(db, type_id)
+        && let Some(name) = nominal_diagnostic_name(db, binder, def_store, app.base)
+    {
+        return Some(name);
+    }
+    if let Some(alias) = db.get_display_alias(type_id)
+        && alias != type_id
+        && let Some(name) = nominal_diagnostic_name(db, binder, def_store, alias)
+    {
+        return Some(name);
+    }
+    if let Some(def_id) = lazy_def_id(db, type_id)
+        && let Some(def) = def_store.get(def_id)
+    {
+        return Some(db.resolve_atom_ref(def.name).to_string());
+    }
+    let shape = object_shape_for_type(db, type_id)?;
+    let symbol = binder.get_symbol(shape.symbol?)?;
+    (!symbol.escaped_name.is_empty()).then(|| symbol.escaped_name.clone())
+}
+
+fn is_primitive_diagnostic_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "unknown"
+            | "never"
+            | "string"
+            | "number"
+            | "boolean"
+            | "symbol"
+            | "bigint"
+            | "void"
+            | "undefined"
+            | "null"
+            | "object"
+    )
 }
 
 pub(crate) fn number_literal_bits(
@@ -126,6 +240,38 @@ pub(crate) fn mapped_type(
     std::sync::Arc<tsz_solver::MappedType>,
 )> {
     tsz_solver::type_queries::get_mapped_type_with_id(db, type_id)
+}
+
+pub(crate) fn finite_mapped_property_surface(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some((mapped_id, mapped)) = tsz_solver::type_queries::get_mapped_type_with_id(db, type_id)
+    else {
+        return false;
+    };
+    if mapped_key_constraint_has_named_origin(db, mapped.constraint) {
+        return false;
+    }
+    tsz_solver::type_queries::collect_finite_mapped_property_names(db, mapped_id).is_some()
+}
+
+fn mapped_key_constraint_has_named_origin(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if tsz_solver::type_queries::get_enum_def_id(db, type_id).is_some() {
+        return true;
+    }
+    if tsz_solver::type_queries::get_lazy_def_id(db, type_id).is_some() {
+        return true;
+    }
+    tsz_solver::type_queries::get_union_members(db, type_id).is_some_and(|members| {
+        members
+            .iter()
+            .copied()
+            .any(|member| mapped_key_constraint_has_named_origin(db, member))
+    })
 }
 
 pub(crate) fn type_application(

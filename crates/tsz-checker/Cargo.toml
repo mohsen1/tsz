@@ -1975,6 +1975,10 @@ name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 
 [[test]]
+name = "polymorphic_this_display_tests"
+path = "tests/polymorphic_this_display_tests.rs"
+
+[[test]]
 name = "const_alias_discriminant_narrowing_tests"
 path = "tests/const_alias_discriminant_narrowing_tests.rs"
 

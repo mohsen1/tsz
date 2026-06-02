@@ -1562,18 +1562,13 @@ impl<'a> CheckerState<'a> {
         evaluated_target: TypeId,
         target_str: &str,
     ) -> String {
-        let expanded_target_str = self.format_type_diagnostic(evaluated_target);
-        if expanded_target_str == target_str {
-            return target_str.to_string();
-        }
-
         if self.ts2820_target_contains_application_surface(target)
             || self.ts2820_target_contains_alias_surface(target)
         {
-            Self::widen_numeric_member_literals_in_display_text(target_str)
-        } else {
-            expanded_target_str
+            return Self::widen_numeric_member_literals_in_display_text(target_str);
         }
+
+        self.format_type_diagnostic(evaluated_target)
     }
     pub(super) fn first_nonpublic_constructor_param_property(
         &mut self,

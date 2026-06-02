@@ -16,7 +16,7 @@ use tsz_solver::relations::relation_queries::{
 
 use super::relation_policy;
 
-pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
+pub(crate) use super::common::{contains_type_parameters, is_callable_type, object_shape_for_type};
 
 /// Build the `(policy, context)` pair shared by the assignability-failure query
 /// paths from packed checker relation flags. Centralizing it keeps the gate

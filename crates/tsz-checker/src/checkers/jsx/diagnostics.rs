@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
             return fallback.to_string();
         };
         let class_target = self.format_type(intrinsic_class_attrs);
-        if class_target.is_empty() || props_display.is_empty() {
+        if props_display.is_empty() {
             return fallback.to_string();
         }
 
@@ -355,24 +355,124 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
     ) -> Option<String> {
         let raw_display = self.format_type(props_type);
-        if !raw_display.contains("propTypes: infer") && !raw_display.contains("defaultProps: infer")
-        {
-            return None;
-        }
-
         if let Some(display) =
             Self::jsx_library_managed_application_simplified_display(&raw_display)
         {
             return Some(display);
         }
 
-        // When the managed props conditional remains in display form, the
+        let is_lma_surface =
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                props_type,
+            );
+        let is_lma_display_surface =
+            Self::jsx_conditional_display_has_lma_infer_metadata(raw_display.as_str());
+        if !is_lma_surface && !is_lma_display_surface {
+            return None;
+        }
+
+        if is_lma_surface
+            && let Some(display) =
+                self.jsx_library_managed_structural_final_fallback_display(props_type)
+        {
+            return Some(display);
+        }
+
+        // When the managed props conditional remains only in display form, the
         // concrete function props are the final fallback branch.
         if let Some(display) = Self::jsx_final_conditional_else_display(&raw_display) {
             return Some(display);
         }
 
+        if !is_lma_surface {
+            return None;
+        }
+
         let normalized = self.normalize_jsx_required_props_target(props_type);
+        let normalized = self.evaluate_type_with_env(normalized);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, normalized)?;
+        let filtered_props: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                !(name == "children" && prop.optional)
+            })
+            .cloned()
+            .collect();
+        if filtered_props.is_empty() {
+            return None;
+        }
+
+        Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+    }
+
+    fn jsx_conditional_display_has_lma_infer_metadata(display: &str) -> bool {
+        let has_prop_types_infer = display
+            .match_indices("propTypes")
+            .any(|(idx, _)| Self::jsx_property_infer_display_at(display, idx));
+        let has_default_props_infer = display
+            .match_indices("defaultProps")
+            .any(|(idx, _)| Self::jsx_property_infer_display_at(display, idx));
+        has_prop_types_infer || has_default_props_infer
+    }
+
+    fn jsx_property_infer_display_at(display: &str, property_idx: usize) -> bool {
+        let tail = &display[property_idx..];
+        let Some(colon_idx) = tail.find(':') else {
+            return false;
+        };
+        let after_colon = tail[colon_idx + ':'.len_utf8()..].trim_start();
+        after_colon.starts_with("infer ")
+    }
+
+    fn jsx_library_managed_structural_final_fallback_display(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<String> {
+        let is_lma_surface =
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                props_type,
+            );
+        let expanded = if is_lma_surface {
+            self.expand_jsx_display_type_alias_application(props_type)
+        } else {
+            None
+        };
+        let fallback_candidate = if is_lma_surface {
+            props_type
+        } else {
+            let expanded = self.expand_jsx_display_type_alias_application(props_type)?;
+            if !crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                expanded,
+            ) {
+                return None;
+            }
+            expanded
+        };
+        let fallback = crate::query_boundaries::checkers::jsx::library_managed_attributes_final_fallback_type(
+            self.ctx.types,
+            fallback_candidate,
+        )
+        .or_else(|| {
+            let expanded = expanded?;
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_final_fallback_type(
+                self.ctx.types,
+                expanded,
+            )
+        })?;
+        if crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, fallback) {
+            return Some(self.format_type(fallback));
+        }
+
+        let normalized = self.normalize_jsx_required_props_target(fallback);
         let normalized = self.evaluate_type_with_env(normalized);
         let shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, normalized)?;
@@ -982,11 +1082,7 @@ impl<'a> CheckerState<'a> {
                 ..
             } => {
                 let children_display = self.format_type(type_id);
-                if children_display.is_empty() {
-                    props_display
-                } else {
-                    format!("{props_display} & {{ children?: {children_display}; }}")
-                }
+                format!("{props_display} & {{ children?: {children_display}; }}")
             }
             _ => props_display,
         }
@@ -1073,10 +1169,9 @@ impl<'a> CheckerState<'a> {
                 .types
                 .nodes
                 .iter()
-                .filter_map(|&member_idx| {
+                .map(|&member_idx| {
                     let member_type = self.get_type_from_type_node(member_idx);
-                    let formatted = self.format_type(member_type);
-                    (!formatted.is_empty()).then_some(formatted)
+                    self.format_type(member_type)
                 })
                 .collect();
             if !parts.is_empty() {

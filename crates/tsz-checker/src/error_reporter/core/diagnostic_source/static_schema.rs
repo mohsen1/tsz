@@ -1,3 +1,4 @@
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -7,30 +8,32 @@ impl<'a> CheckerState<'a> {
         array_type: TypeId,
         other: TypeId,
     ) -> Option<String> {
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, array_type) {
+        if crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, array_type) {
             return None;
         }
-        let element_type =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, array_type)?;
+        let format_peer =
+            diagnostic_query::type_parameter_constraint(self.ctx.types, other).unwrap_or(other);
+        let element_type = diagnostic_query::array_element_type(self.ctx.types, array_type)?;
         let array_display = self.format_type_diagnostic(array_type);
         if let Some(query_display) = self.type_query_static_array_structural_display(&array_display)
         {
             return Some(query_display);
         }
         if let Some(static_type) = self.static_schema_alias_element_structural_type(element_type) {
-            return Some(self.format_static_schema_array_structural_type(static_type, other));
+            return Some(self.format_static_schema_array_structural_type(static_type, format_peer));
         }
-        if !self.is_static_schema_application(element_type) {
-            return None;
-        }
-        if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
-            let schema_type = self.evaluate_type_for_assignability(schema_type);
-            if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
-                return Some(self.format_static_schema_array_structural_type(static_type, other));
-            }
+        let schema_type = self
+            .static_schema_application_schema_type(element_type)
+            .or_else(|| self.static_schema_alias_application_schema_type(element_type))?;
+        let schema_type = self
+            .static_schema_type_query_value_type(schema_type)
+            .unwrap_or_else(|| self.resolve_type_query_type(schema_type));
+        let schema_type = self.evaluate_type_for_assignability(schema_type);
+        if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
+            return Some(self.format_static_schema_array_structural_type(static_type, format_peer));
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
-        Some(self.format_static_schema_array_structural_type(evaluated_element, other))
+        Some(self.format_static_schema_array_structural_type(evaluated_element, format_peer))
     }
 
     fn static_schema_alias_element_structural_type(
@@ -86,8 +89,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
-        else {
+        let Some(def_id) = diagnostic_query::lazy_def_id(self.ctx.types, base) else {
             return false;
         };
         let Some(def) = self.ctx.definition_store.get(def_id) else {
@@ -99,33 +101,34 @@ impl<'a> CheckerState<'a> {
         let Some(body) = def.body else {
             return false;
         };
-        let Some(indexed) =
-            crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, body)
-        else {
+        let Some(indexed) = diagnostic_query::get_indexed_access_type(self.ctx.types, body) else {
             return false;
         };
         self.is_static_property_name(indexed.index_type)
     }
 
     fn is_static_property_name(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::string_literal_value(self.ctx.types, type_id)
+        diagnostic_query::string_literal_value(self.ctx.types, type_id)
             .is_some_and(|name| self.ctx.types.resolve_atom_ref(name).as_ref() == "static")
     }
 
     fn static_schema_application_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
-        let app_info = crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-            .or_else(|| {
-            let alias = self.ctx.types.get_display_alias(type_id)?;
-            crate::query_boundaries::common::application_info(self.ctx.types, alias)
-        })?;
+        let app_info =
+            diagnostic_query::application_info(self.ctx.types, type_id).or_else(|| {
+                let alias = self.ctx.types.get_display_alias(type_id)?;
+                diagnostic_query::application_info(self.ctx.types, alias)
+            })?;
         self.type_alias_projects_static_member(app_info.0)
             .then_some(app_info)
     }
 
     fn static_schema_element_structural_type(&mut self, element_type: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use diagnostic_query::PropertyAccessResult;
 
         if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
+            let schema_type = self
+                .static_schema_type_query_value_type(schema_type)
+                .unwrap_or_else(|| self.resolve_type_query_type(schema_type));
             let schema_type = self.evaluate_type_for_assignability(schema_type);
             if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
                 return Some(static_type);
@@ -137,11 +140,8 @@ impl<'a> CheckerState<'a> {
                     ..
                 } => {
                     let property_type = self.evaluate_type_with_env(type_id);
-                    if crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        property_type,
-                    )
-                    .is_some()
+                    if diagnostic_query::object_shape_for_type(self.ctx.types, property_type)
+                        .is_some()
                     {
                         return Some(property_type);
                     }
@@ -155,18 +155,13 @@ impl<'a> CheckerState<'a> {
             if matches!(current, TypeId::ERROR | TypeId::UNKNOWN) {
                 return None;
             }
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, current)
-                .is_some()
-            {
+            if diagnostic_query::object_shape_for_type(self.ctx.types, current).is_some() {
                 return Some(current);
             }
 
-            let indexed =
-                crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, current)?;
-            let prop_atom = crate::query_boundaries::common::string_literal_value(
-                self.ctx.types,
-                indexed.index_type,
-            )?;
+            let indexed = diagnostic_query::get_indexed_access_type(self.ctx.types, current)?;
+            let prop_atom =
+                diagnostic_query::string_literal_value(self.ctx.types, indexed.index_type)?;
             let prop_name = self.ctx.types.resolve_atom_ref(prop_atom).to_string();
             let object_type = self.evaluate_type_with_env(indexed.object_type);
             current = match self.resolve_property_access_with_env(object_type, &prop_name) {
@@ -186,6 +181,38 @@ impl<'a> CheckerState<'a> {
         args.first().copied()
     }
 
+    fn static_schema_alias_application_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(schema_type) = self.static_schema_type_alias_body_schema_type(type_id) {
+            return Some(schema_type);
+        }
+        let alias = self.ctx.types.get_display_alias(type_id)?;
+        self.static_schema_application_schema_type(alias)
+            .or_else(|| self.static_schema_type_alias_body_schema_type(alias))
+    }
+
+    fn static_schema_type_alias_body_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let def_id = diagnostic_query::lazy_def_id(self.ctx.types, type_id)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        self.static_schema_application_schema_type(def.body?)
+    }
+
+    fn static_schema_type_query_value_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let sym_ref = diagnostic_query::get_type_query_symbol_ref(self.ctx.types, type_id)?;
+        let sym_id = tsz_binder::SymbolId(sym_ref.0);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration.into_option().or_else(|| {
+            symbol.declarations.iter().copied().find(|decl| {
+                self.ctx.arena.get(*decl).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION
+                })
+            })
+        })?;
+        Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
+    }
+
     fn typebox_schema_static_type(&mut self, schema_type: TypeId, depth: u8) -> Option<TypeId> {
         if depth > 12 {
             return None;
@@ -195,10 +222,7 @@ impl<'a> CheckerState<'a> {
         if let Some(static_type) = self.schema_property_type(schema_type, "static") {
             let static_type = self.evaluate_type_for_assignability(static_type);
             if !matches!(static_type, TypeId::ERROR | TypeId::UNKNOWN)
-                && !crate::query_boundaries::common::contains_free_type_parameters(
-                    self.ctx.types,
-                    static_type,
-                )
+                && !diagnostic_query::contains_free_type_parameters(self.ctx.types, static_type)
             {
                 return Some(
                     self.rewrite_nested_static_projection_members(static_type, depth + 1)
@@ -209,10 +233,7 @@ impl<'a> CheckerState<'a> {
 
         let properties_type = self.schema_property_type(schema_type, "properties")?;
         let properties_type = self.evaluate_type_for_assignability(properties_type);
-        let shape = crate::query_boundaries::common::object_shape_for_type(
-            self.ctx.types,
-            properties_type,
-        )?;
+        let shape = diagnostic_query::object_shape_for_type(self.ctx.types, properties_type)?;
         let mut properties = Vec::with_capacity(shape.properties.len());
         for prop in &shape.properties {
             let prop_type = self.typebox_schema_static_type(prop.type_id, depth + 1)?;
@@ -239,8 +260,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let type_id = self.evaluate_type_for_assignability(type_id);
-        let shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)?;
+        let shape = diagnostic_query::object_shape_for_type(self.ctx.types, type_id)?;
         let mut changed = false;
         let mut properties = Vec::with_capacity(shape.properties.len());
         for prop in &shape.properties {
@@ -257,7 +277,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn schema_property_type(&mut self, schema_type: TypeId, property: &str) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use diagnostic_query::PropertyAccessResult;
 
         match self.resolve_property_access_with_env(schema_type, property) {
             PropertyAccessResult::Success { type_id, .. }
@@ -277,12 +297,14 @@ impl<'a> CheckerState<'a> {
             .strip_prefix("(typeof ")?
             .strip_suffix(".static)[]")?;
         let sym_id = self.ctx.binder.file_locals.get(schema_name)?;
-        let value_decl = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .map(|symbol| symbol.value_declaration)
-            .unwrap_or(tsz_parser::NodeIndex::NONE);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration.into_option().or_else(|| {
+            symbol.declarations.iter().copied().find(|decl| {
+                self.ctx.arena.get(*decl).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION
+                })
+            })
+        })?;
         let schema_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
         let schema_type = self.evaluate_type_for_assignability(schema_type);
         let static_type = self.typebox_schema_static_type(schema_type, 0)?;

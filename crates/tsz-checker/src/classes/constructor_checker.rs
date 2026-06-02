@@ -469,12 +469,10 @@ impl<'a> CheckerState<'a> {
 
         let mixin_anonymous_display =
             self.mixin_call_anonymous_instance_display(expr_idx, type_arguments);
-        if let Some(ref anonymous_display) = mixin_anonymous_display
-            && let Some(name) = names
-                .iter_mut()
-                .find(|name| name.contains("(Anonymous class)"))
-        {
-            *name = name.replacen("(Anonymous class)", anonymous_display, 1);
+        if let Some(ref anonymous_display) = mixin_anonymous_display {
+            for name in &mut names {
+                *name = name.replacen("(Anonymous class)", anonymous_display, 1);
+            }
         }
 
         // Sort names to approximate source order. The solver's intersection

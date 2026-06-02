@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
                 let mut value_display = self.format_type(value_type);
-                if value_display == symbol.escaped_name {
+                if self.ctx.resolve_type_to_symbol_id(value_type) == Some(sym_id) {
                     let constructor_name = format!("{}Constructor", symbol.escaped_name);
                     let has_constructor_symbol =
                         self.ctx.binder.file_locals.get(&constructor_name).is_some()

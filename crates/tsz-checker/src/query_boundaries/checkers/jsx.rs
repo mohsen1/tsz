@@ -120,6 +120,30 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     crate::query_boundaries::common::contains_type_parameters(db, type_id)
 }
 
+pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::type_has_displayable_name(db, type_id)
+}
+
+pub(crate) fn missing_props_are_iterator_protocol_noise(
+    db: &dyn TypeDatabase,
+    props: &[&tsz_solver::PropertyInfo],
+) -> bool {
+    if props.len() != 2 {
+        return false;
+    }
+    let mut has_iterator = false;
+    let mut has_next = false;
+    for prop in props {
+        let name = db.resolve_atom_ref(prop.name);
+        match (prop.is_symbol_named, name.as_ref()) {
+            (true, "[Symbol.iterator]") => has_iterator = true,
+            (false, "next") => has_next = true,
+            _ => return false,
+        }
+    }
+    has_iterator && has_next
+}
+
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
 }
@@ -220,6 +244,54 @@ pub(crate) fn type_has_declaration_name(
     def_store
         .get_name(def_id)
         .is_some_and(|name| db.resolve_atom_ref(name).as_ref() == expected)
+}
+
+pub(crate) fn library_managed_attributes_infer_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    if library_managed_attributes_application_surface(db, def_store, type_id) {
+        return true;
+    }
+
+    db.get_display_alias(type_id)
+        .is_some_and(|alias| library_managed_attributes_application_surface(db, def_store, alias))
+}
+
+fn library_managed_attributes_application_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    type_has_declaration_name(db, def_store, type_id, "LibraryManagedAttributes")
+        && crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+            db, def_store, type_id,
+        )
+}
+
+pub(crate) fn library_managed_attributes_final_fallback_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    library_managed_attributes_final_fallback_type_inner(db, type_id, &mut Vec::new())
+}
+
+fn library_managed_attributes_final_fallback_type_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() || visited.contains(&type_id) {
+        return None;
+    }
+    visited.push(type_id);
+
+    let cond_id = crate::query_boundaries::common::get_conditional_type_id(db, type_id)?;
+    let cond = db.get_conditional(cond_id);
+
+    library_managed_attributes_final_fallback_type_inner(db, cond.false_type, visited)
+        .or(Some(cond.false_type))
 }
 
 pub(crate) fn contains_anonymous_object_surface(

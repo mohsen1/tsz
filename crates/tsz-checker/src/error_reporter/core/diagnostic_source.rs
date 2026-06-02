@@ -812,11 +812,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let source_display =
-            self.format_type_for_assignability_message(self.widen_type_for_display(type_id));
-        let constructor_display = self
-            .format_type_for_assignability_message(self.widen_type_for_display(constructor_type));
-        (source_display == constructor_display).then_some(constructor_name)
+        let source_type = self.widen_type_for_display(type_id);
+        let constructor_type = self.widen_type_for_display(constructor_type);
+        crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            source_type,
+            constructor_type,
+        )
+        .then_some(constructor_name)
     }
 
     /// When a source expression is a property/element access whose value type
@@ -1642,6 +1646,11 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.rebuilt_array_source_display(declared_type, target) {
             return Some(display);
         }
+        if let Some(display) =
+            self.broad_mapped_index_signature_source_display(declared_type, target)
+        {
+            return Some(display);
+        }
 
         // Preserve literal property types from declared annotations while
         // leaving fresh object-literal display_properties to the widening path.
@@ -1665,18 +1674,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if prefer_declared_display
-            && crate::query_boundaries::common::is_mapped_type(self.ctx.types, declared_type)
+            && declared_type != expr_display_type
+            && crate::query_boundaries::diagnostics::finite_mapped_property_surface(
+                self.ctx.types,
+                declared_type,
+            )
+            && !diagnostic_query::type_has_displayable_name(self.ctx.types, target)
         {
-            let declared_structural_display = self.format_type_diagnostic(declared_type);
-            if declared_structural_display.starts_with('{')
-                && !declared_structural_display.contains(" in ")
-            {
-                let expr_display =
-                    self.format_assignability_type_for_message(expr_display_type, target);
-                if declared_structural_display != expr_display {
-                    return Some(declared_structural_display);
-                }
-            }
+            return Some(self.format_type_diagnostic(declared_type));
         }
 
         let mut declared_display_type =

@@ -187,3 +187,156 @@ const foo4: Foo4 = foo3;
         "TS2322 should not repaint the application as wrapper aliases, got: {diag:?}"
     );
 }
+
+#[test]
+fn adjacent_recursive_mapped_alias_applications_both_report() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Id<T> = { [K in keyof T]: Id<T[K]> };
+type Foo1 = Id<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo2 = Id<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo1: Foo1;
+const foo2: Foo2 = foo1;
+
+type Id2<T> = { [K in keyof T]: Id2<Id2<T[K]>> };
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+"#,
+    );
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2322)
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "both recursive mapped alias assignments should report TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message_text
+            .contains("Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>")),
+        "second TS2322 should preserve the recursive alias application display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn recursive_mapped_alias_application_rejects_with_renamed_binders() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Recur<Value> = { [Prop in keyof Value]: Recur<Recur<Value[Prop]>> };
+type SourceWrap = Recur<{ outer: { inner: number } }>;
+type TargetWrap = Recur<{ outer: { inner: string } }>;
+declare const source: SourceWrap;
+const target: TargetWrap = source;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for recursive mapped alias mismatch");
+    assert!(
+        diag.message_text
+            .contains("Recur<{ outer: { inner: number; }; }>")
+            && diag
+                .message_text
+                .contains("Recur<{ outer: { inner: string; }; }>"),
+        "TS2322 should preserve recursive alias application args independent of binder names, got: {diag:?}"
+    );
+}
+
+#[test]
+fn array_return_to_bare_type_parameter_keeps_target_surface() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Input = { level1: { level2: { foo: string } } };
+type Output = { level1: { level2: { foo: string; bar: string } } };
+function convert<Result extends Output[]>(ors: Input[]): Result {
+    return ors;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for array return to bare type parameter");
+    assert!(
+        diag.message_text
+            .contains("is not assignable to type 'Result'")
+            && !diag.message_text.contains("Output[]"),
+        "TS2322 should keep the bare type-parameter target instead of repainting its constraint, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information.iter().any(|related| {
+            related.code == crate::diagnostics::diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO
+                && related.message_text.contains("'Result' could be instantiated with an arbitrary type")
+                && related.message_text.contains("Input[]")
+        }),
+        "TS2322 should include the arbitrary-type elaboration for the bare target parameter, got: {diag:?}"
+    );
+}
+
+#[test]
+fn static_schema_alias_array_return_to_bare_type_parameter_uses_structural_source_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface TSchema { static: unknown }
+interface TString extends TSchema { static: string }
+interface TObject<T extends Record<string, TSchema>> extends TSchema {
+    static: { [K in keyof T]: Static<T[K]> }
+}
+type Static<T extends TSchema> = T["static"];
+declare const Type: {
+    String(): TString;
+    Object<T extends Record<string, TSchema>>(properties: T): TObject<T>;
+};
+
+type Input = Static<typeof Input>;
+const Input = Type.Object({
+    level1: Type.Object({
+        level2: Type.Object({
+            foo: Type.String(),
+        }),
+    }),
+});
+
+type Output = Static<typeof Output>;
+const Output = Type.Object({
+    level1: Type.Object({
+        level2: Type.Object({
+            foo: Type.String(),
+            bar: Type.String(),
+        }),
+    }),
+});
+
+function convert<Result extends Output[]>(ors: Input[]): Result {
+    return ors;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .expect("expected TS2322 for static-schema alias array return");
+    assert!(
+        diag.message_text
+            .contains("Type '{ level1: { level2: { foo: string; }; }; }[]' is not assignable to type 'Result'.")
+            && !diag.message_text.contains("Input[]")
+            && !diag.message_text.contains("Output[]"),
+        "TS2322 should structurally display the static-schema alias source while keeping the bare target, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information.iter().any(|related| {
+            related.code == crate::diagnostics::diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO
+                && related.message_text.contains("'Result' could be instantiated with an arbitrary type")
+                && related.message_text.contains("{ level1: { level2: { foo: string; }; }; }[]")
+        }),
+        "TS2322 should use the structural source display in the arbitrary-type elaboration, got: {diag:?}"
+    );
+}

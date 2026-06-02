@@ -65,102 +65,6 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn property_info_for_missing_property_satisfaction(
-        &mut self,
-        ty: TypeId,
-        name: tsz_common::interner::Atom,
-    ) -> Option<tsz_solver::PropertyInfo> {
-        let resolved = self.resolve_type_for_property_access(ty);
-        let judged = self.judge_evaluate(resolved);
-        let evaluated = self.evaluate_type_with_env(ty);
-        let evaluated_resolved = self.resolve_type_for_property_access(evaluated);
-
-        [ty, resolved, judged, evaluated, evaluated_resolved]
-            .into_iter()
-            .find_map(|candidate| self.property_info_for_display(candidate, name))
-            .or_else(|| self.property_info_from_current_interface_declarations(ty, name))
-    }
-
-    fn property_info_from_current_interface_declarations(
-        &mut self,
-        ty: TypeId,
-        name: tsz_common::interner::Atom,
-    ) -> Option<tsz_solver::PropertyInfo> {
-        let sym_id = self.ctx.resolve_type_to_symbol_id(ty)?;
-        let declarations = self.ctx.binder.get_symbol(sym_id)?.declarations.clone();
-
-        declarations.into_iter().find_map(|decl_idx| {
-            let is_current_interface = {
-                let arena =
-                    self.ctx
-                        .binder
-                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
-                std::ptr::eq(arena, self.ctx.arena)
-                    && arena
-                        .get(decl_idx)
-                        .is_some_and(|node| arena.get_interface(node).is_some())
-            };
-            if !is_current_interface {
-                return None;
-            }
-
-            let diag_count_before = self.ctx.diagnostics.len();
-            let interface_type = self.get_type_of_interface(decl_idx);
-            self.ctx.diagnostics.truncate(diag_count_before);
-            self.property_info_for_display(interface_type, name)
-        })
-    }
-
-    fn property_info_for_any_missing_property_satisfaction_type(
-        &mut self,
-        types: &[TypeId],
-        name: tsz_common::interner::Atom,
-    ) -> Option<tsz_solver::PropertyInfo> {
-        types
-            .iter()
-            .copied()
-            .find_map(|ty| self.property_info_for_missing_property_satisfaction(ty, name))
-    }
-
-    fn missing_property_is_satisfied_by_source(
-        &mut self,
-        source_types: &[TypeId],
-        target_types: &[TypeId],
-        property_name: tsz_common::interner::Atom,
-    ) -> bool {
-        let Some(source_prop) = self
-            .property_info_for_any_missing_property_satisfaction_type(source_types, property_name)
-        else {
-            return false;
-        };
-        if source_prop.optional || source_prop.visibility != tsz_solver::Visibility::Public {
-            return false;
-        }
-        let Some(target_prop) = self
-            .property_info_for_any_missing_property_satisfaction_type(target_types, property_name)
-        else {
-            return false;
-        };
-        if target_prop.visibility != tsz_solver::Visibility::Public {
-            return false;
-        }
-        let read_ok = if source_prop.is_method || target_prop.is_method {
-            self.diagnostic_relation_boolean_guard_bivariant(
-                source_prop.type_id,
-                target_prop.type_id,
-            )
-        } else {
-            self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
-                .related
-        };
-        let write_ok = target_prop.readonly
-            || self
-                .assign_relation_outcome(target_prop.write_type, source_prop.write_type)
-                .related;
-
-        read_ok && write_ok
-    }
-
     fn should_suppress_outer_callback_return_assignability(
         &mut self,
         target: TypeId,
@@ -777,7 +681,15 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                let has_static_schema_display = self
+                    .static_schema_array_structural_display(source, target)
+                    .is_some()
+                    || self
+                        .static_schema_array_structural_display(target, source)
+                        .is_some();
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && !has_static_schema_display
+                {
                     diag.message_text = self
                         .rewrite_declared_generic_alias_source_in_ts2322_message(
                             anchor_idx,
@@ -1029,14 +941,18 @@ impl<'a> CheckerState<'a> {
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
+        let mut static_schema_display = false;
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
             source_str = display;
+            static_schema_display = true;
         }
         if let Some(display) = self.static_schema_array_structural_display(target, source) {
             target_str = display;
+            static_schema_display = true;
         }
-        if let Some((direct_source, direct_target)) =
-            self.direct_type_param_alias_application_pair_display(source, target)
+        if !static_schema_display
+            && let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
         {
             source_str = direct_source;
             target_str = direct_target;
@@ -1244,6 +1160,43 @@ impl<'a> CheckerState<'a> {
         target_str =
             self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
+    }
+
+    pub(in crate::error_reporter) fn unrelated_type_parameter_target_related_info(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_display: &str,
+        target_display: &str,
+        start: u32,
+        length: u32,
+    ) -> Option<DiagnosticRelatedInformation> {
+        if !self.target_is_bare_type_parameter(target) {
+            return None;
+        }
+        let constraint = crate::query_boundaries::diagnostics::type_parameter_constraint(
+            self.ctx.types,
+            target,
+        )?;
+        if constraint == TypeId::ANY
+            || constraint == TypeId::UNKNOWN
+            || self.diagnostic_relation_boolean_guard(source, constraint)
+        {
+            return None;
+        }
+        let message = format_message(
+            diagnostic_messages::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
+            &[target_display, source_display],
+        );
+        Some(DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            message_text: message,
+            depth: 0,
+        })
     }
 
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
@@ -1854,14 +1807,18 @@ impl<'a> CheckerState<'a> {
             ) {
                 src_str = display;
             }
+            let mut static_schema_display = false;
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 src_str = display;
+                static_schema_display = true;
             }
             if let Some(display) = self.static_schema_array_structural_display(target, source) {
                 tgt_str = display;
+                static_schema_display = true;
             }
-            if let Some((direct_source, direct_target)) =
-                self.direct_type_param_alias_application_pair_display(source, target)
+            if !static_schema_display
+                && let Some((direct_source, direct_target)) =
+                    self.direct_type_param_alias_application_pair_display(source, target)
             {
                 src_str = direct_source;
                 tgt_str = direct_target;
@@ -1957,10 +1914,30 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             };
-            self.emit_render_request_at_anchor(
-                anchor,
-                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
-            );
+            if let Some(related) = self.unrelated_type_parameter_target_related_info(
+                source,
+                target,
+                &src_str,
+                &tgt_str,
+                anchor.start,
+                anchor.length,
+            ) {
+                self.emit_render_request_at_anchor(
+                    anchor,
+                    DiagnosticRenderRequest::with_related(
+                        DiagnosticAnchorKind::Exact,
+                        code,
+                        message,
+                        vec![related],
+                        RelatedInformationPolicy::ELABORATION,
+                    ),
+                );
+            } else {
+                self.emit_render_request_at_anchor(
+                    anchor,
+                    DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+                );
+            }
         }
     }
 }

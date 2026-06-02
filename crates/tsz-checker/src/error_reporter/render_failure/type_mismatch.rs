@@ -421,29 +421,35 @@ impl<'a> CheckerState<'a> {
             // the body application form. For the generic TS2322 mismatch,
             // tsc preserves the alias name (`B`), so the unfold must stay
             // scoped to the missing-property render paths above.
+            let mut static_schema_display = false;
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 source_str = display;
+                static_schema_display = true;
             }
             if let Some(display) = self.static_schema_array_structural_display(target, source) {
                 target_str = display;
+                static_schema_display = true;
             }
             if let Some(display) = self.type_query_static_array_structural_display(&source_str) {
                 source_str = display;
+                static_schema_display = true;
             }
-            if let Some((direct_source, direct_target)) =
-                self.direct_type_param_alias_application_pair_display(source, target)
+            if !static_schema_display
+                && let Some((direct_source, direct_target)) =
+                    self.direct_type_param_alias_application_pair_display(source, target)
             {
                 source_str = direct_source;
                 target_str = direct_target;
             }
-            if let Some((display_source, display_target)) = self
-                .declared_generic_alias_assignment_pair_display(
-                    idx,
-                    source,
-                    target,
-                    &source_str,
-                    &target_str,
-                )
+            if !static_schema_display
+                && let Some((display_source, display_target)) = self
+                    .declared_generic_alias_assignment_pair_display(
+                        idx,
+                        source,
+                        target,
+                        &source_str,
+                        &target_str,
+                    )
             {
                 source_str = display_source;
                 target_str = display_target;
@@ -543,13 +549,26 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        Diagnostic::error(
+        let mut diagnostic = Diagnostic::error(
             file_name,
             start,
             length,
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        )
+        );
+        if depth == 0
+            && let Some(related) = self.unrelated_type_parameter_target_related_info(
+                source,
+                target,
+                &source_str,
+                &target_str,
+                start,
+                length,
+            )
+        {
+            diagnostic.related_information.push(related);
+        }
+        diagnostic
     }
 
     pub(in crate::error_reporter) fn ts2739_alias_target_display(

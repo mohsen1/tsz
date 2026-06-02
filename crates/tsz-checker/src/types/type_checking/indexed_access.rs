@@ -1370,7 +1370,6 @@ impl<'a> CheckerState<'a> {
                     // Suppress TS2339 for types containing type parameters,
                     // index access types, or deferred types that cannot be resolved.
                     // Check both the resolved type and the original type.
-                    let type_str_for_check = self.format_type(object_type_for_check);
                     let should_suppress =
                         crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
@@ -1391,7 +1390,14 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 object_type,
                             )
-                            || type_str_for_check.contains('['); // Index access type like T[K]
+                            || crate::query_boundaries::diagnostics::contains_index_access_type(
+                                self.ctx.types,
+                                object_type_for_check,
+                            )
+                            || crate::query_boundaries::diagnostics::contains_index_access_type(
+                                self.ctx.types,
+                                object_type,
+                            );
                     if !should_suppress {
                         let object_type_str = self
                             .node_text(data.object_type)
@@ -1850,7 +1856,6 @@ impl<'a> CheckerState<'a> {
                 .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
             {
                 // Suppress TS2339 for types containing type parameters or deferred types.
-                let type_str_for_check = self.format_type(concrete_object_type);
                 let should_suppress = crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     concrete_object_type,
@@ -1862,7 +1867,10 @@ impl<'a> CheckerState<'a> {
                     concrete_object_type,
                 ) || concrete_object_type == TypeId::UNKNOWN
                     || concrete_object_type == TypeId::ERROR
-                    || type_str_for_check.contains('['); // Index access type like T[K]
+                    || crate::query_boundaries::diagnostics::contains_index_access_type(
+                        self.ctx.types,
+                        concrete_object_type,
+                    );
                 if !should_suppress {
                     let object_type_str = self.format_type(object_type);
                     let message = format_message(

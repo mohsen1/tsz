@@ -496,18 +496,20 @@ impl<'a> CheckerState<'a> {
                     | SubtypeFailureReason::OptionalPropertyRequired { .. }
                     | SubtypeFailureReason::NoCommonProperties { .. }
             );
-            if is_property_failure {
-                let src_str = self.format_type_diagnostic(source);
-                if src_str == "Object" {
-                    return Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
-                            .to_string(),
-                        diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
-                    );
-                }
+            if is_property_failure
+                && crate::query_boundaries::diagnostics::is_global_object_interface_for_diagnostic(
+                    self.ctx.types,
+                    source,
+                )
+            {
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    diagnostic_messages::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN
+                        .to_string(),
+                    diagnostic_codes::THE_OBJECT_TYPE_IS_ASSIGNABLE_TO_VERY_FEW_OTHER_TYPES_DID_YOU_MEAN_TO_USE_THE_AN,
+                );
             }
         }
         let rctx = RenderContext {
@@ -1255,14 +1257,13 @@ impl<'a> CheckerState<'a> {
         );
         let source_param_str = self.format_type_diagnostic(source_param);
         let target_param_str = self.format_type_diagnostic(target_param);
-        let (inner, inner_code) = if source_param_str == target_param_str
-            && !crate::error_reporter::assignability::is_primitive_type_name(&source_param_str)
-            && !crate::error_reporter::assignability::display_is_literal_value(&source_param_str)
-            // unique symbols stringify identically but are distinct identities;
-            // tsc uses TS2322, not TS2719. Detect structurally. See #9752.
-            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, source_param)
-            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, target_param)
-        {
+        let share_declared_param_name =
+            crate::query_boundaries::diagnostics::distinct_type_parameters_share_declared_name(
+                self.ctx.types,
+                source_param,
+                target_param,
+            );
+        let (inner, inner_code) = if share_declared_param_name {
             (
                 format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
