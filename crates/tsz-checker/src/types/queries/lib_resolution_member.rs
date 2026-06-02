@@ -207,14 +207,18 @@ impl CheckerState<'_> {
                     }
                 }
             }
+            let mut inherited_member = None;
             for base_name in heritage_bases {
                 if let Some(member_type) =
                     self.resolve_simple_lib_interface_property(&base_name, prop_name, visited)
                 {
-                    return Some(member_type);
+                    if inherited_member.is_some() {
+                        return None;
+                    }
+                    inherited_member = Some(member_type);
                 }
             }
-            return None;
+            return inherited_member;
         };
         let member_node = member_arena.get(member_idx)?;
         let sig = member_arena.get_signature(member_node)?;

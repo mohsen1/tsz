@@ -5,7 +5,7 @@ use crate::test_utils::{
     check_multi_file_with_libs, check_source_with_libs, load_compiled_lib_files, load_lib_files,
 };
 use std::sync::Arc;
-use tsz_binder::{BinderState, symbol_flags};
+use tsz_binder::{BinderState, lib_loader::LibFile, symbol_flags};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::perf_counters::CrossArenaSymbolMissSource;
 use tsz_parser::parser::ParserState;
@@ -570,6 +570,56 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
             )
             .is_none(),
         "non-DOM value-merged lib interfaces have lib-set-sensitive shapes and should stay on the existing path",
+    );
+}
+
+#[test]
+fn inherited_simple_lib_member_falls_back_on_duplicate_renamed_bases() {
+    let lib_files = vec![Arc::new(LibFile::from_source(
+        "lib.ambiguous-member.d.ts".to_string(),
+        r#"
+interface AlphaBase {
+  sharedSlot: string;
+}
+
+interface BetaBase {
+  sharedSlot: string;
+}
+
+interface CombinedTarget extends AlphaBase, BetaBase {}
+"#
+        .to_string(),
+    ))];
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    assert!(
+        state
+            .resolve_simple_lib_interface_own_property("CombinedTarget", "sharedSlot")
+            .is_none(),
+        "inherited simple-member fast path should fall back when multiple bases resolve the property",
     );
 }
 
