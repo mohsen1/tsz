@@ -6,6 +6,66 @@ use super::handlers_code_fixes_utils::{
 };
 use tsz::lsp::position::LineMap;
 
+struct CodeFixBuilder<'a> {
+    fix_name: &'a str,
+    description: String,
+    fix_id: Option<&'a str>,
+    fix_all_description: Option<&'a str>,
+}
+
+impl<'a> CodeFixBuilder<'a> {
+    fn new(fix_name: &'a str, description: impl Into<String>) -> Self {
+        Self {
+            fix_name,
+            description: description.into(),
+            fix_id: None,
+            fix_all_description: None,
+        }
+    }
+
+    const fn fix_id(mut self, fix_id: &'a str) -> Self {
+        self.fix_id = Some(fix_id);
+        self
+    }
+
+    const fn fix_all_description(mut self, fix_all_description: &'a str) -> Self {
+        self.fix_all_description = Some(fix_all_description);
+        self
+    }
+
+    fn single_text_change(
+        self,
+        file_name: &str,
+        line_map: &LineMap,
+        content: &str,
+        start_offset: u32,
+        end_offset: u32,
+        new_text: String,
+    ) -> serde_json::Value {
+        let start = line_map.offset_to_position(start_offset, content);
+        let end = line_map.offset_to_position(end_offset, content);
+        let mut action = serde_json::json!({
+            "fixName": self.fix_name,
+            "description": self.description,
+            "changes": [{
+                "fileName": file_name,
+                "textChanges": [{
+                    "start": { "line": start.line + 1, "offset": start.character + 1 },
+                    "end": { "line": end.line + 1, "offset": end.character + 1 },
+                    "newText": new_text
+                }]
+            }]
+        });
+        if let Some(fix_id) = self.fix_id {
+            action["fixId"] = serde_json::json!(fix_id);
+        }
+        if let Some(fix_all_description) = self.fix_all_description {
+            action["fixAllDescription"] = serde_json::json!(fix_all_description);
+        }
+        action
+    }
+}
+
 impl Server {
     pub(super) fn find_property_access_name_for_missing_member_fallback(
         content: &str,
@@ -67,40 +127,33 @@ impl Server {
         };
 
         let line_map = LineMap::build(&target_content);
-        let insert_pos = line_map.offset_to_position(insert_offset as u32, &target_content);
-        let change_for = |new_text: String| {
-            serde_json::json!([{
-                "fileName": target_file,
-                "textChanges": [{
-                    "start": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
-                    "end": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
-                    "newText": new_text
-                }]
-            }])
+        let action_for = |description: String, new_text: String| {
+            CodeFixBuilder::new("addMissingMember", description)
+                .fix_id("fixMissingMember")
+                .fix_all_description("Add all missing members")
+                .single_text_change(
+                    target_file.as_str(),
+                    &line_map,
+                    &target_content,
+                    insert_offset as u32,
+                    insert_offset as u32,
+                    new_text,
+                )
         };
 
         vec![
-            serde_json::json!({
-                "fixName": "addMissingMember",
-                "description": format!("Declare method '{prop_name}'"),
-                "changes": change_for(format!("\n    {prop_name}(): unknown;\n")),
-                "fixId": "fixMissingMember",
-                "fixAllDescription": "Add all missing members",
-            }),
-            serde_json::json!({
-                "fixName": "addMissingMember",
-                "description": format!("Declare property '{prop_name}'"),
-                "changes": change_for(format!("\n    {prop_name}: unknown;\n")),
-                "fixId": "fixMissingMember",
-                "fixAllDescription": "Add all missing members",
-            }),
-            serde_json::json!({
-                "fixName": "addMissingMember",
-                "description": format!("Add index signature for property '{prop_name}'"),
-                "changes": change_for("\n    [x: string]: unknown;\n".to_string()),
-                "fixId": "fixMissingMember",
-                "fixAllDescription": "Add all missing members",
-            }),
+            action_for(
+                format!("Declare method '{prop_name}'"),
+                format!("\n    {prop_name}(): unknown;\n"),
+            ),
+            action_for(
+                format!("Declare property '{prop_name}'"),
+                format!("\n    {prop_name}: unknown;\n"),
+            ),
+            action_for(
+                format!("Add index signature for property '{prop_name}'"),
+                "\n    [x: string]: unknown;\n".to_string(),
+            ),
         ]
     }
 
