@@ -647,27 +647,42 @@ pub(crate) fn is_root_alias_symlink(dir: &Path) -> bool {
 }
 
 /// Build a redirect map for duplicate packages (same name+version at different
-/// `node_modules` paths). The shallowest copy becomes canonical.
+/// `node_modules` paths). Every non-canonical copy redirects directly to the
+/// rank-winning canonical copy.
+///
+/// Rank is `(node_modules-depth, normalized-path)`: the shallowest copy wins,
+/// with lexical path used as a deterministic tie-break. The function sorts the
+/// discovered package roots by rank first, then sweeps once — within each
+/// contiguous `(name, version)` run the first entry is the canonical winner
+/// and every later entry redirects straight to it. The sort makes this a
+/// pure function of the input file set (no `FxHashSet` iteration order leaks
+/// in) and the rank-ordered sweep skips the stale-chain hazard an
+/// "encounter order" loop has to fix up after the fact.
 pub(crate) fn build_duplicate_package_redirects(
     file_names: &[String],
     options: &ResolvedCompilerOptions,
 ) -> FxHashMap<PathBuf, PathBuf> {
-    use std::collections::hash_map::Entry;
-
-    let mut canonical_packages: FxHashMap<(String, String), (PathBuf, usize)> =
-        FxHashMap::default();
+    // Map each input file to its `node_modules` package root once. The
+    // file-redirect pass below reuses these without re-walking the path.
+    let mut file_pkg_roots: Vec<Option<PathBuf>> = Vec::with_capacity(file_names.len());
     let mut package_roots: FxHashSet<PathBuf> = FxHashSet::default();
     for file_name in file_names {
-        if let Some(pkg_root) = find_node_modules_package_root(Path::new(file_name)) {
-            package_roots.insert(pkg_root);
+        let pkg_root = find_node_modules_package_root(Path::new(file_name));
+        if let Some(ref root) = pkg_root {
+            package_roots.insert(root.clone());
         }
+        file_pkg_roots.push(pkg_root);
     }
 
     for root in &package_roots {
         tracing::debug!(target: "tsz::dup_pkg", root = %root.display(), "found package root");
     }
 
-    let mut root_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
+    // Pre-resolve each package root's `(name, version)` identity. The sort
+    // key adds `(node_modules-depth, normalized-path)` as the rank tie-break,
+    // computed once per root via `sort_by_cached_key` instead of on every
+    // comparator call.
+    let mut root_identities: Vec<(PathBuf, String, String)> = Vec::new();
     for pkg_root in &package_roots {
         let pkg_json_path = pkg_root.join("package.json");
         let (name, version) = match std::fs::read_to_string(&pkg_json_path) {
@@ -688,57 +703,65 @@ pub(crate) fn build_duplicate_package_redirects(
             }
         };
         tracing::debug!(target: "tsz::dup_pkg", name = %name, version = %version, root = %pkg_root.display(), "package found");
+        root_identities.push((pkg_root.clone(), name, version));
+    }
+    root_identities.sort_by_cached_key(|(pkg_root, name, version)| {
         let depth = pkg_root
             .components()
             .filter(|c| c.as_os_str() == "node_modules")
             .count();
-        match canonical_packages.entry((name, version)) {
-            Entry::Vacant(e) => {
-                e.insert((pkg_root.clone(), depth));
+        (
+            name.clone(),
+            version.clone(),
+            depth,
+            normalize_resolved_path(pkg_root, options)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    });
+
+    // Within each `(name, version)` run the first element is canonical and
+    // every later element redirects directly to it. `chunk_by` makes the run
+    // structure explicit and removes the manual `last_key`/`canonical_root`
+    // trackers a fold-style sweep would need.
+    let mut root_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
+    for run in root_identities.chunk_by(|left, right| left.1 == right.1 && left.2 == right.2) {
+        let [(canon, ..), rest @ ..] = run else {
+            continue;
+        };
+        for (pkg_root, _, _) in rest {
+            if pkg_root == canon {
+                continue;
             }
-            Entry::Occupied(mut e) => {
-                let (existing_root, existing_depth) = e.get().clone();
-                let current_rank = (
-                    depth,
-                    normalize_resolved_path(pkg_root, options)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-                let existing_rank = (
-                    existing_depth,
-                    normalize_resolved_path(&existing_root, options)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-                if current_rank < existing_rank {
-                    root_redirects.insert(existing_root, pkg_root.clone());
-                    e.insert((pkg_root.clone(), depth));
-                } else {
-                    root_redirects.insert(pkg_root.clone(), existing_root);
-                }
-            }
+            root_redirects.insert(pkg_root.clone(), canon.clone());
         }
-    }
-    if root_redirects.is_empty() {
-        return FxHashMap::default();
     }
     for (from, to) in &root_redirects {
         tracing::debug!(target: "tsz::dup_pkg", from = %from.display(), to = %to.display(), "root redirect");
     }
+    // Cache `normalize_resolved_path(canonical_root)` per redirected root.
+    // `normalize_resolved_path` calls `canonicalize` + walks every ancestor
+    // looking for symlinks, so the cache turns N files-under-one-package into
+    // one canonicalize per package instead of one per file.
+    let mut normalized_canonical: FxHashMap<&Path, PathBuf> = FxHashMap::default();
     let mut file_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
-    for file_name in file_names {
+    for (file_name, pkg_root) in file_names.iter().zip(file_pkg_roots.iter()) {
+        let Some(pkg_root) = pkg_root else { continue };
+        let Some(canonical_root) = root_redirects.get(pkg_root) else {
+            continue;
+        };
         let file_path = Path::new(file_name);
-        if let Some(pkg_root) = find_node_modules_package_root(file_path)
-            && let Some(canonical_root) = root_redirects.get(&pkg_root)
-            && let Ok(relative) = file_path.strip_prefix(&pkg_root)
-        {
-            let canonical_file = canonical_root.join(relative);
-            let from = normalize_resolved_path(file_path, options);
-            let to = normalize_resolved_path(&canonical_file, options);
-            tracing::debug!(target: "tsz::dup_pkg", from = %from.display(), to = %to.display(), "file redirect");
-            if from != to {
-                file_redirects.insert(from, to);
-            }
+        let Ok(relative) = file_path.strip_prefix(pkg_root) else {
+            continue;
+        };
+        let canonical_root_normalized = normalized_canonical
+            .entry(canonical_root.as_path())
+            .or_insert_with(|| normalize_resolved_path(canonical_root, options));
+        let to = canonical_root_normalized.join(relative);
+        let from = normalize_resolved_path(file_path, options);
+        tracing::debug!(target: "tsz::dup_pkg", from = %from.display(), to = %to.display(), "file redirect");
+        if from != to {
+            file_redirects.insert(from, to);
         }
     }
     file_redirects

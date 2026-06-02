@@ -462,6 +462,146 @@ fn test_duplicate_package_redirects_prefer_stable_lexical_root_when_depth_ties()
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Stand up three duplicate-package copies at the given `node_modules`
+/// sub-paths, each tagged with `name`/`version` so
+/// `build_duplicate_package_redirects` groups them. Returns the per-copy
+/// `index.d.ts` paths in input order.
+fn make_duplicate_package_copies(
+    dir: &Path,
+    name: &str,
+    version: &str,
+    relative_roots: [&str; 3],
+) -> [PathBuf; 3] {
+    let pkg_json = format!(r#"{{"name":"{name}","version":"{version}"}}"#);
+    let mut indices: [PathBuf; 3] = Default::default();
+    for (i, rel) in relative_roots.iter().enumerate() {
+        let pkg_dir = dir.join(rel);
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("package.json"), &pkg_json).unwrap();
+        std::fs::write(pkg_dir.join("index.d.ts"), "export {};").unwrap();
+        indices[i] = pkg_dir.join("index.d.ts");
+    }
+    indices
+}
+
+fn dup_pkg_resolver_options() -> ResolvedCompilerOptions {
+    ResolvedCompilerOptions {
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_duplicate_package_redirects_flatten_chains_to_final_canonical_root() {
+    // Three duplicate package copies at three distinct depths. Iteration over
+    // the package-roots set is hash-order, so any intermediate "winner" must
+    // not leave a stale redirect pointing at it: every non-canonical copy
+    // must rewrite directly to the depth-1 canonical, regardless of which
+    // order the build pass visited them.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_chain");
+    let _ = fs::remove_dir_all(&dir);
+
+    let [file1, file2, file3] = make_duplicate_package_copies(
+        &dir,
+        "pkg",
+        "2.3.4",
+        [
+            "node_modules/pkg",
+            "node_modules/host/node_modules/pkg",
+            "node_modules/host/node_modules/sub/node_modules/pkg",
+        ],
+    );
+
+    let options = dup_pkg_resolver_options();
+
+    let redirects = build_duplicate_package_redirects(
+        &[
+            file1.display().to_string(),
+            file2.display().to_string(),
+            file3.display().to_string(),
+        ],
+        &options,
+    );
+
+    let canonical1 = canonicalize_or_owned(&file1);
+    let canonical2 = canonicalize_or_owned(&file2);
+    let canonical3 = canonicalize_or_owned(&file3);
+
+    assert!(
+        !redirects.contains_key(&canonical1),
+        "the depth-1 canonical copy must never redirect away from itself, got: {redirects:?}"
+    );
+    assert_eq!(
+        redirects.get(&canonical2),
+        Some(&canonical1),
+        "depth-2 copy must redirect directly to the depth-1 canonical (no chains), got: {redirects:?}"
+    );
+    assert_eq!(
+        redirects.get(&canonical3),
+        Some(&canonical1),
+        "depth-3 copy must redirect directly to the depth-1 canonical (no chains), got: {redirects:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_duplicate_package_redirects_deterministic_across_input_orders() {
+    // The redirect map must be a pure function of the input file set: shuffling
+    // the input order must produce the same redirect map. This guards against
+    // hash-set iteration order leaking into the canonical-root choice.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_determinism");
+    let _ = fs::remove_dir_all(&dir);
+
+    let [file1_path, file2_path, file3_path] = make_duplicate_package_copies(
+        &dir,
+        "det-pkg",
+        "0.1.0",
+        [
+            "node_modules/det-pkg",
+            "node_modules/wrap/node_modules/det-pkg",
+            "node_modules/wrap/node_modules/inner/node_modules/det-pkg",
+        ],
+    );
+
+    let options = dup_pkg_resolver_options();
+
+    let file1 = file1_path.display().to_string();
+    let file2 = file2_path.display().to_string();
+    let file3 = file3_path.display().to_string();
+
+    // The pure-function property is "any reordering yields the same map".
+    // Three representative orderings cover the regression: sorted, reversed,
+    // and a rotation that visits the depth-3 (deepest) copy first — the
+    // ordering that originally exposed the stale-chain redirect bug.
+    let permutations = [
+        [file1.clone(), file2.clone(), file3.clone()],
+        [file3.clone(), file2.clone(), file1.clone()],
+        [file3, file1, file2],
+    ];
+
+    let mut maps = Vec::new();
+    for inputs in &permutations {
+        let map = build_duplicate_package_redirects(inputs, &options);
+        let mut entries: Vec<(PathBuf, PathBuf)> = map.into_iter().collect();
+        entries.sort();
+        maps.push(entries);
+    }
+    let first = &maps[0];
+    for (i, m) in maps.iter().enumerate().skip(1) {
+        assert_eq!(
+            first, m,
+            "duplicate-package redirects must not depend on input order; permutation {i} diverged"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_exports_runtime_targets_substitute_matching_declaration_sidecars() {
     use std::fs;
