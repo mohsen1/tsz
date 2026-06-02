@@ -38,3 +38,24 @@ pub(crate) fn make_intersection(db: &dyn TypeDatabase, members: Vec<TypeId>) -> 
 pub(crate) fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::contains_unresolved_application(types, type_id)
 }
+
+/// Collect unresolved type names that appear as `Application` bases.
+pub(crate) fn collect_unresolved_application_names(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<String> {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut names = Vec::new();
+    tsz_solver::visitor::walk_referenced_types(types, type_id, |current| {
+        let Some((base, _)) = tsz_solver::type_queries::get_application_info(types, current) else {
+            return;
+        };
+        let Some(atom) = unresolved_type_name_atom(types, base) else {
+            return;
+        };
+        if seen.insert(atom) {
+            names.push(types.resolve_atom(atom).to_string());
+        }
+    });
+    names
+}

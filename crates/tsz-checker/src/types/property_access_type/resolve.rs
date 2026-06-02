@@ -383,7 +383,7 @@ impl<'a> CheckerState<'a> {
         let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else {
-            self.evaluate_application_type(original_object_type)
+            self.evaluate_property_access_receiver_type(original_object_type)
         };
         let receiver_has_jsdoc_type_annotation = if self.ctx.is_js_file()
             && self.ctx.should_resolve_jsdoc()

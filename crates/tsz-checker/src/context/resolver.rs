@@ -744,7 +744,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             );
             return Some(body);
         }
-
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
         None
     }
@@ -1123,23 +1122,42 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // walk the actual declaration symbol directly. Fall back to the
         // current binder's local entry (typically an import alias) only
         // when no concrete declaration is reachable cross-file.
-        let global_concrete = self
+        let global_root = self
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(root_name))
             .and_then(|entries| {
-                entries.iter().find(|(file_idx, sym)| {
-                    self.all_binders
-                        .as_ref()
-                        .and_then(|b| b.as_ref().get(*file_idx))
-                        .and_then(|binder| binder.get_symbol(*sym))
-                        .is_some_and(|symbol| {
-                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                        })
-                })
+                entries
+                    .iter()
+                    .find(|(file_idx, sym)| {
+                        self.all_binders
+                            .as_ref()
+                            .and_then(|b| b.as_ref().get(*file_idx))
+                            .and_then(|binder| binder.get_symbol(*sym))
+                            .is_some_and(|symbol| {
+                                !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                            })
+                    })
+                    .or_else(|| entries.iter().max_by_key(|(_, sym)| sym.0))
             })
-            .map(|&(_, sym)| sym);
-        let mut current_sym = global_concrete
+            .copied();
+        if let Some((file_idx, sym_id)) = global_root {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let all_binders_root = self.all_binders.as_ref().and_then(|binders| {
+            binders.iter().enumerate().find_map(|(file_idx, binder)| {
+                let sym_id = binder.file_locals.get(root_name)?;
+                let symbol = binder.get_symbol(sym_id)?;
+                (!symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
+                    .then_some((file_idx, sym_id))
+            })
+        });
+        if let Some((file_idx, sym_id)) = all_binders_root {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let mut current_sym = global_root
+            .map(|(_, sym)| sym)
+            .or_else(|| all_binders_root.map(|(_, sym)| sym))
             .or_else(|| self.binder.file_locals.get(root_name))
             .or_else(|| {
                 self.lib_contexts
@@ -1181,7 +1199,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 })?;
         }
 
-        let def_id = self.get_or_create_def_id(current_sym);
+        let canonical_name = name.rsplit('.').next().unwrap_or(name);
+        let def_id = self.get_or_create_def_id_for_symbol_name(current_sym, canonical_name);
         // Cache the resolution into `type_env` so the next solver-side
         // evaluator pass (which uses `TypeEnvironment` as resolver) can
         // reduce `Application(UnresolvedTypeName(name), args)` without
