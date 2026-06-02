@@ -918,9 +918,7 @@ impl<'a> CheckerState<'a> {
                             *inherited_slot
                         {
                             if prev_heritage_idx != type_idx {
-                                // Different bases provide conflicting index signatures.
-                                // tsc emits TS2430 ("incorrectly extends") against the
-                                // later base, not TS2320 ("cannot simultaneously extend").
+                                // Conflicting index signatures from different bases: tsc reports TS2430 ("incorrectly extends") against the later base, not TS2320.
                                 if !self
                                     .interface_heritage_index_value_relation_outcome(
                                         prev_val, value_type,
@@ -932,9 +930,6 @@ impl<'a> CheckerState<'a> {
                                         )
                                         .related
                                 {
-                                    // The later base's index signature conflicts with
-                                    // what was inherited from earlier bases.
-                                    // tsc reports TS2430 against the later base only.
                                     let index_kind = if key_type == TypeId::NUMBER {
                                         "number"
                                     } else {
