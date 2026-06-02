@@ -711,53 +711,84 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 source_instantiated.type_params.clear();
             } else {
                 // Non-generic source vs a genuinely generic target with no shared
-                // type-parameter identity. Follow tsc's `getBaseSignature` for the
-                // subset of the target's type parameters that are *only observed
-                // through a generic application* — i.e. they appear exclusively as a
-                // type argument such as the alias `A` in `AliasedRawBuilder<O, A>`,
-                // never as a directly-observable value type. Each such constrained
-                // parameter is instantiated to its constraint before structural
-                // comparison, so a concrete implementation whose result satisfies the
-                // constraint is accepted. This matches tsc for overloaded generic
-                // builder methods like
-                // `as<A extends string>(alias: Expression<any>): Aliased<T, A>`, where
-                // an implementation returning `Aliased<T, string>` is a valid override.
+                // type-parameter identity.
                 //
-                // Any type parameter that appears *bare* in a value position (a direct
-                // parameter/return type, including inside a nested callback signature,
-                // e.g. `T` in `() => T` or `(arg: T) => U`) stays opaque. The caller
-                // fully controls such a parameter, so a concrete implementation cannot
-                // satisfy every instantiation: `(x: string) => string` remains
-                // incompatible with `<T>(x: T) => T`, and
-                // `new () => MyClass` remains incompatible with
-                // `new <T extends {...}>() => T`. Unconstrained parameters also stay
-                // opaque (no meaningful constraint to erase to).
+                // In strict member-compatibility mode (`erase_generics = false`, used
+                // for TS2416/TS2430), `tsc` keeps every target type parameter opaque
+                // when relating against a non-generic implementation. A concrete
+                // implementation method can only satisfy a generic base method if its
+                // body is structurally compatible for *every* instantiation of the
+                // base's type parameters — so any type parameter that actually appears
+                // in the base's signature must stay opaque, and the Application-level
+                // variance fast path (`try_variance_fast_path`) will correctly reject
+                // a concrete source argument when the target argument is the opaque K.
+                //
+                // The only safe erasure in this mode is for a target type parameter
+                // that does not occur in the target's signature at all — that
+                // parameter is dead and reducing it to its constraint (or `unknown`)
+                // cannot mask any structural mismatch. This matches tsc's
+                // `getBaseSignature` short-circuit for fully-unused type parameters.
+                //
+                // For the other relation modes (regular assignability, where
+                // `erase_generics = true`), the previous tsc-`getBaseSignature`-style
+                // reduction to constraint is preserved for *application-only*
+                // occurrences. Bare occurrences in any mode keep the type parameter
+                // opaque so universal quantifications such as `<T>(x: T) => T` stay
+                // unsatisfiable by a concrete `(x: string) => string`.
                 let mut target_canonical = TypeSubstitution::new();
                 let mut has_opaque_remaining = false;
+                let strict_member_compat = !self.erase_generics;
                 for tp in &target_instantiated.type_params {
                     let tp_id = self.interner.type_param(*tp);
-                    let erasable = match tp.constraint {
-                        Some(constraint) if constraint != TypeId::UNKNOWN => {
-                            let appears_bare = target_instantiated
-                                .params
-                                .iter()
-                                .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
-                                || target_instantiated
-                                    .this_type
-                                    .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
-                                || self.type_param_appears_bare(
-                                    target_instantiated.return_type,
-                                    tp_id,
-                                );
-                            if appears_bare {
+                    let appears_anywhere = target_instantiated.params.iter().any(|p| {
+                        crate::visitor::collect_all_types(self.interner, p.type_id).contains(&tp_id)
+                    }) || target_instantiated.this_type.is_some_and(|t| {
+                        crate::visitor::collect_all_types(self.interner, t).contains(&tp_id)
+                    }) || crate::visitor::collect_all_types(
+                        self.interner,
+                        target_instantiated.return_type,
+                    )
+                    .contains(&tp_id);
+                    let erasable =
+                        if strict_member_compat {
+                            // Strict mode: only fully-unused type parameters are erasable.
+                            // Constrained dead parameters reduce to their constraint;
+                            // unconstrained dead parameters reduce to `unknown`. Either
+                            // way, the substitution is a no-op against the target body
+                            // because the parameter does not occur there.
+                            if appears_anywhere {
                                 false
                             } else {
-                                target_canonical.insert(tp.name, constraint);
+                                target_canonical
+                                    .insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
                                 true
                             }
-                        }
-                        _ => false,
-                    };
+                        } else {
+                            // Permissive (legacy assignability) mode: keep the previous
+                            // application-only constraint reduction so contextual
+                            // signature instantiation in non-strict callers continues to
+                            // accept tsc's `getBaseSignature` shapes.
+                            match tp.constraint {
+                                Some(constraint) if constraint != TypeId::UNKNOWN => {
+                                    let appears_bare =
+                                        target_instantiated.params.iter().any(|p| {
+                                            self.type_param_appears_bare(p.type_id, tp_id)
+                                        }) || target_instantiated.this_type.is_some_and(|t| {
+                                            self.type_param_appears_bare(t, tp_id)
+                                        }) || self.type_param_appears_bare(
+                                            target_instantiated.return_type,
+                                            tp_id,
+                                        );
+                                    if appears_bare {
+                                        false
+                                    } else {
+                                        target_canonical.insert(tp.name, constraint);
+                                        true
+                                    }
+                                }
+                                _ => false,
+                            }
+                        };
                     if !erasable {
                         has_opaque_remaining = true;
                     }
@@ -768,11 +799,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // outer-scope type parameter cannot satisfy that quantification, so
                 // strict member-compatibility checks (TS2416/TS2430) must still
                 // reject it — e.g. `interface I<T> extends A { a: (x: T) => T[] }`
-                // against base `a: <T>(x: T) => T[]`. Application-only-constrained
-                // parameters were already erased above and no longer count as
-                // remaining quantification, which is what lets a concrete builder
-                // override such as `as(...): AliasedRawBuilder<O, string>` through.
-                if has_opaque_remaining && !self.erase_generics {
+                // against base `a: <T>(x: T) => T[]`.
+                if has_opaque_remaining && strict_member_compat {
                     let source_mentions_outer_type_params =
                         source_instantiated.params.iter().any(|p| {
                             crate::visitor::contains_type_parameters(self.interner, p.type_id)
@@ -783,6 +811,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             source_instantiated.return_type,
                         );
                     if source_mentions_outer_type_params {
+                        self.type_param_equivalences.truncate(equiv_start);
+                        return SubtypeResult::False;
+                    }
+
+                    // The opaque target type parameters survive into the target
+                    // body, but tsz's indexed-access and mapped-type evaluators
+                    // greedily reduce `T[K]` to `T[constraint-of-K]` (a union of
+                    // the per-key value types). In a covariant return position
+                    // that union is too wide and silently accepts a concrete
+                    // source that cannot actually satisfy every instantiation of
+                    // K — e.g. `(k: "a"|"b") => string|number` vs
+                    // `<K extends keyof T>(k: K) => T[K]` for
+                    // `T = { a: string; b: number }`, where the impl returns the
+                    // full union but T[K] for a specific K is one of `string` or
+                    // `number`. tsc keeps K opaque here and reports TS2416.
+                    //
+                    // Detect this pattern explicitly: if any covariant target
+                    // body position contains an indexed-access whose key
+                    // references an opaque type parameter, and the source has no
+                    // matching K-dependent return shape, reject.
+                    if self.target_return_has_opaque_indexed_access(&target_instantiated)
+                        && !self.source_return_could_satisfy_opaque_keyed_index_access(
+                            &source_instantiated,
+                            &target_instantiated,
+                        )
+                    {
                         self.type_param_equivalences.truncate(equiv_start);
                         return SubtypeResult::False;
                     }
@@ -2134,4 +2188,111 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.eval_cache.insert(cache_key, result);
         result
     }
+
+    /// Returns true when `target` is a strict-member-compat target whose
+    /// covariant body still depends on at least one of its surviving (opaque)
+    /// type parameters through an indexed-access type — i.e. it contains an
+    /// `IndexAccess(_, K)` shape whose key references one of the type
+    /// parameters declared on `target`.
+    ///
+    /// The body's evaluator will reduce such an indexed access via the type
+    /// parameter's constraint (`T[K]` → `T[constraint-of-K]`), producing a
+    /// value-type union that is correct for property lookup but is too wide for
+    /// a covariant return comparison. This predicate lets the function-subtype
+    /// path detect the pattern explicitly so the comparison can reject a
+    /// concrete source that would otherwise silently match the over-reduced
+    /// target.
+    pub(crate) fn target_return_has_opaque_indexed_access(&self, target: &FunctionShape) -> bool {
+        let tp_ids: Vec<TypeId> = target
+            .type_params
+            .iter()
+            .map(|tp| self.interner.type_param(*tp))
+            .collect();
+        if tp_ids.is_empty() {
+            return false;
+        }
+        let candidates = collect_indexed_accesses(self.interner, target.return_type);
+        candidates.iter().any(|&(_, key)| {
+            let key_types = crate::visitor::collect_all_types(self.interner, key);
+            tp_ids.iter().any(|tp| key_types.contains(tp))
+        })
+    }
+
+    /// Returns true when the source signature has a return-side shape that
+    /// could legitimately satisfy the target's opaque-keyed indexed access for
+    /// every instantiation of the surviving type parameters. The current rule
+    /// is conservative: a `never` source return always satisfies, and a source
+    /// whose return also contains an indexed access keyed by the same surviving
+    /// type parameter identity (i.e. the source is structurally generic in the
+    /// same way) is treated as compatible. Every other concrete source return
+    /// is unable to satisfy the universal quantification and the caller should
+    /// reject the comparison.
+    pub(crate) fn source_return_could_satisfy_opaque_keyed_index_access(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> bool {
+        let evaluated_return = self.evaluate_type(source.return_type);
+        if evaluated_return == TypeId::NEVER {
+            return true;
+        }
+        let target_tp_ids: Vec<TypeId> = target
+            .type_params
+            .iter()
+            .map(|tp| self.interner.type_param(*tp))
+            .collect();
+        if target_tp_ids.is_empty() {
+            return true;
+        }
+        let source_indexed = collect_indexed_accesses(self.interner, source.return_type);
+        source_indexed.iter().any(|&(_, source_key)| {
+            let source_key_types = crate::visitor::collect_all_types(self.interner, source_key);
+            target_tp_ids.iter().any(|tp| source_key_types.contains(tp))
+        })
+    }
+}
+
+/// Collect every `(object_type, index_type)` pair reachable inside `type_id`
+/// via `TypeData::IndexAccess`. The walker stops at type-parameter constraints
+/// to avoid following definitional bounds.
+fn collect_indexed_accesses(
+    interner: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> Vec<(TypeId, TypeId)> {
+    use rustc_hash::FxHashSet;
+    let mut found = Vec::new();
+    let mut stack = vec![type_id];
+    let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || !visited.insert(current) {
+            continue;
+        }
+        if let Some(TypeData::IndexAccess(obj, idx)) = interner.lookup(current) {
+            found.push((obj, idx));
+        }
+        match interner.lookup(current) {
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => {
+                continue;
+            }
+            Some(
+                TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_),
+            ) => continue,
+            _ => {}
+        }
+        crate::visitor::for_each_child_by_id(interner, current, |child| {
+            if !visited.contains(&child) {
+                stack.push(child);
+            }
+        });
+    }
+    found
 }
