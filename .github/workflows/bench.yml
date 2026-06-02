@@ -48,6 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
+      active_run_id: ${{ steps.gate.outputs.active_run_id }}
+      active_run_sha: ${{ steps.gate.outputs.active_run_sha }}
+      active_run_url: ${{ steps.gate.outputs.active_run_url }}
     steps:
       - id: gate
         env:
@@ -121,6 +124,10 @@ jobs:
             if [[ -n "$active_runs" ]]; then
               echo "Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run."
               printf '%s\n' "$active_runs"
+              IFS=$'\t' read -r active_run_id active_run_sha active_run_url <<< "$(printf '%s\n' "$active_runs" | head -n 1)"
+              echo "active_run_id=${active_run_id}" >> "$GITHUB_OUTPUT"
+              echo "active_run_sha=${active_run_sha}" >> "$GITHUB_OUTPUT"
+              echo "active_run_url=${active_run_url}" >> "$GITHUB_OUTPUT"
               should_run=false
             fi
           fi
@@ -650,6 +657,8 @@ jobs:
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
             "/bench-prep/latest/bench-prep.env",
             "bench-prep/latest/bench-prep.env",
+            "/bench-prep.env",
+            "bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
@@ -658,6 +667,8 @@ jobs:
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
             "/bench-prep/latest/bench-prep.tar",
             "bench-prep/latest/bench-prep.tar",
+            "/bench-prep.tar",
+            "bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -844,6 +855,8 @@ jobs:
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
             "/bench-prep/latest/bench-prep.env",
             "bench-prep/latest/bench-prep.env",
+            "/bench-prep.env",
+            "bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
@@ -852,6 +865,8 @@ jobs:
             "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
             "/bench-prep/latest/bench-prep.tar",
             "bench-prep/latest/bench-prep.tar",
+            "/bench-prep.tar",
+            "bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -1591,6 +1606,87 @@ jobs:
           fi
 
           echo "Bench target ${target_sha} did not publish and main is now ${main_sha}; dispatching one catch-up Bench run."
+          curl -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/bench.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"publish_latest_pgo":false}}'
+
+  catch-up-after-active:
+    name: bench-catch-up-after-active
+    needs: bench-gate
+    if: >-
+      always() &&
+      github.event_name == 'workflow_run' &&
+      needs.bench-gate.outputs.should_run != 'true' &&
+      needs.bench-gate.outputs.active_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Wait for active benchmark and dispatch if it did not publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTIVE_RUN_ID: ${{ needs.bench-gate.outputs.active_run_id }}
+          ACTIVE_RUN_SHA: ${{ needs.bench-gate.outputs.active_run_sha }}
+          ACTIVE_RUN_URL: ${{ needs.bench-gate.outputs.active_run_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          max_active_minutes=180
+          max_active_seconds=$((max_active_minutes * 60))
+          echo "Waiting for active Bench run ${ACTIVE_RUN_ID} (${ACTIVE_RUN_SHA}) before deciding catch-up: ${ACTIVE_RUN_URL}"
+          while true; do
+            active_json="$(gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json status,createdAt --jq '{status,createdAt}' 2>/dev/null || true)"
+            active_status="$(jq -r '.status // empty' <<<"${active_json}" 2>/dev/null || true)"
+            active_created_at="$(jq -r '.createdAt // empty' <<<"${active_json}" 2>/dev/null || true)"
+            if [[ "${active_status}" == "completed" ]]; then
+              break
+            fi
+            active_created_epoch="$(date -u -d "${active_created_at}" +%s 2>/dev/null || true)"
+            now_epoch="$(date -u +%s)"
+            if [[ "${active_created_epoch}" =~ ^[0-9]+$ &&
+                  $((now_epoch - active_created_epoch)) -ge "${max_active_seconds}" ]]; then
+              echo "Active Bench run ${ACTIVE_RUN_ID} is still ${active_status:-unknown} after at least ${max_active_minutes} minutes; treating it as stale for catch-up."
+              break
+            fi
+            echo "Active Bench run ${ACTIVE_RUN_ID} is still ${active_status:-unknown}; waiting..."
+            sleep 60
+          done
+
+          if [[ "$(gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json jobs --jq '[.jobs[] | select(.name == "bench-publish" and .conclusion == "success")] | length')" -gt 0 ]]; then
+            echo "Active Bench run ${ACTIVE_RUN_ID} published benchmark data; skipping catch-up dispatch."
+            exit 0
+          fi
+
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -z "${main_sha}" ]]; then
+            echo "Could not read current main SHA; skipping benchmark catch-up dispatch."
+            exit 0
+          fi
+          if [[ "${target_sha}" != "${main_sha}" ]]; then
+            echo "Skipped Bench target ${target_sha} is behind current main ${main_sha}; a newer main Bench event owns catch-up."
+            exit 0
+          fi
+
+          active_dispatches="$(
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --status in_progress --limit 20 \
+              --json databaseId,event,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .databaseId != '"${ACTIVE_RUN_ID}"' and .event == "workflow_dispatch") | [.databaseId, .headSha, .url] | @tsv'
+            gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --status queued --limit 20 \
+              --json databaseId,event,headSha,url \
+              --jq '.[] | select(.databaseId != ${{ github.run_id }} and .databaseId != '"${ACTIVE_RUN_ID}"' and .event == "workflow_dispatch") | [.databaseId, .headSha, .url] | @tsv'
+          )"
+          if [[ -n "${active_dispatches}" ]]; then
+            echo "A dispatched Bench catch-up is already active; skipping duplicate dispatch."
+            printf '%s\n' "${active_dispatches}"
+            exit 0
+          fi
+
+          echo "Active Bench run ${ACTIVE_RUN_ID} completed without bench-publish; dispatching one fresh main Bench run for ${main_sha}."
           curl -fsSL \
             -X POST \
             -H "Accept: application/vnd.github+json" \
