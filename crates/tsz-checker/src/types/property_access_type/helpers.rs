@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|ident| ident.escaped_text == "meta");
 
         if is_meta {
-            self.check_import_meta_in_cjs(idx);
+            self.check_import_meta_module_support(idx);
             // import.meta resolves to the global `ImportMeta` interface
             // (declared in lib.es2020.full.d.ts). Returning that type
             // enables TS2339 on unknown properties (`import.meta.blah`)
