@@ -16,6 +16,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> Option<SubtypeFailureReason> {
+        // tsc's `compareSignaturesRelated` compares parameters before return
+        // types, so when both a parameter and the return type are incompatible
+        // it surfaces the parameter mismatch. Match that ordering: run the
+        // parameter (arity + per-position) checks first and only fall back to
+        // the return-type mismatch once the parameters are compatible.
+        if let Some(parameter_failure) = self.explain_function_parameter_failure(source, target) {
+            return Some(parameter_failure);
+        }
+
         // Check return type
         if !(self
             .check_subtype(source.return_type, target.return_type)
@@ -30,6 +39,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
+        None
+    }
+
+    fn explain_function_parameter_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> Option<SubtypeFailureReason> {
         // Check parameter count
         let target_has_rest = target.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {

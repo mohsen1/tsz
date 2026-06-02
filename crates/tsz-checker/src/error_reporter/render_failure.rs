@@ -179,6 +179,91 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Append tsc's signature-mismatch elaboration beneath a function-to-function
+    /// relation line: a `Types of parameters 'a' and 'b' are incompatible.` frame
+    /// followed by the contravariant leaf relation for the offending parameter.
+    ///
+    /// Only runs when both enclosing types are function/callable, so the parent
+    /// line is genuinely the signature-to-signature line rather than a parameter
+    /// leaf rendered directly. Parameters are contravariant, so the leaf is
+    /// `Type '<target param>' is not assignable to type '<source param>'.`; the
+    /// solver's `inner_reason` already carries that orientation.
+    fn push_parameter_mismatch_elaboration(
+        &mut self,
+        diag: &mut Diagnostic,
+        rctx: &RenderContext,
+        param_index: usize,
+        source_param: TypeId,
+        target_param: TypeId,
+        inner_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) {
+        let (source, target, idx, depth) = (rctx.source, rctx.target, rctx.idx, rctx.depth);
+        if self
+            .callable_type_after_display_evaluation(source)
+            .is_none()
+            || self
+                .callable_type_after_display_evaluation(target)
+                .is_none()
+        {
+            return;
+        }
+        // When the offending parameter is itself a function (a callback), tsc
+        // elides intermediate signature lines between successive
+        // `Types of parameters` frames in a way that depends on the
+        // contravariance nesting depth. That elision is non-trivial to
+        // reproduce, so restrict the elaboration to the single-flip case where
+        // the parameter is a non-callable type — the contravariant leaf is then
+        // a plain relation that matches tsc directly. Callback parameters keep
+        // their previous (signature-line-only) rendering.
+        if self
+            .callable_type_after_display_evaluation(source_param)
+            .is_some()
+            || self
+                .callable_type_after_display_evaluation(target_param)
+                .is_some()
+        {
+            return;
+        }
+        let source_name = self
+            .callable_param_name_at(source, param_index)
+            .unwrap_or_else(|| format!("arg{param_index}"));
+        let target_name = self
+            .callable_param_name_at(target, param_index)
+            .unwrap_or_else(|| format!("arg{param_index}"));
+        let frame = format_message(
+            diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+            &[&source_name, &target_name],
+        );
+        // At depth 0 the parent line is the primary diagnostic message (indent
+        // level 0), so its first elaboration sits at field 0. At depth > 0 the
+        // parent line is itself a related entry at field `depth`, so its
+        // elaboration sits one level deeper.
+        let frame_depth = if depth == 0 { 0 } else { depth + 1 };
+        let leaf_depth = frame_depth + 1;
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: diag.file.clone(),
+            start: diag.start,
+            length: diag.length,
+            message_text: frame,
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+            depth: frame_depth.min(u8::MAX as u32) as u8,
+        });
+        // Parameters are contravariant, so the leaf compares the target
+        // parameter against the source parameter. `push_property_chain_leaf`
+        // renders the structured `inner_reason` when present (keeping
+        // intrinsic/literal display accurate) and otherwise emits the plain
+        // `Type 'S' is not assignable to type 'T'.` line.
+        self.push_property_chain_leaf(
+            diag,
+            inner_reason,
+            target_param,
+            source_param,
+            idx,
+            leaf_depth,
+        );
+    }
+
     fn no_union_member_matches_switch_source_display(
         &mut self,
         source: TypeId,
@@ -1034,13 +1119,32 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    Diagnostic::error(
+                    let mut diag = Diagnostic::error(
                         file_name,
                         start,
                         length,
                         message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
+                    );
+                    // When the enclosing source/target are themselves
+                    // function/callable types, the line just rendered is the
+                    // signature-to-signature relation line (e.g.
+                    // `Type '(x: number) => void' is not assignable to type
+                    // '(x: string) => void'.`). tsc then explains *why* the
+                    // signatures differ with a `Types of parameters 'a' and 'b'
+                    // are incompatible.` frame followed by the contravariant
+                    // leaf relation. Descend into the structured parameter
+                    // reason so the chain matches tsc instead of stopping at the
+                    // bare function line.
+                    self.push_parameter_mismatch_elaboration(
+                        &mut diag,
+                        &rctx,
+                        *param_index,
+                        *source_param,
+                        *target_param,
+                        inner_reason.as_deref(),
+                    );
+                    diag
                 }
             }
 
