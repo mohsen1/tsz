@@ -481,8 +481,8 @@ fn test_class_with_private_field() {
         "Should have WeakMap declaration: {output}"
     );
     assert!(
-        output.contains("__classPrivateFieldSet(this, _Container_value,"),
-        "Should have __classPrivateFieldSet call: {output}"
+        output.contains("_Container_value.set(this, 42)"),
+        "Private field initializer should store directly via WeakMap.set: {output}"
     );
 }
 

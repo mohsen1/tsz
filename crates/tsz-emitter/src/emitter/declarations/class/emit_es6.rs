@@ -1142,6 +1142,17 @@ impl<'a> Printer<'a> {
         // Methods and accessors keep their computed names inline in ES6+.
         // After the class body, a comma expression joins all assignments and side effects.
         let needs_computed_prop_hoisting = target_needs_field_lowering;
+        // For an *erased* computed-name member (a type-only field with no runtime
+        // slot, e.g. `static [N.s]: "b";`) whose key expression has observable side
+        // effects, tsc evaluates the key inside a native `static { ... }` block when
+        // the target supports static blocks (>= ES2022). Field lowering driven by
+        // `useDefineForClassFields: false` forces `needs_computed_prop_hoisting` on
+        // even at ES2022+, but that hoisting machinery (bare after-body statements /
+        // class-expression comma evaluator) must NOT swallow these side effects for a
+        // plain class declaration — they belong in the static block. Class
+        // expressions keep using the comma/evaluator path #12126 introduced.
+        let erased_computed_side_effects_use_static_block =
+            !target_needs_static_block_lowering && !emits_as_class_expression;
         // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
         if needs_computed_prop_hoisting {
@@ -1239,7 +1250,9 @@ impl<'a> Printer<'a> {
                         self.legacy_decorator_computed_name_temp_map
                             .insert(computed.expression, temp.clone());
                         computed_prop_entries.push((Some(temp), computed.expression, member_idx));
-                    } else if !self.is_computed_name_expr_side_effect_free(computed.expression) {
+                    } else if !self.is_computed_name_expr_side_effect_free(computed.expression)
+                        && !erased_computed_side_effects_use_static_block
+                    {
                         computed_prop_entries.push((None, computed.expression, member_idx));
                     }
                 } else {
@@ -1839,6 +1852,7 @@ impl<'a> Printer<'a> {
             target_supports_native_private_names,
             has_legacy_private_name_member_decorators,
             needs_computed_prop_hoisting,
+            erased_computed_side_effects_use_static_block,
             native_computed_prop_evaluator: native_computed_prop_evaluator.as_deref(),
             private_fields: &private_fields,
             private_duplicate_conflicts: &private_duplicate_conflicts,

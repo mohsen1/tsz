@@ -140,8 +140,8 @@ fn private_members_keep_storage_inside_es5_class_iife() {
         "ES5 class declarations should not hoist private storage before the IIFE.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function A() {\n        _A_instances.add(this);\n        __classPrivateFieldSet(this, _A_field, 123, \"f\");\n    }"),
-        "Instance private methods/accessors need a WeakSet brand and private fields initialize with __classPrivateFieldSet.\nOutput:\n{output}"
+        output.contains("function A() {\n        _A_instances.add(this);\n        _A_field.set(this, 123);\n    }"),
+        "Instance private methods/accessors need a WeakSet brand and private fields initialize directly via WeakMap.set.\nOutput:\n{output}"
     );
     assert!(
         output.contains("var _A_instances, _a, _A_field, _A_method, _A_sField, _A_sMethod, _A_acc_get, _A_acc_set, _A_sAcc_get, _A_sAcc_set;"),
@@ -245,8 +245,46 @@ fn test_class_with_private_field() {
     let output = output.expect("transform should succeed in test");
 
     assert!(output.contains("var _Container_value"));
-    assert!(output.contains("__classPrivateFieldSet(this, _Container_value, 42, \"f\")"));
+    assert!(output.contains("_Container_value.set(this, 42)"));
     assert!(output.contains("_Container_value = new WeakMap()"));
+}
+
+#[test]
+fn static_field_super_access_initializer_does_not_emit_class_alias() {
+    // A static field initializer that only reads `super.f` (no `this`) lowers
+    // the static super access to `_super.f` and needs no class-value alias.
+    // Treating the `super` keyword as a `this` reference would spuriously emit
+    // `var _a; _a = D;` inside the IIFE (regression from a broadened helper).
+    let source = r#"class C { static f = 1 }
+        class D extends C {
+            static arrowFunctionBoundary = () => super.f + 1;
+            static functionExprBoundary = function () { return super.f + 2 };
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let class_idx = source_file.statements.nodes[1];
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(class_idx)
+        .expect("class should lower to ES5 IR");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = D;"),
+        "Static `super.f` access must not force a class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("D.arrowFunctionBoundary = function () { return _super.f + 1; };"),
+        "Static arrow `super.f` access should lower to `_super.f`.\nOutput:\n{output}"
+    );
 }
 
 #[test]
