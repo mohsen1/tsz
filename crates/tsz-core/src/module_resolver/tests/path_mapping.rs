@@ -449,7 +449,7 @@ fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
     // in the project file graph.
     struct Row {
         file: &'static str,
-        mappings: fn() -> Vec<PathMapping>,
+        mappings: Vec<PathMapping>,
         a: (&'static str, &'static str), // (specifier, importer_rel)
         b: (&'static str, &'static str),
     }
@@ -458,12 +458,10 @@ fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
         // one via an embedded `..` detour.
         Row {
             file: "shared/api.d.ts",
-            mappings: || {
-                vec![
-                    pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
-                    pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
-                ]
-            },
+            mappings: vec![
+                pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
+                pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
+            ],
             a: ("@alpha/api", "index.ts"),
             b: ("@beta/api", "index.ts"),
         },
@@ -471,19 +469,19 @@ fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
         // same file; the relative import climbs through a parent directory.
         Row {
             file: "src/api.ts",
-            mappings: || vec![pm("@app/*", "@app/", &["./src/*"])],
+            mappings: vec![pm("@app/*", "@app/", &["./src/*"])],
             a: ("@app/api", "index.ts"),
             b: ("../api", "src/sub/index.ts"),
         },
     ];
-    for row in &rows {
+    for row in rows {
         let fx = TempFixture::new();
         fx.write(row.file, "export const v = 1;");
         for (_, importer) in [row.a, row.b] {
             fx.write(importer, "");
         }
 
-        let options = make_options(fx.path(), (row.mappings)());
+        let options = make_options(fx.path(), row.mappings);
         let mut resolver = ModuleResolver::new(&options);
         let via_a = resolver
             .resolve(row.a.0, &fx.join(row.a.1), Span::new(0, 1))
