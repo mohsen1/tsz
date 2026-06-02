@@ -878,13 +878,13 @@ impl<'a> InferenceContext<'a> {
         // preserved (tsc uses RequiresWidening flag for this; we approximate
         // by checking the inference priority).
         let highest_priority = filtered_no_never.first().map(|c| c.priority);
-        // Contextual inference (ReturnType, LowPriority) preserves literal types
-        // because the caller supplies the expected type. HomomorphicMappedType is
-        // NOT contextual — it comes from reverse mapped inference and its object
-        // candidates should be deep-widened like NakedTypeVariable ones.
         let is_contextual_inference = matches!(
             highest_priority,
-            Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
+            Some(
+                InferencePriority::ReturnType
+                    | InferencePriority::LowPriority
+                    | InferencePriority::HomomorphicMappedType
+            )
         );
         let resolved = if !preserve_literals && !is_contextual_inference && !resolved.is_intrinsic()
         {
