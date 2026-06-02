@@ -1,6 +1,25 @@
 use super::*;
 
 impl LspServer {
+    pub(super) fn is_notification_method(method: &str) -> bool {
+        matches!(
+            method,
+            "$/cancelRequest"
+                | "initialized"
+                | "exit"
+                | "textDocument/didOpen"
+                | "textDocument/didChange"
+                | "textDocument/didClose"
+                | "textDocument/didSave"
+                | "workspace/didChangeConfiguration"
+                | "workspace/didChangeWatchedFiles"
+                | "workspace/didChangeWorkspaceFolders"
+                | "workspace/didRenameFiles"
+                | "workspace/didCreateFiles"
+                | "workspace/didDeleteFiles"
+        )
+    }
+
     pub(super) fn handle_notification_method(
         &mut self,
         method: &str,

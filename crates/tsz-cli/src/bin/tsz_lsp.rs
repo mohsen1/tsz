@@ -1633,6 +1633,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dispatch_handles_known_notifications_without_response() {
+        let mut server = LspServer::new();
+        let response = server.handle_message(JsonRpcMessage {
+            id: None,
+            method: Some("initialized".to_string()),
+            params: None,
+        });
+
+        assert!(response.is_none());
+        assert!(server.initialized);
+    }
+
+    #[test]
+    fn dispatch_reports_unknown_request_methods() {
+        let mut server = LspServer::new();
+        let response = server
+            .handle_message(JsonRpcMessage {
+                id: Some(json!(7)),
+                method: Some("workspace/notImplemented".to_string()),
+                params: None,
+            })
+            .expect("unknown requests should produce method-not-found responses");
+
+        assert_eq!(response.id, json!(7));
+        let error = response.error.expect("unknown request should be an error");
+        assert_eq!(error.code, -32601);
+        assert_eq!(error.message, "Method not found: workspace/notImplemented");
+    }
+
+    #[test]
+    fn dispatch_ignores_methodless_response_messages() {
+        let mut server = LspServer::new();
+        let response = server.handle_message(JsonRpcMessage {
+            id: Some(json!(1)),
+            method: None,
+            params: None,
+        });
+
+        assert!(response.is_none());
+    }
+
     // Issue #3545: tsz.applyCodeAction must enqueue workspace/applyEdit as a
     // server-to-client REQUEST (with `id`), not a notification. LSP spec
     // requires the client to respond with `ApplyWorkspaceEditResponse`.

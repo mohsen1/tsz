@@ -1,223 +1,284 @@
 use super::*;
 
+enum JsonRpcMessageLifecycle {
+    Notification {
+        method: String,
+        params: Option<Value>,
+    },
+    Request {
+        id: Option<Value>,
+        method: String,
+        params: Option<Value>,
+    },
+    Response,
+}
+
+impl JsonRpcMessageLifecycle {
+    fn classify(msg: JsonRpcMessage) -> Self {
+        let Some(method) = msg.method else {
+            return Self::Response;
+        };
+
+        if LspServer::is_notification_method(&method) {
+            return Self::Notification {
+                method,
+                params: msg.params,
+            };
+        }
+
+        Self::Request {
+            id: msg.id,
+            method,
+            params: msg.params,
+        }
+    }
+}
+
 impl LspServer {
     // ─── Message dispatch ───────────────────────────────────────────────
 
     pub(super) fn handle_message(&mut self, msg: JsonRpcMessage) -> Option<JsonRpcResponse> {
-        let method = msg.method.as_deref();
-        let id = msg.id.clone();
-
-        if let Some(method) = method
-            && self.handle_notification_method(method, msg.params.clone())
-        {
-            return None;
+        match JsonRpcMessageLifecycle::classify(msg) {
+            JsonRpcMessageLifecycle::Notification { method, params } => {
+                self.handle_notification_method(&method, params);
+                None
+            }
+            JsonRpcMessageLifecycle::Request { id, method, params } => {
+                self.handle_request_message(id, &method, params)
+            }
+            JsonRpcMessageLifecycle::Response => None,
         }
+    }
 
-        // Check if this request was already cancelled
-        if self.is_cancelled(&id)
-            && let Some(id_val) = id
-        {
-            let id_str = match &id_val {
-                Value::Number(n) => n.to_string(),
-                Value::String(s) => s.clone(),
-                _ => String::new(),
-            };
-            self.cancelled_requests.remove(&id_str);
+    fn handle_request_message(
+        &mut self,
+        id: Option<Value>,
+        method: &str,
+        params: Option<Value>,
+    ) -> Option<JsonRpcResponse> {
+        if let Some(cancelled_id) = self.take_cancelled_request_id(&id) {
             return Some(self.error_response(
-                Some(id_val),
+                Some(cancelled_id),
                 -32800,
                 "Request cancelled".to_string(),
             ));
         }
 
+        self.handle_request_method(id, method, params)
+    }
+
+    fn take_cancelled_request_id(&mut self, id: &Option<Value>) -> Option<Value> {
+        if !self.is_cancelled(id) {
+            return None;
+        }
+
+        if let Some(id_val) = id {
+            let id_str = match id_val {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => String::new(),
+            };
+            self.cancelled_requests.remove(&id_str);
+            Some(id_val.clone())
+        } else {
+            None
+        }
+    }
+
+    fn handle_request_method(
+        &mut self,
+        id: Option<Value>,
+        method: &str,
+        params: Option<Value>,
+    ) -> Option<JsonRpcResponse> {
         match method {
-            Some("initialize") => {
-                let result = self.handle_initialize(msg.params.as_ref());
+            "initialize" => {
+                let result = self.handle_initialize(params.as_ref());
                 Some(self.success_response(id, result))
             }
-            Some("shutdown") => {
+            "shutdown" => {
                 self.shutdown_requested = true;
                 Some(self.success_response(id, Value::Null))
             }
 
             // ── Language features ───────────────────────────────────────
-            Some("textDocument/hover") => {
-                let r = self.handle_hover(msg.params);
+            "textDocument/hover" => {
+                let r = self.handle_hover(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/completion") => {
-                let r = self.handle_completion(msg.params);
+            "textDocument/completion" => {
+                let r = self.handle_completion(params);
                 Some(self.make_response(id, r))
             }
-            Some("completionItem/resolve") => {
-                let r = self.handle_completion_resolve(msg.params);
+            "completionItem/resolve" => {
+                let r = self.handle_completion_resolve(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/definition") | Some("textDocument/declaration") => {
-                let r = self.handle_definition(msg.params);
+            "textDocument/definition" | "textDocument/declaration" => {
+                let r = self.handle_definition(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/typeDefinition") => {
-                let r = self.handle_type_definition(msg.params);
+            "textDocument/typeDefinition" => {
+                let r = self.handle_type_definition(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/references") => {
-                let r = self.handle_references(msg.params);
+            "textDocument/references" => {
+                let r = self.handle_references(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/implementation") => {
-                let r = self.handle_implementation(msg.params);
+            "textDocument/implementation" => {
+                let r = self.handle_implementation(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/documentSymbol") => {
-                let r = self.handle_document_symbol(msg.params);
+            "textDocument/documentSymbol" => {
+                let r = self.handle_document_symbol(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/formatting") => {
-                let r = self.handle_formatting(msg.params);
+            "textDocument/formatting" => {
+                let r = self.handle_formatting(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/rename") => {
-                let r = self.handle_rename(msg.params);
+            "textDocument/rename" => {
+                let r = self.handle_rename(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/prepareRename") => {
-                let r = self.handle_prepare_rename(msg.params);
+            "textDocument/prepareRename" => {
+                let r = self.handle_prepare_rename(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/codeAction") => {
-                let r = self.handle_code_action(msg.params);
+            "textDocument/codeAction" => {
+                let r = self.handle_code_action(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/codeLens") => {
-                let r = self.handle_code_lens(msg.params);
+            "textDocument/codeLens" => {
+                let r = self.handle_code_lens(params);
                 Some(self.make_response(id, r))
             }
-            Some("codeLens/resolve") => {
-                let r = self.handle_code_lens_resolve(msg.params);
+            "codeLens/resolve" => {
+                let r = self.handle_code_lens_resolve(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/selectionRange") => {
-                let r = self.handle_selection_range(msg.params);
+            "textDocument/selectionRange" => {
+                let r = self.handle_selection_range(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/foldingRange") => {
-                let r = self.handle_folding_range(msg.params);
+            "textDocument/foldingRange" => {
+                let r = self.handle_folding_range(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/signatureHelp") => {
-                let r = self.handle_signature_help(msg.params);
+            "textDocument/signatureHelp" => {
+                let r = self.handle_signature_help(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/semanticTokens/full") => {
-                let r = self.handle_semantic_tokens_full(msg.params);
+            "textDocument/semanticTokens/full" => {
+                let r = self.handle_semantic_tokens_full(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/semanticTokens/range") => {
-                let r = self.handle_semantic_tokens_range(msg.params);
+            "textDocument/semanticTokens/range" => {
+                let r = self.handle_semantic_tokens_range(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/documentHighlight") => {
-                let r = self.handle_document_highlight(msg.params);
+            "textDocument/documentHighlight" => {
+                let r = self.handle_document_highlight(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/inlayHint") => {
-                let r = self.handle_inlay_hint(msg.params);
+            "textDocument/inlayHint" => {
+                let r = self.handle_inlay_hint(params);
                 Some(self.make_response(id, r))
             }
-            Some("inlayHint/resolve") => {
-                let r = self.handle_inlay_hint_resolve(msg.params);
+            "inlayHint/resolve" => {
+                let r = self.handle_inlay_hint_resolve(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/documentColor") => {
-                let r = self.handle_document_color(msg.params);
+            "textDocument/documentColor" => {
+                let r = self.handle_document_color(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/colorPresentation") => {
-                let r = self.handle_color_presentation(msg.params);
+            "textDocument/colorPresentation" => {
+                let r = self.handle_color_presentation(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/documentLink") => {
-                let r = self.handle_document_link(msg.params);
+            "textDocument/documentLink" => {
+                let r = self.handle_document_link(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/linkedEditingRange") => {
-                let r = self.handle_linked_editing_range(msg.params);
+            "textDocument/linkedEditingRange" => {
+                let r = self.handle_linked_editing_range(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/prepareCallHierarchy") => {
-                let r = self.handle_prepare_call_hierarchy(msg.params);
+            "textDocument/prepareCallHierarchy" => {
+                let r = self.handle_prepare_call_hierarchy(params);
                 Some(self.make_response(id, r))
             }
-            Some("callHierarchy/incomingCalls") => {
-                let r = self.handle_incoming_calls(msg.params);
+            "callHierarchy/incomingCalls" => {
+                let r = self.handle_incoming_calls(params);
                 Some(self.make_response(id, r))
             }
-            Some("callHierarchy/outgoingCalls") => {
-                let r = self.handle_outgoing_calls(msg.params);
+            "callHierarchy/outgoingCalls" => {
+                let r = self.handle_outgoing_calls(params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/prepareTypeHierarchy") => {
-                let r = self.handle_prepare_type_hierarchy(msg.params);
+            "textDocument/prepareTypeHierarchy" => {
+                let r = self.handle_prepare_type_hierarchy(params);
                 Some(self.make_response(id, r))
             }
-            Some("typeHierarchy/supertypes") => {
-                let r = self.handle_supertypes(msg.params);
+            "typeHierarchy/supertypes" => {
+                let r = self.handle_supertypes(params);
                 Some(self.make_response(id, r))
             }
-            Some("typeHierarchy/subtypes") => {
-                let r = self.handle_subtypes(msg.params);
+            "typeHierarchy/subtypes" => {
+                let r = self.handle_subtypes(params);
                 Some(self.make_response(id, r))
             }
-            Some("workspace/symbol") => {
-                let r = self.handle_workspace_symbol(msg.params);
+            "workspace/symbol" => {
+                let r = self.handle_workspace_symbol(params);
                 Some(self.make_response(id, r))
             }
 
             // ── Range formatting ──────────────────────────────────────
-            Some("textDocument/rangeFormatting") => {
-                let r = self.handle_range_formatting(msg.params);
+            "textDocument/rangeFormatting" => {
+                let r = self.handle_range_formatting(params);
                 Some(self.make_response(id, r))
             }
 
             // ── On-type formatting ────────────────────────────────────
-            Some("textDocument/onTypeFormatting") => {
-                let r = self.handle_on_type_formatting(msg.params);
+            "textDocument/onTypeFormatting" => {
+                let r = self.handle_on_type_formatting(params);
                 Some(self.make_response(id, r))
             }
 
             // ── Execute command ────────────────────────────────────────
-            Some("workspace/executeCommand") => {
-                let r = self.handle_execute_command(msg.params);
+            "workspace/executeCommand" => {
+                let r = self.handle_execute_command(params);
                 Some(self.make_response(id, r))
             }
 
             // ── Diagnostic pull model (LSP 3.17) ─────────────────
-            Some("textDocument/diagnostic") => {
-                let r = self.handle_document_diagnostic(msg.params);
+            "textDocument/diagnostic" => {
+                let r = self.handle_document_diagnostic(params);
                 Some(self.make_response(id, r))
             }
-            Some("workspace/diagnostic") => {
-                let r = self.handle_workspace_diagnostic(msg.params);
+            "workspace/diagnostic" => {
+                let r = self.handle_workspace_diagnostic(params);
                 Some(self.make_response(id, r))
             }
 
             // ── File operations ─────────────────────────────────────
-            Some("workspace/willRenameFiles") => {
-                let r = self.handle_will_rename_files(msg.params);
+            "workspace/willRenameFiles" => {
+                let r = self.handle_will_rename_files(params);
                 Some(self.make_response(id, r))
             }
-            Some("workspace/willCreateFiles") => {
+            "workspace/willCreateFiles" => {
                 // Acknowledge but no edits needed for file creation
                 Some(self.success_response(id, Value::Null))
             }
-            Some("workspace/willDeleteFiles") => {
+            "workspace/willDeleteFiles" => {
                 // Acknowledge but no edits needed for file deletion
                 Some(self.success_response(id, Value::Null))
             }
 
             // Unknown request → method not found
-            Some(method) if id.is_some() => {
+            method if id.is_some() => {
                 Some(self.error_response(id, -32601, format!("Method not found: {method}")))
             }
             _ => None,
