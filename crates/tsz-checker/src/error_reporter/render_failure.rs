@@ -652,12 +652,14 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
                 nested_reason,
+                multi_element,
             } => self.render_tuple_element_type_mismatch(
                 &rctx,
                 *index,
                 *source_element,
                 *target_element,
                 nested_reason.as_deref(),
+                *multi_element,
             ),
 
             SubtypeFailureReason::ArrayElementMismatch {
