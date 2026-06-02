@@ -521,6 +521,178 @@ impl<'a> CheckerState<'a> {
         Some(false)
     }
 
+    /// Whether the assignment target's *written* type annotation denotes an
+    /// intersection — directly (`A & B`), through parentheses, or through a
+    /// type-alias reference whose body resolves (recursively) to an
+    /// intersection (`type W = A & B; const x: W = ...`).
+    ///
+    /// This is a purely syntactic check over annotation NODES. tsz eagerly
+    /// merges concrete object-intersections into a single object that interns
+    /// identically to a plain object literal of the same shape, so the merged
+    /// type cannot be distinguished from a plain object by its `TypeId` (or its
+    /// display alias) alone. The annotation's syntactic provenance is the only
+    /// reliable signal that tsc would report the mismatch member-by-member.
+    pub(super) fn target_annotation_denotes_intersection(&self, anchor_idx: NodeIndex) -> bool {
+        self.target_annotation_node(anchor_idx)
+            .is_some_and(|node| self.type_node_denotes_intersection(node, 0))
+    }
+
+    /// Whether the target annotation is *written* as an intersection literal
+    /// (`A & B`, possibly parenthesized) rather than a type-alias reference that
+    /// resolves to one. tsc echoes the inline `&` form for the former
+    /// (`{ g: number; } & { h: string; }`) but the alias name for the latter
+    /// (`PlainWrap`), so the recovered-intersection display chooses accordingly.
+    pub(super) fn target_annotation_is_intersection_literal(&self, anchor_idx: NodeIndex) -> bool {
+        self.target_annotation_node(anchor_idx)
+            .is_some_and(|node| self.type_node_is_intersection_literal(node, 0))
+    }
+
+    fn type_node_is_intersection_literal(&self, type_node_idx: NodeIndex, depth: u32) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if depth > 16 {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            return true;
+        }
+        if let Some(inner) = self.parenthesized_inner_type_node(node) {
+            return self.type_node_is_intersection_literal(inner, depth + 1);
+        }
+        false
+    }
+
+    /// Inner type node of a `PARENTHESIZED_TYPE`, if `node` is one.
+    fn parenthesized_inner_type_node(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            self.ctx.arena.get_wrapped_type(node).map(|w| w.type_node)
+        } else {
+            None
+        }
+    }
+
+    /// Type-annotation node of a binding declaration (variable / parameter /
+    /// property), if it carries one.
+    fn declaration_type_annotation_node(
+        &self,
+        decl: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let annotation = if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl) {
+            var_decl.type_annotation
+        } else if let Some(param) = self.ctx.arena.get_parameter(decl) {
+            param.type_annotation
+        } else if let Some(prop) = self.ctx.arena.get_property_decl(decl) {
+            prop.type_annotation
+        } else {
+            return None;
+        };
+        annotation.is_some().then_some(annotation)
+    }
+
+    /// Resolve the assignment target's type-annotation node from an anchor.
+    fn target_annotation_node(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        // The anchor may be the annotated declaration itself or, more commonly, a
+        // descendant such as the initializer expression. Walk up the ancestor
+        // chain (bounded) until an annotated binding or assignment is found,
+        // stopping at function/statement boundaries so an unrelated outer
+        // annotation is never attributed to this assignment.
+        let mut current = anchor_idx;
+        let mut guard = 0u32;
+        while current.is_some() {
+            guard += 1;
+            if guard > 32 {
+                break;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || node.kind == syntax_kind_ext::PARAMETER
+                || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                return self.declaration_type_annotation_node(node);
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = self.ctx.arena.get_binary_expr(node)?;
+                return self.declared_assignment_type_annotation_node(binary.left);
+            }
+            if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                let expr_stmt = self.ctx.arena.get_expression_statement(node)?;
+                let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+                if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                    let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+                    return self.declared_assignment_type_annotation_node(binary.left);
+                }
+                return None;
+            }
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || node.kind == syntax_kind_ext::BLOCK
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return None;
+            }
+            current = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
+        }
+        None
+    }
+
+    /// Recursively decide whether a type-annotation node denotes an
+    /// intersection, unwrapping parentheses and following type-alias references.
+    fn type_node_denotes_intersection(&self, type_node_idx: NodeIndex, depth: u32) -> bool {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_parser::parser::syntax_kind_ext;
+        if depth > 16 {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            return true;
+        }
+        if let Some(inner) = self.parenthesized_inner_type_node(node) {
+            return self.type_node_denotes_intersection(inner, depth + 1);
+        }
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                return false;
+            };
+            let type_name = type_ref.type_name;
+            let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name) {
+                TypeSymbolResolution::Type(sym_id) | TypeSymbolResolution::ValueOnly(sym_id) => {
+                    sym_id
+                }
+                TypeSymbolResolution::NotFound => return false,
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+            let mut declarations = Vec::new();
+            if symbol.value_declaration.is_some() {
+                declarations.push(symbol.value_declaration);
+            }
+            declarations.extend(symbol.declarations.iter().copied());
+            return declarations.into_iter().any(|decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|decl| self.ctx.arena.get_type_alias(decl))
+                    .is_some_and(|alias| {
+                        self.type_node_denotes_intersection(alias.type_node, depth + 1)
+                    })
+            });
+        }
+        false
+    }
+
     pub(super) fn missing_required_properties_from_index_signature_source(
         &mut self,
         source: TypeId,

@@ -1517,12 +1517,39 @@ impl<'a> CheckerState<'a> {
         // The jsdoc anchor path also enters here (intersection_for_members = None in that case)
         // and receives bare TS2322 without per-property elaboration, matching tsc's output.
         let intersection_for_members =
-            self.resolve_intersection_target_for_display(target_type, target);
+            self.resolve_intersection_target_for_display_kind(target_type, target, idx);
         if intersection_for_members.is_some()
             || self.anchor_jsdoc_type_tag_targets_intersection_alias(idx)
         {
-            let src_str = self.format_type_diagnostic(source);
-            let tgt_str = self.format_type_diagnostic(target);
+            // Source display must replicate the path that previously handled
+            // each case so no conformance baseline shifts:
+            // - recovered (merged) intersections were the flat TS2739 path, which
+            //   widens the top-level assigned literal at the anchor
+            //   (`{ b: "s" }` -> `{ b: string }`);
+            // - genuine intersections were the old intersection path, which keeps
+            //   the source as-is so a contextually-literal nested value stays
+            //   intact (`{ a: 0 }` -> `{ a: 0 }`, not `{ a: number }`).
+            let recovered = matches!(intersection_for_members, Some((_, true)));
+            let src_str = if recovered && depth == 0 {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            } else {
+                self.format_type_diagnostic(source)
+            };
+            // A recovered (merged) intersection renders its top-level target from
+            // the written annotation (see helper); genuine intersections keep the
+            // structural display.
+            let tgt_str = match intersection_for_members {
+                Some((intersection, true)) => {
+                    self.recovered_intersection_top_level_display(intersection, target, source, idx)
+                }
+                _ => self.format_type_diagnostic(target),
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -1534,7 +1561,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            if let Some(intersection) = intersection_for_members {
+            if let Some((intersection, _recovered)) = intersection_for_members {
                 self.push_intersection_member_elaboration(
                     &mut diag,
                     intersection,
@@ -1936,19 +1963,9 @@ impl<'a> CheckerState<'a> {
         };
         let ordered_names =
             self.sort_missing_property_names_for_display(target_type, &filtered_names);
-        // tsc lists up to 5 properties inline (TS2739), and uses "and N more"
-        // truncation (TS2740) when there are 6+. For TS2740, tsc lists the
-        // first 4 properties then "and N more" (where N = total - 4).
-        let is_truncated = ordered_names.len() > 5;
-        let display_count = if is_truncated { 4 } else { 5 };
-        let prop_list: Vec<String> = ordered_names
-            .iter()
-            .take(display_count)
-            .map(|name| self.missing_property_list_name_for_display(*name))
-            .collect();
-        let props_joined = prop_list.join(", ");
-        if is_truncated {
-            let more_count = (ordered_names.len() - display_count).to_string();
+        let (props_joined, more) = self.truncated_missing_property_list(&ordered_names);
+        if let Some(more_count) = more {
+            let more_count = more_count.to_string();
             let message = format_message(
                 diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                 &[&src_str, &tgt_str, &props_joined, &more_count],
