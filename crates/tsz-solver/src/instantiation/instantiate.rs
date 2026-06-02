@@ -1544,65 +1544,59 @@ impl<'a> TypeInstantiator<'a> {
                                 seen_rest = true;
                             }
 
-                            // For rest elements with `Array<E>` (or
-                            // `readonly E[]`), rewrite the resolved source in
-                            // the template to `Array<E>` and bind K = number
-                            // so `(E[])[number]` = E. The result is wrapped in
-                            // `Array<>` below to keep the rest array-shaped.
-                            let rest_array_inner: Option<TypeId> = if elem.rest {
-                                match self.interner.lookup(elem.type_id) {
-                                    Some(TypeData::Array(_)) => Some(elem.type_id),
-                                    Some(TypeData::ReadonlyType(roi)) => {
-                                        match self.interner.lookup(roi) {
-                                            Some(TypeData::Array(_)) => Some(roi),
-                                            _ => None,
-                                        }
-                                    }
-                                    _ => None,
+                            // Decide how to rebind the resolved source and bind
+                            // K for this element. The cases mirror tsc's
+                            // `instantiateMappedTupleType`:
+                            //   - Rest of `Array<E>` / `readonly E[]`:
+                            //     rewrite the resolved source to `Array<E>`
+                            //     and bind K = number so `(E[])[number]` = E.
+                            //     The result is re-wrapped in `Array<>` below.
+                            //   - Opaque variadic (type parameter, lazy ref):
+                            //     bind K = number on the existing template;
+                            //     the deferred `T[K]` shape is preserved.
+                            //   - Fixed element after at least one rest
+                            //     (`is_suffix`): the numeric index on the full
+                            //     source is ambiguous, so rewrite the source
+                            //     to a single-element proxy and bind K = "0".
+                            //   - Fixed prefix element: bind K = "i".
+                            let rest_array_inner: Option<TypeId> = match (
+                                elem.rest,
+                                self.interner.lookup(elem.type_id),
+                            ) {
+                                (true, Some(TypeData::Array(_))) => Some(elem.type_id),
+                                (true, Some(TypeData::ReadonlyType(roi)))
+                                    if matches!(
+                                        self.interner.lookup(roi),
+                                        Some(TypeData::Array(_))
+                                    ) =>
+                                {
+                                    Some(roi)
                                 }
-                            } else {
-                                None
+                                _ => None,
                             };
 
-                            // For a fixed element after at least one rest, the
-                            // numeric index on the *full* source is ambiguous.
-                            // Rebind the resolved source to a single-element
-                            // proxy `[elem.type_id]` and bind K = "0" so
-                            // `([elem])["0"]` = elem unambiguously.
-                            let suffix_proxy: Option<TypeId> = if is_suffix {
-                                Some(self.interner.tuple(vec![
-                                    crate::types::TupleElement::fixed(elem.type_id),
-                                ]))
-                            } else {
-                                None
+                            let rebind_source = |new_source: TypeId| {
+                                let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+                                crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
+                                    self.interner,
+                                    new_template,
+                                    resolved,
+                                    new_source,
+                                    &mut memo,
+                                )
                             };
 
                             let (rebound_template, key_type) = if let Some(rest_arr) =
                                 rest_array_inner
                             {
-                                let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
-                                let rewritten = crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
-                                    self.interner,
-                                    new_template,
-                                    /* from = */ resolved,
-                                    /* to   = */ rest_arr,
-                                    &mut memo,
-                                );
-                                (rewritten, TypeId::NUMBER)
+                                (rebind_source(rest_arr), TypeId::NUMBER)
                             } else if elem.rest {
-                                // Opaque variadic (type parameter, lazy ref, etc.):
-                                // keep `T[K]` deferred shape by binding K = number.
                                 (new_template, TypeId::NUMBER)
-                            } else if let Some(proxy) = suffix_proxy {
-                                let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
-                                let rewritten = crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
-                                    self.interner,
-                                    new_template,
-                                    /* from = */ resolved,
-                                    /* to   = */ proxy,
-                                    &mut memo,
-                                );
-                                (rewritten, self.interner.literal_string("0"))
+                            } else if is_suffix {
+                                let proxy = self.interner.tuple(vec![
+                                    crate::types::TupleElement::fixed(elem.type_id),
+                                ]);
+                                (rebind_source(proxy), self.interner.literal_string("0"))
                             } else {
                                 (new_template, self.interner.literal_string(&i.to_string()))
                             };

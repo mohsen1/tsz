@@ -460,86 +460,69 @@ fn build_identity_mapped_type(
     (mapped, t_name)
 }
 
+/// Assert that the identity homomorphic mapped
+/// `{ [<iter_name> in keyof T]: T[<iter_name>] }` round-trips the
+/// `build_elements`-built tuple `T` through the `instantiate_type` →
+/// `evaluate_type` pipeline. The closure receives the interner so the
+/// element `TypeId`s are interned in the same arena as the mapped type.
+fn assert_identity_mapped_round_trips(
+    iter_name: &str,
+    build_elements: impl FnOnce(&TypeInterner) -> Vec<crate::types::TupleElement>,
+) {
+    use crate::evaluation::evaluate::evaluate_type;
+    let interner = TypeInterner::new();
+    let (mapped, t_name) = build_identity_mapped_type(&interner, iter_name);
+    let source = interner.tuple(build_elements(&interner));
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+    assert_eq!(
+        result, source,
+        "identity homomorphic mapped over the source tuple must \
+         reproduce the same tuple via the instantiate path"
+    );
+}
+
 /// `Mp<[string, ...number[]]>` must produce the same `[string, ...number[]]`
 /// tuple. The pre-fix path bound K = "i" for every position and copied the
 /// rest's inner element type into the rest slot, producing the structurally
 /// invalid `[string, ...number]` (rest with non-array type_id).
 #[test]
 fn test_instantiate_mapped_over_trailing_rest_tuple_preserves_array_rest() {
-    use crate::evaluation::evaluate::evaluate_type;
     use crate::types::TupleElement;
-
-    let interner = TypeInterner::new();
-    let (mapped, t_name) = build_identity_mapped_type(&interner, "K");
-
-    let source = interner.tuple(vec![
-        TupleElement::fixed(TypeId::STRING),
-        TupleElement::rest(interner.array(TypeId::NUMBER)),
-    ]);
-
-    let mut subst = TypeSubstitution::new();
-    subst.insert(t_name, source);
-    let instantiated = instantiate_type(&interner, mapped, &subst);
-    let result = evaluate_type(&interner, instantiated);
-
-    assert_eq!(
-        result, source,
-        "identity homomorphic mapped over `[string, ...number[]]` must \
-         reproduce the same tuple via the instantiate path"
-    );
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::fixed(TypeId::STRING),
+            TupleElement::rest(i.array(TypeId::NUMBER)),
+        ]
+    });
 }
 
 /// Renamed iteration variable (`P` instead of `K`). The fix must be
 /// name-blind — changing the iter var must not affect rest handling.
 #[test]
 fn test_instantiate_mapped_over_trailing_rest_tuple_renamed_iter_var() {
-    use crate::evaluation::evaluate::evaluate_type;
     use crate::types::TupleElement;
-
-    let interner = TypeInterner::new();
-    let (mapped, t_name) = build_identity_mapped_type(&interner, "P");
-
-    let source = interner.tuple(vec![
-        TupleElement::fixed(TypeId::BOOLEAN),
-        TupleElement::rest(interner.array(TypeId::STRING)),
-    ]);
-
-    let mut subst = TypeSubstitution::new();
-    subst.insert(t_name, source);
-    let instantiated = instantiate_type(&interner, mapped, &subst);
-    let result = evaluate_type(&interner, instantiated);
-
-    assert_eq!(
-        result, source,
-        "rest-array shape must round-trip independent of iter var name"
-    );
+    assert_identity_mapped_round_trips("P", |i| {
+        vec![
+            TupleElement::fixed(TypeId::BOOLEAN),
+            TupleElement::rest(i.array(TypeId::STRING)),
+        ]
+    });
 }
 
 /// Leading rest: `[...string[], number]` must round-trip too. The fix
 /// must work whether the rest is at the start, middle, or end.
 #[test]
 fn test_instantiate_mapped_over_leading_rest_tuple_preserves_shape() {
-    use crate::evaluation::evaluate::evaluate_type;
     use crate::types::TupleElement;
-
-    let interner = TypeInterner::new();
-    let (mapped, t_name) = build_identity_mapped_type(&interner, "K");
-
-    let source = interner.tuple(vec![
-        TupleElement::rest(interner.array(TypeId::STRING)),
-        TupleElement::fixed(TypeId::NUMBER),
-    ]);
-
-    let mut subst = TypeSubstitution::new();
-    subst.insert(t_name, source);
-    let instantiated = instantiate_type(&interner, mapped, &subst);
-    let result = evaluate_type(&interner, instantiated);
-
-    assert_eq!(
-        result, source,
-        "identity homomorphic mapped over `[...string[], number]` must \
-         reproduce the same tuple via the instantiate path"
-    );
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::rest(i.array(TypeId::STRING)),
+            TupleElement::fixed(TypeId::NUMBER),
+        ]
+    });
 }
 
 /// Middle rest with prefix and suffix: `[string, ...number[], boolean]`.
@@ -547,28 +530,14 @@ fn test_instantiate_mapped_over_leading_rest_tuple_preserves_shape() {
 /// every element type.
 #[test]
 fn test_instantiate_mapped_over_middle_rest_tuple_preserves_shape() {
-    use crate::evaluation::evaluate::evaluate_type;
     use crate::types::TupleElement;
-
-    let interner = TypeInterner::new();
-    let (mapped, t_name) = build_identity_mapped_type(&interner, "K");
-
-    let source = interner.tuple(vec![
-        TupleElement::fixed(TypeId::STRING),
-        TupleElement::rest(interner.array(TypeId::NUMBER)),
-        TupleElement::fixed(TypeId::BOOLEAN),
-    ]);
-
-    let mut subst = TypeSubstitution::new();
-    subst.insert(t_name, source);
-    let instantiated = instantiate_type(&interner, mapped, &subst);
-    let result = evaluate_type(&interner, instantiated);
-
-    assert_eq!(
-        result, source,
-        "identity homomorphic mapped over `[string, ...number[], boolean]` \
-         must reproduce the same tuple via the instantiate path"
-    );
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::fixed(TypeId::STRING),
+            TupleElement::rest(i.array(TypeId::NUMBER)),
+            TupleElement::fixed(TypeId::BOOLEAN),
+        ]
+    });
 }
 
 /// Wrapper template `{ value: T[K] }` over a variadic tuple. Each fixed
