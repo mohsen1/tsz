@@ -693,27 +693,29 @@ impl<'a> CheckerState<'a> {
                     },
                 ]
             }
-            SubtypeFailureReason::ArrayElementMismatch { .. } => {
-                // tsc names both array types in the head message (e.g.
-                // `Argument of type 'se[]' is not assignable to parameter of
-                // type 'te[]'.`) and then relates the *element* types directly
-                // beneath it, recursing into the element's own failure — there
-                // is no separate "array element" wrapper line. Reuse the shared
-                // array renderer (single source of truth) and keep only the
-                // element elaboration beneath its array-to-array header, which
-                // the call's head message already conveys.
-                let array_diag = self.render_failure_reason(reason, source, target, anchor_idx, 0);
-                array_diag
+            SubtypeFailureReason::ArrayElementMismatch { .. }
+            | SubtypeFailureReason::TypeArgumentMismatch { .. } => {
+                // Both reasons relate same-shaped containers whose differing
+                // *component* is the cause (array element types, or same-generic
+                // type arguments). tsc names both containers in the head — which
+                // the call's TS2345 line already does — then relates the failing
+                // component directly beneath it, with no intermediate
+                // `array element` / `Types of property 'x' are incompatible.`
+                // wrapper. Reuse the TS2322 elaboration (`render_failure_reason`)
+                // as the single source of truth: its child lines already carry
+                // the right `code`, `message_text`, `depth`, and `file`, so only
+                // the category and the call-site anchor (`start`/`length`) need
+                // rewriting for the TS2345 surface.
+                let container_diag =
+                    self.render_failure_reason(reason, source, target, anchor_idx, 0);
+                container_diag
                     .related_information
                     .into_iter()
-                    .map(|rel| DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: rel.code,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: rel.message_text,
-                        depth: rel.depth,
+                    .map(|mut rel| {
+                        rel.category = DiagnosticCategory::Message;
+                        rel.start = start;
+                        rel.length = length;
+                        rel
                     })
                     .collect()
             }
