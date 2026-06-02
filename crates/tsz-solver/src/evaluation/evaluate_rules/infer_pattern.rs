@@ -1397,6 +1397,53 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         evaluator.evaluate(type_id)
     }
 
+    /// Match each member of a union source against `pattern`, merging the
+    /// per-member infer bindings via [`Self::merge_infer_candidates`].
+    ///
+    /// Centralises the union-distribution policy used by `match_infer_pattern`
+    /// so every entry path applies the same contravariance-aware merge: infer
+    /// names that appear in contravariant positions (function/callable
+    /// parameters) intersect their candidates, all others union them. Without
+    /// this single source of truth, inner array/tuple branches could fall back
+    /// to a naive `union2` merge, silently producing an over-constrained
+    /// binding (e.g. `string & boolean` instead of `string | boolean`) for any
+    /// pattern that reaches them.
+    ///
+    /// Returns `false` as soon as one member fails to match the pattern,
+    /// matching the all-arms-must-match semantics of non-distributive
+    /// conditionals (`[T] extends [Pattern]` with `T` a union).
+    pub(crate) fn match_infer_pattern_union_members(
+        &self,
+        members: &[TypeId],
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let base = bindings.clone();
+        let mut merged = base.clone();
+
+        // Determine which infer names appear in contravariant positions
+        // (function/callable parameters) of the pattern. For those, multiple
+        // candidates from union members should be intersected (not unioned).
+        // This is essential for `UnionToIntersection<U>`:
+        //   (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never
+        // where `I` is in a contravariant (parameter) position, so candidates
+        // from each union member are intersected to produce `A & B`.
+        let contravariant_infers = self.collect_contravariant_infer_names(pattern);
+
+        for &member in members.iter() {
+            let mut local = base.clone();
+            if !self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
+                return false;
+            }
+            self.merge_infer_candidates(&base, &mut merged, local, &contravariant_infers);
+        }
+
+        *bindings = merged;
+        true
+    }
+
     /// Main pattern matching function for infer types.
     ///
     /// Matches a source type against a pattern containing `infer` types,
@@ -1433,28 +1480,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeData::Union(members)) = self.interner().lookup(source) {
             let members = self.interner().type_list(members);
-            let base = bindings.clone();
-            let mut merged = base.clone();
-
-            // Determine which infer names appear in contravariant positions
-            // (function/callable parameters) of the pattern. For those, multiple
-            // candidates from union members should be intersected (not unioned).
-            // This is essential for `UnionToIntersection<U>`:
-            //   (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never
-            // where `I` is in a contravariant (parameter) position, so candidates
-            // from each union member are intersected to produce `A & B`.
-            let contravariant_infers = self.collect_contravariant_infer_names(pattern);
-
-            for &member in members.iter() {
-                let mut local = base.clone();
-                if !self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
-                    return false;
-                }
-                self.merge_infer_candidates(&base, &mut merged, local, &contravariant_infers);
-            }
-
-            *bindings = merged;
-            return true;
+            return self
+                .match_infer_pattern_union_members(&members, pattern, bindings, visited, checker);
         }
 
         let Some(pattern_key) = self.interner().lookup(pattern) else {
@@ -1500,36 +1527,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     )
                 }
+                // Union sources are caught by the top-level dispatch above and
+                // routed through `match_infer_pattern_union_members`, so we
+                // never reach here with `source = Union(...)`. Keep the match
+                // arm explicit so a future change that loosens the top-level
+                // catch still goes through the contravariance-aware helper
+                // rather than a naive `union2` merge.
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
-                    let mut combined = FxHashMap::default();
-                    for &member in members.iter() {
-                        let Some(TypeData::Array(source_elem)) = self.interner().lookup(member)
-                        else {
-                            return false;
-                        };
-                        let mut member_bindings = FxHashMap::default();
-                        let mut local_visited = FxHashSet::default();
-                        if !self.match_infer_pattern(
-                            source_elem,
-                            pattern_elem,
-                            &mut member_bindings,
-                            &mut local_visited,
-                            checker,
-                        ) {
-                            return false;
-                        }
-                        for (name, ty) in member_bindings {
-                            combined
-                                .entry(name)
-                                .and_modify(|existing| {
-                                    *existing = self.interner().union2(*existing, ty);
-                                })
-                                .or_insert(ty);
-                        }
-                    }
-                    bindings.extend(combined);
-                    true
+                    self.match_infer_pattern_union_members(
+                        &members, pattern, bindings, visited, checker,
+                    )
                 }
                 _ => false,
             },
@@ -1545,38 +1553,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     )
                 }
+                // See note above: union sources are routed via the top-level
+                // helper to keep merge semantics uniform.
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
-                    let mut combined = FxHashMap::default();
-                    for &member in members.iter() {
-                        let Some(TypeData::Tuple(source_elems)) = self.interner().lookup(member)
-                        else {
-                            return false;
-                        };
-                        let source_elems = self.interner().tuple_list(source_elems);
-                        let pattern_elems = self.interner().tuple_list(pattern_elems);
-                        let mut member_bindings = FxHashMap::default();
-                        let mut local_visited = FxHashSet::default();
-                        if !self.match_tuple_elements(
-                            &source_elems,
-                            &pattern_elems,
-                            &mut member_bindings,
-                            &mut local_visited,
-                            checker,
-                        ) {
-                            return false;
-                        }
-                        for (name, ty) in member_bindings {
-                            combined
-                                .entry(name)
-                                .and_modify(|existing| {
-                                    *existing = self.interner().union2(*existing, ty);
-                                })
-                                .or_insert(ty);
-                        }
-                    }
-                    bindings.extend(combined);
-                    true
+                    self.match_infer_pattern_union_members(
+                        &members, pattern, bindings, visited, checker,
+                    )
                 }
                 _ => false,
             },

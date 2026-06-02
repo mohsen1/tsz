@@ -1,4 +1,5 @@
 mod defaults;
+mod distributive_tuple_union;
 mod r#enum;
 mod indexed_access;
 mod membership_semantics;
