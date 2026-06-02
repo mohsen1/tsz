@@ -9,16 +9,26 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
 
-// Per-thread file-existence cache for module-resolution hot loops.
-// `try_file_with_suffixes_and_extension` and friends probe many candidate
-// paths per import. Within a single `tsz` invocation the filesystem state is
-// stable, so caching `path.is_file()` results saves repeated `stat()`
-// syscalls. The cache is thread-local so rayon workers each have their own
-// (no locking on the hot path); unbounded growth is acceptable for a
-// one-shot CLI compile and tests reset between invocations because each
-// test runs in a fresh thread / a fresh process.
+// Per-thread path-existence caches for module-resolution hot loops.
+//
+// `try_file_with_suffixes_and_extension`, `try_directory`, and the
+// node_modules walk probe the same candidate files and directories many
+// times per build: every import in every source file re-walks overlapping
+// ancestor directories and re-tests the same extension candidates. Within a
+// single `tsz` invocation the filesystem state is stable, so caching the
+// `path.is_file()` / `path.is_dir()` results collapses those repeated
+// `stat()` syscalls to one per distinct path. This mirrors tsc's
+// `ModuleResolutionHost`, which memoizes both `fileExists` and
+// `directoryExists` for exactly the same reason.
+//
+// The caches are thread-local so rayon workers each have their own (no
+// locking on the hot path); unbounded growth is acceptable for a one-shot
+// CLI compile and tests reset between invocations because each test runs in
+// a fresh thread / a fresh process.
 thread_local! {
     static FILE_EXISTS: RefCell<FxHashMap<PathBuf, bool>> =
+        RefCell::new(FxHashMap::default());
+    static DIR_EXISTS: RefCell<FxHashMap<PathBuf, bool>> =
         RefCell::new(FxHashMap::default());
 }
 
@@ -34,13 +44,30 @@ pub(crate) fn cached_is_file(path: &Path) -> bool {
     })
 }
 
-/// Reset the caller thread's file-existence cache.
+/// Cached counterpart to `Path::is_dir`, sharing the staleness contract of
+/// [`cached_is_file`]: the filesystem is assumed stable for the lifetime of a
+/// compilation, and the result is reset together with the file cache via
+/// [`clear_path_existence_caches`].
+#[inline]
+pub(crate) fn cached_is_dir(path: &Path) -> bool {
+    DIR_EXISTS.with(|cache| {
+        if let Some(&exists) = cache.borrow().get(path) {
+            return exists;
+        }
+        let exists = path.is_dir();
+        cache.borrow_mut().insert(path.to_path_buf(), exists);
+        exists
+    })
+}
+
+/// Reset the caller thread's path-existence caches (files and directories).
 ///
 /// Long-lived hosts should use `ModuleResolver::clear_cache` between
 /// compilation cycles. That public reset path calls this helper for the
 /// current thread; rayon worker threads keep their own cache entries.
-pub(crate) fn clear_file_exists_cache() {
+pub(crate) fn clear_path_existence_caches() {
     FILE_EXISTS.with(|cache| cache.borrow_mut().clear());
+    DIR_EXISTS.with(|cache| cache.borrow_mut().clear());
 }
 
 /// Collapse `.` and `..` segments in a path without touching the filesystem.
@@ -1190,5 +1217,35 @@ mod tests {
             declaration_substitution_for_main(Path::new("pkg/index.ts")),
             None
         );
+    }
+
+    #[test]
+    fn path_existence_caches_are_stable_until_reset_for_files_and_directories() {
+        clear_path_existence_caches();
+        let root = tempdir().expect("create temp dir");
+        let file = root.path().join("index.ts");
+        let dir = root.path().join("nested");
+        std::fs::write(&file, "").expect("write probed file");
+        std::fs::create_dir(&dir).expect("create probed directory");
+
+        // First probes record the file and directory as present.
+        assert!(cached_is_file(&file));
+        assert!(cached_is_dir(&dir));
+
+        // Remove both underneath the caches. Within a single compilation the
+        // filesystem is assumed stable, so the cached answers are reused even
+        // though the paths are now gone. This is what collapses the repeated
+        // `stat()` syscalls the resolver would otherwise issue for the same
+        // files and ancestor directories across every import.
+        std::fs::remove_file(&file).expect("remove probed file");
+        std::fs::remove_dir(&dir).expect("remove probed directory");
+        assert!(cached_is_file(&file));
+        assert!(cached_is_dir(&dir));
+
+        // The unified reset clears both caches (not just the file cache), so
+        // the next compilation cycle re-reads the real filesystem state.
+        clear_path_existence_caches();
+        assert!(!cached_is_file(&file));
+        assert!(!cached_is_dir(&dir));
     }
 }

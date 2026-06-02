@@ -1075,7 +1075,7 @@ impl ModuleResolver {
         self.skip_fallback_cache_misses.set(0);
         self.node_modules_dir_cache_hits.set(0);
         self.node_modules_dir_cache_misses.set(0);
-        crate::resolution::helpers::clear_file_exists_cache();
+        crate::resolution::helpers::clear_path_existence_caches();
     }
 
     /// Return entry counts for module resolver-owned caches.

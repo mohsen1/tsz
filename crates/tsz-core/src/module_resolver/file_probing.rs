@@ -210,12 +210,12 @@ impl ModuleResolver {
         // returned `PathBuf` is canonical (e.g. typesVersions `../` joins
         // produce `ts3.1/../ts3.1/..` otherwise).
         let path = &normalize_path_segments(path);
-        if !path.is_dir() {
+        if !cached_is_dir(path) {
             return None;
         }
 
         let package_json_path = path.join("package.json");
-        if package_json_path.exists()
+        if cached_is_file(&package_json_path)
             && let Ok(pj) = self.read_package_json(&package_json_path)
         {
             // The directory's own `package.json#type` determines the
@@ -330,7 +330,7 @@ impl ModuleResolver {
         if !skip_extension_probing && let Some(resolved) = self.try_file(path, package_type) {
             return Some(resolved);
         }
-        if path.is_dir() {
+        if cached_is_dir(path) {
             let index = path.join("index");
             return self.try_file(&index, package_type);
         }
