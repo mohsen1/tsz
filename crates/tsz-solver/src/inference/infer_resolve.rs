@@ -162,11 +162,22 @@ impl<'a> InferenceContext<'a> {
             return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
+        // tsc's `getInferredType` always uses `getIntersectionType` for
+        // contra-candidates regardless of priority. Mirror that: intersection
+        // is correct for all real inference priorities including
+        // NakedTypeVariable (which produces `string & number` = never when the
+        // constraints truly conflict). The getCommonSubtype fallback below is
+        // retained only for the degenerate same-type case which is already
+        // handled by the dedup pass above, so in practice we reach the
+        // intersection branch for any pair of distinct types.
         let best_priority = contra_types.iter().map(|c| c.priority).min();
         let priority_implies_combination = best_priority.is_some_and(|priority| {
             matches!(
                 priority,
-                InferencePriority::ReturnType
+                InferencePriority::NakedTypeVariable
+                    | InferencePriority::HomomorphicMappedType
+                    | InferencePriority::PartialHomomorphicMappedType
+                    | InferencePriority::ReturnType
                     | InferencePriority::LowPriority
                     | InferencePriority::MappedType
                     | InferencePriority::LiteralKeyof
@@ -870,13 +881,13 @@ impl<'a> InferenceContext<'a> {
         // preserved (tsc uses RequiresWidening flag for this; we approximate
         // by checking the inference priority).
         let highest_priority = filtered_no_never.first().map(|c| c.priority);
+        // Contextual inference (ReturnType, LowPriority) preserves literal types
+        // because the caller supplies the expected type. HomomorphicMappedType is
+        // NOT contextual — it comes from reverse mapped inference and its object
+        // candidates should be deep-widened like NakedTypeVariable ones.
         let is_contextual_inference = matches!(
             highest_priority,
-            Some(
-                InferencePriority::ReturnType
-                    | InferencePriority::LowPriority
-                    | InferencePriority::HomomorphicMappedType
-            )
+            Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
         );
         let resolved = if !preserve_literals && !is_contextual_inference && !resolved.is_intrinsic()
         {
