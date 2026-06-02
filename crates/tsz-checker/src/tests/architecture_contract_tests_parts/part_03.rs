@@ -203,3 +203,93 @@ fn test_assignability_diagnostics_route_through_relation_outcome_helpers() {
         violations.join("\n")
     );
 }
+
+/// Guard: when the checker downgrades a solver-related outcome via
+/// `checker_only_assignability_failure_reason` (iterator-result mismatches and
+/// peers), the structured failure reason MUST be surfaced into the
+/// `RelationOutcome.failure` slot. Otherwise TS2322/TS2345/TS2416 emit paths
+/// observe a degenerate `(related=false, failure=None)` pair and render the
+/// generic "Type 'X' is not assignable to type 'Y'." with no inner elaboration,
+/// breaking the structural rule that the `query_boundaries/assignability`
+/// gateway always returns a coherent decision-plus-reason pair.
+#[test]
+fn test_checker_only_downgrade_preserves_failure_reason_through_gateway() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
+
+    // The shared downgrade helper must exist so every consumer agrees on the
+    // "downgrade + reason recovery" semantics rather than open-coding the
+    // pattern at each callsite.
+    assert!(
+        source.contains("fn apply_checker_side_downgrade("),
+        "assignability_relation.rs must define a single apply_checker_side_downgrade \
+         helper so all checker-side downgrades agree on preserving the failure reason"
+    );
+
+    let downgrade_body = extract_method_body(&source, "fn apply_checker_side_downgrade(");
+    assert!(
+        downgrade_body.contains("outcome.related = false;"),
+        "apply_checker_side_downgrade must force outcome.related to false"
+    );
+    // The reason surfacing may be inlined OR delegated to the shared
+    // `set_failure_from_reason_if_empty` helper. Accept either shape.
+    let surfaces_reason_inline = downgrade_body.contains("outcome.failure = Some(")
+        && downgrade_body.contains("RelationFailure::from_solver_reason(");
+    let surfaces_reason_via_helper =
+        downgrade_body.contains("set_failure_from_reason_if_empty(");
+    assert!(
+        surfaces_reason_inline || surfaces_reason_via_helper,
+        "apply_checker_side_downgrade must surface the structured failure reason \
+         so callers don't observe (related=false, failure=None)"
+    );
+
+    // The shared helper itself must always wrap the solver reason into a
+    // `RelationFailure` and assign it iff `outcome.failure` is currently None.
+    let helper_body =
+        extract_method_body(&source, "fn set_failure_from_reason_if_empty(");
+    assert!(
+        helper_body.contains("outcome.failure.is_none()")
+            && helper_body.contains("outcome.failure = Some(")
+            && helper_body.contains("RelationFailure::from_solver_reason("),
+        "set_failure_from_reason_if_empty must guard on outcome.failure.is_none() \
+         and wrap the solver reason into a checker-facing RelationFailure"
+    );
+
+    let exec_body = extract_method_body(&source, "fn execute_relation_request(");
+    assert!(
+        exec_body.contains("apply_checker_side_downgrade("),
+        "execute_relation_request must route checker-side downgrades through \
+         apply_checker_side_downgrade so the failure reason is preserved"
+    );
+
+    // assign_relation_outcome's failed branch must recover the structured
+    // reason via the cheap raw-input pre-check (`raw_input_failure_reason`)
+    // when execute_relation_request's solver pass returned no reason. The
+    // pre-check covers the three raw-input families that `is_assignable_to`'s
+    // checker-side fast-paths reject but the solver pass considers related.
+    let assign_body = extract_method_body(&source, "fn assign_relation_outcome(");
+    assert!(
+        assign_body.contains("raw_input_failure_reason("),
+        "assign_relation_outcome must recover the structured failure reason via \
+         raw_input_failure_reason when execute_relation_request returns no reason"
+    );
+    assert!(
+        assign_body.contains("outcome.failure.is_none()"),
+        "assign_relation_outcome must only recover the failure reason when the \
+         boundary outcome lacks one — otherwise it would override an already \
+         elaborated structured reason"
+    );
+}
+
+/// Slice the body of a Rust method from `source` starting at `fn_signature`
+/// and ending at the matching `}` (assumes 4-space indented method body).
+fn extract_method_body<'a>(source: &'a str, fn_signature: &str) -> &'a str {
+    let start = source
+        .find(fn_signature)
+        .unwrap_or_else(|| panic!("{fn_signature} not found"));
+    let after = &source[start..];
+    let end = after
+        .find("\n    }\n")
+        .unwrap_or_else(|| panic!("{fn_signature} must close with a method-end '}}'"));
+    &after[..end]
+}

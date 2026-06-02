@@ -14,8 +14,8 @@ use crate::query_boundaries::state::type_resolution::{get_application_info, get_
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
-use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
+use tsz_solver::{SubtypeFailureReason, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Shared assignability core: cache lookup → compute → cache insert → trace.
@@ -177,19 +177,48 @@ impl<'a> CheckerState<'a> {
         );
 
         self.propagate_overflow_flags(outcome.depth_exceeded, outcome.iteration_exceeded);
-
-        // Checker-only post-check: the solver may say "related" but the checker
-        // can downgrade via deferred conditional types or other checker-specific
-        // semantic rules.
-        if outcome.related
-            && self
-                .checker_only_assignability_failure_reason(request.source, request.target)
-                .is_some()
-        {
-            outcome.related = false;
-        }
+        self.apply_checker_side_downgrade(&mut outcome, request.source, request.target);
 
         outcome
+    }
+
+    /// When the solver says the relation holds but a checker-only semantic
+    /// rule (e.g., iterator-result protocol mismatch) rejects it, downgrade
+    /// `outcome.related` to false AND surface the structured reason so the
+    /// `query_boundaries/assignability` gateway returns a coherent
+    /// (related, failure) pair instead of a generic TS2322/TS2345 with no
+    /// inner chain.
+    fn apply_checker_side_downgrade(
+        &mut self,
+        outcome: &mut crate::query_boundaries::assignability::RelationOutcome,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        if !outcome.related {
+            return;
+        }
+        let Some(reason) = self.checker_only_assignability_failure_reason(source, target) else {
+            return;
+        };
+        outcome.related = false;
+        Self::set_failure_from_reason_if_empty(outcome, reason);
+    }
+
+    /// Populate `outcome.failure` with the structured reason iff it is
+    /// currently `None`. Centralizes the boilerplate that wraps a solver
+    /// `SubtypeFailureReason` into the checker-facing `RelationFailure` and
+    /// preserves any reason the boundary already produced.
+    fn set_failure_from_reason_if_empty(
+        outcome: &mut crate::query_boundaries::assignability::RelationOutcome,
+        reason: SubtypeFailureReason,
+    ) {
+        if outcome.failure.is_none() {
+            outcome.failure = Some(
+                crate::query_boundaries::relation_types::RelationFailure::from_solver_reason(
+                    reason,
+                ),
+            );
+        }
     }
 
     /// Execute a diagnostic-bearing assignment relation for raw checker types.
@@ -214,10 +243,23 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        let raw_source = source;
+        let raw_target = target;
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
         let mut outcome = self.execute_relation_request(&request);
+
+        // Solver pass returned `failure=None`: `is_assignable_to` rejected via
+        // a checker-side fast-path the solver cannot reconstruct after
+        // `prepare_assignability_inputs`. The raw-input detectors recover the
+        // structured reason — see `raw_input_failure_reason` for the families.
+        if outcome.failure.is_none()
+            && let Some(reason) = self.raw_input_failure_reason(raw_source, raw_target)
+        {
+            Self::set_failure_from_reason_if_empty(&mut outcome, reason);
+        }
+
         outcome.related = false;
         outcome
     }
@@ -294,13 +336,9 @@ impl<'a> CheckerState<'a> {
             relation_outcome.iteration_exceeded,
         );
 
-        if relation_outcome.related
-            && self
-                .checker_only_assignability_failure_reason(source, target)
-                .is_some()
-        {
-            relation_outcome.related = false;
-        }
+        // Mirror the canonical `execute_relation_request` downgrade so the
+        // env-aware path stays on the same `(related, failure)` contract.
+        self.apply_checker_side_downgrade(&mut relation_outcome, source, target);
 
         if relation_outcome.related
             && let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
