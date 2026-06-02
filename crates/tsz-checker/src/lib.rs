@@ -594,6 +594,9 @@ mod dispatch_tests;
 #[path = "tests/do_while_exit_narrowing_tests.rs"]
 mod do_while_exit_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/dom_fuel_exhaustion_ts2322_tests.rs"]
+mod dom_fuel_exhaustion_ts2322_tests;
+#[cfg(test)]
 #[path = "tests/dynamic_import_relation_routing_arch_tests.rs"]
 mod dynamic_import_relation_routing_arch_tests;
 #[cfg(test)]
