@@ -908,15 +908,21 @@ impl<'a> CheckerState<'a> {
                                 *derived_member_idx,
                             )
                         } else {
-                            should_report_member_type_mismatch(
+                            // After substitution, source and target share the same outer TypeParam;
+                            // the callable-outer-type-param heuristic would silence genuine mismatches.
+                            self.ctx.skip_callable_type_param_suppression.set(true);
+                            let mismatch = should_report_member_type_mismatch(
                                 self,
                                 derived_prop_type,
                                 base_prop_type,
                                 *derived_member_idx,
-                            ) && !self.generic_method_override_is_valid_specialization(
-                                derived_prop_type,
-                                base_prop_type,
-                            )
+                            ) && !self
+                                .generic_method_override_is_valid_specialization(
+                                    derived_prop_type,
+                                    base_prop_type,
+                                );
+                            self.ctx.skip_callable_type_param_suppression.set(false);
+                            mismatch
                         };
 
                         if type_mismatch {
