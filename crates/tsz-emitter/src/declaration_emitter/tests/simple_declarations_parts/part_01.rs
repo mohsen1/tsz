@@ -1787,3 +1787,36 @@ module.exports = {
     );
 }
 
+#[test]
+fn test_commonjs_export_elides_type_only_require_destructuring() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const { Thing } = require("./module.js");
+
+/** @typedef {import("./module.js").Thing} Thing */
+class Main {
+    /** @param {Thing} x */
+    constructor(x) {}
+}
+
+module.exports = Main;
+"#,
+    );
+
+    assert!(
+        !output.contains("declare const Thing:"),
+        "Expected type-only require destructuring to be elided: {output}"
+    );
+    assert!(
+        output.contains("export = Main;"),
+        "Expected CommonJS export assignment to remain: {output}"
+    );
+    assert!(
+        output.contains("constructor(x: Thing);"),
+        "Expected JSDoc import typedef to keep constructor parameter type: {output}"
+    );
+    assert!(
+        output.contains("type Thing = import(\"./module.js\").Thing;"),
+        "Expected public typedef to use import type instead of the local require binding: {output}"
+    );
+}

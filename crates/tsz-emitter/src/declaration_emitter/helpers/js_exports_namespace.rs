@@ -8,7 +8,7 @@ use super::super::{
 #[allow(unused_imports)]
 use rustc_hash::{FxHashMap, FxHashSet};
 #[allow(unused_imports)]
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
 #[allow(unused_imports)]
@@ -449,6 +449,88 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.initializer_is_bare_require_call(initializer)
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_bare_require_destructuring_without_value_surface(
+        &self,
+        pattern_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file || !self.initializer_is_bare_require_call(initializer) {
+            return false;
+        }
+
+        let mut names = FxHashSet::default();
+        for (ident_idx, _) in self.collect_flattened_binding_entries(pattern_idx, None) {
+            if let Some(name) = self.get_identifier_text(ident_idx) {
+                names.insert(name);
+            }
+        }
+        if names.is_empty() {
+            return false;
+        }
+
+        !names
+            .iter()
+            .any(|name| self.public_api_type_surface_contains_typeof_name(name))
+            && !self.js_module_exports_initializer_references_any_identifier_name(&names)
+    }
+
+    fn js_module_exports_initializer_references_any_identifier_name(
+        &self,
+        names: &FxHashSet<String>,
+    ) -> bool {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return true;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return true;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return true;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                self.js_module_exports_assignment_initializer(stmt_idx)
+                    .is_some_and(|initializer| {
+                        self.node_references_any_identifier_name(initializer, &names)
+                    })
+            })
+    }
+
+    fn node_references_any_identifier_name(
+        &self,
+        node_idx: NodeIndex,
+        names: &FxHashSet<String>,
+    ) -> bool {
+        let mut seen = FxHashSet::default();
+        self.node_references_any_identifier_name_inner(node_idx, names, &mut seen)
+    }
+
+    fn node_references_any_identifier_name_inner(
+        &self,
+        node_idx: NodeIndex,
+        names: &FxHashSet<String>,
+        seen: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
+        if node_idx.is_none() || !seen.insert(node_idx) {
+            return false;
+        }
+        if self
+            .get_identifier_text(node_idx)
+            .is_some_and(|name| names.contains(&name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.node_references_any_identifier_name_inner(child_idx, names, seen))
     }
 
     pub(in crate::declaration_emitter) fn emit_js_require_property_import_aliases(&mut self) {

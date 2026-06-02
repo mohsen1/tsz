@@ -617,9 +617,17 @@ impl<'a> DeclarationEmitter<'a> {
                         });
 
                         if is_destructuring {
-                            if self.js_local_bare_require_alias_without_export_surface(
-                                decl.initializer,
-                            ) {
+                            let is_exported =
+                                has_export_modifier || self.is_js_named_exported_name(decl.name);
+                            if !is_exported
+                                && (self.js_local_bare_require_alias_without_export_surface(
+                                    decl.initializer,
+                                ) || self
+                                    .js_local_bare_require_destructuring_without_value_surface(
+                                        decl.name,
+                                        decl.initializer,
+                                    ))
+                            {
                                 self.record_js_elided_bare_require_binding_names(decl.name);
                                 let skip_end = self
                                     .arena
@@ -629,8 +637,6 @@ impl<'a> DeclarationEmitter<'a> {
                                 continue;
                             }
                             // Emit destructuring as individual declarations
-                            let is_exported =
-                                has_export_modifier || self.is_js_named_exported_name(decl.name);
                             self.emit_flattened_variable_declaration(
                                 decl_idx,
                                 keyword,

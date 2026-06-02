@@ -124,7 +124,10 @@ impl<'a> DeclarationEmitter<'a> {
                     .push((key_text.to_string(), source_name_text.trim().to_string()));
             }
 
-            let Some(mut name_text) = self.object_literal_member_name_text(name_idx) else {
+            let Some(mut name_text) = self
+                .object_literal_member_name_text(name_idx)
+                .or_else(|| self.emittable_computed_property_name_text(name_idx))
+            else {
                 if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     has_non_emittable_computed_members = true;
                     if synthetic_number_index_member.is_none() {
@@ -525,6 +528,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             let name_text = self
                 .object_literal_member_name_text(name_idx)
+                .or_else(|| self.emittable_computed_property_name_text(name_idx))
                 .or_else(|| self.constant_computed_property_name_text(name_idx));
             let kind = self.computed_object_index_key_kind(name_idx, name_text.as_deref());
             members.push(ComputedObjectIndexMember {

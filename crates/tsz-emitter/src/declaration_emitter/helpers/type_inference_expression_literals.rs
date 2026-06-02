@@ -354,7 +354,10 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
                 continue;
             };
-            let Some(name) = self.object_literal_member_name_text(name_idx) else {
+            let Some(name) = self
+                .object_literal_member_name_text(name_idx)
+                .or_else(|| self.emittable_computed_property_name_text(name_idx))
+            else {
                 continue;
             };
             let Some(value_idx) = self.object_literal_member_value_idx(member_node) else {
