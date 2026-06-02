@@ -170,7 +170,7 @@ fn test_assignability_checker_has_execute_relation_request() {
 /// outcome's `weak_union_violation` hint instead of re-calling the solver.
 ///
 /// Note: per `test_assignability_diagnostics_route_through_relation_outcome_helpers`
-/// (part_03.rs), diagnostic files must NOT build `RelationRequest::*` directly;
+/// (`part_03.rs`), diagnostic files must NOT build `RelationRequest::*` directly;
 /// they must go through the named `*_relation_outcome` helpers in
 /// `assignability_relation.rs`. The named helpers internally build the
 /// `RelationRequest::assign(`/etc. and call `execute_relation_request(`, so
