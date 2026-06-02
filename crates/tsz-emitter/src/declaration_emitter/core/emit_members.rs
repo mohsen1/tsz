@@ -565,8 +565,10 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(type_text) =
                             self.function_body_preferred_return_type_text(method_body)
                     {
+                        // function_body_preferred_return_type_text embeds depth=indent_level;
+                        // use write() so the pre-encoded indent is not doubled.
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
-                        self.write_type_text_with_current_indent(&type_text);
+                        self.write(&type_text);
                     } else {
                         let type_text =
                             self.inferred_method_return_type_text(method, return_type_id);
@@ -586,7 +588,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.function_body_preferred_return_type_text(method_body)
                     {
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
-                        self.write_type_text_with_current_indent(&type_text);
+                        self.write(&type_text);
                     } else if !self.source_is_declaration_file {
                         self.write("any");
                     }
@@ -603,7 +605,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.function_body_preferred_return_type_text(method_body)
                 {
                     let type_text = self.wrap_async_method_return_type_text(method, type_text);
-                    self.write_type_text_with_current_indent(&type_text);
+                    self.write(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
                 }
@@ -621,8 +623,9 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
+                // Pre-encoded indent_level depth; write() avoids double-counting.
                 let type_text = self.wrap_async_method_return_type_text(method, type_text);
-                self.write_type_text_with_current_indent(&type_text);
+                self.write(&type_text);
             } else if !self.source_is_declaration_file {
                 self.write("any");
             }
