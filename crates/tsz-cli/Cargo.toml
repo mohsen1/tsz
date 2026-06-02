@@ -25,6 +25,10 @@ name = "tsz-server"
 path = "src/bin/tsz_server/main.rs"
 
 [[bin]]
+name = "try-tsz"
+path = "src/bin/try_tsz.rs"
+
+[[bin]]
 name = "audit-unsoundness"
 path = "src/bin/audit_unsoundness.rs"
 

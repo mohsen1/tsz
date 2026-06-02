@@ -63,6 +63,7 @@ yarn.lock
 ~*.docx
 
 # Root directory - prevent new files in root (scripts and configs go in subdirectories)
+/.npm.local.env
 /*.sh
 /*.mjs
 /*.js

@@ -12,6 +12,7 @@ pub mod localization;
 pub mod perf_json;
 pub mod project;
 pub mod reporting;
+pub mod try_tsz;
 pub use commands::args;
 pub use commands::build;
 pub use commands::help;
