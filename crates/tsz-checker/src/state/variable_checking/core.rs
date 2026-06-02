@@ -1124,7 +1124,18 @@ impl<'a> CheckerState<'a> {
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;
-                if let Some(ref name) = var_name {
+                // Lazy deferred self-references (no contextual return type, no
+                // recursive callee self-invocation) still widen to `any` above
+                // but must NOT emit TS7022/TS7023: tsc resolves them on demand
+                // without a diagnostic. Keeping the widening (rather than
+                // suppressing the recording) preserves type behaviour for every
+                // other circular case, so this only drops a tsz-only false
+                // positive. See issue #10675.
+                let lazy_circular_return =
+                    self.all_circular_return_sites_are_lazy(sym_id, &circular_return_sites);
+                if let Some(ref name) = var_name
+                    && !lazy_circular_return
+                {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,

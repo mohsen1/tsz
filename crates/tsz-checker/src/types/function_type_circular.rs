@@ -13,6 +13,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         function_idx: NodeIndex,
         body_idx: NodeIndex,
+        no_contextual_return: bool,
     ) {
         let resolving_vars: FxHashSet<_> = self
             .ctx
@@ -54,6 +55,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A circular-return site is "lazy" (a benign self-reference that `tsc`
+        // resolves on demand rather than reporting as TS7022/TS7023) when the
+        // deferred function has no contextual return type AND its body does not
+        // recursively invoke the resolving variable in callee position. The site
+        // is still recorded normally so the variable's type still widens to
+        // `any` (cycle break, unchanged from before); the lazy marker only
+        // suppresses the spurious diagnostic at the emission site. See issue
+        // #10675 (`define<T>(spec: T): T; const api = define({ refresh: () => api })`).
+        let is_lazy = no_contextual_return
+            && !self.return_body_has_callee_self_invocation(body_idx, &resolving_vars);
+
         for sym_id in found {
             let sites = self
                 .ctx
@@ -63,7 +75,36 @@ impl<'a> CheckerState<'a> {
             if !sites.contains(&function_idx) {
                 sites.push(function_idx);
             }
+            if is_lazy {
+                let lazy_sites = self
+                    .ctx
+                    .pending_lazy_circular_return_sites
+                    .entry(sym_id)
+                    .or_default();
+                if !lazy_sites.contains(&function_idx) {
+                    lazy_sites.push(function_idx);
+                }
+            }
         }
+    }
+
+    /// Whether every recorded circular-return `site` for `sym_id` is a benign
+    /// lazy self-reference (see [`Self::record_pending_circular_return_sites`]).
+    /// When true, the variable's TS7022/TS7023 emission is suppressed even
+    /// though its type still widened to `any`, matching `tsc`, which accepts
+    /// such deferred self-references without a diagnostic.
+    pub(crate) fn all_circular_return_sites_are_lazy(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        sites: &[NodeIndex],
+    ) -> bool {
+        if sites.is_empty() {
+            return false;
+        }
+        let Some(lazy) = self.ctx.pending_lazy_circular_return_sites.get(&sym_id) else {
+            return false;
+        };
+        sites.iter().all(|site| lazy.contains(site))
     }
 
     pub(super) fn return_body_has_resolving_var_in_call_like(&self, body_idx: NodeIndex) -> bool {
@@ -106,21 +147,7 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> bool {
         let Some(return_context) = return_context else {
-            // No contextual return type at all. The deferred function's return
-            // type is inferred lazily and is NOT forced while resolving the
-            // enclosing variable, so a self-reference in its body does not make
-            // the variable circular — tsc resolves it on demand. For example,
-            // `declare function define<T>(spec: T): T; const api = define({
-            // refresh: () => api });` is accepted by tsc: the object literal is
-            // matched against the bare type parameter `T`, leaving the arrow
-            // with no contextual return type, so `refresh`'s return is deferred.
-            //
-            // Only a contextual return position that is itself an inference
-            // target (a type parameter, handled below) forces evaluation and
-            // yields a genuine circularity; a body that recursively invokes the
-            // resolving variable (`() => api.loop()`) is still caught by the
-            // call-like check at the recording site.
-            return true;
+            return false;
         };
 
         return_context == TypeId::ANY
@@ -1002,15 +1029,166 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    /// Whether the resolving-variable reference at `ident_idx` flows into the
-    /// **callee** position of a call/new/tagged-template — i.e. the variable is
-    /// recursively invoked (`() => api.loop()`), which makes the deferred
-    /// function's return type depend on itself.
-    ///
-    /// A reference that merely appears as a call *argument* (`() => helper(api)`)
-    /// does not constrain the callee's return type and is therefore not a
-    /// circular return-type dependency; tsc accepts such bodies.
     fn identifier_flows_through_call_like(&self, ident_idx: NodeIndex) -> bool {
+        let mut current = ident_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::CALL_EXPRESSION
+                    | syntax_kind_ext::NEW_EXPRESSION
+                    | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            ) {
+                return true;
+            }
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::RETURN_STATEMENT
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+            ) {
+                return false;
+            }
+            current = parent_idx;
+        }
+    }
+
+    /// Whether any return expression in `body_idx` recursively *invokes* one of
+    /// `resolving_vars` in **callee** position — e.g. `() => api.loop()`,
+    /// `() => (0, api.loop)()`, `() => (c ? api.a : api.b)()`. Unlike
+    /// [`Self::return_body_has_resolving_var_in_call_like`], a reference that is
+    /// merely a call *argument* (`() => helper(api)`) does NOT count, because the
+    /// callee's return type does not depend on the resolving variable.
+    ///
+    /// This is the precise "the deferred function's return type genuinely
+    /// depends on itself" predicate used to decide whether a circular-return
+    /// site is a real circularity (`tsc` reports TS7023) or a benign lazily
+    /// resolved self-reference. It does not affect which sites are *recorded*;
+    /// it only refines whether the recorded site is reported.
+    pub(super) fn return_body_has_callee_self_invocation(
+        &self,
+        body_idx: NodeIndex,
+        resolving_vars: &FxHashSet<tsz_binder::SymbolId>,
+    ) -> bool {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            if let Some(block) = self.ctx.arena.get_block(body_node) {
+                return block.statements.nodes.iter().copied().any(|stmt_idx| {
+                    self.statement_has_callee_self_invocation(stmt_idx, resolving_vars)
+                });
+            }
+            return false;
+        }
+        self.expression_has_callee_self_invocation(body_idx, resolving_vars)
+    }
+
+    fn statement_has_callee_self_invocation(
+        &self,
+        stmt_idx: NodeIndex,
+        resolving_vars: &FxHashSet<tsz_binder::SymbolId>,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => self
+                .ctx
+                .arena
+                .get_return_statement(node)
+                .is_some_and(|ret| {
+                    ret.expression.is_some()
+                        && self
+                            .expression_has_callee_self_invocation(ret.expression, resolving_vars)
+                }),
+            syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|stmt| self.statement_has_callee_self_invocation(stmt, resolving_vars))
+            }),
+            syntax_kind_ext::IF_STATEMENT => {
+                self.ctx
+                    .arena
+                    .get_if_statement(node)
+                    .is_some_and(|if_data| {
+                        self.statement_has_callee_self_invocation(
+                            if_data.then_statement,
+                            resolving_vars,
+                        ) || (if_data.else_statement.is_some()
+                            && self.statement_has_callee_self_invocation(
+                                if_data.else_statement,
+                                resolving_vars,
+                            ))
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_has_callee_self_invocation(
+        &self,
+        expr_idx: NodeIndex,
+        resolving_vars: &FxHashSet<tsz_binder::SymbolId>,
+    ) -> bool {
+        if self.expression_is_void_prefix_unary(expr_idx) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16
+            && !self.identifier_is_non_value_name_position(expr_idx)
+            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+            && resolving_vars.contains(&sym_id)
+        {
+            return self.identifier_flows_through_callee_position(expr_idx);
+        }
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_children(expr_idx)
+            .into_iter()
+            .any(|child_idx| self.expression_has_callee_self_invocation(child_idx, resolving_vars))
+    }
+
+    /// Whether the resolving-variable reference at `ident_idx` flows into the
+    /// **callee** position of a call/new/tagged-template (`api.loop()`), walking
+    /// through transparent wrappers, object-side member access, comma right
+    /// operands, and conditional branches. A reference appearing only as a call
+    /// *argument* (`helper(api)`) returns `false`.
+    fn identifier_flows_through_callee_position(&self, ident_idx: NodeIndex) -> bool {
         let mut current = ident_idx;
         loop {
             let Some(ext) = self.ctx.arena.get_extended(current) else {

@@ -846,6 +846,12 @@ pub struct CheckerContext<'a> {
     /// symbol currently being resolved. Used to centralize TS7022/TS7023/TS7024
     /// emission and suppress downstream relation noise from the circularity.
     pub pending_circular_return_sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
+    /// Subset of [`Self::pending_circular_return_sites`] whose self-reference is
+    /// a benign *lazy* deferred reference (no contextual return type and no
+    /// recursive callee self-invocation). These sites still widen the variable
+    /// to `any`, but their TS7022/TS7023 emission is suppressed to match `tsc`,
+    /// which resolves such references on demand without a diagnostic (#10675).
+    pub pending_lazy_circular_return_sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
     /// Extra tracking depth for method/accessor return-site circularity when a
     /// construct consults those bodies immediately during type computation
     /// (currently the `for...of` iterator protocol path).

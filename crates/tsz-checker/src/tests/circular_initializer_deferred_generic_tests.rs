@@ -13,8 +13,12 @@
 //!
 //! Previously tsz over-fired TS7022/TS7023 whenever a self-referencing object
 //! literal was passed to a generic function (e.g. `define<T>(spec: T): T`),
-//! because the deferred return site was recorded even though no contextual
-//! type forced its evaluation. See issue #10675 (kysely false TS7022/TS1062).
+//! because the deferred return site, while correctly recorded (so the variable
+//! still widens to `any`), was also reported as a diagnostic. The fix marks
+//! such sites as benign "lazy" references and suppresses only the diagnostic
+//! emission — leaving recording and the widening behaviour untouched, so no
+//! other circular-initializer case changes. See issue #10675 (kysely false
+//! TS7022/TS1062).
 
 use crate::test_utils::check_source_diagnostics;
 

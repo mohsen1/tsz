@@ -179,6 +179,7 @@ impl<'a> CheckerContext<'a> {
             circular_class_symbols: FxHashSet::default(),
             pending_implicit_any_vars: FxHashMap::default(),
             pending_circular_return_sites: FxHashMap::default(),
+            pending_lazy_circular_return_sites: FxHashMap::default(),
             non_closure_circular_return_tracking_depth: 0,
             reported_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph::new(),
