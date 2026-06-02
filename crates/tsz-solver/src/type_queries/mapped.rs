@@ -785,6 +785,53 @@ pub fn get_finite_mapped_property_display_type(
     }
 }
 
+/// Resolve the `(optional, readonly)` modifiers for an output property of a
+/// finite mapped type, honoring `as`-clause key remapping.
+///
+/// When the `as` clause renames keys, the output property name is not itself a
+/// source key, so looking the output name up directly in the source loses the
+/// inherited modifiers. tsc derives the modifiers from the source key whose
+/// remap produced the output name; when several keys collide on one name, the
+/// first in declaration order wins (see `resolveMappedTypeMembers`). Returns
+/// `None` when the mapped type is not homomorphic over a concrete object source
+/// or no source key maps to `property_name`.
+pub fn finite_mapped_output_property_modifiers(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    property_name: Atom,
+) -> Option<(bool, bool)> {
+    let (source_type, key_type) = crate::type_queries::get_index_access_types(db, mapped.template)?;
+    let key_param = crate::type_param_info(db, key_type)?;
+    if key_param.name != mapped.type_param.name {
+        return None;
+    }
+
+    // Source properties in declaration order so the first colliding contributor
+    // wins, matching tsc.
+    let source_props =
+        super::mapped_display_order::collect_homomorphic_source_property_infos(db, source_type);
+    for prop in &source_props {
+        let key_literal = property_key_to_type(
+            db,
+            ExactLiteralPropertyKey {
+                name: prop.name,
+                is_symbol_named: prop.is_symbol_named,
+            },
+        );
+        let remapped = remap_mapped_property_key(db, mapped, key_literal);
+        if remapped == TypeId::NEVER {
+            continue;
+        }
+        let produces_target =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)
+                .is_some_and(|keys| keys.iter().any(|key| key.name == property_name));
+        if produces_target {
+            return Some((prop.optional, prop.readonly));
+        }
+    }
+    None
+}
+
 fn property_key_to_type(db: &dyn TypeDatabase, key: ExactLiteralPropertyKey) -> TypeId {
     let key_str = db.resolve_atom(key.name);
     if key.is_symbol_named
@@ -1325,15 +1372,17 @@ pub fn merge_colliding_mapped_properties(
     for property in properties.drain(..) {
         if let Some(&existing_index) = by_name.get(&property.name) {
             let existing: &mut PropertyInfo = &mut merged[existing_index];
+            // tsc's `resolveMappedTypeMembers` widens a colliding output key by
+            // unioning the value contributions of every source key that maps to
+            // it, but it keeps the optional/readonly modifiers (and naming
+            // metadata) of the FIRST source key in declaration order. The
+            // colliding branch there only updates `keyType`/`nameType`; it never
+            // recomputes the property symbol's modifier flags. AND-combining the
+            // modifiers (the previous behavior) dropped `readonly`/`optional`
+            // intent whenever the source keys disagreed.
             existing.type_id = db.union_preserve_members(vec![existing.type_id, property.type_id]);
             existing.write_type =
                 db.union_preserve_members(vec![existing.write_type, property.write_type]);
-            existing.optional &= property.optional;
-            existing.readonly &= property.readonly;
-            existing.is_method &= property.is_method;
-            existing.is_string_named &= property.is_string_named;
-            existing.is_symbol_named &= property.is_symbol_named;
-            existing.single_quoted_name &= property.single_quoted_name;
             existing.declaration_order = existing.declaration_order.min(property.declaration_order);
         } else {
             by_name.insert(property.name, merged.len());

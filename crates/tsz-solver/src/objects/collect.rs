@@ -379,7 +379,15 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         mapped: &crate::types::MappedType,
         property_name: Atom,
     ) -> (bool, bool) {
-        let source_modifiers = self.finite_mapped_source_property_modifiers(mapped, property_name);
+        // Honor `as`-clause key remapping: the inherited modifiers come from the
+        // source key whose remap produced `property_name` (first contributor wins
+        // on a collision), not from looking the output name up directly in the
+        // source.
+        let source_modifiers = crate::type_queries::finite_mapped_output_property_modifiers(
+            self.interner,
+            mapped,
+            property_name,
+        );
         let (source_optional, source_readonly) = source_modifiers.unwrap_or((false, false));
         let is_homomorphic = source_modifiers.is_some();
         crate::type_queries::compute_mapped_modifiers(
@@ -388,33 +396,6 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             source_optional,
             source_readonly,
         )
-    }
-
-    fn finite_mapped_source_property_modifiers(
-        &self,
-        mapped: &crate::types::MappedType,
-        property_name: Atom,
-    ) -> Option<(bool, bool)> {
-        let (source_type, key_type) =
-            crate::type_queries::get_index_access_types(self.interner, mapped.template)?;
-        let key_param = crate::type_param_info(self.interner, key_type)?;
-        if key_param.name != mapped.type_param.name {
-            return None;
-        }
-
-        let resolved_source = resolve_type(source_type, self.interner, self.resolver);
-        match collect_properties_cached(
-            resolved_source,
-            self.interner,
-            self.resolver,
-            self.query_db,
-        ) {
-            PropertyCollectionResult::Properties { properties, .. } => {
-                PropertyInfo::find_in_slice(&properties, property_name)
-                    .map(|prop| (prop.optional, prop.readonly))
-            }
-            _ => None,
-        }
     }
 
     /// Collect common properties from all union members.
