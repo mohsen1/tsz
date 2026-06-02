@@ -112,14 +112,7 @@ pub fn extract_predicate_signature(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<ExtractedPredicateSignature> {
-    extract_predicate_from_kind(db, classify_for_predicate_signature(db, type_id))
-}
-
-fn extract_predicate_from_kind(
-    db: &dyn TypeDatabase,
-    kind: PredicateSignatureKind,
-) -> Option<ExtractedPredicateSignature> {
-    match kind {
+    match classify_for_predicate_signature(db, type_id) {
         PredicateSignatureKind::Function(shape_id) => {
             let shape = db.function_shape(shape_id);
             let predicate = shape.type_predicate?;
@@ -152,26 +145,6 @@ fn extract_predicate_from_kind(
         }
         PredicateSignatureKind::None => None,
     }
-}
-
-/// Extract a type predicate for control-flow narrowing, rejecting overloaded
-/// callables (more than one call signature) as having no statically-derivable
-/// predicate. The applicable predicate of an overloaded call depends on which
-/// overload resolution selected, so it must be read from the resolved call site
-/// rather than recovered by scanning the overload set. Single-signature
-/// callables, functions, unions, and intersections behave as in
-/// [`extract_predicate_signature`].
-pub fn extract_predicate_signature_for_narrowing(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<ExtractedPredicateSignature> {
-    let kind = classify_for_predicate_signature(db, type_id);
-    if let PredicateSignatureKind::Callable(shape_id) = &kind
-        && db.callable_shape(*shape_id).call_signatures.len() > 1
-    {
-        return None;
-    }
-    extract_predicate_from_kind(db, kind)
 }
 
 /// Returns `true` if a union of callable types is a valid type predicate.

@@ -677,7 +677,9 @@ pub(crate) fn extract_predicate_signature_for_narrowing(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<ExtractedPredicateSignature> {
-    tsz_solver::type_queries::flow::extract_predicate_signature_for_narrowing(db, type_id)
+    tsz_solver::type_queries::predicate_narrowing::extract_predicate_signature_for_narrowing(
+        db, type_id,
+    )
 }
 
 /// Check if a type is only `false` or `never` (used for assertion-function detection).
