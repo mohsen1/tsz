@@ -50,11 +50,7 @@ export const value = { second, first };
         "/src/index.ts",
     );
 
-    assert_eq!(
-        messages.len(),
-        1,
-        "expected one TS2883 diagnostic, got {messages:#?}"
-    );
+    assert_one_ts2883(&messages);
     assert!(
         messages[0].contains("'SecondHidden'"),
         "TS2883 should name the first non-portable property by source order: {messages:#?}"
@@ -62,5 +58,81 @@ export const value = { second, first };
     assert!(
         !messages[0].contains("'FirstHidden'"),
         "TS2883 should not drift to the later property: {messages:#?}"
+    );
+}
+
+#[test]
+fn ts2883_names_outer_nonportable_application_before_inner_argument() {
+    let messages = declaration_diagnostic_messages(
+        &[
+            (
+                "/node_modules/pkg/node_modules/inner/index.d.ts",
+                "export interface InnerHidden { inner: string; }\n\
+                 export interface WrapperHidden<T> { value: T; }\n",
+            ),
+            (
+                "/src/index.ts",
+                r#"
+import type { InnerHidden, WrapperHidden } from "../node_modules/pkg/node_modules/inner";
+
+declare const wrapped: WrapperHidden<InnerHidden>;
+
+export const value = wrapped;
+"#,
+            ),
+        ],
+        "/src/index.ts",
+    );
+
+    assert_one_ts2883(&messages);
+    assert!(
+        messages[0].contains("'WrapperHidden'"),
+        "TS2883 should name the outer non-portable application first: {messages:#?}"
+    );
+    assert!(
+        !messages[0].contains("'InnerHidden'"),
+        "TS2883 should not drift to the nested argument before the wrapper: {messages:#?}"
+    );
+}
+
+#[test]
+fn ts2883_names_function_parameter_before_return_type() {
+    let messages = declaration_diagnostic_messages(
+        &[
+            (
+                "/node_modules/pkg/node_modules/inner/index.d.ts",
+                "export interface ParameterHidden { input: string; }\n\
+                 export interface ReturnHidden { output: string; }\n",
+            ),
+            (
+                "/src/index.ts",
+                r#"
+import type { ParameterHidden, ReturnHidden } from "../node_modules/pkg/node_modules/inner";
+
+declare const fn: (input: ParameterHidden) => ReturnHidden;
+
+export const value = fn;
+"#,
+            ),
+        ],
+        "/src/index.ts",
+    );
+
+    assert_one_ts2883(&messages);
+    assert!(
+        messages[0].contains("'ParameterHidden'"),
+        "TS2883 should name the first function parameter before the return type: {messages:#?}"
+    );
+    assert!(
+        !messages[0].contains("'ReturnHidden'"),
+        "TS2883 should not drift to the return type before parameters: {messages:#?}"
+    );
+}
+
+fn assert_one_ts2883(messages: &[String]) {
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected one TS2883 diagnostic, got {messages:#?}"
     );
 }
