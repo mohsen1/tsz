@@ -156,3 +156,23 @@ function f(x = 0) {
         "Expected no TS6133 when `x` is used as value in a non-destructuring object literal. Got: {diags:?}"
     );
 }
+
+#[test]
+fn write_then_read_explicit_destructuring_no_ts6133() {
+    // Symmetric counterpart: parameter `x` is first written via explicit
+    // destructuring assignment, then read.  TS6133 must NOT fire because the
+    // symbol IS eventually read.
+    let diags = check_write_only(
+        r"
+function f(x = 0) {
+    let obj = { x: 1 };
+    ({ x: x } = obj);
+    return x;
+}
+",
+    );
+    assert!(
+        has_no_ts6133(&diags),
+        "Expected no TS6133 when `x` is written via explicit destructuring then read. Got: {diags:?}"
+    );
+}
