@@ -525,6 +525,9 @@ mod callable_interface_assignment_tests;
 #[path = "tests/callable_union_relation_routing_arch_tests.rs"]
 mod callable_union_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/circular_initializer_deferred_generic_tests.rs"]
+mod circular_initializer_deferred_generic_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]

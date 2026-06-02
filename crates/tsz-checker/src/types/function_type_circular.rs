@@ -106,7 +106,21 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> bool {
         let Some(return_context) = return_context else {
-            return false;
+            // No contextual return type at all. The deferred function's return
+            // type is inferred lazily and is NOT forced while resolving the
+            // enclosing variable, so a self-reference in its body does not make
+            // the variable circular — tsc resolves it on demand. For example,
+            // `declare function define<T>(spec: T): T; const api = define({
+            // refresh: () => api });` is accepted by tsc: the object literal is
+            // matched against the bare type parameter `T`, leaving the arrow
+            // with no contextual return type, so `refresh`'s return is deferred.
+            //
+            // Only a contextual return position that is itself an inference
+            // target (a type parameter, handled below) forces evaluation and
+            // yields a genuine circularity; a body that recursively invokes the
+            // resolving variable (`() => api.loop()`) is still caught by the
+            // call-like check at the recording site.
+            return true;
         };
 
         return_context == TypeId::ANY
@@ -988,6 +1002,14 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Whether the resolving-variable reference at `ident_idx` flows into the
+    /// **callee** position of a call/new/tagged-template — i.e. the variable is
+    /// recursively invoked (`() => api.loop()`), which makes the deferred
+    /// function's return type depend on itself.
+    ///
+    /// A reference that merely appears as a call *argument* (`() => helper(api)`)
+    /// does not constrain the callee's return type and is therefore not a
+    /// circular return-type dependency; tsc accepts such bodies.
     fn identifier_flows_through_call_like(&self, ident_idx: NodeIndex) -> bool {
         let mut current = ident_idx;
         loop {
@@ -1002,29 +1024,46 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::CALL_EXPRESSION
-                    | syntax_kind_ext::NEW_EXPRESSION
-                    | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
-            ) {
-                return true;
+            match parent_node.kind {
+                // Transparent wrappers: the value flows outward unchanged.
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    current = parent_idx;
+                }
+                // Member access keeps the variable on the callee path only when
+                // it is the object being accessed (`api.loop`), not a computed
+                // index (`obj[api]`).
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                    let is_object = self
+                        .ctx
+                        .arena
+                        .get_access_expr(parent_node)
+                        .is_some_and(|access| access.expression == current);
+                    if !is_object {
+                        return false;
+                    }
+                    current = parent_idx;
+                }
+                syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NEW_EXPRESSION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent_node)
+                        .is_some_and(|call| call.expression == current);
+                }
+                syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_tagged_template(parent_node)
+                        .is_some_and(|tagged| tagged.tag == current);
+                }
+                _ => return false,
             }
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::RETURN_STATEMENT
-                    | syntax_kind_ext::FUNCTION_DECLARATION
-                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
-                    | syntax_kind_ext::METHOD_DECLARATION
-                    | syntax_kind_ext::GET_ACCESSOR
-                    | syntax_kind_ext::SET_ACCESSOR
-                    | syntax_kind_ext::CLASS_DECLARATION
-                    | syntax_kind_ext::CLASS_EXPRESSION
-            ) {
-                return false;
-            }
-            current = parent_idx;
         }
     }
 
