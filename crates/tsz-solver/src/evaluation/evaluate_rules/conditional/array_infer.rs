@@ -542,10 +542,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner().type_list(members);
                 let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
-                    let member_type = match self.interner().lookup(member) {
-                        Some(TypeData::ReadonlyType(inner)) => inner,
-                        _ => member,
-                    };
+                    // Peel transparent wrappers so an aliased or
+                    // `NoInfer<readonly [...]>` arm is recognised as a tuple
+                    // and the union arm is preserved in the merged result.
+                    let mut member_type = member;
+                    for _ in 0..2 {
+                        match self.interner().lookup(member_type) {
+                            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                                member_type = inner
+                            }
+                            _ => break,
+                        }
+                    }
                     match self.interner().lookup(member_type) {
                         Some(TypeData::Tuple(check_elements)) => {
                             let check_elements = self.interner().tuple_list(check_elements);
