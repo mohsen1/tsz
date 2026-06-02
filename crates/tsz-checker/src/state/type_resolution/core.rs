@@ -472,15 +472,18 @@ impl<'a> CheckerState<'a> {
                         // evaluations from this file cannot bleed into this check.
                         self.ctx.types.take_tuple_too_large();
                         self.ctx.depth_exceeded.set(false);
-                        // Use the regular evaluator for ordinary type-reference
-                        // probes. The TS2589-specific evaluator treats any repeated
-                        // Application cycle as overflow, which is too aggressive for
-                        // bounded recursive conditional aliases. Default-reset
-                        // recursive aliases are already known to be unbounded, so
-                        // their wrapper references need the stronger probe too.
+                        // Use the TS2589-specific evaluator for aliases known to
+                        // diverge: computed recursive, same-input recursive union,
+                        // default-reset (always unbounded), or default-omitting
+                        // only when the use site omits the counter arg (meaning the
+                        // body's recursive sub-call uses the default, possibly
+                        // re-triggering fan-out). When all args are explicit the
+                        // body's sub-call hits the base case immediately.
                         let (exceeded, tuple_too_large) = if (computed_recursive_alias
                             || same_input_recursive_union_alias
-                            || defaulted_recursive_alias)
+                            || default_reset_recursive_alias
+                            || (default_omitting_recursive_alias
+                                && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref)))
                             && let Some(base_def_id) = base_def_id
                         {
                             (
@@ -1415,17 +1418,22 @@ impl<'a> CheckerState<'a> {
                             // Clear overflow flags before probing.
                             self.ctx.types.take_tuple_too_large();
                             self.ctx.depth_exceeded.set(false);
-                            // Use the regular evaluator for ordinary type-reference
-                            // probes. The TS2589-specific evaluator treats any repeated
-                            // Application cycle as overflow, which is too aggressive for
-                            // bounded recursive conditional aliases. Default-reset
-                            // recursive aliases are already known to be unbounded, so
-                            // their wrapper references need the stronger probe too.
+                            // Use the TS2589-specific evaluator for aliases known to
+                            // diverge: computed recursive, same-input recursive union,
+                            // default-reset (always unbounded), or default-omitting
+                            // only when the use site omits the counter arg (meaning the
+                            // body's recursive sub-call uses the default, possibly
+                            // re-triggering fan-out). When all args are explicit the
+                            // body's sub-call hits the base case immediately.
                             let app_def_id = query::get_application_info(self.ctx.types, result)
                                 .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base));
                             let (exceeded, tuple_too_large) = if (computed_recursive_alias
                                 || same_input_recursive_union_alias
-                                || defaulted_recursive_alias)
+                                || default_reset_recursive_alias
+                                || (default_omitting_recursive_alias
+                                    && self.type_reference_omits_defaulted_alias_arg(
+                                        sym_id, type_ref,
+                                    )))
                                 && let Some(app_def_id) = app_def_id
                             {
                                 (
