@@ -102,10 +102,10 @@ function formatSpeedupLabel(tszMs, tsgoMs) {
   if (!Number.isFinite(tszMs) || !Number.isFinite(tsgoMs) || tszMs <= 0) return "";
 
   if (tszMs < tsgoMs) {
-    return `tsz ${formatRatio(tsgoMs / tszMs)}x faster`;
+    return `tsz is ${formatRatio(tsgoMs / tszMs)}x faster`;
   }
   if (tsgoMs > 0) {
-    return `tsgo ${formatRatio(tszMs / tsgoMs)}x faster`;
+    return `tsgo is ${formatRatio(tszMs / tsgoMs)}x faster`;
   }
   return "";
 }

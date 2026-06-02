@@ -967,6 +967,25 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 .benchmark-mean-card {
   margin: 1.25rem 0 2rem;
+  padding: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text);
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+}
+
+@media (prefers-color-scheme: dark) {
+  .benchmark-mean-card {
+    background: #0d1117;
+    border-color: #30363d;
+  }
+}
+
+.benchmark-mean-card .bench-category-desc {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .benchmark-mean-card .bench-bar-row {
@@ -977,6 +996,36 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .benchmark-mean-card .bench-bar {
   width: var(--bench-bar-width);
   min-width: 0;
+  border-radius: 0;
+}
+
+.benchmark-mean-card .bench-bar-label,
+.benchmark-mean-card .bench-bar-value,
+.benchmark-mean-card .bench-winner {
+  -webkit-font-smoothing: antialiased;
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.benchmark-mean-card .bench-bar-value {
+  color: #ffffff;
+}
+
+.benchmark-mean-card .bench-winner {
+  color: var(--success);
+  font-size: 0.88rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .benchmark-mean-card .bench-category-desc,
+  .benchmark-mean-card .bench-bar-label {
+    color: #f0f6fc;
+  }
+
+  .benchmark-mean-card .bench-winner {
+    color: #56d364;
+  }
 }
 
 .benchmark-links-block {
