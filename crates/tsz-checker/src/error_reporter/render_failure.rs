@@ -726,25 +726,57 @@ impl<'a> CheckerState<'a> {
                 source_count,
                 target_count,
             } => {
+                // tsc renders the arity reason with two wordings depending on the
+                // mismatch direction: when the source carries more elements than a
+                // closed target allows it is "target allows only M" (`TS2619`); when
+                // the source is shorter than the target requires it is "target
+                // requires M" (`TS2618`). The solver supplies `source_count` and
+                // `target_count` so the checker just picks the matching catalog
+                // message instead of inventing local wording.
+                let (arity_message, arity_code) = if source_count > target_count {
+                    (
+                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                        diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                    )
+                };
+                let arity_text = format_message(
+                    arity_message,
+                    &[&source_count.to_string(), &target_count.to_string()],
+                );
                 if depth == 0 {
+                    // Top level: tsc keeps the `TS2322` headline and attaches the
+                    // arity reason as a nested elaboration line, matching the
+                    // sibling function-arity elaboration above.
                     let (source_str, target_str) =
                         self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    Diagnostic::error(
-                        file_name,
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
-                } else {
-                    let message = format!(
-                        "Tuple type has {source_count} elements but target requires {target_count}."
                     );
-                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: arity_text,
+                        category: DiagnosticCategory::Message,
+                        code: arity_code,
+                        depth: 0,
+                    });
+                    diag
+                } else {
+                    Diagnostic::error(file_name, start, length, arity_text, arity_code)
                 }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
