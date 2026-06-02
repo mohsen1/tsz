@@ -317,8 +317,9 @@ fn test_any_widening_in_template() {
 }
 
 #[test]
-fn test_unknown_widening_in_template() {
-    // unknown in template should widen to string
+fn test_unknown_in_template_is_distinct() {
+    // tsc keeps `a${unknown}b` as a distinct TemplateLiteral type — `string` is NOT
+    // assignable to it. Must NOT collapse to STRING (TS2322 parity).
     let interner = create_test_interner();
 
     let spans = vec![
@@ -328,10 +329,17 @@ fn test_unknown_widening_in_template() {
     ];
     let template = interner.template_literal(spans);
 
-    assert_eq!(
+    assert_ne!(
         template,
         TypeId::STRING,
-        "Unknown widening in template failed"
+        "Template with unknown must NOT collapse to string (tsc parity: TS2322)"
+    );
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Template with unknown should be a TemplateLiteral type"
     );
 }
 

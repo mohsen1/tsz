@@ -433,22 +433,11 @@ impl TypeInterner {
             }
         }
 
-        // Unknown absorption: a template that contains `unknown` anywhere collapses
-        // to `string`. `unknown` is opaque — the template cannot describe a more
-        // precise pattern — so the whole type is just `string`. Matches tsc's
-        // `getTemplateLiteralType` behaviour (see checker.ts isUnknownLikeUnionType).
-        for span in &spans {
-            if let TemplateSpan::Type(type_id) = span
-                && *type_id == TypeId::UNKNOWN
-            {
-                return TypeId::STRING;
-            }
-        }
-
-        // Single-span `${string}` collapses to `string` (tsc's
-        // `getTemplateLiteralType` rule). `${any}` is intentionally NOT collapsed:
-        // tsc keeps `` `${any}` `` as a distinct deferred template literal type
-        // (string is not assignable to `` `${any}` ``, TS2322).
+        // Bare `${string}` is the only intrinsic placeholder that collapses to
+        // `string`, matching tsc's `getTemplateLiteralType` single-span rule.
+        // `${any}` and `${unknown}` are intentionally kept as distinct deferred
+        // template literal types: `string` is NOT assignable to `` `${any}` `` or
+        // `` `${unknown}` `` (tsc emits TS2322 for those assignments).
         if let [TemplateSpan::Type(type_id)] = spans.as_slice()
             && *type_id == TypeId::STRING
         {

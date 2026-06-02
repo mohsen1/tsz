@@ -1315,15 +1315,23 @@ fn test_template_empty_string_removal() {
 }
 
 #[test]
-fn test_template_unknown_widening() {
+fn test_template_unknown_is_distinct_template_literal() {
     let interner = TypeInterner::new();
 
-    // `` `${unknown}` `` should widen to string
+    // tsc keeps `` `${unknown}` `` as a distinct TemplateLiteral type — `string` is NOT
+    // assignable to `` `${unknown}` `` (TS2322 parity). Must NOT collapse to STRING.
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::UNKNOWN)]);
-    assert_eq!(
+    assert_ne!(
         template,
         TypeId::STRING,
-        "Template with unknown should widen to string"
+        "Template with bare unknown must NOT collapse to string (tsc parity: TS2322)"
+    );
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Template with bare unknown should be a TemplateLiteral type"
     );
 }
 
