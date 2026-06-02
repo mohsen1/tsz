@@ -1592,21 +1592,19 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(expr_idx) = self.skip_parenthesized_expression(new_expr.expression) else {
             return false;
         };
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
+        if self
+            .nameable_constructor_expression_text(expr_idx)
+            .is_none()
+        {
             return false;
         }
-        let Some(ident) = self.get_identifier_text(expr_idx) else {
-            return false;
-        };
         let Some(binder) = self.binder else {
             return false;
         };
-        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx, &ident) else {
+        let Some(sym_id) = self.value_reference_symbol(expr_idx) else {
             return false;
         };
+        let sym_id = self.resolve_portability_symbol(sym_id, binder);
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };

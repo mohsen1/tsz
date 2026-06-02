@@ -25,6 +25,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let new_expr = self.arena.get_call_expr(expr_node)?;
+        if new_expr.type_arguments.is_some()
+            && self.new_expression_constructor_is_class_like(expr_idx)
+            && let Some(type_text) = self.nameable_new_expression_type_text(expr_idx)
+        {
+            return Some(self.rewrite_exported_import_equals_type_text(type_text));
+        }
+
         let constructor_type = self
             .get_node_type_or_names(&[new_expr.expression])
             .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
