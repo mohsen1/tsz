@@ -90,6 +90,15 @@ impl<'a> CheckerState<'a> {
     /// non-generic error type: either it was already recorded as circular, or
     /// it is a generic self-application cycle.
     pub(crate) fn type_reference_alias_collapsed_to_error(&self, sym_id: SymbolId) -> bool {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+            && !std::ptr::eq(self.ctx.get_arena_for_file(file_idx as u32), self.ctx.arena)
+        {
+            return self
+                .ctx
+                .get_existing_def_id(sym_id)
+                .is_some_and(|def_id| self.ctx.definition_store.is_circular_def(def_id));
+        }
         self.ctx.circular_type_aliases.contains(&sym_id)
             || self.type_alias_is_generic_self_circular(sym_id)
     }

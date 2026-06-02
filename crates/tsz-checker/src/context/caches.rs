@@ -12,12 +12,11 @@ pub struct TypeReferenceValidationCaches {
     /// Syntax-guided type-reference argument instantiations in the current
     /// lexical type-parameter scope, including misses.
     pub syntax_instantiation: FxHashMap<(usize, u32, TypeId, u64), Option<TypeId>>,
-    /// Declared type-parameter lists keyed by `SymbolId`, valid for the
-    /// lifetime of the current source file.  Multiple type-reference nodes
-    /// that point to the same generic utility type would otherwise each
-    /// trigger a full `extract_declared_type_params_for_reference_symbol`
-    /// walk including O(N²) `push_type_parameters` refinement passes.
-    pub ref_type_params: FxHashMap<SymbolId, Vec<TypeParamInfo>>,
+    /// Declared type-parameter lists keyed by reference symbol identity, valid
+    /// for the lifetime of the current source file. `SymbolId` values are
+    /// arena-local in project checks, so imported aliases from different files
+    /// can share the same raw id while declaring different arities.
+    pub ref_type_params: FxHashMap<(SymbolId, Option<usize>, String), Vec<TypeParamInfo>>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
