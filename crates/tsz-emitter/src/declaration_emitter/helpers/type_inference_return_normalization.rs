@@ -927,7 +927,7 @@ impl<'a> DeclarationEmitter<'a> {
             return source_type_text;
         };
 
-        let mut rewritten = source_type_text;
+        let mut member_rewrites = Vec::new();
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -956,14 +956,14 @@ impl<'a> DeclarationEmitter<'a> {
 
             let get_unknown = format!("get {name_text}(): unknown;");
             let get_replacement = format!("get {name_text}(): {type_text};");
-            rewritten = rewritten.replace(&get_unknown, &get_replacement);
+            member_rewrites.push((get_unknown, get_replacement));
 
             let set_unknown = format!("set {name_text}(arg: unknown);");
             let set_replacement = format!("set {name_text}(arg: {type_text});");
-            rewritten = rewritten.replace(&set_unknown, &set_replacement);
+            member_rewrites.push((set_unknown, set_replacement));
         }
 
-        rewritten
+        Self::rewrite_exact_return_member_lines(&source_type_text, &member_rewrites)
     }
 
     fn rewrite_returned_object_parameter_unknowns(
@@ -985,7 +985,7 @@ impl<'a> DeclarationEmitter<'a> {
             return source_type_text.to_string();
         };
 
-        let mut rewritten = source_type_text.to_string();
+        let mut member_rewrites = Vec::new();
         for member_idx in object.elements.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1012,7 +1012,37 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let unknown_member = format!("{member_name}: unknown;");
             let replacement = format!("{member_name}: {type_text};");
-            rewritten = rewritten.replace(&unknown_member, &replacement);
+            member_rewrites.push((unknown_member, replacement));
+        }
+
+        Self::rewrite_exact_return_member_lines(source_type_text, &member_rewrites)
+    }
+
+    fn rewrite_exact_return_member_lines(
+        source_type_text: &str,
+        member_rewrites: &[(String, String)],
+    ) -> String {
+        if member_rewrites.is_empty() {
+            return source_type_text.to_string();
+        }
+
+        let mut rewritten = String::with_capacity(source_type_text.len());
+        for segment in source_type_text.split_inclusive('\n') {
+            let (line, newline) = segment
+                .strip_suffix('\n')
+                .map_or((segment, ""), |line| (line, "\n"));
+            let indent_len = line.len() - line.trim_start().len();
+            let (indent, trimmed) = line.split_at(indent_len);
+            if let Some((_, replacement)) = member_rewrites
+                .iter()
+                .find(|(unknown_line, _)| trimmed == unknown_line)
+            {
+                rewritten.push_str(indent);
+                rewritten.push_str(replacement);
+                rewritten.push_str(newline);
+            } else {
+                rewritten.push_str(segment);
+            }
         }
 
         rewritten
@@ -1917,5 +1947,33 @@ impl<'a> DeclarationEmitter<'a> {
             current = parent_idx;
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn exact_return_member_rewrite_preserves_indentation() {
+        let source = "{\n    value: unknown;\n    other: unknown;\n}";
+        let rewrites = vec![("value: unknown;".to_string(), "value: string;".to_string())];
+
+        let rewritten = DeclarationEmitter::rewrite_exact_return_member_lines(source, &rewrites);
+
+        assert_eq!(rewritten, "{\n    value: string;\n    other: unknown;\n}");
+    }
+
+    #[test]
+    fn exact_return_member_rewrite_does_not_touch_partial_matches() {
+        let source = "{\n    value: unknown;\n    nested: { value: unknown; };\n}";
+        let rewrites = vec![("value: unknown;".to_string(), "value: number;".to_string())];
+
+        let rewritten = DeclarationEmitter::rewrite_exact_return_member_lines(source, &rewrites);
+
+        assert_eq!(
+            rewritten,
+            "{\n    value: number;\n    nested: { value: unknown; };\n}"
+        );
     }
 }
