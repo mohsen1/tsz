@@ -354,17 +354,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         props_type: TypeId,
     ) -> Option<String> {
-        if !crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
-            self.ctx.types,
-            &self.ctx.definition_store,
-            props_type,
-        ) {
-            return None;
-        }
-
         let raw_display = self.format_type(props_type);
         if let Some(display) =
             Self::jsx_library_managed_application_simplified_display(&raw_display)
+        {
+            return Some(display);
+        }
+
+        if let Some(display) =
+            self.jsx_library_managed_structural_final_fallback_display(props_type)
         {
             return Some(display);
         }
@@ -376,6 +374,69 @@ impl<'a> CheckerState<'a> {
         }
 
         let normalized = self.normalize_jsx_required_props_target(props_type);
+        let normalized = self.evaluate_type_with_env(normalized);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, normalized)?;
+        let filtered_props: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                !(name == "children" && prop.optional)
+            })
+            .cloned()
+            .collect();
+        if filtered_props.is_empty() {
+            return None;
+        }
+
+        Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+    }
+
+    fn jsx_library_managed_structural_final_fallback_display(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<String> {
+        let is_lma_surface =
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                props_type,
+            );
+        let expanded = if is_lma_surface {
+            self.expand_jsx_display_type_alias_application(props_type)
+        } else {
+            None
+        };
+        let fallback_candidate = if is_lma_surface {
+            props_type
+        } else {
+            let expanded = self.expand_jsx_display_type_alias_application(props_type)?;
+            if !crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                expanded,
+            ) {
+                return None;
+            }
+            expanded
+        };
+        let fallback = crate::query_boundaries::checkers::jsx::library_managed_attributes_final_fallback_type(
+            self.ctx.types,
+            fallback_candidate,
+        )
+        .or_else(|| {
+            let expanded = expanded?;
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_final_fallback_type(
+                self.ctx.types,
+                expanded,
+            )
+        })?;
+        if crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, fallback) {
+            return Some(self.format_type(fallback));
+        }
+
+        let normalized = self.normalize_jsx_required_props_target(fallback);
         let normalized = self.evaluate_type_with_env(normalized);
         let shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, normalized)?;

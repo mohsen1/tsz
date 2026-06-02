@@ -259,48 +259,31 @@ pub(crate) fn library_managed_attributes_infer_surface(
         return true;
     }
 
-    library_managed_attributes_infer_conditional_surface(db, type_id, &mut Vec::new())
+    library_managed_attributes_final_fallback_type(db, type_id).is_some()
 }
 
-fn library_managed_attributes_infer_conditional_surface(
+pub(crate) fn library_managed_attributes_final_fallback_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    library_managed_attributes_final_fallback_type_inner(db, type_id, &mut Vec::new())
+}
+
+fn library_managed_attributes_final_fallback_type_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     visited: &mut Vec<TypeId>,
-) -> bool {
+) -> Option<TypeId> {
     if type_id.is_intrinsic() || visited.contains(&type_id) {
-        return false;
+        return None;
     }
     visited.push(type_id);
 
-    if let Some(cond_id) = crate::query_boundaries::common::get_conditional_type_id(db, type_id) {
-        let cond = db.get_conditional(cond_id);
-        if object_shape_has_jsx_infer_metadata(db, cond.extends_type) {
-            return true;
-        }
-        return library_managed_attributes_infer_conditional_surface(db, cond.false_type, visited);
-    }
+    let cond_id = crate::query_boundaries::common::get_conditional_type_id(db, type_id)?;
+    let cond = db.get_conditional(cond_id);
 
-    crate::query_boundaries::common::union_members(db, type_id)
-        .into_iter()
-        .flatten()
-        .chain(
-            crate::query_boundaries::common::intersection_members(db, type_id)
-                .into_iter()
-                .flatten(),
-        )
-        .any(|member| library_managed_attributes_infer_conditional_surface(db, member, visited))
-}
-
-fn object_shape_has_jsx_infer_metadata(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id) else {
-        return false;
-    };
-    shape.properties.iter().any(|prop| {
-        matches!(
-            db.resolve_atom_ref(prop.name).as_ref(),
-            "defaultProps" | "propTypes"
-        ) && crate::query_boundaries::common::contains_infer_types(db, prop.type_id)
-    })
+    library_managed_attributes_final_fallback_type_inner(db, cond.false_type, visited)
+        .or(Some(cond.false_type))
 }
 
 pub(crate) fn contains_anonymous_object_surface(
