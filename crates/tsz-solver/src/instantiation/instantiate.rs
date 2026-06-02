@@ -1518,32 +1518,135 @@ impl<'a> TypeInstantiator<'a> {
                     };
                     if let Some((tuple_id, source_readonly)) = tuple_source {
                         let elements = self.interner.tuple_list(tuple_id);
-                        // Instantiate template first (substitutes T, keeps K shadowed)
+                        // Instantiate template first (substitutes T, keeps K shadowed).
+                        // After this `new_template` holds the *resolved* source tuple
+                        // wherever T appeared.
                         let new_template = self.instantiate(mapped.template);
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
+                        // Per-element rebinding mirrors tsc's
+                        // `instantiateMappedTupleType`. The choice of (template, key)
+                        // determines whether `T[K]` resolves to this element's own
+                        // type or the union of every element type. The naive
+                        // pre-fix loop bound K = "i" for every element, which:
+                        //   - dropped the Array<> wrapper from a rest element's
+                        //     type_id (producing structurally invalid tuples like
+                        //     `[string, ...number]`); and
+                        //   - silently widened any fixed element after a rest to
+                        //     the union of all element types, because `T["i"]` is
+                        //     ambiguous when the rest range could be 0 or more
+                        //     elements long.
+                        let mut seen_rest = false;
                         let mut new_elements = Vec::with_capacity(elements.len());
                         for (i, elem) in elements.iter().enumerate() {
-                            let key_type = self.interner.literal_string(&i.to_string());
+                            let is_suffix = seen_rest && !elem.rest;
+                            if elem.rest {
+                                seen_rest = true;
+                            }
+
+                            // For rest elements with `Array<E>` (or
+                            // `readonly E[]`), rewrite the resolved source in
+                            // the template to `Array<E>` and bind K = number
+                            // so `(E[])[number]` = E. The result is wrapped in
+                            // `Array<>` below to keep the rest array-shaped.
+                            let rest_array_inner: Option<TypeId> = if elem.rest {
+                                match self.interner.lookup(elem.type_id) {
+                                    Some(TypeData::Array(_)) => Some(elem.type_id),
+                                    Some(TypeData::ReadonlyType(roi)) => {
+                                        match self.interner.lookup(roi) {
+                                            Some(TypeData::Array(_)) => Some(roi),
+                                            _ => None,
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+
+                            // For a fixed element after at least one rest, the
+                            // numeric index on the *full* source is ambiguous.
+                            // Rebind the resolved source to a single-element
+                            // proxy `[elem.type_id]` and bind K = "0" so
+                            // `([elem])["0"]` = elem unambiguously.
+                            let suffix_proxy: Option<TypeId> = if is_suffix {
+                                Some(self.interner.tuple(vec![
+                                    crate::types::TupleElement::fixed(elem.type_id),
+                                ]))
+                            } else {
+                                None
+                            };
+
+                            let (rebound_template, key_type) = if let Some(rest_arr) =
+                                rest_array_inner
+                            {
+                                let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+                                let rewritten = crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
+                                    self.interner,
+                                    new_template,
+                                    /* from = */ resolved,
+                                    /* to   = */ rest_arr,
+                                    &mut memo,
+                                );
+                                (rewritten, TypeId::NUMBER)
+                            } else if elem.rest {
+                                // Opaque variadic (type parameter, lazy ref, etc.):
+                                // keep `T[K]` deferred shape by binding K = number.
+                                (new_template, TypeId::NUMBER)
+                            } else if let Some(proxy) = suffix_proxy {
+                                let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+                                let rewritten = crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
+                                    self.interner,
+                                    new_template,
+                                    /* from = */ resolved,
+                                    /* to   = */ proxy,
+                                    &mut memo,
+                                );
+                                (rewritten, self.interner.literal_string("0"))
+                            } else {
+                                (new_template, self.interner.literal_string(&i.to_string()))
+                            };
+
                             let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
                             let mapped_type = crate::evaluation::evaluate::evaluate_type(
                                 self.interner,
-                                instantiate_type(self.interner, new_template, &subst),
+                                instantiate_type(self.interner, rebound_template, &subst),
                             );
 
-                            let final_type = if matches!(
-                                mapped.optional_modifier,
-                                Some(crate::types::MappedModifier::Add)
-                            ) {
-                                self.interner.union2(mapped_type, TypeId::UNDEFINED)
+                            let wrapped = if rest_array_inner.is_some() {
+                                self.interner.array(mapped_type)
                             } else {
                                 mapped_type
+                            };
+
+                            // Rest elements absorb `Add` as `T | undefined` (a
+                            // rest cannot syntactically combine with `?`); fixed
+                            // elements toggle the per-element optional flag below.
+                            let final_type = if elem.rest
+                                && matches!(
+                                    mapped.optional_modifier,
+                                    Some(crate::types::MappedModifier::Add)
+                                )
+                            {
+                                self.interner.union2(wrapped, TypeId::UNDEFINED)
+                            } else {
+                                wrapped
+                            };
+
+                            let optional = if elem.rest {
+                                elem.optional
+                            } else {
+                                match mapped.optional_modifier {
+                                    Some(crate::types::MappedModifier::Add) => true,
+                                    Some(crate::types::MappedModifier::Remove) => false,
+                                    None => elem.optional,
+                                }
                             };
 
                             new_elements.push(crate::types::TupleElement {
                                 type_id: final_type,
                                 name: elem.name,
-                                optional: elem.optional,
+                                optional,
                                 rest: elem.rest,
                             });
                         }

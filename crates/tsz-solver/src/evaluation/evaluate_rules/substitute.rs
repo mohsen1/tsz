@@ -8,11 +8,200 @@
 //! unchanged. We therefore memoize per-node substitutions and use a
 //! self-mapping placeholder to handle true cycles.
 
+use crate::caches::db::TypeDatabase;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{ConditionalType, FunctionShape, TemplateSpan, TupleElement, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 
 use super::super::evaluate::TypeEvaluator;
+
+/// Free-function form of [`TypeEvaluator::substitute_exact_type`] that walks
+/// the type graph using only a [`TypeDatabase`]. Crate-private so the
+/// instantiation layer can do per-element source rebinding without depending
+/// on a `TypeResolver`.
+pub(crate) fn substitute_exact_type_db(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    from: TypeId,
+    to: TypeId,
+    memo: &mut FxHashMap<TypeId, TypeId>,
+) -> TypeId {
+    if type_id == from {
+        return to;
+    }
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if let Some(&cached) = memo.get(&type_id) {
+        return cached;
+    }
+    memo.insert(type_id, type_id);
+
+    let result = match db.lookup(type_id) {
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            let base = substitute_exact_type_db(db, app.base, from, to, memo);
+            let mut changed = base != app.base;
+            let args: Vec<_> = app
+                .args
+                .iter()
+                .map(|&arg| {
+                    let substituted = substitute_exact_type_db(db, arg, from, to, memo);
+                    changed |= substituted != arg;
+                    substituted
+                })
+                .collect();
+            if changed {
+                db.application(base, args)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mut changed = false;
+            let members: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    let substituted = substitute_exact_type_db(db, member, from, to, memo);
+                    changed |= substituted != member;
+                    substituted
+                })
+                .collect();
+            if changed { db.union(members) } else { type_id }
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let mut changed = false;
+            let members: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    let substituted = substitute_exact_type_db(db, member, from, to, memo);
+                    changed |= substituted != member;
+                    substituted
+                })
+                .collect();
+            if changed {
+                db.intersection(members)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Array(element)) => {
+            let substituted = substitute_exact_type_db(db, element, from, to, memo);
+            if substituted != element {
+                db.array(substituted)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Tuple(elements_id)) => {
+            let elements = db.tuple_list(elements_id);
+            let mut changed = false;
+            let elements: Vec<_> = elements
+                .iter()
+                .map(|element| {
+                    let type_id = substitute_exact_type_db(db, element.type_id, from, to, memo);
+                    changed |= type_id != element.type_id;
+                    TupleElement {
+                        type_id,
+                        ..*element
+                    }
+                })
+                .collect();
+            if changed { db.tuple(elements) } else { type_id }
+        }
+        Some(TypeData::IndexAccess(object_type, index_type)) => {
+            let substituted_object = substitute_exact_type_db(db, object_type, from, to, memo);
+            let substituted_index = substitute_exact_type_db(db, index_type, from, to, memo);
+            if substituted_object != object_type || substituted_index != index_type {
+                db.index_access(substituted_object, substituted_index)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.get_conditional(cond_id);
+            let check_type = substitute_exact_type_db(db, cond.check_type, from, to, memo);
+            let extends_type = substitute_exact_type_db(db, cond.extends_type, from, to, memo);
+            let true_type = substitute_exact_type_db(db, cond.true_type, from, to, memo);
+            let false_type = substitute_exact_type_db(db, cond.false_type, from, to, memo);
+            if check_type != cond.check_type
+                || extends_type != cond.extends_type
+                || true_type != cond.true_type
+                || false_type != cond.false_type
+            {
+                db.conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                })
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::TemplateLiteral(template_id)) => {
+            let spans = db.template_list(template_id);
+            let mut changed = false;
+            let spans: Vec<_> = spans
+                .iter()
+                .map(|span| match span {
+                    TemplateSpan::Text(text) => TemplateSpan::Text(*text),
+                    TemplateSpan::Type(span_type) => {
+                        let substituted = substitute_exact_type_db(db, *span_type, from, to, memo);
+                        changed |= substituted != *span_type;
+                        TemplateSpan::Type(substituted)
+                    }
+                })
+                .collect();
+            if changed {
+                db.template_literal(spans)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::KeyOf(inner)) => {
+            let substituted = substitute_exact_type_db(db, inner, from, to, memo);
+            if substituted != inner {
+                db.keyof(substituted)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::ReadonlyType(inner)) => {
+            let substituted = substitute_exact_type_db(db, inner, from, to, memo);
+            if substituted != inner {
+                db.readonly_type(substituted)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::NoInfer(inner)) => {
+            let substituted = substitute_exact_type_db(db, inner, from, to, memo);
+            if substituted != inner {
+                db.no_infer(substituted)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::StringIntrinsic { kind, type_arg }) => {
+            let substituted = substitute_exact_type_db(db, type_arg, from, to, memo);
+            if substituted != type_arg {
+                db.string_intrinsic(kind, substituted)
+            } else {
+                type_id
+            }
+        }
+        // Object/Function/Mapped/etc. — substitution does not reach into
+        // these in the original method either; preserve behaviour.
+        _ => type_id,
+    };
+
+    memo.insert(type_id, result);
+    result
+}
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Substitute every occurrence of `from` with `to` inside `type_id`.

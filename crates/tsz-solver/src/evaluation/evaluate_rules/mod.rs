@@ -28,5 +28,5 @@ mod mapped_array;
 mod mapped_template_index;
 mod string_index_helpers;
 pub mod string_intrinsic;
-mod substitute;
+pub(crate) mod substitute;
 pub mod template_literal;
