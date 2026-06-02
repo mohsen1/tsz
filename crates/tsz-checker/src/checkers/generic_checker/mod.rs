@@ -764,6 +764,22 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
+        let syntax_base_name = self
+            .ctx
+            .arena
+            .get(type_ref_idx)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            .and_then(|type_ref| self.entity_name_text(type_ref.type_name));
+        let mut import_base_name = None;
+        if let Some(base_name) = syntax_base_name.as_deref()
+            && let Some(alias_sym_id) = self.ctx.binder.file_locals.get(base_name)
+            && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
+            && self.reference_symbol_is_import_alias(alias_symbol)
+            && let Some(target) = self.resolve_import_alias_cross_file(alias_sym_id)
+        {
+            sym_id = target;
+            import_base_name = Some(base_name.to_owned());
+        }
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
@@ -808,10 +824,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let lib_binders = self.get_lib_binders();
-        let base_name = self
-            .get_symbol_from_registered_file_target(sym_id)
-            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
-            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+        let base_name = import_base_name.unwrap_or_else(|| {
+            self.get_symbol_from_registered_file_target(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone())
+        });
+
+        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
 
         // A type alias that circularly references itself collapses to a
         // non-generic error type. Applying type arguments to it is therefore
@@ -819,7 +838,9 @@ impl<'a> CheckerState<'a> {
         // behavior; a bare reference yields no diagnostic. This must override
         // the normal arity checks below, which would otherwise read the stale
         // generic parameter list off the AST and emit TS2314.
-        if self.type_reference_alias_collapsed_to_error(sym_id) {
+        if self.type_reference_alias_collapsed_to_error(sym_id)
+            && (type_params.is_empty() || self.type_alias_is_generic_self_circular(sym_id))
+        {
             if !type_args_list.nodes.is_empty() {
                 let error_anchor = self
                     .ctx
@@ -840,7 +861,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
         if type_params.is_empty() {
             // Before emitting TS2315, check if this symbol's declaration actually has
             // type parameters. Cross-arena symbols (e.g., lib types like Awaited<T>)

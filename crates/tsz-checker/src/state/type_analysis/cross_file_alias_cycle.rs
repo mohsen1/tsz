@@ -13,6 +13,7 @@
 
 use crate::state::CheckerState;
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::DefId;
 
@@ -115,6 +116,28 @@ impl<'a> CheckerState<'a> {
         symbol: &Symbol,
         sym_id: SymbolId,
     ) -> bool {
+        if let Some(owner_file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && owner_file_idx != self.ctx.current_file_idx
+            && let Some(owner_arena) = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(owner_file_idx))
+            && symbol.declarations.iter().any(|&decl| {
+                owner_arena
+                    .get(decl)
+                    .and_then(|node| {
+                        (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                            .then(|| owner_arena.get_type_alias(node))
+                            .flatten()
+                    })
+                    .and_then(|type_alias| owner_arena.get_identifier_text(type_alias.name))
+                    .is_some_and(|name| name == symbol.escaped_name)
+            })
+        {
+            return false;
+        }
+
         symbol.declarations.iter().any(|&decl| {
             if self.ctx.binder.get_node_symbol(decl) != Some(sym_id) {
                 return false;

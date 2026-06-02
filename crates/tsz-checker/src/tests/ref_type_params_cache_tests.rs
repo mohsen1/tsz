@@ -1,4 +1,5 @@
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_multi_file_with_global_index, check_source_diagnostics};
 
 /// When multiple type references in the same alias body refer to the same
 /// generic utility type, tsz must resolve that type's parameter list once per
@@ -235,5 +236,128 @@ type E10 = Either<E03, E04>;
         errors.len(),
         0,
         "Ten valid instantiations of Either should produce no errors; got: {errors:#?}"
+    );
+}
+
+#[test]
+fn imported_ref_type_params_cache_is_keyed_by_target_file() {
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "sources/List/one.ts",
+                r#"
+export type Key = string | number | symbol;
+export type List<A = any> = readonly A[];
+export type One<T, Path extends List<Key>, M extends any = any> = {
+    readonly one: T;
+    readonly path: Path;
+    readonly match: M;
+};
+"#,
+            ),
+            (
+                "sources/Object/two.ts",
+                r#"
+export type Key = string | number | symbol;
+export type Two<K extends Key, V extends any = unknown> = {
+    readonly key: K;
+    readonly value: V;
+};
+"#,
+            ),
+            (
+                "sources/List/main.ts",
+                r#"
+import { Key, List, One as Pathish } from "./one";
+import { Two as Pairish } from "../Object/two";
+
+type A = Pathish<object, List<Key>, string>;
+type B = Pairish<string, number>;
+"#,
+            ),
+            (
+                "sources/Object/HasPath.ts",
+                r#"
+export type HasPath<O extends object, Path, M extends any = any, match extends string = 'default'> = {
+    readonly object: O;
+    readonly path: Path;
+    readonly match: M;
+    readonly mode: match;
+};
+"#,
+            ),
+            (
+                "sources/Any/Compute.ts",
+                r#"
+export type ComputeRaw<A extends any> = A;
+"#,
+            ),
+            (
+                "sources/List/toolbelt.ts",
+                r#"
+import { HasPath as OHasPath } from "../Object/HasPath";
+import { ComputeRaw } from "../Any/Compute";
+
+type C = OHasPath<object, readonly ['a'], string, 'default'>;
+type D = ComputeRaw<{ readonly a: string }>;
+"#,
+            ),
+        ],
+        "sources/List/toolbelt.ts",
+        CheckerOptions::default(),
+    );
+
+    let arity_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2558))
+        .collect();
+    assert_eq!(
+        arity_errors.len(),
+        0,
+        "Imported generic aliases with colliding raw ids should keep distinct arities; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_ref_type_params_follow_barrel_reexports_to_decl_file() {
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "src/generic.ts",
+                r#"
+export type Boxed<T, U = unknown> = {
+    readonly value: T;
+    readonly extra: U;
+};
+"#,
+            ),
+            (
+                "src/namedBarrel.ts",
+                r#"export { Boxed } from "./generic";"#,
+            ),
+            ("src/starBarrel.ts", r#"export * from "./generic";"#),
+            (
+                "src/main.ts",
+                r#"
+import { Boxed as NamedBoxed } from "./namedBarrel";
+import { Boxed as StarBoxed } from "./starBarrel";
+
+type A = NamedBoxed<string>;
+type B = StarBoxed<number, boolean>;
+"#,
+            ),
+        ],
+        "src/main.ts",
+        CheckerOptions::default(),
+    );
+
+    let arity_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2558))
+        .collect();
+    assert_eq!(
+        arity_errors.len(),
+        0,
+        "Imported generic aliases should follow barrel re-exports to the declaration file; got: {diags:#?}"
     );
 }

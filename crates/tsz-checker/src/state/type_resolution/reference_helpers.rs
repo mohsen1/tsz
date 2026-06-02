@@ -44,25 +44,26 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
+        let cache_key = self.reference_type_params_cache_key(sym_id, expected_name);
         if let Some(cached) = self
             .ctx
             .type_reference_validation_caches
             .ref_type_params
-            .get(&sym_id)
+            .get(&cache_key)
         {
             return cached.clone();
         }
         let declared =
-            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+            self.extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name);
         let result = if !declared.is_empty() {
             declared
         } else {
-            self.get_display_type_params_for_symbol(sym_id)
+            self.get_display_type_params_for_symbol(cache_key.0)
         };
         self.ctx
             .type_reference_validation_caches
             .ref_type_params
-            .insert(sym_id, result.clone());
+            .insert(cache_key, result.clone());
         result
     }
 
@@ -71,16 +72,17 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> usize {
+        let cache_key = self.reference_type_params_cache_key(sym_id, expected_name);
         if let Some(cached) = self
             .ctx
             .type_reference_validation_caches
             .ref_type_params
-            .get(&sym_id)
+            .get(&cache_key)
         {
             return cached.iter().filter(|p| p.default.is_none()).count();
         }
         let declared =
-            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+            self.extract_declared_type_params_for_reference_symbol(cache_key.0, expected_name);
         if !declared.is_empty() {
             let count = declared
                 .iter()
@@ -89,10 +91,129 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .type_reference_validation_caches
                 .ref_type_params
-                .insert(sym_id, declared);
+                .insert(cache_key, declared);
             return count;
         }
-        self.count_required_type_params(sym_id)
+        self.count_required_type_params(cache_key.0)
+    }
+
+    fn reference_type_params_cache_key(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> (SymbolId, Option<usize>, String) {
+        let (sym_id, file_idx) = self
+            .reference_type_params_import_target(sym_id, expected_name)
+            .unwrap_or_else(|| (sym_id, self.ctx.resolve_symbol_file_index(sym_id)));
+        (sym_id, file_idx, expected_name.to_owned())
+    }
+
+    fn reference_type_params_import_target(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Option<(SymbolId, Option<usize>)> {
+        let alias_symbol = self
+            .ctx
+            .binder
+            .file_locals
+            .get(expected_name)
+            .and_then(|alias_sym_id| self.ctx.binder.get_symbol(alias_sym_id))
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+        if !self.reference_symbol_is_import_alias(alias_symbol) {
+            return None;
+        }
+        self.reference_import_alias_export_target(alias_symbol, expected_name)
+    }
+
+    fn reference_import_alias_export_target(
+        &self,
+        alias_symbol: &tsz_binder::Symbol,
+        expected_name: &str,
+    ) -> Option<(SymbolId, Option<usize>)> {
+        let module_specifier = alias_symbol.import_module.as_ref()?;
+        let import_name = alias_symbol.import_name.as_deref().unwrap_or(expected_name);
+        let source_file_idx = if alias_symbol.decl_file_idx == u32::MAX {
+            self.ctx.current_file_idx
+        } else {
+            alias_symbol.decl_file_idx as usize
+        };
+        if let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+        {
+            let mut visited = rustc_hash::FxHashSet::default();
+            if let Some((target_sym_id, actual_file_idx)) =
+                self.resolve_export_in_file(target_file_idx, import_name, &mut visited)
+                && self
+                    .ctx
+                    .get_binder_for_file(actual_file_idx)
+                    .and_then(|binder| binder.get_symbol(target_sym_id))
+                    .is_none_or(|symbol| symbol.import_module.is_none())
+            {
+                self.ctx
+                    .register_symbol_file_target(target_sym_id, actual_file_idx);
+                return Some((target_sym_id, Some(actual_file_idx)));
+            }
+        }
+
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            module_specifier,
+            import_name,
+            Some(source_file_idx),
+        )?;
+        let target_file_idx = self
+            .ctx
+            .resolve_symbol_file_index_stable(target_sym_id)
+            .or_else(|| self.ctx.resolve_symbol_file_index(target_sym_id));
+        if let Some(file_idx) = target_file_idx {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
+        Some((target_sym_id, target_file_idx))
+    }
+
+    pub(crate) fn reference_symbol_is_import_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
+        let arena = if symbol.decl_file_idx == u32::MAX {
+            self.ctx.arena
+        } else {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        };
+        symbol.has_any_flags(symbol_flags::ALIAS)
+            && symbol.import_module.is_some()
+            && symbol
+                .declarations
+                .iter()
+                .copied()
+                .any(|decl_idx| self.reference_decl_is_import_alias_syntax(arena, decl_idx))
+    }
+
+    fn reference_decl_is_import_alias_syntax(
+        &self,
+        arena: &NodeArena,
+        mut decl_idx: NodeIndex,
+    ) -> bool {
+        for _ in 0..4 {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                || node.kind == syntax_kind_ext::IMPORT_CLAUSE
+                || node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                return true;
+            }
+            let Some(extended) = arena.get_extended(decl_idx) else {
+                return false;
+            };
+            let parent_idx = extended.parent;
+            if parent_idx == NodeIndex::NONE {
+                return false;
+            }
+            decl_idx = parent_idx;
+        }
+        false
     }
 
     pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
@@ -469,19 +590,48 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
+        let mut effective_sym_id = sym_id;
+        let import_target = self
+            .ctx
+            .binder
+            .file_locals
+            .get(expected_name)
+            .and_then(|alias_sym_id| self.ctx.binder.get_symbol(alias_sym_id))
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .filter(|alias_symbol| self.reference_symbol_is_import_alias(alias_symbol))
+            .and_then(|alias_symbol| {
+                self.reference_import_alias_export_target(alias_symbol, expected_name)
+            });
+        if let Some((target_sym_id, target_idx)) = import_target {
+            if let Some(target_idx) = target_idx {
+                self.ctx
+                    .register_symbol_file_target(target_sym_id, target_idx);
+            }
+            effective_sym_id = target_sym_id;
+        }
+
         let Some(symbol) = self
-            .get_symbol_from_registered_file_target(sym_id)
-            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .get_symbol_from_registered_file_target(effective_sym_id)
+            .or_else(|| self.get_cross_file_symbol(effective_sym_id))
         else {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
+        let imported_decl_name = self
+            .ctx
+            .binder
+            .file_locals
+            .get(expected_name)
+            .and_then(|alias_sym_id| self.ctx.binder.get_symbol(alias_sym_id))
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .filter(|alias_symbol| self.reference_symbol_is_import_alias(alias_symbol))
+            .and_then(|alias_symbol| alias_symbol.import_name.clone());
         let mixed_class_interface = symbol.has_any_flags(symbol_flags::CLASS)
             && symbol.has_any_flags(symbol_flags::INTERFACE);
 
         if symbol.has_any_flags(symbol_flags::CLASS)
-            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
-            && file_idx != self.ctx.current_file_idx
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(effective_sym_id)
+            && !std::ptr::eq(self.ctx.get_arena_for_file(file_idx as u32), self.ctx.arena)
         {
             let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
             for &decl_idx in &declarations {
@@ -508,22 +658,49 @@ impl<'a> CheckerState<'a> {
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
         for &decl_idx in &declarations {
-            let decl_arenas: Vec<&NodeArena> = self
-                .ctx
-                .binder
-                .declaration_arenas
-                .get(&(sym_id, decl_idx))
-                .map(|arenas| arenas.iter().map(std::convert::AsRef::as_ref).collect())
-                .or_else(|| {
-                    self.ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arena| vec![arena.as_ref()])
-                })
-                .unwrap_or_else(|| vec![self.ctx.arena]);
+            let cross_file_arena = if let Some(file_idx) =
+                self.ctx.resolve_symbol_file_index(effective_sym_id)
+                && let Some(arena) = self
+                    .ctx
+                    .all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx).cloned())
+                && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
+            {
+                Some(arena)
+            } else {
+                None
+            };
+            let decl_arenas: Vec<(&NodeArena, bool)> = if let Some(arena) =
+                cross_file_arena.as_deref()
+            {
+                vec![(arena, false)]
+            } else {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(effective_sym_id, decl_idx))
+                    .map(|arenas| {
+                        arenas
+                            .iter()
+                            .map(|arena| {
+                                (arena.as_ref(), std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                            })
+                            .collect()
+                    })
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .symbol_arenas
+                            .get(&effective_sym_id)
+                            .map(|arena| {
+                                vec![(arena.as_ref(), std::ptr::eq(arena.as_ref(), self.ctx.arena))]
+                            })
+                    })
+                    .unwrap_or_else(|| vec![(self.ctx.arena, true)])
+            };
 
-            for decl_arena in decl_arenas {
+            for (decl_arena, is_current_arena) in decl_arenas {
                 let Some(node) = decl_arena.get(decl_idx) else {
                     continue;
                 };
@@ -534,10 +711,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(name_node) = decl_arena.get(type_alias.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
                         && ident.escaped_text != expected_name
+                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
                     {
                         continue;
                     }
-                    let params = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    let params = if is_current_arena {
                         let (params, updates) =
                             self.push_type_parameters(&type_alias.type_parameters);
                         self.pop_type_parameters(updates);
@@ -599,10 +777,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(name_node) = decl_arena.get(iface.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
                         && ident.escaped_text != expected_name
+                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
                     {
                         continue;
                     }
-                    let params = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    let params = if is_current_arena {
                         let (params, updates) = self.push_type_parameters(&iface.type_parameters);
                         self.pop_type_parameters(updates);
                         params
@@ -663,10 +842,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(name_node) = decl_arena.get(class.name)
                         && let Some(ident) = decl_arena.get_identifier(name_node)
                         && ident.escaped_text != expected_name
+                        && imported_decl_name.as_deref() != Some(ident.escaped_text.as_str())
                     {
                         continue;
                     }
-                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    if is_current_arena {
                         let (params, updates) = self.push_type_parameters(&class.type_parameters);
                         self.pop_type_parameters(updates);
                         if !params.is_empty() {
