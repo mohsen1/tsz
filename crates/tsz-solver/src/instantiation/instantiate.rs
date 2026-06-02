@@ -1517,12 +1517,20 @@ impl<'a> TypeInstantiator<'a> {
                         }
                     };
                     if let Some((tuple_id, source_readonly)) = tuple_source {
+                        use crate::types::MappedModifier;
                         let elements = self.interner.tuple_list(tuple_id);
                         // Instantiate template first (substitutes T, keeps K shadowed).
                         // After this `new_template` holds the *resolved* source tuple
                         // wherever T appeared.
                         let new_template = self.instantiate(mapped.template);
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                        // Pre-bind modifier flags once; both fixed and rest paths
+                        // consume them below.
+                        let add_optional =
+                            matches!(mapped.optional_modifier, Some(MappedModifier::Add));
+                        let remove_optional =
+                            matches!(mapped.optional_modifier, Some(MappedModifier::Remove));
 
                         // Per-element rebinding mirrors tsc's
                         // `instantiateMappedTupleType`. The choice of (template, key)
@@ -1586,20 +1594,27 @@ impl<'a> TypeInstantiator<'a> {
                                 )
                             };
 
-                            let (rebound_template, key_type) = if let Some(rest_arr) =
-                                rest_array_inner
-                            {
-                                (rebind_source(rest_arr), TypeId::NUMBER)
-                            } else if elem.rest {
-                                (new_template, TypeId::NUMBER)
-                            } else if is_suffix {
-                                let proxy = self.interner.tuple(vec![
-                                    crate::types::TupleElement::fixed(elem.type_id),
-                                ]);
-                                (rebind_source(proxy), self.interner.literal_string("0"))
-                            } else {
-                                (new_template, self.interner.literal_string(&i.to_string()))
-                            };
+                            let (rebound_template, key_type, wrap_in_array) =
+                                if let Some(rest_arr) = rest_array_inner {
+                                    (rebind_source(rest_arr), TypeId::NUMBER, true)
+                                } else if elem.rest {
+                                    (new_template, TypeId::NUMBER, false)
+                                } else if is_suffix {
+                                    let proxy = self.interner.tuple(vec![
+                                        crate::types::TupleElement::fixed(elem.type_id),
+                                    ]);
+                                    (
+                                        rebind_source(proxy),
+                                        self.interner.literal_string("0"),
+                                        false,
+                                    )
+                                } else {
+                                    (
+                                        new_template,
+                                        self.interner.literal_string(&i.to_string()),
+                                        false,
+                                    )
+                                };
 
                             let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
                             let mapped_type = crate::evaluation::evaluate::evaluate_type(
@@ -1607,7 +1622,7 @@ impl<'a> TypeInstantiator<'a> {
                                 instantiate_type(self.interner, rebound_template, &subst),
                             );
 
-                            let wrapped = if rest_array_inner.is_some() {
+                            let wrapped = if wrap_in_array {
                                 self.interner.array(mapped_type)
                             } else {
                                 mapped_type
@@ -1616,12 +1631,7 @@ impl<'a> TypeInstantiator<'a> {
                             // Rest elements absorb `Add` as `T | undefined` (a
                             // rest cannot syntactically combine with `?`); fixed
                             // elements toggle the per-element optional flag below.
-                            let final_type = if elem.rest
-                                && matches!(
-                                    mapped.optional_modifier,
-                                    Some(crate::types::MappedModifier::Add)
-                                )
-                            {
+                            let final_type = if elem.rest && add_optional {
                                 self.interner.union2(wrapped, TypeId::UNDEFINED)
                             } else {
                                 wrapped
@@ -1629,12 +1639,12 @@ impl<'a> TypeInstantiator<'a> {
 
                             let optional = if elem.rest {
                                 elem.optional
+                            } else if add_optional {
+                                true
+                            } else if remove_optional {
+                                false
                             } else {
-                                match mapped.optional_modifier {
-                                    Some(crate::types::MappedModifier::Add) => true,
-                                    Some(crate::types::MappedModifier::Remove) => false,
-                                    None => elem.optional,
-                                }
+                                elem.optional
                             };
 
                             new_elements.push(crate::types::TupleElement {
