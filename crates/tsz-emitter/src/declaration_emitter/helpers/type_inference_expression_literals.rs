@@ -91,7 +91,13 @@ impl<'a> DeclarationEmitter<'a> {
         let expr_node = self.arena.get(expr_idx)?;
         let array = self.arena.get_literal_expr(expr_node)?;
         if array.elements.nodes.is_empty() {
-            return Some("any".to_string());
+            // tsc: with strictNullChecks on, [] has element type never;
+            // with strictNullChecks off, [] widens to any[].
+            return if self.strict_null_checks {
+                Some("never".to_string())
+            } else {
+                Some("any".to_string())
+            };
         }
 
         let mut element_types = Vec::with_capacity(array.elements.nodes.len());

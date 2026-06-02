@@ -24,6 +24,14 @@ pub(super) fn emit_dts(source: &str) -> String {
     emitter.emit(root)
 }
 
+pub(super) fn emit_dts_strict(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_strict_null_checks(true);
+    emitter.emit(root)
+}
+
 pub(super) fn emit_dts_strip_internal(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

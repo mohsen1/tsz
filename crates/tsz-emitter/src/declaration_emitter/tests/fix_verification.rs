@@ -1833,3 +1833,32 @@ let renamed_k = [{ p: 0 }, { p: 1, q: "x" }][0];
         "renamed variable still gets 4-space indent:\n{output}"
     );
 }
+
+#[test]
+fn fix_empty_array_literal_strict_mode_emits_never_element_type() {
+    // With strictNullChecks on, tsc infers never[] for empty array literals
+    // in object literal properties (no widening possible).
+    let output = emit_dts_strict("export const x = { foo: [] };");
+    assert!(
+        output.contains("foo: never[]"),
+        "strict mode: empty array property should be never[]: {output}"
+    );
+    assert!(
+        !output.contains("foo: any[]"),
+        "strict mode: empty array property must not be any[]: {output}"
+    );
+}
+
+#[test]
+fn fix_empty_array_literal_non_strict_mode_emits_any_element_type() {
+    // With strictNullChecks off, tsc widens empty array literals to any[].
+    let output = emit_dts("export const x = { foo: [] };");
+    assert!(
+        output.contains("foo: any[]"),
+        "non-strict mode: empty array property should be any[]: {output}"
+    );
+    assert!(
+        !output.contains("foo: never[]"),
+        "non-strict mode: empty array property must not be never[]: {output}"
+    );
+}
