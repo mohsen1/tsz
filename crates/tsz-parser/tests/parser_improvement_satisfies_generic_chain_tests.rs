@@ -207,7 +207,7 @@ fn chained_satisfies_then_as_const_spans_correct() {
 }
 
 // ---------------------------------------------------------------------------
-// Recovery: unusual type forms on the RHS must parse without errors
+// Broad RHS type forms — each must parse without errors
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -280,12 +280,6 @@ fn as_chain_same_line_produces_two_nodes_and_no_errors() {
 
 #[test]
 fn as_does_not_chain_across_line_break() {
-    // Without the fix the parser would create a second AS_EXPRESSION wrapping
-    // the chain; after the fix exactly one node exists and spans only the first
-    // assertion.  Three sources prove the rule is structural:
-    // - as/as pair on two lines
-    // - as/satisfies pair on two lines (different operator)
-    // - as/as/as triple on three lines (more than one following break)
     for (source, expected) in [
         ("const x = v as TypeA\nas TypeB;", "v as TypeA"),
         ("const z = v as TypeA\nsatisfies TypeB;", "v as TypeA"),
@@ -319,7 +313,8 @@ fn satisfies_then_as_does_not_chain_across_line_break() {
         as_count, 0,
         "ASI must prevent as-chaining after satisfies; expected 0 AS_EXPRESSION, got {as_count}"
     );
-    assert_span(
+    assert_span_on(
+        &parser,
         source,
         syntax_kind_ext::SATISFIES_EXPRESSION,
         "v satisfies TypeA",
