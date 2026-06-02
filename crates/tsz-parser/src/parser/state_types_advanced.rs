@@ -1711,21 +1711,18 @@ impl ParserState {
             return false;
         }
 
-        // `[identifier in ...]` is a mapped-type start, not array/indexed-access.
-        // Check this before the line-break guard because the bracket-scanning loop
-        // below uses raw scanner calls that do not re-enter template-continuation
-        // mode after a `TemplateHead` substitution: template literals inside `as`
-        // clauses such as `${infer P}:${infer N}` can absorb the closing `]`, so
-        // bracket-depth tracking may never reach 0 and incorrectly return false.
-        // Short-circuit unconditionally for mapped-type starters so the bracket
-        // scan is never reached for `[K in T as \`...\`]` patterns regardless of
-        // whether there is a preceding line break.
-        if self.look_ahead_is_mapped_type_start() {
-            return true;
-        }
-
         if !self.scanner.has_preceding_line_break() {
             return false;
+        }
+
+        // When a preceding line break is present, short-circuit for `[identifier in ...]`
+        // before running the bracket scan.  The bracket scan uses raw scanner calls that
+        // do not re-enter template-continuation mode after a `TemplateHead` substitution,
+        // so template literals inside `as` clauses can confuse the depth counter.
+        // `look_ahead_is_mapped_type_start` is a cheap two-token peek that avoids the
+        // scan entirely for the common mapped-type case.
+        if self.look_ahead_is_mapped_type_start() {
+            return true;
         }
 
         let snapshot = self.scanner.save_state();
