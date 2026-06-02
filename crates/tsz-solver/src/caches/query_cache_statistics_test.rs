@@ -161,73 +161,67 @@ fn instantiation_cache_is_per_file_isolated() {
     );
 }
 
-#[test]
-fn subtype_cache_inner_inserts_are_shared_cross_file() {
-    // Structural rule: the SubtypeChecker's recursive descent inserts results
-    // through `insert_subtype_cache`. In a multi-file project, the only way
-    // file B's checker can reuse the subtree relations file A computed for a
-    // deep mapped/conditional shape is if those inner inserts also populate
-    // the `SharedQueryCache`. Otherwise relation cache miss churn dominates
-    // utility-type project runtime (#10921).
-    let interner = TypeInterner::new();
-    let shared = SharedQueryCache::new();
-    let key = RelationCacheKey::for_subtype(
-        TypeId::STRING,
-        TypeId::OBJECT,
-        RelationCacheConfig::default(),
-    );
-
-    // File A's SubtypeChecker writes a definitive inner result via
-    // `insert_subtype_cache`. The shared cache must observe it.
-    let db_a = QueryCache::new_with_shared(&interner, &shared);
-    db_a.insert_subtype_cache(key, true);
-
-    // File B starts with an empty local cache. The lookup must traverse to
-    // the shared cache and find the previously inserted result.
-    let db_b = QueryCache::new_with_shared(&interner, &shared);
-    assert_eq!(
-        db_b.lookup_subtype_cache(key),
-        Some(true),
-        "inner subtype cache inserts must be visible cross-file"
-    );
-
-    let stats_b = db_b.statistics();
-    assert_eq!(stats_b.relation.subtype_hits, 1);
-    assert_eq!(stats_b.relation.subtype_misses, 0);
-    // The shared hit also populates B's local cache so subsequent lookups are
-    // single-pass without re-traversing the `DashMap`.
-    assert_eq!(stats_b.relation.subtype_entries, 1);
-}
+// Inner relation cache inserts driven by the `SubtypeChecker`'s recursive
+// descent must also populate `SharedQueryCache`, otherwise sibling per-file
+// checkers re-derive the same mapped/conditional subtree relations (#10921).
+// See the `SharedQueryCache` doc block for the full invariant.
 
 #[test]
-fn assignability_cache_inner_inserts_are_shared_cross_file() {
-    // Same structural rule as the subtype cache: inner assignability inserts
-    // must be visible to sibling file checkers.
-    let interner = TypeInterner::new();
-    let shared = SharedQueryCache::new();
-    let key = RelationCacheKey::for_assignability(
-        TypeId::NUMBER,
-        TypeId::UNKNOWN,
-        RelationCacheConfig::default(),
+fn relation_cache_inner_inserts_are_shared_cross_file() {
+    fn check(
+        key: RelationCacheKey,
+        result: bool,
+        insert: impl Fn(&QueryCache<'_>, RelationCacheKey, bool),
+        lookup: impl Fn(&QueryCache<'_>, RelationCacheKey) -> Option<bool>,
+        stats: impl Fn(&QueryCacheStatistics) -> (u64, u64, usize),
+    ) {
+        let interner = TypeInterner::new();
+        let shared = SharedQueryCache::new();
+
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        insert(&db_a, key, result);
+
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(lookup(&db_b, key), Some(result));
+
+        // Shared hit also populates B's local cache so subsequent lookups
+        // skip the `DashMap` traversal.
+        assert_eq!(stats(&db_b.statistics()), (1, 0, 1));
+    }
+
+    let cfg = RelationCacheConfig::default();
+    check(
+        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::OBJECT, cfg),
+        true,
+        |db, k, v| db.insert_subtype_cache(k, v),
+        |db, k| db.lookup_subtype_cache(k),
+        |s| {
+            (
+                s.relation.subtype_hits,
+                s.relation.subtype_misses,
+                s.relation.subtype_entries,
+            )
+        },
     );
-
-    let db_a = QueryCache::new_with_shared(&interner, &shared);
-    db_a.insert_assignability_cache(key, false);
-
-    let db_b = QueryCache::new_with_shared(&interner, &shared);
-    assert_eq!(db_b.lookup_assignability_cache(key), Some(false));
-
-    let stats_b = db_b.statistics();
-    assert_eq!(stats_b.relation.assignability_hits, 1);
-    assert_eq!(stats_b.relation.assignability_misses, 0);
-    assert_eq!(stats_b.relation.assignability_entries, 1);
+    check(
+        RelationCacheKey::for_assignability(TypeId::NUMBER, TypeId::UNKNOWN, cfg),
+        false,
+        |db, k, v| db.insert_assignability_cache(k, v),
+        |db, k| db.lookup_assignability_cache(k),
+        |s| {
+            (
+                s.relation.assignability_hits,
+                s.relation.assignability_misses,
+                s.relation.assignability_entries,
+            )
+        },
+    );
 }
 
 #[test]
 fn relation_cache_misses_stay_local_when_unshared() {
-    // Without a `SharedQueryCache`, the inner relation cache calls must keep
-    // their per-file behavior: a miss on file A's local cache must not leak
-    // into a different file via shared state, since there is no shared state.
+    // Without a `SharedQueryCache` there is no shared state to leak through;
+    // file B must see only its own local cache.
     let interner = TypeInterner::new();
     let key = RelationCacheKey::for_subtype(
         TypeId::STRING,
@@ -239,11 +233,7 @@ fn relation_cache_misses_stay_local_when_unshared() {
     db_a.insert_subtype_cache(key, true);
 
     let db_b = QueryCache::new(&interner);
-    assert_eq!(
-        db_b.lookup_subtype_cache(key),
-        None,
-        "without a shared cache, file B must not see file A's inner inserts"
-    );
+    assert_eq!(db_b.lookup_subtype_cache(key), None);
     let stats_b = db_b.statistics();
     assert_eq!(stats_b.relation.subtype_hits, 0);
     assert_eq!(stats_b.relation.subtype_misses, 1);
@@ -251,10 +241,9 @@ fn relation_cache_misses_stay_local_when_unshared() {
 
 #[test]
 fn shared_relation_inserts_track_subtype_and_assignability_separately() {
-    // The shared cache must preserve the subtype/assignability split: an
-    // inner `insert_subtype_cache` for `(S, T)` does not produce a hit for an
-    // `lookup_assignability_cache` of the same `(S, T)` (they live in distinct
-    // `RelationCacheKind` slots even at the shared level).
+    // Subtype and assignability live in distinct `RelationCacheKind` slots
+    // even at the shared level: a subtype insert must not satisfy an
+    // assignability lookup with the same `(source, target)` pair.
     let interner = TypeInterner::new();
     let shared = SharedQueryCache::new();
     let cfg = RelationCacheConfig::default();
@@ -267,11 +256,7 @@ fn shared_relation_inserts_track_subtype_and_assignability_separately() {
 
     let db_b = QueryCache::new_with_shared(&interner, &shared);
     assert_eq!(db_b.lookup_subtype_cache(subtype_key), Some(true));
-    assert_eq!(
-        db_b.lookup_assignability_cache(assignability_key),
-        None,
-        "subtype insert must not satisfy an assignability lookup"
-    );
+    assert_eq!(db_b.lookup_assignability_cache(assignability_key), None);
 }
 
 #[test]
