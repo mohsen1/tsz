@@ -29,7 +29,7 @@ pub(crate) struct ParserCheckpoint {
     arena_nodes_len: usize,
     arena_extended_info_len: usize,
     /// Lengths of every typed data pool at checkpoint time. Without this,
-    /// failed speculations leave orphaned pool entries (identifiers, type_refs,
+    /// failed speculations leave orphaned pool entries (identifiers, `type_refs`,
     /// etc.) that inflate peak memory and degrade cache efficiency on files with
     /// many recursive/generic types.
     arena_pool_lengths: NodeArenaPoolLengths,
@@ -261,7 +261,7 @@ mod tests {
     ///
     /// Before this fix, `restore_speculation_checkpoint` only truncated
     /// `arena.nodes` and `arena.extended_info`. Every typed pool (identifiers,
-    /// type_refs, etc.) retained entries created during a failed speculation,
+    /// `type_refs`, etc.) retained entries created during a failed speculation,
     /// causing unbounded memory growth and cache degradation in files with many
     /// complex generic types. This test verifies that rollback also reclaims
     /// typed pool allocations.

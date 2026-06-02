@@ -998,7 +998,7 @@ where
 /// The speculation machinery in `speculation.rs` captures this snapshot before
 /// a speculative `parse_*` call and restores it on rollback. Without this,
 /// failed speculations leave orphaned entries in every typed pool (identifiers,
-/// type_refs, etc.) even though the corresponding node headers are truncated.
+/// `type_refs`, etc.) even though the corresponding node headers are truncated.
 /// The orphaned data inflates peak memory and degrades cache efficiency,
 /// causing super-linear slowdowns on files with many complex recursive types
 /// such as the `utility-types-project` benchmark row.
@@ -1262,7 +1262,7 @@ macro_rules! impl_pool_checkpoints {
         /// Paired with [`Self::restore_pool_checkpoint`] in the speculation system
         /// to reclaim orphaned pool entries when a speculative parse is rolled back.
         #[must_use]
-        pub(crate) fn pool_checkpoint(&self) -> NodeArenaPoolLengths {
+        pub(crate) const fn pool_checkpoint(&self) -> NodeArenaPoolLengths {
             NodeArenaPoolLengths { $($f: self.$f.len(),)+ }
         }
 
