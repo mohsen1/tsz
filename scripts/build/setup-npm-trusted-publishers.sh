@@ -13,12 +13,12 @@ WORKFLOW_FILE="${WORKFLOW_FILE:-npm-publish.yml}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 
 PACKAGES=(
-  "try-tsz-darwin-arm64"
-  "try-tsz-darwin-x64"
-  "try-tsz-linux-x64"
-  "try-tsz-linux-arm64"
-  "try-tsz-win32-x64"
-  "try-tsz-win32-arm64"
+  "@mohsen-azimi/try-tsz-darwin-arm64"
+  "@mohsen-azimi/try-tsz-darwin-x64"
+  "@mohsen-azimi/try-tsz-linux-x64"
+  "@mohsen-azimi/try-tsz-linux-arm64"
+  "@mohsen-azimi/try-tsz-win32-x64"
+  "@mohsen-azimi/try-tsz-win32-arm64"
   "try-tsz"
 )
 
