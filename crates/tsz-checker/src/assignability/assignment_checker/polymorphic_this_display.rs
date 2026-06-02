@@ -16,11 +16,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let access = self.ctx.arena.get_access_expr(node)?;
-        if !self
+        if self
             .ctx
             .arena
             .get(access.expression)
-            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            .is_none_or(|node| node.kind != SyntaxKind::ThisKeyword as u16)
         {
             return None;
         }
