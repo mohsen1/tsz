@@ -1889,4 +1889,35 @@ type D1 = DeepObject<Flat, 1>;
             "DeepObject<number, 1> must NOT emit TS2589; got: {cs:?}"
         );
     }
+
+    /// Depth 2 with a flat object: the body at depth 2 yields
+    /// `{ x: DeepObject<number> }` (N omitted → defaults to 0 → base case).
+    /// All type args are explicit at the use site so the probe must be skipped.
+    #[test]
+    fn deep_object_depth_two_flat_type_no_ts2589() {
+        let cs = codes_with_preamble(
+            r#"type Flat = { x: number; y: string };
+type D2 = DeepObject<Flat, 2>;
+"#,
+        );
+        assert!(
+            !cs.contains(&2589),
+            "DeepObject<Flat, 2> must NOT emit TS2589; got: {cs:?}"
+        );
+    }
+
+    /// Explicit N=0 at the use site: `BuildTuple<0> = []` so the base case fires
+    /// immediately. Must not emit TS2589 even though N is fully spelled out.
+    #[test]
+    fn deep_object_explicit_depth_zero_no_ts2589() {
+        let cs = codes_with_preamble(
+            r#"type Flat = { x: number; y: string };
+type D0 = DeepObject<Flat, 0>;
+"#,
+        );
+        assert!(
+            !cs.contains(&2589),
+            "DeepObject<Flat, 0> (explicit N=0) must NOT emit TS2589; got: {cs:?}"
+        );
+    }
 }
