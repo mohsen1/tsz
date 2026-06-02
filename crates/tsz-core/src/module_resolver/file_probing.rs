@@ -28,14 +28,9 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
-        // Canonicalize `.`/`..` segments before probing. Without this, candidate
-        // paths from path-mapping, baseUrl, package.json `main`, and relative
-        // joins retain the literal text they were constructed with, so the
-        // probed result string carries those segments into `ResolvedModule`.
-        // The same physical file ends up represented as two distinct path keys
-        // depending on which alias branch produced it.
-        let normalized = normalize_path_segments(path);
-        let path = normalized.as_path();
+        // Canonicalize `.`/`..` before probing so the returned `PathBuf` is
+        // the same across alias branches that point at the same file.
+        let path = &normalize_path_segments(path);
         let suffixes = &self.module_suffixes;
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
@@ -109,8 +104,7 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
-        let normalized = normalize_path_segments(path);
-        let path = normalized.as_path();
+        let path = &normalize_path_segments(path);
         let suffixes = &self.module_suffixes;
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
@@ -211,16 +205,11 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
-        // Collapse `.`/`..` segments before the directory probe. Without
-        // canonicalizing up front, a relative directory import like `../`
-        // joined inside typesVersions subfolders produces resolved paths with
-        // embedded `..` (e.g. `ts3.1/../ts3.1/..`) which the project file
-        // graph fails to match against the canonical spelling — manifesting
-        // as spurious TS2307s on re-exports. Normalizing before `is_dir()`
-        // also makes the existence probe robust to non-existent intermediates
-        // that the host OS cannot walk.
-        let normalized = normalize_path_segments(path);
-        let path = normalized.as_path();
+        // Normalize before `is_dir()` so the existence probe is robust to
+        // non-existent intermediates the host OS cannot walk, and so the
+        // returned `PathBuf` is canonical (e.g. typesVersions `../` joins
+        // produce `ts3.1/../ts3.1/..` otherwise).
+        let path = &normalize_path_segments(path);
         if !path.is_dir() {
             return None;
         }
@@ -298,8 +287,7 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
-        let normalized = normalize_path_segments(path);
-        let path = normalized.as_path();
+        let path = &normalize_path_segments(path);
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
             if split_path_extension(path).is_some() {
                 // For JS export targets, try declaration substitution first.
@@ -354,8 +342,7 @@ impl ModuleResolver {
         path: &Path,
         package_type: Option<PackageType>,
     ) -> Option<PathBuf> {
-        let normalized = normalize_path_segments(path);
-        let path = normalized.as_path();
+        let path = &normalize_path_segments(path);
         if let Some(resolved) = resolve_explicit_unknown_extension(path) {
             return Some(resolved);
         }

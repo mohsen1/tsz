@@ -385,76 +385,63 @@ fn test_path_mapping_extensionless_alias_follows_tsc_group_order() {
 
 // ── path segment normalization (issue #10896) ────────────────────────────────
 //
-// Structural rule: when a `paths` target text contains `./` or `../` segments,
-// or when `baseUrl` is itself non-canonical, the substituted candidate path
-// must be segment-normalized before file probing. Without this, the resolved
-// `PathBuf` retains the literal text (`<base>/./lib/foo.d.ts`,
-// `<base>/lib/../shared/foo.d.ts`) and the same physical declaration ends up
-// represented by two distinct path keys depending on which alias branch
-// produced it — splitting declaration identity in the project file graph.
-//
-// The rule is independent of the wildcard variable name and of the alias key
-// spelling; the tests below vary both to keep the fix structural.
+// Tests vary alias spelling, target shape, and entry point to keep the fix
+// structural rather than name-keyed. See `normalize_path_segments` docs.
 
 #[test]
-fn test_path_mapping_dot_slash_target_resolves_to_canonical_path() {
-    // `paths: { "@app/*": ["./src/*"] }` — the leading `./` in the target must
-    // not survive into `resolved_path`.
-    let fx = TempFixture::new();
-    fx.write("src/widget.ts", "export const w = 1;");
-    fx.write("index.ts", "import '@app/widget';");
+fn test_path_mapping_target_canonicalised_into_resolved_path() {
+    // Rule covers `./X` (leading curdir), `./X/../Y` (embedded parent), and
+    // non-wildcard `./X/../Y/Z` (no `*` in target). Each must produce a
+    // resolved path with no surviving CurDir/ParentDir components.
+    let rows: &[(&str, &str, &str, &[&str], &str, &str)] = &[
+        (
+            "@app/*",
+            "@app/",
+            "@app/widget",
+            &["./src/*"],
+            "src/widget.ts",
+            "src/widget.ts",
+        ),
+        (
+            "@util/*",
+            "@util/",
+            "@util/helpers",
+            &["./lib/../shared/*"],
+            "shared/helpers.ts",
+            "shared/helpers.ts",
+        ),
+        (
+            "pkg-alias",
+            "pkg-alias",
+            "pkg-alias",
+            &["./sub/../pkg/index"],
+            "pkg/index.ts",
+            "pkg/index.ts",
+        ),
+    ];
+    for (pattern, prefix, specifier, targets, on_disk, expected) in rows {
+        let fx = TempFixture::new();
+        fx.write(on_disk, "export const v = 1;");
+        fx.write("index.ts", "");
 
-    let options = make_options(fx.path(), vec![pm("@app/*", "@app/", &["./src/*"])]);
-    let mut resolver = ModuleResolver::new(&options);
-    let resolved = resolver
-        .resolve("@app/widget", &fx.join("index.ts"), Span::new(0, 11))
-        .expect("@app/widget should resolve");
+        let options = make_options(fx.path(), vec![pm(pattern, prefix, targets)]);
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve(specifier, &fx.join("index.ts"), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{specifier} should resolve via {targets:?}"));
 
-    let expected = fx.join("src/widget.ts");
-    assert_eq!(
-        resolved.resolved_path, expected,
-        "leading `./` segment must be normalized out of the resolved path",
-    );
-    assert!(
-        !resolved
-            .resolved_path
-            .components()
-            .any(|c| matches!(c, std::path::Component::CurDir)),
-        "resolved path must contain no `.` components, got {:?}",
-        resolved.resolved_path,
-    );
-}
-
-#[test]
-fn test_path_mapping_parent_dir_target_resolves_to_canonical_path() {
-    // `paths: { "@util/*": ["./lib/../shared/*"] }` — embedded `..` must be
-    // canonicalized.
-    let fx = TempFixture::new();
-    fx.write("shared/helpers.ts", "export const h = 1;");
-    fx.write("index.ts", "import '@util/helpers';");
-
-    let options = make_options(
-        fx.path(),
-        vec![pm("@util/*", "@util/", &["./lib/../shared/*"])],
-    );
-    let mut resolver = ModuleResolver::new(&options);
-    let resolved = resolver
-        .resolve("@util/helpers", &fx.join("index.ts"), Span::new(0, 13))
-        .expect("@util/helpers should resolve via alias with `..` segment");
-
-    let expected = fx.join("shared/helpers.ts");
-    assert_eq!(
-        resolved.resolved_path, expected,
-        "embedded `..` segments must be normalized out of the resolved path",
-    );
-    assert!(
-        !resolved
-            .resolved_path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir)),
-        "resolved path must contain no `..` components, got {:?}",
-        resolved.resolved_path,
-    );
+        assert_eq!(resolved.resolved_path, fx.join(expected));
+        assert!(
+            !resolved.resolved_path.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            }),
+            "{specifier}: no `.`/`..` in {:?}",
+            resolved.resolved_path,
+        );
+    }
 }
 
 #[test]
@@ -523,43 +510,14 @@ fn test_path_mapping_relative_import_and_alias_share_resolved_path() {
 }
 
 #[test]
-fn test_path_mapping_baseurl_with_non_canonical_dir_resolves_canonically() {
-    // A `baseUrl` joined with a `paths` target whose substitution introduces a
-    // `..` must still produce a canonical resolved path. This case mirrors the
-    // upstream symptom where row-level conditional fixtures select alternate
-    // alias branches with shared physical targets.
-    let fx = TempFixture::new();
-    fx.write("pkg/index.ts", "export const x = 1;");
-    fx.write("index.ts", "import 'pkg-alias';");
-
-    // baseUrl is the fixture root; the target dives into a sibling and back up.
-    let options = make_options(
-        fx.path(),
-        vec![pm("pkg-alias", "pkg-alias", &["./sub/../pkg/index"])],
-    );
-    let mut resolver = ModuleResolver::new(&options);
-    let resolved = resolver
-        .resolve("pkg-alias", &fx.join("index.ts"), Span::new(0, 9))
-        .expect("pkg-alias must resolve via canonicalised baseUrl-joined target");
-
-    assert_eq!(resolved.resolved_path, fx.join("pkg/index.ts"));
-}
-
-#[test]
 fn test_path_mapping_unbalanced_parent_dirs_preserve_leading_dotdot() {
-    // Lower-level invariant for the consolidated `normalize_path_segments`:
-    // when there is nothing to pop, the leading `..` must be preserved so that
-    // probe results remain accurate against relative roots. The earlier
-    // `relative_resolution.rs` copy silently dropped these, which would have
-    // mis-resolved alias targets that climb above the alias-relative base.
+    // When there is nothing to pop, the leading `..` must be preserved. The
+    // earlier `relative_resolution.rs` copy silently dropped these, which
+    // would have mis-resolved alias targets that climb above the alias base.
+    // Normalization is filesystem-independent, so the intermediate
+    // `lib/inner/` need not exist on disk.
     let fx = TempFixture::new();
     fx.write("widget.ts", "export const w = 1;");
-
-    // The alias jumps two levels up from a nested `lib/inner/` and lands back
-    // at the fixture root. The intermediate physical directory exists, so the
-    // OS-level walk succeeds either way; the assertion is that the *textual*
-    // resolved path is canonical (no surviving `..` segments).
-    fx.write("lib/inner/.gitkeep", "");
     fx.write("alias-root.ts", "import 'p';");
     let options = make_options(fx.path(), vec![pm("p", "p", &["./lib/inner/../../widget"])]);
     let mut resolver = ModuleResolver::new(&options);
