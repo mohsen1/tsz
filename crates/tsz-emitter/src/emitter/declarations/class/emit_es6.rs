@@ -1244,12 +1244,38 @@ impl<'a> Printer<'a> {
                 if property_is_erased == Some(true) {
                     // Side-effect only: expression is emitted for its effects but no temp.
                     if has_legacy_decorators {
-                        let temp = self.make_unique_name_hoisted();
-                        self.computed_prop_temp_map
-                            .insert(computed.expression, temp.clone());
-                        self.legacy_decorator_computed_name_temp_map
-                            .insert(computed.expression, temp.clone());
-                        computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                        // Only `declare`/`abstract` fields are truly erased at
+                        // runtime — for those, a side-effect-free key expression
+                        // (plain identifier, literal) can be emitted directly in
+                        // the `__decorate` call without a hoisted temp.
+                        //
+                        // Implicitly-erased fields (no initializer +
+                        // `use_define_for_class_fields: false`) are still
+                        // runtime-visible through the decorator, so `tsc` always
+                        // allocates a temp for their key to guarantee stable
+                        // evaluation order at class-definition time.
+                        let is_explicitly_erased = self
+                            .arena
+                            .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(modifiers, SyntaxKind::DeclareKeyword);
+                        let needs_temp = !is_explicitly_erased
+                            || !self.is_computed_name_expr_side_effect_free(computed.expression);
+                        if needs_temp {
+                            let temp = self.make_unique_name_hoisted();
+                            self.computed_prop_temp_map
+                                .insert(computed.expression, temp.clone());
+                            self.legacy_decorator_computed_name_temp_map
+                                .insert(computed.expression, temp.clone());
+                            computed_prop_entries.push((
+                                Some(temp),
+                                computed.expression,
+                                member_idx,
+                            ));
+                        }
+                        // `declare`/`abstract` + side-effect-free key: no temp;
+                        // `emit_decorator_member_name` emits the expression directly.
                     } else if !self.is_computed_name_expr_side_effect_free(computed.expression)
                         && !erased_computed_side_effects_use_static_block
                     {
