@@ -21,7 +21,7 @@ use crate::test_utils::check_source_diagnostics;
 fn circularity_codes(src: &str) -> Vec<u32> {
     let mut codes: Vec<u32> = check_source_diagnostics(src)
         .iter()
-        .filter(|d| matches!(d.code, 7022 | 7023 | 7024))
+        .filter(|d| matches!(d.code, 7022..=7024))
         .map(|d| d.code)
         .collect();
     codes.sort_unstable();
@@ -178,6 +178,33 @@ fn recursive_self_invocation_in_deferred_body_is_circular() {
         r#"
 declare function define<D>(spec: D): D;
 const runtime = define({ tick: () => runtime.tick() });
+runtime;
+"#,
+    );
+}
+
+#[test]
+fn recursive_self_invocation_through_comma_callee_is_circular() {
+    // A comma expression yields its right operand, so `(0, runtime.tick)()`
+    // still recursively invokes the resolving variable. tsc reports TS7023.
+    assert_has_circularity(
+        r#"
+declare function define<D>(spec: D): D;
+const runtime = define({ tick: () => (0, runtime.tick)() });
+runtime;
+"#,
+    );
+}
+
+#[test]
+fn recursive_self_invocation_through_conditional_callee_is_circular() {
+    // Either branch of a conditional callee keeps the variable on the callee
+    // path (`(flag ? runtime.tick : runtime.tick)()`). tsc reports TS7023.
+    assert_has_circularity(
+        r#"
+declare const flag: boolean;
+declare function define<D>(spec: D): D;
+const runtime = define({ tick: () => (flag ? runtime.tick : runtime.tick)() });
 runtime;
 "#,
     );

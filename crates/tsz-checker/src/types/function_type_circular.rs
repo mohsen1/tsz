@@ -1062,6 +1062,39 @@ impl<'a> CheckerState<'a> {
                         .get_tagged_template(parent_node)
                         .is_some_and(|tagged| tagged.tag == current);
                 }
+                // A comma expression yields its right operand, so the variable
+                // stays on the callee path only through that operand
+                // (`(0, api.loop)()`); the discarded left operand does not.
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let flows = self
+                        .ctx
+                        .arena
+                        .get_binary_expr(parent_node)
+                        .is_some_and(|bin| {
+                            bin.operator_token == SyntaxKind::CommaToken as u16
+                                && bin.right == current
+                        });
+                    if !flows {
+                        return false;
+                    }
+                    current = parent_idx;
+                }
+                // A conditional yields whichever branch is taken, so either
+                // branch keeps the variable on the callee path
+                // (`(c ? api.loop : api.loop)()`); the condition does not.
+                syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                    let flows = self
+                        .ctx
+                        .arena
+                        .get_conditional_expr(parent_node)
+                        .is_some_and(|cond| {
+                            cond.when_true == current || cond.when_false == current
+                        });
+                    if !flows {
+                        return false;
+                    }
+                    current = parent_idx;
+                }
                 _ => return false,
             }
         }
