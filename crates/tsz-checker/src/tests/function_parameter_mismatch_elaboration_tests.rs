@@ -1,0 +1,200 @@
+//! Regression tests for function/signature relation failure elaboration.
+//!
+//! Structural rule: when a function type is not assignable to another function
+//! type because a parameter is incompatible, tsc reports the signature line
+//! followed by a `Types of parameters 'a' and 'b' are incompatible.` frame and
+//! the contravariant leaf relation. tsz must produce the same chain instead of
+//! stopping at the bare signature line.
+//!
+//! Two pieces cooperate:
+//!
+//! 1. The solver compares parameters before the return type (matching tsc's
+//!    `compareSignaturesRelated`), so when both a parameter *and* the return
+//!    type mismatch, the parameter mismatch is the reported reason.
+//! 2. The checker renderer descends into the parameter reason to emit the
+//!    `Types of parameters` frame plus the contravariant leaf.
+//!
+//! The rule is structural (independent of identifier spelling and of whether
+//! the function appears directly, as an object property, or via an interface
+//! method), so the matrix below varies all three.
+
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_with_options, strict_checker_options};
+
+/// Full elaboration text (primary message plus every related-information line)
+/// of the single error with `code` in `source`, checked under strict options.
+fn elaboration(source: &str, code: u32) -> String {
+    elaboration_with(source, code, strict_checker_options())
+}
+
+fn elaboration_with(source: &str, code: u32, options: CheckerOptions) -> String {
+    let diags = check_with_options(source, options);
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == code).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected exactly one TS{code}. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    let mut lines = vec![matching[0].message_text.clone()];
+    lines.extend(
+        matching[0]
+            .related_information
+            .iter()
+            .map(|info| info.message_text.clone()),
+    );
+    lines.join("\n")
+}
+
+/// A direct function-to-function assignment whose only difference is a parameter
+/// type surfaces the `Types of parameters` frame and the contravariant leaf.
+#[test]
+fn direct_function_parameter_mismatch_elaborates_parameter_chain() {
+    let text = elaboration(
+        r#"
+let f: (x: string) => string;
+let g: (x: number) => number;
+f = g;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of parameters 'x' and 'x' are incompatible."),
+        "Expected the parameter-incompatibility frame. Got: {text:?}"
+    );
+    // Parameters are contravariant: the leaf compares the target parameter
+    // against the source parameter, so `string` is the one not assignable.
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'number'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
+/// When *both* a parameter and the return type mismatch, tsc reports the
+/// parameter mismatch (parameters are compared first). tsz must not report the
+/// return type instead.
+#[test]
+fn parameter_is_preferred_over_return_when_both_mismatch() {
+    let text = elaboration(
+        r#"
+type A = { m: (x: string) => string };
+type B = { m: (x: number) => number };
+declare const b: B;
+const a: A = b;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of property 'm' are incompatible."),
+        "Expected the property frame. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Types of parameters 'x' and 'x' are incompatible."),
+        "Expected the parameter frame to be preferred over a return-type frame. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'number'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+    assert!(
+        !text.contains("returned by"),
+        "Return-type elaboration must not be reported when a parameter mismatches. Got: {text:?}"
+    );
+}
+
+/// Same rule for a function-typed object property; renamed identifiers prove the
+/// fix is structural rather than keyed on the spelling `x`.
+#[test]
+fn property_function_parameter_mismatch_renamed_identifiers() {
+    let text = elaboration(
+        r#"
+type Target = { handler: (payload: string) => void };
+type Source = { handler: (payload: number) => void };
+declare const s: Source;
+const t: Target = s;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of property 'handler' are incompatible."),
+        "Expected the property frame. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Types of parameters 'payload' and 'payload' are incompatible."),
+        "Expected the renamed parameter frame. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'number'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
+/// The offending parameter index is reported, not always the first parameter.
+#[test]
+fn second_parameter_mismatch_names_the_correct_parameter() {
+    let text = elaboration(
+        r#"
+let f: (a: string, b: string) => void;
+let g: (a: string, b: number) => void;
+f = g;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of parameters 'b' and 'b' are incompatible."),
+        "Expected the second parameter to be named. Got: {text:?}"
+    );
+}
+
+/// Method-shorthand signatures (an interface method, not a function-typed
+/// property) elaborate the same parameter chain when assigned.
+#[test]
+fn interface_method_shorthand_parameter_mismatch_elaborates_chain() {
+    let text = elaboration(
+        r#"
+interface Target { transform(value: string): void; }
+interface Source { transform(value: number): void; }
+declare const s: Source;
+const t: Target = s;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Types of property 'transform' are incompatible."),
+        "Expected the property frame. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Types of parameters 'value' and 'value' are incompatible."),
+        "Expected the parameter frame for a method-shorthand signature. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'number'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
+/// A return-only mismatch (parameters identical) still reports the return type,
+/// proving the parameter-first ordering does not suppress return diagnostics.
+#[test]
+fn return_only_mismatch_still_reports_return() {
+    let text = elaboration_with(
+        r#"
+let f: () => string;
+let g: () => number;
+f = g;
+"#,
+        2322,
+        strict_checker_options(),
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the return leaf for a return-only mismatch. Got: {text:?}"
+    );
+    assert!(
+        !text.contains("Types of parameters"),
+        "A return-only mismatch must not emit a parameter frame. Got: {text:?}"
+    );
+}
