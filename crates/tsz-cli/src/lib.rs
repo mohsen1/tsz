@@ -40,6 +40,9 @@ mod driver_tests;
 #[path = "../tests/driver_tests_ts2307.rs"]
 mod driver_tests_ts2307;
 #[cfg(test)]
+#[path = "../tests/dual_package_exports_tests.rs"]
+mod dual_package_exports_tests;
+#[cfg(test)]
 #[path = "../tests/fs_tests.rs"]
 mod fs_tests;
 #[cfg(test)]
