@@ -30,6 +30,7 @@ mod flow_dp;
 pub(crate) mod narrowing;
 mod narrowing_helpers;
 mod optional_chain;
+mod predicate_resolution;
 pub(crate) mod references;
 pub(crate) mod type_guards;
 mod typeof_exclusions;

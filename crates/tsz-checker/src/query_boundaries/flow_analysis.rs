@@ -707,6 +707,22 @@ pub(crate) fn type_param_info(
     tsz_solver::type_queries::get_type_parameter_info(db, type_id)
 }
 
+/// Infer concrete bindings for a generic signature's type parameters by
+/// structurally matching each `(declared parameter type, concrete argument
+/// type)` pair, using the solver's call-resolution inference engine.
+///
+/// This is the boundary used to instantiate a type-predicate target when a
+/// type parameter appears nested inside a parameter type (a generic alias or
+/// wrapper such as `MaybeAsync<T> = T | AsyncIterable<T>`), where a direct
+/// parameter/type-parameter identity check cannot recover the binding.
+pub(crate) fn infer_type_arguments_from_param_args(
+    db: &dyn QueryDatabase,
+    type_params: &[tsz_solver::TypeParamInfo],
+    param_arg_pairs: &[(TypeId, TypeId)],
+) -> Vec<(tsz_common::interner::Atom, TypeId)> {
+    tsz_solver::computation::infer_type_arguments_from_param_args(db, type_params, param_arg_pairs)
+}
+
 /// Evaluate an application type via the solver's `ApplicationEvaluator`.
 ///
 /// This is the boundary entry point for flow-control code that needs to
