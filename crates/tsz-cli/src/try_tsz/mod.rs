@@ -963,7 +963,7 @@ fn maybe_prepare_interactive_report(cwd: &Path, summary: &SummaryReport) -> Resu
 
     println!();
     if !confirm(
-        "Prepare a local report? This may copy small snippets around failing spans. [y/N] ",
+        "Prepare a local report? This may copy small snippets around failing spans. No files are uploaded. You can review everything before sharing. [y/N] ",
     )? {
         return Ok(());
     }
@@ -978,12 +978,14 @@ fn maybe_prepare_interactive_report(cwd: &Path, summary: &SummaryReport) -> Resu
     write_raw_outputs(summary, &report_dir)?;
     println!("Wrote {}", report_path.display());
 
-    if confirm("Open the report in your editor? [y/N] ")? {
-        open_report_in_editor(&report_path)?;
-    }
-
     if confirm("Create snippet repro candidates for the first mismatches? [y/N] ")? {
         write_snippet_candidates(cwd, summary, &report_dir)?;
+    }
+
+    if confirm("Open the report in your editor? [y/N] ")? {
+        open_report_in_editor(&report_path)?;
+    } else {
+        println!("Report: {}", report_path.display());
     }
 
     if confirm("Submit this report to GitHub Discussions with gh? [y/N] ")? {
