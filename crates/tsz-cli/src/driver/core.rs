@@ -53,10 +53,9 @@ use rustc_hash::FxHasher;
 #[cfg(test)]
 use std::cell::RefCell;
 use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
-use tsz::parser::NodeIndex;
-use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::NodeArena;
 use tsz::parser::syntax_kind_ext;
+use tsz::parser::{NodeIndex, ParseDiagnostic};
 use tsz::scanner::SyntaxKind;
 use tsz_solver::construction::QueryCache;
 
