@@ -161,3 +161,65 @@ const v: string = rd.b;   // TS2322
         "split-alias optional: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Invalid inline instantiation expressions must keep their tsc error parity:
+// the vestigial-argument unwrap only applies to an already-validated callable,
+// so a non-generic value or a wrong-arity generic still reports TS2635 at the
+// instantiation expression and TS2344 at the utility constraint — and must NOT
+// let `ReturnType` / `Parameters` observe a concrete return downstream.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inline_instantiation_on_non_generic_value_keeps_ts2635_ts2344() {
+    let diags = strict_diags(
+        r#"
+declare function nonGeneric(x: number): string;
+type RN = ReturnType<typeof nonGeneric<number>>;
+declare const rn: RN;
+const probe: 0 = rn;   // RN must stay error-like, NOT leak `string` (no TS2322)
+"#,
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2635),
+        1,
+        "non-generic inline instantiation must report TS2635: {diags:?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2344),
+        1,
+        "ReturnType constraint must report TS2344 for the failed instantiation: {diags:?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        0,
+        "the failed instantiation must not leak a concrete return downstream: {diags:?}"
+    );
+}
+
+#[test]
+fn inline_instantiation_with_wrong_arity_keeps_ts2635_ts2344() {
+    let diags = strict_diags(
+        r#"
+declare function oneParam<T>(x: T): T;
+type RW = ReturnType<typeof oneParam<number, string>>;
+declare const rw: RW;
+const probe: 0 = rw;   // RW must stay error-like, NOT leak a concrete return
+"#,
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2635),
+        1,
+        "wrong-arity inline instantiation must report TS2635: {diags:?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2344),
+        1,
+        "ReturnType constraint must report TS2344 for the wrong-arity instantiation: {diags:?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        0,
+        "the wrong-arity instantiation must not leak a concrete return downstream: {diags:?}"
+    );
+}

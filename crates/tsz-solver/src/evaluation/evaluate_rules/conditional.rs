@@ -1302,14 +1302,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// function shape rather than an opaque application that silently degrades to
     /// `any`.
     ///
-    /// When no signature consumes the type arguments — the callable is already
-    /// fully concrete and the instantiation expression's arguments are vestigial
-    /// (e.g. the checker eagerly instantiated `typeof f<X>` to `(x: X) => …` but
-    /// re-wrapped it as `Application(callable, [X])`) — the application unwraps to
-    /// the callable itself, which is exactly the instantiation expression's type.
-    /// Otherwise downstream consumers would see the opaque `Application` and lose
-    /// the function shape. Any other base — or a query that does not resolve to a
-    /// callable — stays opaque for a later pass.
+    /// When no signature consumes the type arguments the two base shapes differ:
+    ///
+    /// * A `Callable` base only reaches here after the checker's
+    ///   instantiation-expression applicability gate
+    ///   (`apply_instantiation_expression_type_arguments`) accepted it and
+    ///   eagerly specialized the value to a concrete callable that was then
+    ///   re-wrapped as `Application(callable, [X])`. The leftover arguments are
+    ///   vestigial, so the application unwraps to the callable itself — exactly
+    ///   the instantiation expression's type.
+    /// * A `TypeQuery(sym)` base has **not** been re-validated for
+    ///   arity/applicability here. If no signature consumes its arguments the
+    ///   instantiation is invalid (non-generic value, or wrong arity), so the
+    ///   application is left opaque rather than unwrapped — matching tsc, which
+    ///   errors (TS2635/TS2344) and does not let `ReturnType` / `Parameters`
+    ///   observe the value's real return.
+    ///
+    /// Any other base — or a query that does not resolve to a callable — stays
+    /// opaque for a later pass.
     pub(in crate::evaluation) fn evaluate_application_no_def_id(
         &mut self,
         app_id: crate::types::TypeApplicationId,
@@ -1319,16 +1329,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.is_empty() {
             return original_type_id;
         }
+        let base_is_callable = matches!(
+            self.interner().lookup(app.base),
+            Some(TypeData::Callable(_))
+        );
         let Some(callable) = self.callable_for_instantiation_base(app.base) else {
             return original_type_id;
         };
         let args = app.args.clone();
-        // A specialized callable when a generic signature consumes the args, or
-        // the already-concrete callable itself when the args are vestigial.
-        let resolved = self
-            .try_instantiate_callable_type_params(callable, &args)
-            .unwrap_or(callable);
-        self.evaluate(resolved)
+        match self.try_instantiate_callable_type_params(callable, &args) {
+            // A generic signature consumed the type arguments.
+            Some(specialized) => self.evaluate(specialized),
+            // No signature consumed them: vestigial args on an already-validated
+            // `Callable` base unwrap to the concrete callable; an unvalidated
+            // `TypeQuery` base stays opaque so invalid inline instantiations keep
+            // their tsc TS2635/TS2344 parity.
+            None if base_is_callable => self.evaluate(callable),
+            None => original_type_id,
+        }
     }
 
     /// Resolve the callable type backing an instantiation-expression base
