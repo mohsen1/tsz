@@ -179,8 +179,11 @@ jobs:
             suffix="${dir#npm/npm-native-}"
             mkdir -p "npm/@mohsen-azimi/tsz-${suffix}/bin"
             cp "$dir"/* "npm/@mohsen-azimi/tsz-${suffix}/bin/"
+            mkdir -p "npm/try-tsz-${suffix}/bin"
+            cp "$dir"/try-tsz* "npm/try-tsz-${suffix}/bin/"
           done
           find npm/@mohsen-azimi -maxdepth 3 -type f | sort
+          find npm/try-tsz-* -maxdepth 3 -type f | sort
 
       - name: Assemble package manifests
         run: scripts/build/build-npm-packages.sh --all --native-only --skip-build
@@ -189,7 +192,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for pkg in npm/@mohsen-azimi/tsz-* npm/tsz npm/try-tsz; do
+          for pkg in npm/try-tsz-* npm/try-tsz; do
             (cd "$pkg" && npm publish --dry-run --access public)
           done
 
@@ -212,8 +215,7 @@ jobs:
             (cd "$pkg_dir" && npm publish --access public --provenance)
           }
 
-          for pkg in npm/@mohsen-azimi/tsz-*; do
+          for pkg in npm/try-tsz-*; do
             publish_if_needed "$pkg"
           done
-          publish_if_needed npm/tsz
           publish_if_needed npm/try-tsz
