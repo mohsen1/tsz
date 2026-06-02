@@ -1284,33 +1284,77 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Fallback for `evaluate_application` when the base has no `DefId`.
     ///
-    /// `Application(Callable, [Args])` arises when the checker wraps a
-    /// value-position generic function (`typeof f<Args>`) and the resolver
-    /// lacks a `DefId` for the bare expression type. Instantiate the callable
-    /// signatures (both call and construct) directly so downstream
-    /// `ReturnType`/`Parameters`/`infer` patterns see the substituted
-    /// function shape rather than an opaque application; other base shapes
-    /// stay opaque.
+    /// An instantiation expression `base<Args>` over a generic *value* (a
+    /// function or a `const`/`let`/`var` bound to one) reaches evaluation
+    /// without a type-space `DefId`, so [`Self::resolve_application_def_id`]
+    /// returns `None` and the application lands here. Two base shapes occur:
+    ///
+    /// * `Callable` — `typeof f<Args>` already lowered to the function's
+    ///   callable shape (value-position annotations resolve the query eagerly).
+    /// * `TypeQuery(sym)` — the lazy instantiation-expression form preserved by
+    ///   type-argument positions (`ReturnType<typeof f<Args>>`, `Parameters<…>`,
+    ///   `infer` patterns). The query base is kept intact there, so it must be
+    ///   resolved to the underlying callable before instantiation.
+    ///
+    /// Both shapes instantiate every type-parameter-bearing signature (call and
+    /// construct) via [`Self::try_instantiate_callable_type_params`] so
+    /// downstream `ReturnType`/`Parameters`/`infer` patterns see the substituted
+    /// function shape rather than an opaque application that silently degrades to
+    /// `any`.
+    ///
+    /// When no signature consumes the type arguments — the callable is already
+    /// fully concrete and the instantiation expression's arguments are vestigial
+    /// (e.g. the checker eagerly instantiated `typeof f<X>` to `(x: X) => …` but
+    /// re-wrapped it as `Application(callable, [X])`) — the application unwraps to
+    /// the callable itself, which is exactly the instantiation expression's type.
+    /// Otherwise downstream consumers would see the opaque `Application` and lose
+    /// the function shape. Any other base — or a query that does not resolve to a
+    /// callable — stays opaque for a later pass.
     pub(in crate::evaluation) fn evaluate_application_no_def_id(
         &mut self,
         app_id: crate::types::TypeApplicationId,
         original_type_id: TypeId,
     ) -> TypeId {
         let app = self.interner().type_application(app_id);
-        if app.args.is_empty()
-            || !matches!(
-                self.interner().lookup(app.base),
-                Some(TypeData::Callable(_))
-            )
-        {
+        if app.args.is_empty() {
             return original_type_id;
         }
-        let base = app.base;
-        let args = app.args.clone();
-        let Some(specialized) = self.try_instantiate_callable_type_params(base, &args) else {
+        let Some(callable) = self.callable_for_instantiation_base(app.base) else {
             return original_type_id;
         };
-        self.evaluate(specialized)
+        let args = app.args.clone();
+        // A specialized callable when a generic signature consumes the args, or
+        // the already-concrete callable itself when the args are vestigial.
+        let resolved = self
+            .try_instantiate_callable_type_params(callable, &args)
+            .unwrap_or(callable);
+        self.evaluate(resolved)
+    }
+
+    /// Resolve the callable type backing an instantiation-expression base
+    /// (`base<Args>`) that reached evaluation without a `DefId`.
+    ///
+    /// Returns a `Callable` base unchanged, or resolves a `TypeQuery(sym)` on a
+    /// generic function/`const` value to its callable shape (preferring the
+    /// value/constructor type from `resolve_type_query`, falling back to
+    /// `resolve_ref`). Any other base — or a query that does not resolve to a
+    /// callable — yields `None`, keeping the application opaque.
+    fn callable_for_instantiation_base(&self, base: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(base)? {
+            TypeData::Callable(_) => Some(base),
+            TypeData::TypeQuery(sym_ref) => {
+                let resolved = self
+                    .resolver()
+                    .resolve_type_query(sym_ref, self.interner())
+                    .or_else(|| self.resolver().resolve_ref(sym_ref, self.interner()))?;
+                matches!(
+                    self.interner().lookup(resolved),
+                    Some(TypeData::Callable(_))
+                )
+                .then_some(resolved)
+            }
+            _ => None,
+        }
     }
 
     /// Check if this is a primitive type vs Function/callable target.
