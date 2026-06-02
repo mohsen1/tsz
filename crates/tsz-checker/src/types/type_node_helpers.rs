@@ -694,36 +694,107 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .is_none())
     }
 
-    /// Mirror `tsc`'s `isArrayLikeType` for the rest-element grammar check
-    /// (TS2574). A rest element `...X` is only legal when the *resolved* type of
-    /// `X` is array-like: an array type, or — when not nullable — a type
-    /// assignable to `readonly any[]`.
+    /// Decide the rest-element grammar check (TS2574) the way `tsc`'s
+    /// `isArrayLikeType` does — from the *resolved* type rather than the AST
+    /// shape — but conservatively: return `true` (legal rest) unless the type is
+    /// *definitely* not array-like.
     ///
-    /// Resolving the type (rather than inspecting the AST shape) is what lets
-    /// generics (`...T` vs `...T extends any[]`), type aliases, conditional
-    /// types, indexed access, and unions all be classified the same way `tsc`
-    /// does. `any`/`never`/error types are assignable to `readonly any[]` and so
-    /// are accepted, matching `tsc`'s recovery behaviour.
+    /// `tsc` runs `isArrayLikeType` on a fully instantiated type, so utility
+    /// spreads (`[...Tuple<I, E>]`, `[...NTuple<A>]`) and parameters constrained
+    /// to them (`<S extends Selector[]> [...S]`) resolve to arrays before the
+    /// check and are accepted. tsz's solver resolver is a no-op for `Lazy` defs,
+    /// so such types may stay opaque here; treating opaque/instantiable types as
+    /// "indeterminate" (legal) avoids false TS2574 on them while still flagging
+    /// the concrete non-array cases (`[...string]`, `[...{a:1}]`, unconstrained
+    /// `[...T]`, `[...unknown]`).
     pub(super) fn rest_element_type_is_array_like(&self, type_id: tsz_solver::TypeId) -> bool {
-        // Resolve lazy alias references and pending conditional/application
-        // evaluations so aliases-to-arrays (`type AL = number[]; [...AL]`) and
-        // utility conditionals (`[...Cond<number[]>]`) are classified by their
-        // resolved shape, exactly as `tsc`'s `getTypeFromTypeNode` would.
-        let type_id = self.resolve_type_for_rest_element_check(type_id);
-        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id) {
-            return true;
-        }
-        // tsc guards with `!(type.flags & TypeFlags.Nullable)` so that bare
-        // `null`/`undefined` rest elements are rejected even under
-        // non-strict-null modes where they would otherwise be assignable.
-        if crate::query_boundaries::common::is_nullish_type(self.ctx.types, type_id) {
+        !self.rest_element_type_is_definitely_not_array_like(type_id, 0)
+    }
+
+    /// Recursive classifier backing [`Self::rest_element_type_is_array_like`].
+    /// Returns `true` only when the resolved type is *definitely* not array-like
+    /// (so TS2574 should fire). Array/tuple, `any`/`never`, and types that remain
+    /// instantiable after resolution (applications, conditionals, mapped types,
+    /// and parameters constrained to them) all return `false`.
+    fn rest_element_type_is_definitely_not_array_like(
+        &self,
+        type_id: tsz_solver::TypeId,
+        depth: u32,
+    ) -> bool {
+        use crate::query_boundaries::common as q;
+        // Bound the constraint/wrapper/union recursion; an undecided type is not
+        // "definitely" non-array-like, so give up in the legal direction.
+        if depth > 8 {
             return false;
         }
+        let t = self.resolve_type_for_rest_element_check(type_id);
+
+        // Concrete array/tuple shapes are array-like.
+        if q::is_array_type(self.ctx.types, t) || q::is_tuple_type(self.ctx.types, t) {
+            return false;
+        }
+        // `any`/`never`/error are assignable to `readonly any[]`.
+        if matches!(t, TypeId::ANY | TypeId::NEVER | TypeId::ERROR) {
+            return false;
+        }
+        // tsc's nullable guard: bare `null`/`undefined` are rejected.
+        if q::is_nullish_type(self.ctx.types, t) {
+            return true;
+        }
+        // `unknown` is not array-like (`tsc` flags `[...unknown]`).
+        if t == TypeId::UNKNOWN {
+            return true;
+        }
+        // Look through `readonly` / `NoInfer` wrappers.
+        if let Some(inner) = q::unwrap_readonly_or_noinfer(self.ctx.types, t) {
+            return self.rest_element_type_is_definitely_not_array_like(inner, depth + 1);
+        }
+        // Type parameter: classify by its constraint. An unconstrained parameter
+        // has constraint `unknown`, which is not array-like (matches `tsc`).
+        if let Some(info) = q::type_param_info(self.ctx.types, t) {
+            return match info.constraint {
+                None => true,
+                Some(constraint) => {
+                    self.rest_element_type_is_definitely_not_array_like(constraint, depth + 1)
+                }
+            };
+        }
+        // Types that remain instantiable *and* still reference free type
+        // parameters are deferred generics whose array-like-ness `tsc` decides
+        // from the (usually array-like) constraint; tsz frequently cannot
+        // resolve them here, so treat them as indeterminate rather than risk a
+        // false TS2574 (`[...Tuple<I, E>]`, `[...NTuple<A>]`). Concrete
+        // applications/conditionals (no free type parameters, e.g.
+        // `[...Cond<number>]`) fall through to the relation, which reduces them.
+        if (q::application_info(self.ctx.types, t).is_some()
+            || q::is_conditional_type(self.ctx.types, t)
+            || q::is_mapped_type(self.ctx.types, t))
+            && q::contains_free_type_parameters(self.ctx.types, t)
+        {
+            return false;
+        }
+        // Union is array-like only if every member is, so it is definitely not
+        // array-like as soon as one member is definitely not.
+        if let Some(members) = q::union_members(self.ctx.types, t) {
+            return members
+                .iter()
+                .any(|&m| self.rest_element_type_is_definitely_not_array_like(m, depth + 1));
+        }
+        // Intersection is array-like if any member is, so it is definitely not
+        // array-like only when every member is.
+        if let Some(members) = q::intersection_members(self.ctx.types, t) {
+            return members
+                .iter()
+                .all(|&m| self.rest_element_type_is_definitely_not_array_like(m, depth + 1));
+        }
+        // Fully-resolved concrete type that is neither array nor tuple (primitive,
+        // literal, object, function, …). Defer to assignability so array-like
+        // object shapes (numeric index + `length`) are still accepted.
         let readonly_any_array = {
             let factory = self.ctx.types.factory();
             factory.readonly_type(factory.array(TypeId::ANY))
         };
-        self.ctx.types.is_assignable_to(type_id, readonly_any_array)
+        !self.ctx.types.is_assignable_to(t, readonly_any_array)
     }
 
     /// Resolve a rest-element type to its inspectable shape for the TS2574
@@ -744,7 +815,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let next = {
                 let env = self.ctx.type_environment.borrow();
                 // Resolve a bare `Lazy(DefId)` alias reference, then evaluate any
-                // resulting application/conditional through the env-backed
+                // resulting application through the env-backed
                 // `ApplicationEvaluator` (which can resolve lazy application
                 // heads such as `Cond<number[]>`, where the plain solver
                 // evaluator cannot).
@@ -759,6 +830,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     resolved,
                 )
             };
+            // Reduce a now-concrete conditional / indexed-access result
+            // (e.g. `number extends infer U ? U : never` from `Cond<number>`)
+            // so it is classified by its reduced shape rather than left opaque.
+            let next = self.ctx.types.evaluate_type(next);
             if next == current {
                 break;
             }

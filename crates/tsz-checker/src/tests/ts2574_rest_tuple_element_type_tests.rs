@@ -261,3 +261,41 @@ type Tail<T> = T extends [infer A, ...infer B] ? B : never;
         "TS2574 should not fire for rest-position infer `[infer A, ...infer B]`: {codes:?}"
     );
 }
+
+/// Spread of a generic utility application that resolves to a tuple/array but
+/// still references free type parameters (`[...Tuple<I, E>]`) must NOT flag:
+/// tsc instantiates it to an array; tsz cannot fully resolve it here, so it is
+/// treated as indeterminate rather than flagged. Regression for the
+/// `largeTupleTypes` / `recursiveConditionalTypes` conformance cases.
+#[test]
+fn rest_deferred_generic_utility_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Grow<A extends unknown[], N extends number> =
+    A['length'] extends N ? A : Grow<[...A, unknown], N>;
+type Wrap<I, E extends number> = [...Grow<[I], E>];
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for deferred generic utility spread `[...Grow<[I], E>]`: {codes:?}"
+    );
+}
+
+/// Spread of a type parameter constrained to an array-typed alias
+/// (`<S extends Sel[]> [...S]`) must NOT flag. Regression for the
+/// `contextualTypeTupleEnd` conformance case.
+#[test]
+fn rest_type_parameter_with_aliased_array_constraint_does_not_emit_ts2574() {
+    let codes = check_source_codes(
+        r#"
+type Sel = (x: unknown) => unknown;
+type SelTuple = Sel[];
+declare function f<S extends SelTuple>(...args: [...selectors: S, last: Sel]): void;
+"#,
+    );
+    assert!(
+        !codes.contains(&2574),
+        "TS2574 should not fire for `[...S]` with `S extends SelTuple` (array alias): {codes:?}"
+    );
+}
