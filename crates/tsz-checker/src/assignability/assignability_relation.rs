@@ -173,7 +173,6 @@ impl<'a> CheckerState<'a> {
             flags,
             &self.ctx.inheritance_graph,
             &overrides,
-            Some(&self.ctx),
             self.ctx.sound_mode(),
         );
 
@@ -286,7 +285,6 @@ impl<'a> CheckerState<'a> {
                 flags,
                 &self.ctx.inheritance_graph,
                 &overrides,
-                Some(&self.ctx),
                 self.ctx.sound_mode(),
             )
         };

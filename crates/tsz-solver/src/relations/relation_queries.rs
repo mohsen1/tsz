@@ -355,6 +355,89 @@ where
     }
 }
 
+/// The relation result plus, when the relation does not hold, the structured
+/// failure analysis derived from the **same** configured-checker pass.
+#[derive(Debug, Clone)]
+pub struct AssignabilityQueryOutcome {
+    /// Pass/fail outcome of the assignability relation.
+    pub result: RelationResult,
+    /// Structured failure analysis, present iff `result.related` is `false`.
+    pub analysis: Option<AssignabilityFailureAnalysis>,
+}
+
+/// Query an assignability relation and, when it fails, derive the failure
+/// analysis from the **same** configured [`CompatChecker`] instance.
+///
+/// The query boundary previously decided pass/fail with one configured checker
+/// and then computed the failure reason with a second, independently
+/// configured checker. Those two traversals could disagree — producing a
+/// failure reason that contradicts the decision, or no reason at all when a
+/// checker override (enum / abstract-constructor / accessibility / private
+/// brand) forced the failure before the structural walk ran. Running the
+/// decision and the failure analysis on one checker shares its relation cache,
+/// so the reason is always consistent with the decision and the relation is
+/// not re-evaluated from scratch.
+///
+/// Only the assignability relation kinds (`Assignable` and
+/// `AssignableBivariantCallbacks`) carry structured failure analysis; other
+/// kinds must use [`query_relation_with_overrides`].
+pub fn query_assignability_with_failure_analysis<'a, R, P>(
+    RelationQueryInputs {
+        interner,
+        resolver,
+        source,
+        target,
+        kind,
+        policy,
+        context,
+        overrides,
+    }: RelationQueryInputs<'a, R, P>,
+) -> AssignabilityQueryOutcome
+where
+    R: TypeResolver,
+    P: AssignabilityOverrideProvider + ?Sized,
+{
+    let _span = tracing::debug_span!(
+        "query_assignability_with_failure_analysis",
+        src = source.0,
+        tgt = target.0,
+        kind = ?kind,
+    )
+    .entered();
+
+    let mut checker = configured_compat_checker(interner, resolver, policy, context);
+    let related = match kind {
+        RelationKind::Assignable => checker.is_assignable_with_overrides(source, target, overrides),
+        RelationKind::AssignableBivariantCallbacks => {
+            checker.is_assignable_to_bivariant_callback(source, target)
+        }
+        other => {
+            debug_assert!(
+                false,
+                "query_assignability_with_failure_analysis requires an assignability relation kind, got {other:?}"
+            );
+            checker.is_assignable_with_overrides(source, target, overrides)
+        }
+    };
+
+    let result = RelationResult {
+        kind,
+        related,
+        depth_exceeded: checker.depth_exceeded(),
+        iteration_exceeded: checker.iteration_exceeded(),
+    };
+
+    // The failure analysis runs on the same `checker`, so its relation cache is
+    // already warm with the decision's sub-results: the structural reason walk
+    // observes the identical outcomes the decision did and cannot contradict it.
+    let analysis = (!related).then(|| AssignabilityFailureAnalysis {
+        weak_union_violation: checker.is_weak_union_violation(source, target),
+        failure_reason: checker.explain_failure(source, target),
+    });
+
+    AssignabilityQueryOutcome { result, analysis }
+}
+
 /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) via the
 /// differing type arguments, mirroring tsc's elaboration.
 ///
