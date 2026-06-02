@@ -890,36 +890,21 @@ impl<'a> CheckerState<'a> {
                     spread_expr_type
                 };
                 // tsc treats `never` as array-like (`never <: readonly any[]`):
-                // spreading a `never` value into an array literal is allowed,
-                // contributes a `never` element (so `[...x]` is `never[]`), and
-                // produces no TS2488. The for-of, array-destructuring, and
-                // call-argument spread paths instead route through the iterated-type
-                // check, which reports TS2488 for `never`, so this exemption is scoped
-                // to array-literal value spreads. Empty intersections such as
-                // `string & number` reduce to `never`, so evaluate before comparing.
-                if !self.ctx.in_destructuring_target
-                    && self.spread_source_is_never(spread_expr_type)
-                {
-                    if tuple_context.is_some() || self.ctx.in_const_assertion {
-                        tuple_elements.push(TupleElement {
-                            type_id: TypeId::NEVER,
-                            name: None,
-                            optional: false,
-                            rest: true,
-                        });
-                    } else {
-                        saw_array_element_for_bct = true;
-                        all_array_elements_const_asserted = false;
-                        element_types.push(TypeId::NEVER);
-                    }
-                    continue;
-                }
+                // spreading a `never` value into an array literal is allowed and
+                // contributes a `never` element (so `[...x]` is `never[]`), with no
+                // TS2488. for-of, array-destructuring, and call-argument spreads
+                // instead route through the iterated-type check, which reports TS2488
+                // for `never`, so this exemption is scoped to array-literal value
+                // spreads. Empty intersections such as `string & number` reduce to
+                // `never`, so evaluate before comparing.
+                let spread_is_never = !self.ctx.in_destructuring_target
+                    && self.spread_source_is_never(spread_expr_type);
 
-                // Check if spread argument is iterable, emit TS2488 if not.
-                // Skip this check when the array is a destructuring target
-                // (e.g., `[...c] = expr`), since the spread element is an assignment
-                // target, not a value being spread into a new array.
-                if !self.ctx.in_destructuring_target {
+                // Check if spread argument is iterable, emit TS2488 if not. Skip for
+                // destructuring targets (e.g. `[...c] = expr`), where the spread
+                // element is an assignment target rather than a value being spread,
+                // and for `never` sources (array-like, handled below).
+                if !self.ctx.in_destructuring_target && !spread_is_never {
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
                 }
 
@@ -983,9 +968,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // For non-tuple spreads in array context, use element type
-                // For tuple context, use the spread type itself
-                let elem_type = if tuple_context.is_some() {
+                // For non-tuple spreads in array context, use element type.
+                // For tuple context, use the spread type itself. A `never` source
+                // is array-like with element type `never`.
+                let elem_type = if spread_is_never {
+                    TypeId::NEVER
+                } else if tuple_context.is_some() {
                     spread_expr_type
                 } else {
                     self.for_of_element_type(spread_expr_type, false)
