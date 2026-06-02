@@ -5,6 +5,7 @@
 
 use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
 
@@ -49,14 +50,21 @@ pub(crate) fn clear_file_exists_cache() {
 /// when they refer to the same physical location. tsconfig `paths` targets,
 /// `baseUrl`-joined specifiers, package.json `main`/`exports` targets, and
 /// container-relative specifiers can all introduce stray `./` or `../` segments
-/// that survive `Path::join` (which preserves the literal components). Probing
-/// against an unnormalized candidate produces an unnormalized resolved path,
-/// which then splits declaration identity across alias branches.
+/// that survive `Path::join` (which preserves the literal components).
 ///
 /// Leading `..` segments are preserved when there is nothing to pop, mirroring
 /// `path.Normalize` in tsc. An earlier copy in `relative_resolution.rs`
 /// silently popped past the root; this consolidation removes that divergence.
-pub(crate) fn normalize_path_segments(path: &Path) -> PathBuf {
+///
+/// Returns `Cow::Borrowed` when the input is already canonical (the common
+/// case on the hot probe path), avoiding the per-call `PathBuf` allocation.
+pub(crate) fn normalize_path_segments(path: &Path) -> Cow<'_, Path> {
+    if !path
+        .components()
+        .any(|c| matches!(c, Component::CurDir | Component::ParentDir))
+    {
+        return Cow::Borrowed(path);
+    }
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -71,7 +79,7 @@ pub(crate) fn normalize_path_segments(path: &Path) -> PathBuf {
             }
         }
     }
-    normalized
+    Cow::Owned(normalized)
 }
 
 pub(crate) fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {

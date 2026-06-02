@@ -393,13 +393,12 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
     // Rule covers `./X` (leading curdir), `./X/../Y` (embedded parent), and
     // non-wildcard `./X/../Y/Z` (no `*` in target). Each must produce a
     // resolved path with no surviving CurDir/ParentDir components.
-    let rows: &[(&str, &str, &str, &[&str], &str, &str)] = &[
+    let rows: &[(&str, &str, &str, &[&str], &str)] = &[
         (
             "@app/*",
             "@app/",
             "@app/widget",
             &["./src/*"],
-            "src/widget.ts",
             "src/widget.ts",
         ),
         (
@@ -408,7 +407,6 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
             "@util/helpers",
             &["./lib/../shared/*"],
             "shared/helpers.ts",
-            "shared/helpers.ts",
         ),
         (
             "pkg-alias",
@@ -416,12 +414,11 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
             "pkg-alias",
             &["./sub/../pkg/index"],
             "pkg/index.ts",
-            "pkg/index.ts",
         ),
     ];
-    for (pattern, prefix, specifier, targets, on_disk, expected) in rows {
+    for (pattern, prefix, specifier, targets, file) in rows {
         let fx = TempFixture::new();
-        fx.write(on_disk, "export const v = 1;");
+        fx.write(file, "export const v = 1;");
         fx.write("index.ts", "");
 
         let options = make_options(fx.path(), vec![pm(pattern, prefix, targets)]);
@@ -430,7 +427,7 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
             .resolve(specifier, &fx.join("index.ts"), Span::new(0, 1))
             .unwrap_or_else(|_| panic!("{specifier} should resolve via {targets:?}"));
 
-        assert_eq!(resolved.resolved_path, fx.join(expected));
+        assert_eq!(resolved.resolved_path, fx.join(file));
         assert!(
             !resolved.resolved_path.components().any(|c| {
                 matches!(
@@ -445,68 +442,63 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
 }
 
 #[test]
-fn test_path_mapping_two_aliases_to_same_file_share_resolved_path() {
-    // Two distinct alias keys whose substituted targets refer to the same
-    // physical `.d.ts` file must produce identical `resolved_path` values, even
-    // when one target uses a `./` prefix and the other uses an embedded `..`.
-    // The wildcard variable name in each pattern is deliberately different
-    // (`*` is the only allowed placeholder, but the prefix/suffix shape varies)
-    // to prove the rule is structural, not name-keyed.
-    let fx = TempFixture::new();
-    fx.write("shared/api.d.ts", "export declare const v: number;");
-    fx.write("index.ts", "import '@alpha/api'; import '@beta/api';");
+fn test_path_mapping_same_file_via_two_paths_shares_resolved_path() {
+    // Two resolutions of one physical file — via different alias branches or
+    // via an alias and a relative import — must produce identical
+    // `resolved_path`s. Splits in this invariant fork declaration identity
+    // in the project file graph.
+    struct Row {
+        file: &'static str,
+        mappings: fn() -> Vec<PathMapping>,
+        a: (&'static str, &'static str), // (specifier, importer_rel)
+        b: (&'static str, &'static str),
+    }
+    let rows = [
+        // Two distinct alias keys reach the same `.d.ts`, one via `./` and
+        // one via an embedded `..` detour.
+        Row {
+            file: "shared/api.d.ts",
+            mappings: || {
+                vec![
+                    pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
+                    pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
+                ]
+            },
+            a: ("@alpha/api", "index.ts"),
+            b: ("@beta/api", "index.ts"),
+        },
+        // Alias resolution and relative-import resolution converge on the
+        // same file; the relative import climbs through a parent directory.
+        Row {
+            file: "src/api.ts",
+            mappings: || vec![pm("@app/*", "@app/", &["./src/*"])],
+            a: ("@app/api", "index.ts"),
+            b: ("../api", "src/sub/index.ts"),
+        },
+    ];
+    for row in &rows {
+        let fx = TempFixture::new();
+        fx.write(row.file, "export const v = 1;");
+        for (_, importer) in [row.a, row.b] {
+            fx.write(importer, "");
+        }
 
-    let options = make_options(
-        fx.path(),
-        vec![
-            pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
-            // Same logical export reached through a `..` detour.
-            pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
-        ],
-    );
-    let mut resolver = ModuleResolver::new(&options);
+        let options = make_options(fx.path(), (row.mappings)());
+        let mut resolver = ModuleResolver::new(&options);
+        let via_a = resolver
+            .resolve(row.a.0, &fx.join(row.a.1), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{} must resolve", row.a.0));
+        let via_b = resolver
+            .resolve(row.b.0, &fx.join(row.b.1), Span::new(0, 1))
+            .unwrap_or_else(|_| panic!("{} must resolve", row.b.0));
 
-    let via_alpha = resolver
-        .resolve("@alpha/api", &fx.join("index.ts"), Span::new(0, 10))
-        .expect("@alpha/api must resolve");
-    let via_beta = resolver
-        .resolve("@beta/api", &fx.join("index.ts"), Span::new(0, 9))
-        .expect("@beta/api must resolve");
-
-    assert_eq!(
-        via_alpha.resolved_path, via_beta.resolved_path,
-        "two aliases targeting the same `.d.ts` must share resolved_path \
-         to preserve declaration identity across alias branches",
-    );
-    assert_eq!(via_alpha.resolved_path, fx.join("shared/api.d.ts"));
-}
-
-#[test]
-fn test_path_mapping_relative_import_and_alias_share_resolved_path() {
-    // Alias-resolved import and relative-import resolution of the same file
-    // must yield identical `resolved_path`s. The alias target uses `./`, while
-    // the relative import joins through a parent directory: both must collapse
-    // to the same canonical declaration path.
-    let fx = TempFixture::new();
-    fx.write("src/api.ts", "export const v = 1;");
-    fx.write("src/sub/index.ts", "import '../api';");
-    fx.write("index.ts", "import '@app/api';");
-
-    let options = make_options(fx.path(), vec![pm("@app/*", "@app/", &["./src/*"])]);
-    let mut resolver = ModuleResolver::new(&options);
-
-    let via_alias = resolver
-        .resolve("@app/api", &fx.join("index.ts"), Span::new(0, 8))
-        .expect("@app/api must resolve via alias");
-    let via_relative = resolver
-        .resolve("../api", &fx.join("src/sub/index.ts"), Span::new(0, 6))
-        .expect("../api must resolve via relative import");
-
-    assert_eq!(
-        via_alias.resolved_path, via_relative.resolved_path,
-        "alias-resolved and relative-import paths to the same file must match",
-    );
-    assert_eq!(via_alias.resolved_path, fx.join("src/api.ts"));
+        assert_eq!(
+            via_a.resolved_path, via_b.resolved_path,
+            "{} and {} must produce equal resolved_path",
+            row.a.0, row.b.0,
+        );
+        assert_eq!(via_a.resolved_path, fx.join(row.file));
+    }
 }
 
 #[test]
