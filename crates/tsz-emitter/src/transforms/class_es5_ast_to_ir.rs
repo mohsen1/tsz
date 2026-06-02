@@ -676,6 +676,11 @@ impl<'a> AstToIr<'a> {
             if self.is_destructuring_assignment_expr(expr_stmt.expression) {
                 return IRNode::ASTRef(idx);
             }
+            // `this.#x++;` / `this.#x--;` discards its result, so use tsc's leaner
+            // statement form (no old-value temp).
+            if let Some(stmt) = self.try_private_postfix_statement(expr_stmt.expression) {
+                return IRNode::ExpressionStatement(Box::new(stmt));
+            }
             IRNode::ExpressionStatement(Box::new(self.convert_expression(expr_stmt.expression)))
         } else {
             IRNode::ASTRef(idx)
