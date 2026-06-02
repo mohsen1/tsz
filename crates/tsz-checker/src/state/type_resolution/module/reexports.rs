@@ -244,6 +244,16 @@ impl<'a> CheckerState<'a> {
                         result,
                         visited,
                     );
+                    // Fold in module augmentations targeting the re-exported source
+                    // module. `module_exports[source]` only contains the source
+                    // file's own exports; augmentations declared in other files
+                    // contribute additional names that must traverse every
+                    // `export *` edge along with the source's direct exports.
+                    self.merge_module_augmentation_namespace_exports(
+                        result,
+                        source_idx,
+                        Some(source_module),
+                    );
                 }
             }
         }
