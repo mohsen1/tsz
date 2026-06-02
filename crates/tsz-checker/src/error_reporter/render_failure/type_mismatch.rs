@@ -219,14 +219,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip single-missing-property lookup when the target is an intersection type.
-        let target_is_intersection_for_mismatch = {
-            let target_eval = self.evaluate_type_with_env(target);
-            crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
-                || crate::query_boundaries::common::is_intersection_type(
-                    self.ctx.types,
-                    target_eval,
-                )
-        };
+        let target_is_intersection_for_mismatch = self.is_intersection_target(target);
         if depth == 0
             && !target_is_intersection_for_mismatch
             && let Some(property_name) = self.missing_single_required_property(source, target)

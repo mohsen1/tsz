@@ -753,4 +753,33 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(name_idx)?;
         Some((node.pos, node.end.saturating_sub(node.pos)))
     }
+
+    /// Return the most-specific of the three target candidates that is an
+    /// intersection type, in priority order `evaluated > target > target_type`.
+    /// Returns `None` when none is an intersection.
+    ///
+    /// Shared by single-property (`render_missing_property`) and multi-property
+    /// (`render_missing_properties`) intersection fall-back paths so the candidate
+    /// priority stays consistent.
+    pub(super) fn resolve_intersection_target_for_display(
+        &mut self,
+        target_type: TypeId,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        let evaluated = self.evaluate_type_with_env(target);
+        [evaluated, target, target_type]
+            .into_iter()
+            .find(|&t| crate::query_boundaries::common::is_intersection_type(self.ctx.types, t))
+    }
+
+    /// Return `true` when `target` or its evaluated form is an intersection type.
+    ///
+    /// Used as a boolean predicate when only a single candidate is available
+    /// (e.g. `render_type_mismatch` where `target_type` is not in scope).
+    pub(super) fn is_intersection_target(&mut self, target: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_env(target);
+        [evaluated, target]
+            .into_iter()
+            .any(|t| crate::query_boundaries::common::is_intersection_type(self.ctx.types, t))
+    }
 }
