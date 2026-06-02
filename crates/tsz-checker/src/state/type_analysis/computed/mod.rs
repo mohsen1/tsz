@@ -1426,27 +1426,28 @@ impl<'a> CheckerState<'a> {
 
             use tsz_solver::CallableShape;
 
+            // Impl signature is never an externally visible call signature.
+            // Body-less decls are the overloads; JSDoc `@overload` substitutes
+            // only when zero body-less decls exist across all declarations.
             let mut overloads = Vec::new();
             let mut implementation_decl = NodeIndex::NONE;
 
             for &decl_idx in &declarations {
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                let Some(func) = self.ctx.arena.get_function_at(decl_idx) else {
                     continue;
                 };
-                let Some(func) = self.ctx.arena.get_function(node) else {
-                    continue;
-                };
-
                 if func.body.is_none() {
                     overloads.push(self.call_signature_from_function(func, decl_idx));
                 } else {
                     implementation_decl = decl_idx;
-                    if overloads.is_empty() {
-                        overloads.extend(
-                            self.jsdoc_overload_call_signatures_for_function(func, decl_idx),
-                        );
-                    }
                 }
+            }
+
+            if overloads.is_empty()
+                && let Some(impl_func) = self.ctx.arena.get_function_at(implementation_decl)
+            {
+                overloads = self
+                    .jsdoc_overload_call_signatures_for_function(impl_func, implementation_decl);
             }
 
             let function_type = if !overloads.is_empty() {
