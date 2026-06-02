@@ -358,13 +358,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Also include the base class's already-cached instance type in the prescan
-            // so that `this.inheritedProp` in a derived class initializer doesn't produce
-            // a false TS2339. For example: `class B extends A { x = this.a; }` where `a`
-            // is declared in A — without this, `this` would only have B's own properties.
-            let base_prescan_type = self
-                .get_base_class_idx(class_idx)
-                .and_then(|base_idx| self.ctx.class_instance_type_cache.get(&base_idx).copied());
+            let base_prescan_type = class
+                .heritage_clauses
+                .as_ref()
+                .and_then(|heritage_clauses| {
+                    heritage_clauses.nodes.iter().find_map(|&clause_idx| {
+                        let clause_node = self.ctx.arena.get(clause_idx)?;
+                        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            return None;
+                        }
+                        let &type_idx = heritage.types.nodes.first()?;
+                        let type_node = self.ctx.arena.get(type_idx)?;
+                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            (
+                                expr_type_args.expression,
+                                expr_type_args.type_arguments.as_ref(),
+                            )
+                        } else {
+                            (type_idx, None)
+                        };
+                        self.base_instance_type_from_expression(expr_idx, type_arguments)
+                    })
+                });
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {
