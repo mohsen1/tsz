@@ -70,25 +70,18 @@ impl<'a> CheckerState<'a> {
                     );
         }
 
-        // TS2880: Warn about deprecated `assert` keyword
-        self.check_import_attributes_deprecated_assert(import.attributes);
-
         if !has_parse_errors {
             self.check_type_only_resolution_mode_attribute_grammar(
                 import.attributes,
                 is_type_only_import,
             );
 
-            // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(import.attributes, is_type_only_import);
-
             // TS2322: Check import attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(import.attributes);
 
-            self.check_import_attributes_commonjs_or_type_only(
-                import.attributes,
-                is_type_only_import,
-            );
+            // TS2821/TS2822/TS2823/TS2836/TS2856/TS2857/TS2880: attribute grammar,
+            // ordered to mirror tsc's `checkImportAttributes` precedence.
+            self.check_import_attributes_grammar(import.attributes, is_type_only_import);
         }
 
         // TS1214/TS1212: Check import binding names for strict mode reserved words.

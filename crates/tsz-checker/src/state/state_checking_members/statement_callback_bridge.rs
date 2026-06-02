@@ -199,22 +199,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
             }
 
-            // TS2880: Warn about deprecated `assert` keyword
-            self.check_import_attributes_deprecated_assert(export_decl.attributes);
-
-            // TS2823: Import attributes require specific module options
-            self.check_import_attributes_module_option(
-                export_decl.attributes,
-                export_decl.is_type_only,
-            );
-
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);
 
-            self.check_import_attributes_commonjs_or_type_only(
-                export_decl.attributes,
-                export_decl.is_type_only,
-            );
+            // TS2821/TS2822/TS2823/TS2836/TS2856/TS2857/TS2880: attribute grammar,
+            // ordered to mirror tsc's `checkImportAttributes` precedence.
+            self.check_import_attributes_grammar(export_decl.attributes, export_decl.is_type_only);
 
             // Check module specifier for unresolved modules (TS2792)
             if export_decl.module_specifier.is_some() {
