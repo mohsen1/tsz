@@ -6,5 +6,6 @@ mod entry;
 mod helpers;
 mod heritage_identity;
 mod js_class_properties;
+mod prescan;
 
 pub(super) use helpers::can_skip_base_instantiation;
