@@ -701,11 +701,19 @@ jobs:
               --region=us-central1 \
               --format='value(status)' 2>/dev/null || true
           }
+          capture_cloudbuild_log() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds log "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              > bench-prep-cloudbuild.log 2>&1 || true
+          }
           cloudbuild_id="${{ needs.bench-prepare.outputs.build_id }}"
 
           deadline=$((SECONDS + 9000))
           success_seen_at=""
-          success_grace_seconds=600
+          success_grace_seconds=7200
           while true; do
             rm -f bench-prep.env bench-prep.tar
             if storage_cp \
@@ -737,12 +745,14 @@ jobs:
               fi
               if (( SECONDS - success_seen_at >= success_grace_seconds )); then
                 echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha} after ${success_grace_seconds}s."
+                capture_cloudbuild_log "$cloudbuild_id"
                 exit 1
               fi
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                capture_cloudbuild_log "$cloudbuild_id"
                 exit 1
                 ;;
             esac
@@ -750,6 +760,7 @@ jobs:
             if (( SECONDS >= deadline )); then
               echo "No finished Cloud Build PGO prep artifact is available for ${target_sha} after 150 minutes."
               [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
+              capture_cloudbuild_log "$cloudbuild_id"
               exit 1
             fi
 
@@ -884,12 +895,20 @@ jobs:
               --region=us-central1 \
               --format='value(status)' 2>/dev/null || true
           }
+          capture_cloudbuild_log() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds log "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              > bench-prep-cloudbuild.log 2>&1 || true
+          }
           cloudbuild_id="${{ needs.bench-prepare-cloudbuild.outputs.build_id }}"
           target_sha="${{ env.BENCH_TARGET_SHA }}"
 
           deadline=$((SECONDS + 9000))
           success_seen_at=""
-          success_grace_seconds=600
+          success_grace_seconds=7200
           while true; do
             if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
@@ -920,12 +939,14 @@ jobs:
               fi
               if (( SECONDS - success_seen_at >= success_grace_seconds )); then
                 echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha} after ${success_grace_seconds}s."
+                capture_cloudbuild_log "$cloudbuild_id"
                 exit 1
               fi
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                capture_cloudbuild_log "$cloudbuild_id"
                 exit 1
                 ;;
             esac
@@ -933,12 +954,28 @@ jobs:
             if (( SECONDS >= deadline )); then
               echo "No finished Cloud Build benchmark prep artifact is available for ${{ env.BENCH_TARGET_SHA }} after 150 minutes."
               [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
+              capture_cloudbuild_log "$cloudbuild_id"
               exit 1
             fi
 
             echo "Waiting for Cloud Build benchmark prep artifact (build=${cloudbuild_id:-none}, status=${status:-unknown}, target=${target_sha}, elapsed=${SECONDS}s)..."
             sleep 30
           done
+
+      - name: Upload benchmark prep diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prep-diagnostics
+          path: |
+            bench-prep-cloudbuild.log
+            cloudbuild-artifacts.json
+            cloudbuild-artifacts.env
+            bench-prep.env
+            latest-bench-prep.env
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
 
       - name: Validate benchmark prep artifact
         shell: bash
