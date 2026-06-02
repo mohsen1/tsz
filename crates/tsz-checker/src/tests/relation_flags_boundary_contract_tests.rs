@@ -30,6 +30,7 @@ fn flow_analysis_uses_boundary_relation_flags_surface() {
 fn checker_boundaries_use_explicit_legacy_relation_policy_constructor() {
     for path in [
         "src/query_boundaries/assignability.rs",
+        "src/query_boundaries/class.rs",
         "src/query_boundaries/flow_analysis.rs",
     ] {
         let source = fs::read_to_string(path).expect("failed to read checker query boundary");

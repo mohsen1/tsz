@@ -1,3 +1,4 @@
+use super::relation_policy;
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
@@ -479,9 +480,7 @@ fn overload_return_base_matches_and_params_cover(
     source_type: TypeId,
     target_type: TypeId,
 ) -> bool {
-    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
-        checker.ctx.pack_relation_flags(),
-    );
+    let policy = relation_policy::from_checker_flags_u16(checker.ctx.pack_relation_flags());
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(checker.ctx.types),
         inheritance_graph: Some(&checker.ctx.inheritance_graph),
