@@ -35,6 +35,7 @@ use super::lib_resolution_selected::selected_lib_symbol_for_name;
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 
 impl CheckerState<'_> {
     /// Resolve a single plain property `prop_name` of the simple lib interface
@@ -64,11 +65,8 @@ impl CheckerState<'_> {
         &mut self,
         name: &str,
         prop_name: &str,
-        visited: &mut FxHashSet<String>,
+        visited: &mut FxHashSet<SymbolId>,
     ) -> Option<TypeId> {
-        if !visited.insert(name.to_string()) {
-            return None;
-        }
         if self.ctx.skip_lib_type_resolution {
             return None;
         }
@@ -89,6 +87,9 @@ impl CheckerState<'_> {
 
         let (sym_id, selected_binder_arc) =
             selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders)?;
+        if !visited.insert(sym_id) {
+            return None;
+        }
         let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
         let symbol = selected_binder.get_symbol_with_libs(sym_id, &lib_binders)?;
 
@@ -106,7 +107,7 @@ impl CheckerState<'_> {
         // Find the single own plain-property-signature declaration of `prop_name`
         // across the interface's declarations. Bail (None) on any ambiguity so
         // overloads/split declarations keep their full-path semantics.
-        let mut member: Option<(NodeIndex, &NodeArena, Vec<String>)> = None;
+        let mut member: Option<(NodeIndex, &NodeArena, Vec<SymbolId>)> = None;
         for &(decl_idx, arena) in &decls_with_arenas {
             let Some(node) = arena.get(decl_idx) else {
                 continue;
@@ -117,10 +118,18 @@ impl CheckerState<'_> {
                 // Skip it; the interface body decl is elsewhere in the list.
                 continue;
             };
-            let type_param_names = interface
+            let type_param_symbols = interface
                 .type_parameters
                 .as_ref()
-                .map(|params| self.lib_interface_type_param_names(arena, params))
+                .map(|params| {
+                    self.lib_interface_type_param_symbols(
+                        selected_binder,
+                        arena,
+                        params,
+                        &decls_with_arenas,
+                        fallback_arena,
+                    )
+                })
                 .unwrap_or_default();
             for &member_idx in &interface.members.nodes {
                 let Some(member_node) = arena.get(member_idx) else {
@@ -145,11 +154,11 @@ impl CheckerState<'_> {
                     // Declared more than once — ambiguous, fall back.
                     return None;
                 }
-                member = Some((member_idx, arena, type_param_names.clone()));
+                member = Some((member_idx, arena, type_param_symbols.clone()));
             }
         }
 
-        let (member_idx, member_arena, type_param_names) = if let Some(member) = member {
+        let (member_idx, member_arena, type_param_symbols) = if let Some(member) = member {
             member
         } else {
             let mut heritage_bases = Vec::new();
@@ -215,11 +224,14 @@ impl CheckerState<'_> {
             // shape rather than reimplement the default here.
             return None;
         }
-        if !type_param_names.is_empty()
+        if !type_param_symbols.is_empty()
             && self.type_annotation_references_type_params(
+                selected_binder,
                 member_arena,
                 sig.type_annotation,
-                &type_param_names,
+                &type_param_symbols,
+                &decls_with_arenas,
+                fallback_arena,
             )
         {
             return None;
@@ -281,32 +293,40 @@ impl CheckerState<'_> {
         Some(member_type)
     }
 
-    fn lib_interface_type_param_names(
+    fn lib_interface_type_param_symbols(
         &self,
+        binder: &tsz_binder::BinderState,
         arena: &NodeArena,
         params: &tsz_parser::parser::NodeList,
-    ) -> Vec<String> {
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> Vec<SymbolId> {
         params
             .nodes
             .iter()
             .filter_map(|&param_idx| {
                 let param_node = arena.get(param_idx)?;
                 let param = arena.get_type_parameter(param_node)?;
-                arena.get_identifier_text(param.name).map(str::to_string)
+                resolve_lib_node_in_arenas(binder, param.name, decls_with_arenas, fallback_arena)
             })
             .collect()
     }
 
     fn type_annotation_references_type_params(
         &self,
+        binder: &tsz_binder::BinderState,
         arena: &NodeArena,
         root: NodeIndex,
-        type_param_names: &[String],
+        type_param_symbols: &[SymbolId],
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
     ) -> bool {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
-            if let Some(text) = arena.get_identifier_text(idx)
-                && type_param_names.iter().any(|name| name == text)
+            if arena.get_identifier_text(idx).is_some()
+                && let Some(sym_id) =
+                    resolve_lib_node_in_arenas(binder, idx, decls_with_arenas, fallback_arena)
+                && type_param_symbols.contains(&sym_id)
             {
                 return true;
             }
