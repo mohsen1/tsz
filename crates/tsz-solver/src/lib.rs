@@ -181,6 +181,7 @@ pub mod computation {
     };
 
     // Operations
+    pub use crate::inference::infer_type_arguments_from_param_args;
     pub use crate::operations::infer_generic_function;
     pub use crate::operations::{
         AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
