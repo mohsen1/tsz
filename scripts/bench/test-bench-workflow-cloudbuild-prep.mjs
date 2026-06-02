@@ -98,6 +98,25 @@ assert.match(
   "Cloud Build prep reuse should only skip submit after validating both the env and tar artifacts",
 );
 
+const cloudbuildPrepSubmit = workflow.match(
+  /  bench-prepare-cloudbuild:[\s\S]+?  publish-latest-pgo:/,
+)?.[0] ?? "";
+assert.match(
+  cloudbuildPrepSubmit,
+  /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+manifest_target_sha="\$\(manifest_value BENCH_TARGET_SHA\)"[\s\S]+manifest_build_date="\$\(manifest_value BENCH_BUILD_DATE\)"[\s\S]+manifest_pgo_optimized="\$\(manifest_value BENCH_PGO_OPTIMIZED\)"[\s\S]+--substitutions=_BENCH_TARGET_SHA="\$\{target_sha\}"/,
+  "Cloud Build prep submit should preserve the workflow target SHA when checking reusable artifacts",
+);
+assert.doesNotMatch(
+  cloudbuildPrepSubmit,
+  /source bench-prep\.env/,
+  "Cloud Build prep submit must not source a reusable prep env because it can clobber BENCH_TARGET_SHA before submit",
+);
+assert.match(
+  cloudbuildPrepSubmit,
+  /Existing Cloud Build prep artifact is incomplete or stale; submitting a fresh build\.[\s\S]+rm -f bench-prep\.env bench-prep\.tar[\s\S]+gcloud builds submit/,
+  "Cloud Build prep submit should remove stale reusable artifacts before uploading a fresh source archive",
+);
+
 assert.match(
   workflow,
   /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{target_sha\}\/bench-prep\.env[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{target_sha\}\/bench-prep\.tar/,
