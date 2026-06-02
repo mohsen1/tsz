@@ -9,9 +9,34 @@ use tsz_solver::{
 
 use crate::state::CheckerState;
 
+use tsz_solver::relations::relation_queries::{
+    RelationContext, RelationKind as SolverRelationKind, RelationPolicy, RelationQueryInputs,
+    query_assignability_with_failure_analysis,
+};
+
 use super::relation_policy;
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
+
+/// Build the `(policy, context)` pair shared by the assignability-failure query
+/// paths from packed checker relation flags. Centralizing it keeps the gate
+/// decision and the single-pass failure analysis on identical policy/context.
+fn assignability_policy_and_context<'a>(
+    db: &'a dyn QueryDatabase,
+    inheritance_graph: &'a InheritanceGraph,
+    flags: u16,
+    sound_mode: bool,
+) -> (RelationPolicy, RelationContext<'a>) {
+    let policy = relation_policy::from_checker_flags_u16(flags)
+        .with_strict_subtype_checking(sound_mode)
+        .with_strict_any_propagation(sound_mode);
+    let context = RelationContext {
+        query_db: Some(db),
+        inheritance_graph: Some(inheritance_graph),
+        class_check: None,
+    };
+    (policy, context)
+}
 
 pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     db: &dyn TypeDatabase,
@@ -950,26 +975,18 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::relations::subtype::Ty
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = relation_policy::from_checker_flags_u16(flags)
-        .with_strict_subtype_checking(sound_mode)
-        .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::relations::relation_queries::RelationContext {
-        query_db: Some(db),
-        inheritance_graph: Some(inheritance_graph),
-        class_check: None,
-    };
-    tsz_solver::relations::relation_queries::query_relation_with_overrides(
-        tsz_solver::relations::relation_queries::RelationQueryInputs {
-            interner: db.as_type_database(),
-            resolver,
-            source,
-            target,
-            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
-            policy,
-            context,
-            overrides,
-        },
-    )
+    let (policy, context) =
+        assignability_policy_and_context(db, inheritance_graph, flags, sound_mode);
+    tsz_solver::relations::relation_queries::query_relation_with_overrides(RelationQueryInputs {
+        interner: db.as_type_database(),
+        resolver,
+        source,
+        target,
+        kind: SolverRelationKind::Assignable,
+        policy,
+        context,
+        overrides,
+    })
 }
 
 /// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
@@ -1126,29 +1143,44 @@ pub(crate) fn check_assignable_gate_with_overrides<
 >(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
-    ctx: Option<&crate::context::CheckerContext<'_>>,
     collect_failure_analysis: bool,
 ) -> AssignabilityGateResult {
-    let related = is_assignable_with_overrides(inputs, overrides).is_related();
-
-    if !collect_failure_analysis || related {
+    // When the caller only needs the boolean, take the cheap single-decision path.
+    if !collect_failure_analysis {
+        let related = is_assignable_with_overrides(inputs, overrides).is_related();
         return AssignabilityGateResult {
             related,
             analysis: None,
         };
     }
 
-    let analysis = ctx.map(|ctx| {
-        analyze_assignability_failure_with_context(
-            inputs.db.as_type_database(),
-            ctx,
-            inputs.resolver,
-            inputs.source,
-            inputs.target,
-        )
+    // Otherwise decide and (on failure) explain in a single configured-checker
+    // pass so the structured analysis observes exactly the same relation policy,
+    // overrides, and cached sub-results as the decision and cannot contradict it.
+    let (policy, context) = assignability_policy_and_context(
+        inputs.db,
+        inputs.inheritance_graph,
+        inputs.flags,
+        inputs.sound_mode,
+    );
+    let outcome = query_assignability_with_failure_analysis(RelationQueryInputs {
+        interner: inputs.db.as_type_database(),
+        resolver: inputs.resolver,
+        source: inputs.source,
+        target: inputs.target,
+        kind: SolverRelationKind::Assignable,
+        policy,
+        context,
+        overrides,
     });
-
-    AssignabilityGateResult { related, analysis }
+    let analysis = outcome.analysis.map(|a| AssignabilityFailureAnalysis {
+        weak_union_violation: a.weak_union_violation,
+        failure_reason: a.failure_reason,
+    });
+    AssignabilityGateResult {
+        related: outcome.result.is_related(),
+        analysis,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,7 +1237,6 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     flags: u16,
     inheritance_graph: &InheritanceGraph,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
-    ctx: Option<&crate::context::CheckerContext<'_>>,
     sound_mode: bool,
 ) -> RelationOutcome {
     let _span = tracing::debug_span!(
@@ -1221,38 +1252,40 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
     }
 
-    // BivariantCallbacks uses a different solver entry point that treats
-    // callback parameter types bivariantly (strips strict-function-types).
-    let (related, depth_exceeded, iteration_exceeded) =
-        if request.kind == RelationKind::BivariantCallbacks {
-            let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
-            let r = is_assignable_bivariant_with_resolver(
-                db,
-                resolver,
-                request.source,
-                request.target,
-                bivariant_flags,
-                inheritance_graph,
-                sound_mode,
-            );
-            (r.is_related(), r.depth_exceeded, r.iteration_exceeded)
-        } else {
-            let inputs = AssignabilityQueryInputs {
-                db,
-                resolver,
-                source: request.source,
-                target: request.target,
-                flags: relation_flags,
-                inheritance_graph,
-                sound_mode,
-            };
-            let relation_result = is_assignable_with_overrides(&inputs, overrides);
-            (
-                relation_result.is_related(),
-                relation_result.depth_exceeded,
-                relation_result.iteration_exceeded,
-            )
-        };
+    // BivariantCallbacks treats callback parameter types bivariantly by stripping
+    // strict-function-types. The decision and the failure reason both run under
+    // this policy so they cannot diverge.
+    let (solver_kind, solver_flags) = if request.kind == RelationKind::BivariantCallbacks {
+        (
+            SolverRelationKind::AssignableBivariantCallbacks,
+            relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES,
+        )
+    } else {
+        (SolverRelationKind::Assignable, relation_flags)
+    };
+
+    // Decide the relation and, on failure, capture the structured reason from the
+    // SAME configured checker (single pass). This is the canonical fix for the
+    // boundary's previous double evaluation, where the pass/fail decision and the
+    // failure reason were computed by two independently configured checkers and
+    // could contradict each other (or drop the reason entirely when a checker
+    // override forced the failure).
+    let (policy, context) =
+        assignability_policy_and_context(db, inheritance_graph, solver_flags, sound_mode);
+    let solver_outcome = query_assignability_with_failure_analysis(RelationQueryInputs {
+        interner: db.as_type_database(),
+        resolver,
+        source: request.source,
+        target: request.target,
+        kind: solver_kind,
+        policy,
+        context,
+        overrides,
+    });
+
+    let related = solver_outcome.result.is_related();
+    let depth_exceeded = solver_outcome.result.depth_exceeded;
+    let iteration_exceeded = solver_outcome.result.iteration_exceeded;
 
     if related {
         return RelationOutcome {
@@ -1265,18 +1298,7 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
         };
     }
 
-    // Relation failed — collect structured failure analysis.
-    let analysis = ctx.map(|ctx| {
-        analyze_assignability_failure_with_context(
-            db.as_type_database(),
-            ctx,
-            resolver,
-            request.source,
-            request.target,
-        )
-    });
-
-    let (weak_union_violation, failure) = match analysis {
+    let (weak_union_violation, failure) = match solver_outcome.analysis {
         Some(a) => (
             a.weak_union_violation,
             a.failure_reason
@@ -1770,29 +1792,6 @@ fn is_global_object_or_function_shape(
         let name = db.resolve_atom_ref(prop.name);
         OBJECT_PROTO.contains(&name.as_ref()) || FUNCTION_PROTO.contains(&name.as_ref())
     })
-}
-
-pub(crate) fn analyze_assignability_failure_with_context<
-    R: tsz_solver::relations::subtype::TypeResolver,
->(
-    db: &dyn TypeDatabase,
-    ctx: &crate::context::CheckerContext<'_>,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-) -> AssignabilityFailureAnalysis {
-    let analysis =
-        tsz_solver::relations::relation_queries::analyze_assignability_failure_with_resolver(
-            db,
-            resolver,
-            source,
-            target,
-            |checker| ctx.configure_compat_checker(checker),
-        );
-    AssignabilityFailureAnalysis {
-        weak_union_violation: analysis.weak_union_violation,
-        failure_reason: analysis.failure_reason,
-    }
 }
 
 /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) via the

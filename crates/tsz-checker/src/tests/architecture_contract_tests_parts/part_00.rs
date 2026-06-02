@@ -1208,8 +1208,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "query_boundaries/assignability should not construct CompatChecker directly; use solver relation-query helpers"
     );
     assert!(
-        assignability_boundary_src.contains("analyze_assignability_failure_with_resolver("),
-        "query_boundaries/assignability failure analysis should route through solver relation-query helpers"
+        assignability_boundary_src.contains("query_assignability_with_failure_analysis("),
+        "query_boundaries/assignability failure analysis should route through the solver relation-query \
+         helper that decides and explains in a single configured-checker pass"
     );
 
     let generic_checker_src = {

@@ -1539,7 +1539,7 @@ impl<'a> CheckerState<'a> {
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
         };
-        let gate = check_assignable_gate_with_overrides(&inputs, &overrides, Some(&self.ctx), true);
+        let gate = check_assignable_gate_with_overrides(&inputs, &overrides, true);
         if gate.related
             && let Some(reason) =
                 self.checker_only_assignability_failure_reason(prepared_source, prepared_target)

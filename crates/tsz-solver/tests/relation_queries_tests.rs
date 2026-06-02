@@ -231,6 +231,112 @@ fn assignability_failure_analysis_helper_reports_reason() {
 }
 
 #[test]
+fn single_pass_analysis_matches_decision_and_explains_structural_failure() {
+    // `animal` (only `name`) is not assignable to `dog` (`name` + `breed`).
+    // The single-pass helper must report `related == false` AND surface a
+    // structured reason from the SAME checker pass, with a decision identical
+    // to the canonical boolean query.
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+    let overrides = NoopOverrideProvider;
+    let (animal, dog) = make_animal_dog(&interner);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+
+    let inputs = || RelationQueryInputs {
+        interner: &interner,
+        resolver: &resolver,
+        source: animal,
+        target: dog,
+        kind: RelationKind::Assignable,
+        policy,
+        context: RelationContext::default(),
+        overrides: &overrides,
+    };
+
+    let outcome = query_assignability_with_failure_analysis(inputs());
+    let decision = query_relation_with_overrides(inputs());
+
+    assert_eq!(
+        outcome.result.related, decision.related,
+        "single-pass decision must match the canonical assignability query"
+    );
+    assert!(!outcome.result.related);
+
+    let analysis = outcome
+        .analysis
+        .expect("a failed relation must carry structured analysis");
+    assert!(
+        analysis.failure_reason.is_some(),
+        "missing-property failure must surface a reason from the same pass"
+    );
+}
+
+#[test]
+fn single_pass_analysis_is_absent_when_relation_holds() {
+    // `dog` (name + breed) IS assignable to `animal` (name): the helper must
+    // report `related == true` and carry no failure analysis.
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+    let overrides = NoopOverrideProvider;
+    let (animal, dog) = make_animal_dog(&interner);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+
+    let outcome = query_assignability_with_failure_analysis(RelationQueryInputs {
+        interner: &interner,
+        resolver: &resolver,
+        source: dog,
+        target: animal,
+        kind: RelationKind::Assignable,
+        policy,
+        context: RelationContext::default(),
+        overrides: &overrides,
+    });
+
+    assert!(outcome.result.related);
+    assert!(
+        outcome.analysis.is_none(),
+        "a holding relation must not carry failure analysis"
+    );
+}
+
+#[test]
+fn single_pass_decision_honors_overrides_and_records_analysis() {
+    // An override that forces non-assignability for a structurally-assignable
+    // pair (`number -> number`) drives BOTH the decision and the analysis
+    // through the same configured checker. Previously the decision observed the
+    // override while a separate reason pass did not, leaving `related == false`
+    // with no analysis record. The single-pass helper keeps them coupled.
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+    let overrides = AlwaysRejectOverride;
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+
+    let inputs = || RelationQueryInputs {
+        interner: &interner,
+        resolver: &resolver,
+        source: TypeId::NUMBER,
+        target: TypeId::NUMBER,
+        kind: RelationKind::Assignable,
+        policy,
+        context: RelationContext::default(),
+        overrides: &overrides,
+    };
+
+    let outcome = query_assignability_with_failure_analysis(inputs());
+    let decision = query_relation_with_overrides(inputs());
+
+    assert_eq!(
+        outcome.result.related, decision.related,
+        "single-pass decision must match the canonical override-aware query"
+    );
+    assert!(!outcome.result.related, "override forces non-assignability");
+    assert!(
+        outcome.analysis.is_some(),
+        "a non-related outcome must always carry an analysis record"
+    );
+}
+
+#[test]
 fn redeclaration_identity_evaluates_keyof_to_literal_union() {
     // Regression test: `var v: "a" | "b"; var v: keyof { a: number, b: string }`
     // should NOT produce TS2403 because `keyof { a: number, b: string }` evaluates
