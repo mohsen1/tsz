@@ -83,6 +83,13 @@ pub struct AstToIr<'a> {
     /// lowering (e.g. `let x` → `var x_1` when shadowing an outer `x`).
     /// References inside class bodies must use the renamed form.
     outer_rename_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private field name → `WeakMap` variable name for `__classPrivateFieldGet/Set`.
+    /// Populated from the enclosing class's `PrivateFieldInfo` collection.
+    private_field_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private accessor name → getter `WeakMap` variable name.
+    private_get_accessor_map: rustc_hash::FxHashMap<String, String>,
+    /// Maps clean private accessor name → setter `WeakMap` variable name.
+    private_set_accessor_map: rustc_hash::FxHashMap<String, String>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -110,7 +117,58 @@ impl<'a> AstToIr<'a> {
             blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
             generated_disposable_env_names: RefCell::new(Vec::new()),
             outer_rename_map: rustc_hash::FxHashMap::default(),
+            private_field_map: rustc_hash::FxHashMap::default(),
+            private_get_accessor_map: rustc_hash::FxHashMap::default(),
+            private_set_accessor_map: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Provide private field and accessor storage maps so that `this.#x` references
+    /// inside method/accessor bodies lower to `__classPrivateFieldGet/Set` calls.
+    pub fn with_private_field_maps(
+        mut self,
+        fields: &[crate::transforms::private_fields_es5::PrivateFieldInfo],
+        accessors: &[crate::transforms::private_fields_es5::PrivateAccessorInfo],
+    ) -> Self {
+        for field in fields {
+            self.private_field_map
+                .insert(field.name.clone(), field.weakmap_name.clone());
+        }
+        for accessor in accessors {
+            if let Some(ref get_var) = accessor.get_var_name {
+                self.private_get_accessor_map
+                    .insert(accessor.name.clone(), get_var.clone());
+            }
+            if let Some(ref set_var) = accessor.set_var_name {
+                self.private_set_accessor_map
+                    .insert(accessor.name.clone(), set_var.clone());
+            }
+        }
+        self
+    }
+
+    /// Look up private-field storage info for a read of `this.#name`.
+    /// Returns `(weakmap_var, kind)` where kind is `"f"` for fields or `"a"` for accessors.
+    pub(super) fn private_read_info(&self, clean_name: &str) -> Option<(String, &'static str)> {
+        if let Some(var) = self.private_field_map.get(clean_name) {
+            return Some((var.clone(), "f"));
+        }
+        if let Some(var) = self.private_get_accessor_map.get(clean_name) {
+            return Some((var.clone(), "a"));
+        }
+        None
+    }
+
+    /// Look up private-field storage info for a write `this.#name = v`.
+    /// Returns `(weakmap_var, kind)` where kind is `"f"` for fields or `"a"` for accessors.
+    pub(super) fn private_write_info(&self, clean_name: &str) -> Option<(String, &'static str)> {
+        if let Some(var) = self.private_field_map.get(clean_name) {
+            return Some((var.clone(), "f"));
+        }
+        if let Some(var) = self.private_set_accessor_map.get(clean_name) {
+            return Some((var.clone(), "a"));
+        }
+        None
     }
 
     /// Set the outer rename map: original → emitted name for block-scoped

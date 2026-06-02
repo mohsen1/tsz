@@ -818,7 +818,8 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get())
             .with_class_transformer_indent_base(self.indent_base + 2)
             .with_downlevel_iteration(self.downlevel_iteration)
-            .with_module_kind(self.module_kind);
+            .with_module_kind(self.module_kind)
+            .with_private_field_maps(&self.private_fields, &self.private_accessors);
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);
         }

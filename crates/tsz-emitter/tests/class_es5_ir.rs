@@ -140,8 +140,8 @@ fn private_members_keep_storage_inside_es5_class_iife() {
         "ES5 class declarations should not hoist private storage before the IIFE.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("function A() {\n        _A_instances.add(this);\n        _A_field.set(this, 123);\n    }"),
-        "Instance private methods/accessors need a WeakSet brand and private fields initialize directly.\nOutput:\n{output}"
+        output.contains("function A() {\n        _A_instances.add(this);\n        __classPrivateFieldSet(this, _A_field, 123, \"f\");\n    }"),
+        "Instance private methods/accessors need a WeakSet brand and private fields initialize with __classPrivateFieldSet.\nOutput:\n{output}"
     );
     assert!(
         output.contains("var _A_instances, _a, _A_field, _A_method, _A_sField, _A_sMethod, _A_acc_get, _A_acc_set, _A_sAcc_get, _A_sAcc_set;"),
@@ -245,7 +245,7 @@ fn test_class_with_private_field() {
     let output = output.expect("transform should succeed in test");
 
     assert!(output.contains("var _Container_value"));
-    assert!(output.contains("_Container_value.set(this, void 0)"));
+    assert!(output.contains("__classPrivateFieldSet(this, _Container_value, 42, \"f\")"));
     assert!(output.contains("_Container_value = new WeakMap()"));
 }
 
