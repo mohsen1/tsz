@@ -6,7 +6,10 @@
 //! - Object-like type detection for instanceof support
 
 use super::{CachedPropertyType, NarrowingContext};
-use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeData, TypeId, Visibility};
+use crate::operations::property::PropertyAccessResult;
+use crate::types::{
+    IntrinsicKind, ObjectFlags, ObjectShapeId, PropertyInfo, TypeData, TypeId, Visibility,
+};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,
     union_list_id,
@@ -225,6 +228,20 @@ impl<'a> NarrowingContext<'a> {
 
         if present {
             // Positive: "prop" in x
+            //
+            // `has_property` is apparent-type aware (so arrays/functions/
+            // primitives are recognised), but the structural property the
+            // promotion logic below needs only exists for object shapes. When
+            // the member is contributed purely by the apparent type (e.g.
+            // `push` on `T[]`, `call` on a function type) there is no own slot
+            // to promote, and tsc leaves the receiver unchanged — so return it
+            // as-is rather than synthesising a bogus `{ prop: unknown }` slot.
+            let has_own_property = self
+                .get_property_type(resolved_type, property_name)
+                .is_some();
+            if has_property && !has_own_property {
+                return source_type;
+            }
             if has_property {
                 // Property exists: promote to required. For exact-optional
                 // slots the write type excludes the synthetic missing-property
@@ -334,7 +351,17 @@ impl<'a> NarrowingContext<'a> {
     /// Returns true if the type has the property (required or optional),
     /// or has an index signature that would match the property.
     pub(crate) fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
-        self.get_property_type(type_id, property_name).is_some()
+        if self.get_property_type(type_id, property_name).is_some() {
+            return true;
+        }
+        // The structural lookup above only models object/intersection shapes.
+        // Array, tuple, function and primitive receivers carry their members on
+        // their *apparent* type (`Array<T>`/`ReadonlyArray<T>`, the global
+        // `Function`, the boxed primitive interfaces), so `tsc`'s `in`-operator
+        // narrowing resolves the key against the apparent type. Mirror that for
+        // parity (e.g. `"push" in arr`, `"call" in fn`).
+        self.apparent_member_presence(type_id, property_name)
+            .is_some()
     }
 
     /// Check if a property exists and is required on a type.
@@ -397,7 +424,68 @@ impl<'a> NarrowingContext<'a> {
                 .any(|&m| self.is_property_required(m, property_name));
         }
 
+        // Apparent-type members of arrays/tuples/functions/primitives (e.g.
+        // `push`, `call`, `length`) are non-optional declarations on the boxed
+        // interface, so they are *required*: `!("push" in x)` excludes a `T[]`
+        // constituent. Members reached only through an index signature are not
+        // guaranteed to be present, so they stay (mirroring the object-shape
+        // index-signature handling, which never marks index members required).
+        if let Some(from_index_signature) =
+            self.apparent_member_presence(resolved_type, property_name)
+        {
+            return !from_index_signature;
+        }
+
         false
+    }
+
+    /// Resolve `property_name` against the *apparent* type of receivers that the
+    /// structural lookup above does not model: arrays, tuples, function types
+    /// and primitives expose their members through their apparent type
+    /// (`Array<T>`/`ReadonlyArray<T>`, the global `Function`, the boxed
+    /// primitive interfaces) rather than through an object shape.
+    ///
+    /// Returns `Some(from_index_signature)` when the apparent type has the
+    /// member, where `from_index_signature` reports whether it was matched via
+    /// an index signature rather than a named declaration. Object, class and
+    /// interface shapes are intentionally excluded because the structural
+    /// lookup already covers them, and routing them through the heavier
+    /// property resolver would be redundant.
+    fn apparent_member_presence(&self, type_id: TypeId, property_name: Atom) -> Option<bool> {
+        let resolved_type = self.resolve_type(type_id);
+        let bears_apparent_members = match self.db.lookup(resolved_type) {
+            Some(
+                TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_)
+                | TypeData::ReadonlyType(_),
+            ) => true,
+            Some(TypeData::Intrinsic(kind)) => matches!(
+                kind,
+                IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol
+            ),
+            _ => false,
+        };
+        if !bears_apparent_members {
+            return None;
+        }
+
+        let name = self.db.resolve_atom_ref(property_name);
+        match self
+            .db
+            .resolve_property_access(resolved_type, name.as_ref())
+        {
+            PropertyAccessResult::Success {
+                from_index_signature,
+                ..
+            } => Some(from_index_signature),
+            _ => None,
+        }
     }
 
     /// Get the type of a property if it exists.
