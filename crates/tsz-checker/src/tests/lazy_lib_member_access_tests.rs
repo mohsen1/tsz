@@ -125,3 +125,75 @@ export {};
         "user-shadowed interface own member should resolve, got {codes:?}",
     );
 }
+
+/// Own plain property read on a **known-global lib value** receiver (e.g.
+/// `document`, `location`, `navigator` directly, not via a typed local) resolves
+/// to the correct member type with no diagnostics. This is the case the global
+/// value-type override would otherwise eagerly materialize; preserving the bare
+/// `Lazy` receiver keeps the single-member fast path engaged. Proven across three
+/// distinct globals + members so the behavior follows the shape, not a spelling.
+#[test]
+fn global_value_receiver_own_member_resolves_without_diagnostics() {
+    let codes = dom_codes(
+        r#"
+const a: string = document.title;
+const b: string = location.href;
+const c: string = navigator.userAgent;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "global-value own-member reads should not produce diagnostics, got {codes:?}",
+    );
+}
+
+/// A type mismatch on an own member read through a global value receiver must
+/// still report TS2322 — preserving the lazy receiver does not widen the member.
+#[test]
+fn global_value_receiver_type_mismatch_still_errors() {
+    let codes = dom_codes(
+        r#"
+const wrong: number = document.title;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "string member assigned to number via global receiver should report TS2322, got {codes:?}",
+    );
+}
+
+/// A missing member on a global value receiver must still report TS2339 — the
+/// on-demand materialization fallback runs when the fast path misses, so the
+/// diagnostic is unchanged from the eager-override path.
+#[test]
+fn global_value_receiver_missing_member_still_reports_ts2339() {
+    let codes = dom_codes(
+        r#"
+const x = document.definitelyNotARealDomMember;
+export {};
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "absent member on global receiver should report TS2339, got {codes:?}",
+    );
+}
+
+/// An inherited member read through a global value receiver must still resolve.
+/// The own-member fast path misses (the member lives on a base interface) and the
+/// full materialization path provides it — same result, just not eagerly forced.
+#[test]
+fn global_value_receiver_inherited_member_still_resolves() {
+    let codes = dom_codes(
+        r#"
+const n: string = document.nodeName;
+export {};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "inherited member via global receiver should resolve cleanly, got {codes:?}",
+    );
+}

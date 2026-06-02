@@ -40,7 +40,8 @@
 
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
-use tsz_solver::DefId;
+use tsz_parser::parser::NodeIndex;
+use tsz_solver::{DefId, TypeId};
 
 /// Kill-switch for the lazy single-member lib-interface property-access fast
 /// path. Set `TSZ_DISABLE_LAZY_MEMBER_ACCESS=1` to force the legacy
@@ -57,7 +58,64 @@ pub(crate) fn lazy_lib_member_access_disabled() -> bool {
     })
 }
 
+/// Kill-switch for preserving a bare-`Lazy` lib-interface receiver through the
+/// known-global value-type override in property-access resolution. Set
+/// `TSZ_DISABLE_GLOBAL_LAZY_RECV_PRESERVE=1` to force the legacy path that
+/// always re-materializes the global value type, enabling byte-identical
+/// diagnostic comparison.
+///
+/// Without this preservation, a global receiver like `document` (whose type is
+/// already `Lazy(Document)`) is eagerly materialized to its full `Object` shape
+/// — merging the entire heritage chain — even when only one own member is read,
+/// defeating [`CheckerState::try_lazy_lib_member_property_access`].
+pub(crate) fn global_lazy_receiver_preserve_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_GLOBAL_LAZY_RECV_PRESERVE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 impl CheckerState<'_> {
+    /// Compute the known-global value-type override for a property-access
+    /// receiver identifier `ident_text`, given the receiver's `current_type`
+    /// and its expression node `expr`. Returns `Some(value_type)` to override,
+    /// or `None` to keep `current_type`.
+    ///
+    /// The override makes an unshadowed known-global value (e.g. `document`,
+    /// `location`) authoritative over a stale/JS-inferred receiver type. But
+    /// when `current_type` is *already* a bare `Lazy(DefId)` to an eligible
+    /// simple lib interface, it IS the authoritative global type — overriding
+    /// would only re-materialize the identical interface eagerly, defeating the
+    /// lazy single-member fast path for global receivers like `document.title`
+    /// (the receiver arrives lazy but is forced to a full `Object` shape,
+    /// merging the whole heritage chain to read one member). In that case this
+    /// returns `None` to preserve the lazy receiver; the fast path resolves the
+    /// accessed own member, and on a miss the downstream materialization
+    /// fallback produces the identical `Object` the override would have.
+    /// Preservation is gated by [`global_lazy_receiver_preserve_disabled`].
+    pub(crate) fn global_value_type_override(
+        &mut self,
+        ident_text: &str,
+        current_type: TypeId,
+        expr: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.is_known_global_value_name(ident_text)
+            || self.known_global_value_has_local_shadow(expr, ident_text)
+        {
+            return None;
+        }
+        if !global_lazy_receiver_preserve_disabled()
+            && self.lazy_lib_member_receiver_def_id(current_type).is_some()
+        {
+            return None;
+        }
+        let value_type = self.type_of_value_symbol_by_name(ident_text);
+        (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
+    }
+
     /// Return the `DefId` of an eligible simple lib-interface receiver when
     /// `object_type` is a bare `Lazy(DefId)` reference to one, or `None`
     /// otherwise.

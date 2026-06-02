@@ -400,18 +400,16 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        // Override object_type with the global value type only when the identifier
-        // actually resolves to a global, not when a local variable shadows the global.
-        // E.g., `let location = shape.location; location.x` should use the local's type,
-        // not the DOM `Location` global type.
+        // Override object_type with the global value type for an unshadowed known
+        // global (e.g. `let location = shape.location; location.x` keeps the local
+        // type, but bare `location.x` uses the DOM `Location` global). Preserves an
+        // already-eligible bare `Lazy` receiver so the lazy single-member fast path
+        // stays engaged for `document.title` etc. See `global_value_type_override`.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
-            && self.is_known_global_value_name(&ident.escaped_text)
-            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
+            && let Some(value_type) =
+                self.global_value_type_override(&ident.escaped_text, object_type, access.expression)
         {
-            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                object_type = value_type;
-            }
+            object_type = value_type;
         }
 
         if self.ctx.is_js_file()
@@ -805,16 +803,18 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(original_object_type)
         };
 
-        // Override display type with global value type only when the identifier
-        // actually resolves to a global, not when a local variable shadows it.
+        // Override display type with the global value type for an unshadowed known
+        // global, preserving an already-eligible bare `Lazy` display type (it
+        // renders identically by name, e.g. `Document`, without forcing a full
+        // structural materialization). See `global_value_type_override`.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
-            && self.is_known_global_value_name(&ident.escaped_text)
-            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
+            && let Some(value_type) = self.global_value_type_override(
+                &ident.escaped_text,
+                display_object_type,
+                access.expression,
+            )
         {
-            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                display_object_type = value_type;
-            }
+            display_object_type = value_type;
         }
 
         if self.ctx.is_js_file()
