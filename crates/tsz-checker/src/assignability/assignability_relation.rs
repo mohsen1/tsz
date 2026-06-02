@@ -243,27 +243,31 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Raw-input detectors fire on the unevaluated operands and own failure
-        // shapes the solver's evaluated pipeline cannot reconstruct (index-
-        // access type-param mismatch, abstract-constructor assignment, same-
-        // generic application with differing args). They MUST override any
-        // wrapper reason the boundary's evaluated-shape pass produced (e.g.
-        // "Types of property 'x' are incompatible"), otherwise TS2322 loses
-        // tsc's direct elaboration chain. This mirrors the early-return
-        // ordering of `analyze_assignability_failure`.
-        let raw_reason = self.raw_input_failure_reason(source, target);
-        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
-        let request = crate::query_boundaries::assignability::RelationRequest::assign(
-            prepared_source,
-            prepared_target,
-        );
+        let raw_source = source;
+        let raw_target = target;
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::assign(source, target);
         let mut outcome = self.execute_relation_request(&request);
-        if let Some(reason) = raw_reason {
-            outcome.failure = Some(
-                crate::query_boundaries::relation_types::RelationFailure::from_solver_reason(
-                    reason,
-                ),
-            );
+
+        // Solver pass returned `failure=None`: `is_assignable_to` rejected via
+        // a checker-side fast-path the solver cannot reconstruct after
+        // `prepare_assignability_inputs`. The raw-input detectors recover the
+        // structured reason — see `raw_input_failure_reason` for the families.
+        //
+        // This intentionally only fires when `outcome.failure` is empty. When
+        // the boundary already produced a reason (e.g. property-incompatible
+        // for `C<A..>` vs `C<B..>`), the TS2322 emit path consumes that reason
+        // via `analyze_assignability_failure`, which runs the raw-input
+        // detectors FIRST and overrides the wrapper reason there. Overriding
+        // `outcome.failure` from here would also change what
+        // `contextual_callable_member_failure_is_generic_parameter_drift` and
+        // similar `outcome.failure`-reading predicates observe, which has
+        // unrelated semantic side-effects (see #12239 review).
+        if outcome.failure.is_none()
+            && let Some(reason) = self.raw_input_failure_reason(raw_source, raw_target)
+        {
+            Self::set_failure_from_reason_if_empty(&mut outcome, reason);
         }
 
         outcome.related = false;
