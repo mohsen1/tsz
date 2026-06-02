@@ -24,7 +24,7 @@ fn mapped_type_without_template_type_emits_single_7039() {
     let diagnostics = check_with_no_implicit_any(
         r#"
         type MissingTemplate<T> = { [K in keyof T] };
-        "#, 
+        "#,
     );
 
     assert_eq!(
@@ -39,7 +39,7 @@ fn mapped_type_without_template_type_emits_single_7039_for_renamed_parameter() {
     let diagnostics = check_with_no_implicit_any(
         r#"
         type MissingTemplate<T> = { [Q in keyof T] };
-        "#, 
+        "#,
     );
 
     assert_eq!(

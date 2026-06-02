@@ -248,11 +248,11 @@ impl CheckerState<'_> {
                 }
 
                 for &type_idx in &heritage.types.nodes {
-                    let Some(type_node) = arena.get(type_idx) else {
+                    if arena.get(type_idx).is_none() {
                         continue;
-                    };
+                    }
                     let Some((base_expr_idx, has_type_args)) =
-                        self.get_heritage_expr_and_type_args(arena, type_node)
+                        self.get_heritage_expr_and_type_args(arena, type_idx)
                     else {
                         return Err(());
                     };
@@ -263,7 +263,7 @@ impl CheckerState<'_> {
                         return Err(());
                     };
 
-                    match self.resolve_simple_lib_interface_property(base_name, prop_name, visited)
+                    match self.resolve_simple_lib_interface_property(&base_name, prop_name, visited)
                     {
                         Ok(Some(base_member)) => {
                             if resolved_member.is_some() {

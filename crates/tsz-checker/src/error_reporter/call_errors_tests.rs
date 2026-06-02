@@ -1768,8 +1768,7 @@ declare function filter<A>(fn: (t: A) => number): {name}<A, A>;
 declare function pipe<A, B>(op1: {name}<A, B>): {name}<A, B>;
 declare function pipe<A, B, C>(op1: {name}<A, B>, op2: {name}<B, C>): {name}<A, C>;
 const r = pipe(map((x: number) => x + 1), filter(x => x > 0));
-"#,
-            name = name
+"#
         );
 
         let diagnostics = check_source_with_strict_null(&source);
