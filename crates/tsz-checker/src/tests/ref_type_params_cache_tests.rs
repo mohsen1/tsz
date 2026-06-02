@@ -180,6 +180,35 @@ type M2 = StringMap<string, boolean>;
 }
 
 #[test]
+fn partial_indexed_access_keeps_lib_alias_body_state() {
+    let diags = check_source_diagnostics(
+        r#"
+type Foo = {
+    x: number;
+    y: string;
+};
+
+function getValueConcrete<K extends keyof Foo>(
+    o: Partial<Foo>,
+    k: K
+): Foo[K] | undefined {
+    return o[k];
+}
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2536))
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Indexed access through Partial<T> should preserve lib alias body state; got: {errors:#?}"
+    );
+}
+
+#[test]
 fn many_refs_to_same_two_param_type_all_valid() {
     let diags = check_source_diagnostics(
         r#"

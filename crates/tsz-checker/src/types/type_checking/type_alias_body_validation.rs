@@ -1,7 +1,9 @@
 //! Helpers for type-alias body validation that stay off the hot lowering path.
 
 use crate::state::CheckerState;
+use crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_explicit_type_reference_for_alias_body_validation(
@@ -9,7 +11,11 @@ impl<'a> CheckerState<'a> {
         ref_idx: NodeIndex,
         nested_in_type_literal: bool,
     ) -> bool {
-        if nested_in_type_literal || self.is_inside_type_parameter_declaration(ref_idx) {
+        if nested_in_type_literal
+            || self.is_inside_type_parameter_declaration(ref_idx)
+            || !self.type_reference_is_in_type_alias_body(ref_idx)
+            || is_builtin_lib_declaration_arena(self.ctx.arena)
+        {
             return false;
         }
         let Some(node) = self.ctx.arena.get(ref_idx) else {
@@ -31,5 +37,30 @@ impl<'a> CheckerState<'a> {
 
         self.validate_type_reference_type_arguments(tsz_binder::SymbolId(raw), &args, ref_idx);
         true
+    }
+
+    fn type_reference_is_in_type_alias_body(&self, ref_idx: NodeIndex) -> bool {
+        let mut current = ref_idx;
+        while current.is_some() {
+            let Some(parent_idx) = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map(|extended| extended.parent)
+            else {
+                return false;
+            };
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return true;
+            }
+            current = parent_idx;
+        }
+        false
     }
 }
