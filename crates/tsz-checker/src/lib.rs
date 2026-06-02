@@ -810,6 +810,9 @@ mod mutable_binding_widening_from_const_literal_tests;
 #[path = "tests/namespace_property_mismatch_boundary_arch_tests.rs"]
 mod namespace_property_mismatch_boundary_arch_tests;
 #[cfg(test)]
+#[path = "../tests/never_absorption_call_spread_tests.rs"]
+mod never_absorption_call_spread_tests;
+#[cfg(test)]
 #[path = "../tests/never_initializer_falls_through_tests.rs"]
 mod never_initializer_falls_through_tests;
 #[cfg(test)]

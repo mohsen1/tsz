@@ -13,6 +13,22 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    /// Whether an array-literal spread source is the `never` type (directly, or as
+    /// an empty intersection such as `string & number` that reduces to `never`).
+    ///
+    /// `never` is array-like in tsc, so spreading it into an array literal is valid.
+    /// Evaluation is gated on intersection shape so the common (non-`never`) spread
+    /// source does not pay for a reduction it cannot need.
+    fn spread_source_is_never(&mut self, spread_type: TypeId) -> bool {
+        if spread_type == TypeId::NEVER {
+            return true;
+        }
+        if query_common::is_intersection_type(self.ctx.types, spread_type) {
+            return self.evaluate_type_for_assignability(spread_type) == TypeId::NEVER;
+        }
+        false
+    }
+
     fn array_element_is_const_assertion(&self, elem_idx: NodeIndex) -> bool {
         let mut current = elem_idx;
         while let Some(node) = self.ctx.arena.get(current) {
@@ -873,6 +889,32 @@ impl<'a> CheckerState<'a> {
                 } else {
                     spread_expr_type
                 };
+                // tsc treats `never` as array-like (`never <: readonly any[]`):
+                // spreading a `never` value into an array literal is allowed,
+                // contributes a `never` element (so `[...x]` is `never[]`), and
+                // produces no TS2488. The for-of, array-destructuring, and
+                // call-argument spread paths instead route through the iterated-type
+                // check, which reports TS2488 for `never`, so this exemption is scoped
+                // to array-literal value spreads. Empty intersections such as
+                // `string & number` reduce to `never`, so evaluate before comparing.
+                if !self.ctx.in_destructuring_target
+                    && self.spread_source_is_never(spread_expr_type)
+                {
+                    if tuple_context.is_some() || self.ctx.in_const_assertion {
+                        tuple_elements.push(TupleElement {
+                            type_id: TypeId::NEVER,
+                            name: None,
+                            optional: false,
+                            rest: true,
+                        });
+                    } else {
+                        saw_array_element_for_bct = true;
+                        all_array_elements_const_asserted = false;
+                        element_types.push(TypeId::NEVER);
+                    }
+                    continue;
+                }
+
                 // Check if spread argument is iterable, emit TS2488 if not.
                 // Skip this check when the array is a destructuring target
                 // (e.g., `[...c] = expr`), since the spread element is an assignment
