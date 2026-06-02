@@ -1649,6 +1649,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         index: usize,
         source_element: TypeId,
         target_element: TypeId,
+        multi_element: bool,
     ) -> SubtypeFailureReason {
         let nested_reason = self
             .explain_failure(source_element, target_element)
@@ -1658,6 +1659,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_element,
             target_element,
             nested_reason,
+            multi_element,
         }
     }
 
@@ -1725,6 +1727,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     source_end - 1,
                                     s_elem.type_id,
                                     tail_elem.type_id,
+                                    // Rest/variadic tuples are multi-position;
+                                    // keep the positional disambiguation line.
+                                    true,
                                 ));
                             }
                             source_end -= 1;
@@ -1756,6 +1761,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             source_end - 1,
                             s_elem.type_id,
                             tail_elem.type_id,
+                            true,
                         ));
                     }
                     source_end -= 1;
@@ -1780,6 +1786,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     j,
                                     s_elem.type_id,
                                     t_fixed.type_id,
+                                    true,
                                 ));
                             }
                         }
@@ -1804,6 +1811,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     j,
                                     s_elem.type_id,
                                     variadic_array,
+                                    true,
                                 ));
                             }
                         } else if variadic_is_type_param {
@@ -1816,6 +1824,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 j,
                                 s_elem.type_id,
                                 variadic,
+                                true,
                             ));
                         }
                     }
@@ -1863,6 +1872,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         source_element: s_elem.type_id,
                         target_element: t_elem.type_id,
                         nested_reason: nested.map(Box::new),
+                        // Single-element tuples have no position to disambiguate,
+                        // so tsc omits the TS2626 positional line and relates the
+                        // element types directly.
+                        multi_element: target.len() > 1,
                     });
                 }
             } else if !t_elem.optional {
