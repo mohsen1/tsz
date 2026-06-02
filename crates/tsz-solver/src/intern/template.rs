@@ -436,8 +436,8 @@ impl TypeInterner {
         // Bare `${string}` is the only intrinsic placeholder that collapses to
         // `string`, matching tsc's `getTemplateLiteralType` single-span rule.
         // `${any}` and `${unknown}` are intentionally kept as distinct deferred
-        // template literal types: `string` is NOT assignable to `\`${any}\`` or
-        // `\`${unknown}\`` (tsc emits TS2322 for those assignments).
+        // template literal types: `string` is NOT assignable to `` `${any}` `` or
+        // `` `${unknown}` `` (tsc emits TS2322 for those assignments).
         if let [TemplateSpan::Type(type_id)] = spans.as_slice()
             && *type_id == TypeId::STRING
         {

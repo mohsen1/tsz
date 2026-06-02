@@ -1490,15 +1490,14 @@ fn test_template_literal_with_never() {
 }
 
 #[test]
-fn test_template_literal_with_any() {
-    // `${any}` template with any should produce string
-    // TypeScript: `prefix-${any}` collapses to `string` because any can be any value
+fn test_template_literal_with_any_is_distinct() {
+    // tsc keeps `${any}` as a distinct TemplateLiteral type — `string` is NOT
+    // assignable to `${any}` (TS2322). Must NOT collapse to STRING.
     let interner = TypeInterner::new();
 
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
 
-    // Template with any should widen to string - any stringifies to any possible string
-    assert_eq!(template, TypeId::STRING);
+    assert_ne!(template, TypeId::STRING);
 }
 
 #[test]

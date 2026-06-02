@@ -162,6 +162,14 @@ impl<'a> InferenceContext<'a> {
             return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
+        // Mirror tsc's `getCommonSubtype` for high-priority contra-candidates
+        // (NakedTypeVariable, HomomorphicMappedType, PartialHomomorphicMappedType):
+        // use common-subtype tournament rather than intersection. Switching these
+        // to intersection caused conformance regressions in coAndContraVariantInferences2,
+        // correlatedUnions, and inferentialTypingWithFunctionTypeZip because tsz's
+        // interner does not simplify `string & number` to `never` as tsc does.
+        // Only lower-priority (combination) priorities use intersection, matching
+        // tsc's PriorityImpliesCombination flag.
         let best_priority = contra_types.iter().map(|c| c.priority).min();
         let priority_implies_combination = best_priority.is_some_and(|priority| {
             matches!(

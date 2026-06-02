@@ -1524,10 +1524,12 @@ fn template_literal_with_never_is_never() {
 }
 
 #[test]
-fn template_literal_with_any_is_string() {
+fn template_literal_with_any_is_distinct_template() {
+    // tsc keeps `${any}` as a distinct TemplateLiteral — NOT equal to string (TS2322 parity).
     let i = TypeInterner::new();
     let t = i.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
-    assert_eq!(t, TypeId::STRING);
+    assert_ne!(t, TypeId::STRING);
+    assert!(matches!(i.lookup(t), Some(TypeData::TemplateLiteral(_))));
 }
 
 #[test]
