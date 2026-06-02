@@ -411,6 +411,22 @@ fn cjs_string_literal_specifier_stays_lazy() {
 }
 
 #[test]
+fn cjs_no_substitution_template_specifier_stays_lazy() {
+    // A NoSubstitutionTemplateLiteral is string-like, so it follows the lazy form
+    // with the specifier inlined verbatim — no `${…}` coercion wrapper.
+    // tsc 5.8.3: Promise.resolve().then(() => __importStar(require(`./mod`)))
+    let out = cjs("async function load() { return await import(`./mod`); }");
+    assert!(
+        out.contains("Promise.resolve().then(() => __importStar(require(`./mod`)))"),
+        "no-substitution template specifier must use the lazy form with the specifier inlined.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("Promise.resolve(`${"),
+        "no-substitution template specifier must not be wrapped in a `${{…}}` coercion.\nOutput:\n{out}"
+    );
+}
+
+#[test]
 fn amd_template_specifier_inlines_in_require_array() {
     // AMD never captures; template expression must be inlined in require([...]).
     let out = amd("async function load(id: string) { return await import(`./widgets/${id}`); }");
