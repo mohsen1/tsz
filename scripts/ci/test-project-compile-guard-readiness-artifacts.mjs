@@ -572,8 +572,26 @@ exit 0
     TSZ_PROJECT_COMPILE_RESULT_CACHE: "0",
   };
 
-  spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
-  spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
+  const r1 = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(
+    r1.status,
+    0,
+    `first cache-disabled run failed:\n${r1.stderr}\n${r1.stdout}`,
+  );
+  const r2 = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(
+    r2.status,
+    0,
+    `second cache-disabled run failed:\n${r2.stderr}\n${r2.stdout}`,
+  );
 
   assert.equal(
     fs.readFileSync(runCountFile, "utf8"),
