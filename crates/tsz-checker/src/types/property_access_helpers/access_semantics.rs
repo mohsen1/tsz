@@ -1099,47 +1099,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit TS1470 if `import.meta` appears in a file that builds to CommonJS output.
+    /// Report the module-compatibility error for `import.meta` when the
+    /// effective module kind does not support the meta-property, matching
+    /// `tsc`'s two distinct diagnostics:
     ///
-    /// TSC logic: in Node16/NodeNext module modes, the per-file format determines
-    /// whether the file outputs CJS (TS1470). For older module modes (< ES2020,
-    /// excluding System), ALL files produce CJS output so TS1470 always fires.
-    pub(in crate::types_domain) fn check_import_meta_in_cjs(&mut self, node_idx: NodeIndex) {
+    /// * Node16/Node18/Node20/NodeNext: `import.meta` is fine in ES-module
+    ///   files but not in files that resolve to CommonJS output, so the
+    ///   per-file format decides whether to emit TS1470 ("not allowed in
+    ///   files which will build into CommonJS output").
+    /// * CommonJS, AMD, UMD, and ES2015 (every module kind below ES2020 that
+    ///   is not System and not a Node mode): the meta-property is unavailable
+    ///   regardless of the file, so `tsc` emits TS1343 ("only allowed when the
+    ///   '--module' option is 'es2020', ..."). Earlier tsz always emitted
+    ///   TS1470 here, which diverged from `tsc`.
+    /// * System and ES2020+ support `import.meta` natively, so no error.
+    ///
+    /// The default-module case (`None`) is resolved to a concrete module kind
+    /// by the driver before checking, so it never reaches this branch as
+    /// `None` for an ES2020+ target.
+    pub(in crate::types_domain) fn check_import_meta_module_support(
+        &mut self,
+        node_idx: NodeIndex,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_common::common::ModuleKind;
 
         let module_kind = self.ctx.compiler_options.module;
-        let should_error = if module_kind.is_node_module() {
-            // Node16/Node18/Node20/NodeNext: per-file CJS/ESM determination
+        if module_kind.is_node_module() {
+            // Node16/Node18/Node20/NodeNext: per-file CJS/ESM determination.
+            // Only files that build into CommonJS output are rejected (TS1470).
             let current_file = &self.ctx.file_name;
             let is_commonjs_file = current_file.ends_with(".cts") || current_file.ends_with(".cjs");
             let is_esm_file = current_file.ends_with(".mts") || current_file.ends_with(".mjs");
-            if is_commonjs_file {
-                true
-            } else if is_esm_file {
-                false
-            } else if let Some(is_esm) = self.ctx.file_is_esm {
-                !is_esm
-            } else {
-                false
+            // `.cts`/`.cjs` force CJS, `.mts`/`.mjs` force ESM; otherwise an
+            // extensionless `.ts`/`.js` builds to CJS only when the resolved
+            // format is explicitly CommonJS (`file_is_esm == Some(false)`).
+            let builds_to_cjs =
+                is_commonjs_file || (!is_esm_file && self.ctx.file_is_esm == Some(false));
+            if builds_to_cjs {
+                self.error_at_node(
+                    node_idx,
+                    diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
+                    diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
+                );
             }
-        } else if module_kind == ModuleKind::System
-            || (module_kind as u32) >= (ModuleKind::ES2020 as u32)
+        } else if module_kind != ModuleKind::System
+            && (module_kind as u32) < (ModuleKind::ES2020 as u32)
         {
-            // System and ES2020+ support import.meta natively
-            false
-        } else {
-            // CommonJS, AMD, UMD, ES2015, None -> always CJS output
-            true
-        };
-
-        if should_error {
+            // CommonJS, AMD, UMD, ES2015: import.meta is unavailable for the
+            // whole module mode, not a per-file CJS-output decision (TS1343).
             self.error_at_node(
                 node_idx,
-                diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
-                diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
+                diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_ES2020_E,
+                diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_ES2020_E,
             );
         }
+        // System and ES2020+ support import.meta natively: no diagnostic.
     }
 
     /// Mirror the binder's `resolved_const_expando_key` logic so that the checker

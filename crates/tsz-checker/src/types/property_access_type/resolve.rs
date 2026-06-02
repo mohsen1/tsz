@@ -31,7 +31,8 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR; // Missing access expression data - propagate error
         };
-        // Handle import.meta: emit TS1470 in files that compile to CommonJS output
+        // Handle import.meta: emit the module-compatibility diagnostic
+        // (TS1343 for module < ES2020, TS1470 for Node CommonJS-output files)
         if let Some(result) =
             self.try_resolve_import_meta_access(idx, access.expression, access.name_or_argument)
         {

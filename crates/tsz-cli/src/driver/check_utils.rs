@@ -1587,12 +1587,13 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1274 // JSDoc '@typedef' tag should either have a type annotation or be followed by '@property' or '@member' tags
         | 1277 // 'JSDoc' types may only appear in type positions
         | 1308 // 'await' expressions are only allowed within async functions
+        | 1343 // 'import.meta' only allowed when '--module' is es2020/esnext/system/node*
         | 1344 // Not all code paths return a value / unreachable code
         | 1359 // Identifier expected; 'await' is reserved in async
         | 1360 // '@satisfies' types can only be used in type positions
         | 1382 // Unexpected token
         | 1464 // Import assertion/attribute
-        | 1470 // 'import.meta' outside module
+        | 1470 // 'import.meta' in a file building into CommonJS output
         | 1473 // Module declaration names
         | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
         | 1489 // Duplicate identifier
