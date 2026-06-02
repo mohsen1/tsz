@@ -1328,15 +1328,23 @@ fn test_template_unknown_widening() {
 }
 
 #[test]
-fn test_template_any_widening() {
+fn test_template_any_is_distinct_template_literal() {
     let interner = TypeInterner::new();
 
-    // `` `${any}` `` should widen to string (any is infectious in templates)
+    // tsc keeps `` `${any}` `` as a distinct TemplateLiteral type — `string` is NOT
+    // assignable to `` `${any}` `` (TS2322). The type must NOT be collapsed to STRING.
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
-    assert_eq!(
+    assert_ne!(
         template,
         TypeId::STRING,
-        "Template with any should widen to string"
+        "Template with bare any must NOT collapse to string (tsc parity: TS2322)"
+    );
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Template with bare any should be a TemplateLiteral type"
     );
 }
 

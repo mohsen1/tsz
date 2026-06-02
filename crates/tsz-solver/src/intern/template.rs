@@ -445,12 +445,12 @@ impl TypeInterner {
             }
         }
 
-        // Single-span collapse: `${string}` and `${any}` are mutually assignable
-        // with `string` at the top level, so collapse to `string` (tsc's
-        // `getTemplateLiteralType` rule). Multi-span `any` preserves the template
-        // structure so that fixed text ("prefix-") is not lost.
+        // Single-span `${string}` collapses to `string` (tsc's
+        // `getTemplateLiteralType` rule). `${any}` is intentionally NOT collapsed:
+        // tsc keeps `` `${any}` `` as a distinct deferred template literal type
+        // (string is not assignable to `` `${any}` ``, TS2322).
         if let [TemplateSpan::Type(type_id)] = spans.as_slice()
-            && (*type_id == TypeId::STRING || *type_id == TypeId::ANY)
+            && *type_id == TypeId::STRING
         {
             return TypeId::STRING;
         }
