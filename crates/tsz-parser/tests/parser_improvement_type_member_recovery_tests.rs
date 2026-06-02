@@ -1,6 +1,6 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — type member recovery.
 
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{assert_no_errors, parse_source};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -294,5 +294,107 @@ var f: {
     assert!(
         !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "Expected no top-level TS1128 stray-brace cascade for `<-` type-member recovery, got diagnostics: {diagnostics:?}"
+    );
+}
+
+// ─── mapped-type member boundary with template literals in `as` clause ──────
+//
+// Regression tests for `look_ahead_is_computed_type_member_boundary`:
+// the bracket-depth scan tracks template substitution nesting so that
+// `[K in T as \`...\`]: V` members are correctly recognised as type-member
+// boundaries even when the `as` clause contains TemplateHead substitutions
+// that would otherwise cause the scanner to lose track of the closing `]`.
+
+#[test]
+fn test_mapped_type_same_line_template_as_clause_no_errors() {
+    // `[K in T as \`prefix_${K}\`]` on a single line inside a type literal.
+    assert_no_errors(
+        r#"
+type Prefixed<T> = { [K in keyof T as `prefix_${K & string}`]: T[K] };
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_multiline_template_as_clause_no_errors() {
+    // Same pattern spread across lines — line-break path must still work.
+    assert_no_errors(
+        r#"
+type Prefixed<T> = {
+    [K in keyof T as `prefix_${K & string}`]: T[K]
+};
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_double_substitution_as_clause_no_errors() {
+    // Two template substitutions in the `as` clause: `${A}_${B}`. The second
+    // `}` (closing the second substitution) previously confused the bracket-depth
+    // scanner, causing `look_ahead_is_computed_type_member_boundary` to return
+    // false for this member. Fix: the bracket scan now tracks `template_depth`
+    // and rescans `}` as TemplateMiddle/TemplateTail when inside a template.
+    assert_no_errors(
+        r#"
+type M<T> = { [K in keyof T as `${K & string}_${K & string}`]: T[K] };
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_same_line_plain_as_clause_no_errors() {
+    // Plain (non-template) `as` clause on one line — must not regress.
+    assert_no_errors(
+        r#"
+type Renamed<T> = { [K in keyof T as K extends "bad" ? never : K]: T[K] };
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_same_line_no_as_clause_no_errors() {
+    // Basic mapped type without `as` clause, same-line form.
+    assert_no_errors(
+        r#"
+type Optional<T> = { [K in keyof T]?: T[K] };
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_template_as_clause_intersection_no_errors() {
+    // Two mapped types with template `as` clauses intersected — the canonical
+    // way to combine getter and setter mapped types. Both mapped types are
+    // same-line, exercising the `look_ahead_is_computed_type_member_boundary`
+    // fix for each individual member.
+    assert_no_errors(
+        r#"
+type A<T> = { [K in keyof T as `get_${K & string}`]: () => T[K] }
+    & { [K in keyof T as `set_${K & string}`]: (v: T[K]) => void };
+"#,
+    );
+}
+
+#[test]
+fn test_mapped_type_template_as_clause_nested_generics_no_errors() {
+    // Template literal `as` clause with a generic constraint.
+    assert_no_errors(
+        r#"
+type Getters<T> = {
+    [K in keyof T as K extends string ? `get${Capitalize<K>}` : never]: () => T[K]
+};
+"#,
+    );
+}
+#[test]
+fn test_mapped_type_same_line_no_separator_template_minimal_errors() {
+    // Without `;` between type members on the same line, the parser should still
+    // produce at least one diagnostic (the missing separator), not silently accept it.
+    let source = r#"type A<T> = { a: T[keyof T] [K in keyof T as `p_${string}`]: T[keyof T] };"#;
+    let (parser, _) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected at least one diagnostic for missing-separator recovery, got none"
     );
 }

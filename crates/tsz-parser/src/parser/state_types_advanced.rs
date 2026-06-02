@@ -1707,22 +1707,12 @@ impl ParserState {
     }
 
     pub(crate) fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
-        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
-        {
+        if !self.is_token(SyntaxKind::OpenBracketToken) {
             return false;
         }
 
-        // A mapped type parameter `[K in T]` on a new line is always a type member
-        // boundary, never an array/indexed-access suffix.  The bracket-scanning loop
-        // below uses raw scanner calls that do not re-enter template-continuation mode
-        // after a `TemplateHead` substitution; template literals inside the `as` clause
-        // (e.g. `[K in T as K extends \`${P}:${N}\` ? N : never]`) can absorb the
-        // closing `]` into the template string, making bracket_depth never reach 0 and
-        // causing the function to incorrectly return false.  Short-circuit here: any
-        // `[identifier in …]` sequence with a preceding line break is a mapped type and
-        // therefore a boundary, regardless of what the bracket contents look like.
-        if self.look_ahead_is_mapped_type_start() {
-            return true;
+        if !self.scanner.has_preceding_line_break() {
+            return false;
         }
 
         let snapshot = self.scanner.save_state();
@@ -1731,6 +1721,10 @@ impl ParserState {
         self.next_token(); // skip `[`
         let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
         let mut bracket_depth = 1_u32;
+        // Track template substitution nesting so `}` inside a template is
+        // re-scanned as TemplateMiddle/TemplateTail rather than treated as a
+        // plain CloseBraceToken that would confuse the bracket-depth counter.
+        let mut template_depth = 0_u32;
         while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             match self.token() {
                 SyntaxKind::OpenBracketToken => {
@@ -1739,6 +1733,22 @@ impl ParserState {
                 }
                 SyntaxKind::CloseBracketToken => {
                     bracket_depth -= 1;
+                    self.next_token();
+                }
+                SyntaxKind::TemplateHead => {
+                    // Entering a template literal with substitutions.
+                    template_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBraceToken if template_depth > 0 => {
+                    // Re-scan `}` as a template continuation to consume the
+                    // TemplateMiddle/TemplateTail token and stay in sync with
+                    // the template literal structure.
+                    self.scanner.re_scan_template_token(false);
+                    self.current_token = self.scanner.get_token();
+                    if matches!(self.current_token, SyntaxKind::TemplateTail) {
+                        template_depth -= 1;
+                    }
                     self.next_token();
                 }
                 _ => {
