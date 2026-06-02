@@ -44,8 +44,7 @@ fn template_expression_parts_record_raw_token_text() {
 #[test]
 fn decl_using() {
     // `using x = getResource();`
-    let (parser, root) = parse_source("using x = getResource();");
-    assert_no_errors(&parser, "using declaration");
+    let (parser, root) = parse_clean_source("using x = getResource();", "using declaration");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -59,8 +58,10 @@ fn decl_using() {
 #[test]
 fn decl_await_using() {
     // `await using x = getResource();`
-    let (parser, _root) = parse_source("async function f() { await using x = getResource(); }");
-    assert_no_errors(&parser, "await using declaration");
+    let (_parser, _root) = parse_clean_source(
+        "async function f() { await using x = getResource(); }",
+        "await using declaration",
+    );
 }
 
 #[test]
@@ -113,11 +114,11 @@ fn decl_using_and_await_using_in_blocks_are_variable_statements() {
 #[test]
 fn class_expression() {
     // `const C = class extends Base { constructor() { super(); } };`
-    let (parser, root) =
-        parse_source("const C = class extends Base { constructor() { super(); } };");
-    assert_no_errors(&parser, "class expression");
+    let (parser, init) = parse_clean_var_initializer(
+        "const C = class extends Base { constructor() { super(); } };",
+        "class expression",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -129,10 +130,11 @@ fn class_expression() {
 #[test]
 fn function_expression() {
     // `const f = function foo(x: number) { return x; };`
-    let (parser, root) = parse_source("const f = function foo(x: number) { return x; };");
-    assert_no_errors(&parser, "function expression");
+    let (parser, init) = parse_clean_var_initializer(
+        "const f = function foo(x: number) { return x; };",
+        "function expression",
+    );
     let arena = parser.get_arena();
-    let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
@@ -146,8 +148,7 @@ fn function_expression() {
 #[test]
 fn generator_function() {
     // `function* gen() { yield 1; }`
-    let (parser, root) = parse_source("function* gen() { yield 1; }");
-    assert_no_errors(&parser, "generator function");
+    let (parser, root) = parse_clean_source("function* gen() { yield 1; }", "generator function");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -158,8 +159,8 @@ fn generator_function() {
 #[test]
 fn async_generator_function() {
     // `async function* gen() { yield 1; }`
-    let (parser, root) = parse_source("async function* gen() { yield 1; }");
-    assert_no_errors(&parser, "async generator");
+    let (parser, root) =
+        parse_clean_source("async function* gen() { yield 1; }", "async generator");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -171,8 +172,10 @@ fn async_generator_function() {
 #[test]
 fn multiple_variable_declarations() {
     // `const a = 1, b = 2, c = 3;`
-    let (parser, root) = parse_source("const a = 1, b = 2, c = 3;");
-    assert_no_errors(&parser, "multiple variable declarations");
+    let (parser, root) = parse_clean_source(
+        "const a = 1, b = 2, c = 3;",
+        "multiple variable declarations",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -190,8 +193,10 @@ fn multiple_variable_declarations() {
 #[test]
 fn interface_call_and_construct_signatures() {
     // `interface I { (): void; new (): I; }`
-    let (parser, root) = parse_source("interface I { (): void; new (): I; }");
-    assert_no_errors(&parser, "call and construct signatures");
+    let (parser, root) = parse_clean_source(
+        "interface I { (): void; new (): I; }",
+        "call and construct signatures",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -237,8 +242,10 @@ fn asserts_type_predicate_in_setter_parameter_type() {
     // setter parameter type produced a stray TS1005 (',' expected) instead.
     //
     // `declare class Wat { set p2(x: asserts this is string); }`
-    let (parser, root) = parse_source("declare class Wat { set p2(x: asserts this is string); }");
-    assert_no_errors(&parser, "asserts predicate in setter parameter type");
+    let (parser, root) = parse_clean_source(
+        "declare class Wat { set p2(x: asserts this is string); }",
+        "asserts predicate in setter parameter type",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -288,8 +295,8 @@ fn asserts_identifier_with_line_break_is_type_reference() {
     // (ASI). tsc's `nextTokenIsIdentifierOrKeywordOnSameLine` enforces this; the
     // tsz lookahead used to ignore the line break, which would have parsed
     // `asserts\n  bar` as an ill-formed predicate had we entered the branch.
-    let (parser, root) = parse_source("type T = asserts\n;");
-    assert_no_errors(&parser, "asserts as plain type reference");
+    let (parser, root) =
+        parse_clean_source("type T = asserts\n;", "asserts as plain type reference");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -305,8 +312,10 @@ fn asserts_identifier_with_line_break_is_type_reference() {
 #[test]
 fn import_with_attributes() {
     // `import data from './data.json' with { type: 'json' };`
-    let (parser, root) = parse_source("import data from './data.json' with { type: 'json' };");
-    assert_no_errors(&parser, "import with attributes");
+    let (parser, root) = parse_clean_source(
+        "import data from './data.json' with { type: 'json' };",
+        "import with attributes",
+    );
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -317,8 +326,7 @@ fn import_with_attributes() {
 #[test]
 fn export_star_from() {
     // `export * from './module';`
-    let (parser, root) = parse_source("export * from './module';");
-    assert_no_errors(&parser, "export star from");
+    let (parser, root) = parse_clean_source("export * from './module';", "export star from");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
@@ -333,8 +341,7 @@ fn export_star_from() {
 #[test]
 fn export_star_as_namespace() {
     // `export * as ns from './module';`
-    let (parser, root) = parse_source("export * as ns from './module';");
-    assert_no_errors(&parser, "export * as ns");
+    let (parser, root) = parse_clean_source("export * as ns from './module';", "export * as ns");
     let arena = parser.get_arena();
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt");
