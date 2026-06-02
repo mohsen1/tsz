@@ -262,22 +262,42 @@ fn test_checker_only_downgrade_preserves_failure_reason_through_gateway() {
          apply_checker_side_downgrade so the failure reason is preserved"
     );
 
-    // assign_relation_outcome's failed branch must recover the structured
-    // reason via the cheap raw-input pre-check (`raw_input_failure_reason`)
-    // when execute_relation_request's solver pass returned no reason. The
-    // pre-check covers the three raw-input families that `is_assignable_to`'s
-    // checker-side fast-paths reject but the solver pass considers related.
+    // assign_relation_outcome's failed branch must compute the raw-input
+    // failure reason BEFORE the boundary's evaluated-shape pass and OVERRIDE
+    // any boundary reason it produced. This matches the early-return ordering
+    // of `analyze_assignability_failure`: when a raw-input detector fires the
+    // raw reason wins, because the boundary's evaluated pipeline cannot
+    // reconstruct those shapes (e.g. same-generic `C<A..>` vs `C<B..>` evaluates
+    // to incompatible object property values, producing a wrapper reason that
+    // masks tsc's direct type-argument elaboration).
     let assign_body = extract_method_body(&source, "fn assign_relation_outcome(");
     assert!(
         assign_body.contains("raw_input_failure_reason("),
-        "assign_relation_outcome must recover the structured failure reason via \
-         raw_input_failure_reason when execute_relation_request returns no reason"
+        "assign_relation_outcome must compute the raw-input failure reason \
+         via raw_input_failure_reason"
     );
+    let raw_reason_idx = assign_body
+        .find("raw_input_failure_reason(")
+        .expect("raw_input_failure_reason call site not found");
+    let execute_idx = assign_body
+        .find("execute_relation_request(")
+        .expect("execute_relation_request call site not found");
     assert!(
-        assign_body.contains("outcome.failure.is_none()"),
-        "assign_relation_outcome must only recover the failure reason when the \
-         boundary outcome lacks one — otherwise it would override an already \
-         elaborated structured reason"
+        raw_reason_idx < execute_idx,
+        "raw_input_failure_reason must be computed BEFORE execute_relation_request \
+         so the raw reason can override any wrapper reason the boundary's \
+         evaluated-shape pass produces"
+    );
+    let override_assigns_failure_unconditionally = assign_body
+        .contains("outcome.failure = Some(")
+        && assign_body.contains("RelationFailure::from_solver_reason(");
+    let override_uses_if_let_some =
+        assign_body.contains("if let Some(reason) = raw_reason");
+    assert!(
+        override_assigns_failure_unconditionally && override_uses_if_let_some,
+        "assign_relation_outcome must overwrite outcome.failure when the raw \
+         reason fires, not gate on outcome.failure.is_none() — otherwise the \
+         boundary's wrapper reason would shadow the raw-input elaboration"
     );
 }
 
