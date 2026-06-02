@@ -245,10 +245,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          manifest_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' bench-prep.env
+          }
+
           prep_prefix="latest"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
                 "${{ inputs.publish_latest_pgo }}" != "true" ]]; then
-            prep_prefix="${BENCH_TARGET_SHA}"
+            prep_prefix="${target_sha}"
           fi
 
           rm -f bench-prep.env bench-prep.tar
@@ -258,16 +267,19 @@ jobs:
             gcloud storage cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${prep_prefix}/bench-prep.tar" \
               bench-prep.tar >/dev/null 2>&1; then
-            # shellcheck disable=SC1091
-            source bench-prep.env
-            if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
-                  "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]] && \
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_build_date="$(manifest_value BENCH_BUILD_DATE)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                  "${manifest_build_date}" == "$(date -u +%F)" &&
+                  "${manifest_pgo_optimized}" == "1" ]] && \
                 tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null && \
                 tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null; then
-              echo "Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
+              echo "Cloud Build prep artifact already exists for ${target_sha}; skipping submit."
               exit 0
             fi
             echo "Existing Cloud Build prep artifact is incomplete or stale; submitting a fresh build."
+            rm -f bench-prep.env bench-prep.tar
           fi
 
           submit_output="$(gcloud builds submit \
@@ -276,7 +288,7 @@ jobs:
             --region=us-central1 \
             --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
+            --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
             --format='value(id)' \
             .)"
           build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
