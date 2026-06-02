@@ -1845,3 +1845,84 @@ function other<T, U>(t: T, u: U) {
         ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+/// Assert that `source` produces a single TS2345 whose head message contains
+/// `expected_head` and whose related-information elaboration (each entry as
+/// `(depth, message)`) equals `expected_related`. Centralizes the shape shared
+/// by the same-generic argument-elaboration regression tests below.
+fn assert_ts2345_elaboration(source: &str, expected_head: &str, expected_related: &[(u8, &str)]) {
+    let diagnostics = check_source_with_strict_null(source);
+    let head = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .unwrap_or_else(|| panic!("expected TS2345, got: {diagnostics:?}"));
+    assert!(
+        head.message_text.contains(expected_head),
+        "unexpected TS2345 head: {head:?}"
+    );
+    let related: Vec<(u8, &str)> = head
+        .related_information
+        .iter()
+        .map(|r| (r.depth, r.message_text.as_str()))
+        .collect();
+    assert_eq!(
+        related, expected_related,
+        "TS2345 must elaborate the differing type argument directly (no `Types of \
+         property` wrapper), got: {related:?}"
+    );
+}
+
+/// Same-generic call argument mismatch (`Wrap<string>` argument vs
+/// `Wrap<number>` parameter): tsc elaborates the differing type *argument*
+/// directly beneath the TS2345 head (`Type 'string' is not assignable to type
+/// 'number'.`) with no intermediate `Types of property 'held' are
+/// incompatible.` wrapper. This is the TS2345 sibling of the TS2322 assignment
+/// elaboration; before the fix the call-argument path dropped it entirely.
+/// Binder names deliberately differ from the canonical `Box`/`value` so the
+/// elaboration cannot be keyed off identifier text.
+#[test]
+fn same_generic_call_argument_elaborates_type_argument_directly() {
+    assert_ts2345_elaboration(
+        "interface Wrap<Inner> { held: Inner }\n\
+         declare function take(slot: Wrap<number>): void;\n\
+         declare let supplied: Wrap<string>;\n\
+         take(supplied);\n",
+        "Argument of type 'Wrap<string>' is not assignable to parameter of type 'Wrap<number>'.",
+        &[(0, "Type 'string' is not assignable to type 'number'.")],
+    );
+}
+
+/// Nested same-generic call argument (`Wrap<Wrap<string>>` vs
+/// `Wrap<Wrap<number>>`): the elaboration recurses, peeling one application
+/// layer per indent level just like tsc.
+#[test]
+fn nested_same_generic_call_argument_elaborates_each_layer() {
+    assert_ts2345_elaboration(
+        "interface Wrap<Inner> { held: Inner }\n\
+         declare function take(slot: Wrap<Wrap<number>>): void;\n\
+         declare let supplied: Wrap<Wrap<string>>;\n\
+         take(supplied);\n",
+        "Argument of type 'Wrap<Wrap<string>>' is not assignable to parameter of type 'Wrap<Wrap<number>>'.",
+        &[
+            (
+                0,
+                "Type 'Wrap<string>' is not assignable to type 'Wrap<number>'.",
+            ),
+            (1, "Type 'string' is not assignable to type 'number'."),
+        ],
+    );
+}
+
+/// Same-generic constructor argument routes through the identical
+/// argument-assignability path, so it carries the same elaboration.
+#[test]
+fn same_generic_constructor_argument_elaborates_type_argument_directly() {
+    assert_ts2345_elaboration(
+        "interface Wrap<Inner> { held: Inner }\n\
+         class Receiver { constructor(slot: Wrap<number>) {} }\n\
+         declare let supplied: Wrap<string>;\n\
+         new Receiver(supplied);\n",
+        "Argument of type 'Wrap<string>' is not assignable to parameter of type 'Wrap<number>'.",
+        &[(0, "Type 'string' is not assignable to type 'number'.")],
+    );
+}
