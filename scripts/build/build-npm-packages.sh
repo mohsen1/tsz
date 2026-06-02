@@ -196,7 +196,8 @@ if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
     rust_target=$(get_rust_target "$platform_suffix")
     echo "  Building for $platform_suffix ($rust_target)..."
 
-    cargo build --profile "$CARGO_PROFILE" -p tsz-cli --target "$rust_target"
+    CARGO_TARGET_DIR="$CARGO_TARGET_ROOT" \
+      cargo build --profile "$CARGO_PROFILE" -p tsz-cli --target "$rust_target"
 
     # Copy binaries to the platform package
     pkg_bin="$NPM_DIR/@mohsen-azimi/tsz-$platform_suffix/bin"
@@ -219,8 +220,9 @@ if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
         chmod +x "$pkg_bin/$bin_name$ext"
         echo "    Copied $bin_name$ext ($(du -h "$pkg_bin/$bin_name$ext" | cut -f1))"
       else
-        echo "    WARNING: binary not found: $bin_name$ext"
-        echo "    Searched: $CARGO_TARGET_ROOT/$rust_target/{dist-fast,release}/$bin_name$ext"
+        echo "    ERROR: binary not found: $bin_name$ext" >&2
+        echo "    Searched: $CARGO_TARGET_ROOT/$rust_target/{dist-fast,release}/$bin_name$ext" >&2
+        exit 1
       fi
     done
   done

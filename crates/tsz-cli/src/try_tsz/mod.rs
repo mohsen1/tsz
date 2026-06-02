@@ -336,7 +336,7 @@ fn run_config(cwd: &Path, config: &Path) -> ConfigReport {
 }
 
 fn run_tsc(cwd: &Path, config: &Path) -> Result<CompilerRun> {
-    ensure_local_typescript(cwd)?;
+    ensure_local_typescript(cwd, config)?;
 
     let command = format!("node <try-tsz tsc helper> {}", config.display());
     println!("Running tsc --noEmit -p {} ...", relative_path(cwd, config));
@@ -599,19 +599,39 @@ fn should_visit_entry(entry: &DirEntry) -> bool {
     )
 }
 
-fn ensure_local_typescript(cwd: &Path) -> Result<()> {
-    let local_tsc = if cfg!(windows) {
-        cwd.join("node_modules/.bin/tsc.cmd")
-    } else {
-        cwd.join("node_modules/.bin/tsc")
-    };
-    if local_tsc.exists() {
+fn ensure_local_typescript(cwd: &Path, config: &Path) -> Result<()> {
+    if find_local_tsc(cwd, config).is_some() {
         Ok(())
     } else {
         bail!(
-            "try-tsz needs this project to have TypeScript installed locally; missing {}",
-            local_tsc.display()
+            "try-tsz needs this project to have TypeScript installed locally; searched from {} and {} for {}",
+            cwd.display(),
+            config.parent().unwrap_or(cwd).display(),
+            local_tsc_relative_path().display()
         )
+    }
+}
+
+fn find_local_tsc(cwd: &Path, config: &Path) -> Option<PathBuf> {
+    let config_root = config.parent().unwrap_or(cwd);
+    for root in [config_root, cwd] {
+        let mut dir = Some(root);
+        while let Some(current) = dir {
+            let candidate = current.join(local_tsc_relative_path());
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            dir = current.parent();
+        }
+    }
+    None
+}
+
+fn local_tsc_relative_path() -> &'static Path {
+    if cfg!(windows) {
+        Path::new("node_modules/.bin/tsc.cmd")
+    } else {
+        Path::new("node_modules/.bin/tsc")
     }
 }
 
@@ -1415,6 +1435,33 @@ mod tests {
         let configs = discover_configs(&temp.path, None, true).expect("all should find configs");
 
         assert_eq!(configs, vec![temp.path.join("packages/a/tsconfig.json")]);
+    }
+
+    #[test]
+    fn local_typescript_preflight_accepts_hoisted_workspace_tsc() {
+        let temp = TempDir::new();
+        let package_dir = temp.path.join("packages/foo");
+        let config = package_dir.join("tsconfig.json");
+        write_file(&config, "{}");
+        write_file(&temp.path.join(local_tsc_relative_path()), "");
+
+        ensure_local_typescript(&package_dir, &config)
+            .expect("hoisted workspace TypeScript should satisfy preflight");
+    }
+
+    #[test]
+    fn local_typescript_preflight_rejects_missing_tsc() {
+        let temp = TempDir::new();
+        let package_dir = temp.path.join("packages/foo");
+        let config = package_dir.join("tsconfig.json");
+        write_file(&config, "{}");
+
+        let error = ensure_local_typescript(&package_dir, &config)
+            .expect_err("missing local TypeScript should be rejected")
+            .to_string();
+
+        assert!(error.contains("TypeScript installed locally"));
+        assert!(error.contains("node_modules/.bin/tsc"));
     }
 
     #[test]
