@@ -1290,12 +1290,12 @@ mod tests {
     use super::*;
     use crate::context::{CheckerContext, CheckerOptions};
     use crate::diagnostics::Diagnostic;
-    use crate::query_boundaries::common::TypeInterner;
     use crate::state::CheckerState;
     use smallvec::smallvec;
     use std::sync::Arc;
     use tsz_binder::{BinderState, SymbolId};
     use tsz_parser::parser::{NodeArena, ParserState};
+    use tsz_solver::construction::TypeInterner;
 
     fn overload_decls_for_symbol(
         arena: &NodeArena,
