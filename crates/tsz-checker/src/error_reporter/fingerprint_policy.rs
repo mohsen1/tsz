@@ -536,18 +536,23 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
-                        depth: 0,
+                        // Leaf sits one level beneath the `Types of property`
+                        // header. See the sort-key comment in
+                        // `normalize_related_information` for why the chain
+                        // order depends on this.
+                        depth: 1,
                     },
                 ];
                 // When the property type fails because a union member is not
                 // assignable (the common `T | undefined` vs `T` case), surface
-                // the failing member so the root mismatch stays visible, matching
-                // tsc's `... -> Type 'undefined' is not assignable to type 'T'.`
-                // leaf instead of stopping at the union line.
-                if let Some(member_line) =
-                    self.union_member_related_line(nested_reason.as_deref(), start, length)
+                // the failing member at depth 2 so the chain reads
+                //   Types of property 'p' are incompatible.
+                //     Type 'A | undefined' is not assignable to type 'A'.
+                //       Type 'undefined' is not assignable to type 'A'.
+                if let Some(line) =
+                    self.union_member_related_line(nested_reason.as_deref(), start, length, 2)
                 {
-                    items.push(member_line);
+                    items.push(line);
                 }
                 items
             }
@@ -684,7 +689,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
-                        depth: 0,
+                        depth: 1,
                     },
                 ]
             }
@@ -728,7 +733,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             &[&source_str, &target_str],
                         ),
-                        depth: 0,
+                        depth: 1,
                     },
                 ]
             }
@@ -766,7 +771,7 @@ impl<'a> CheckerState<'a> {
             }
             SubtypeFailureReason::UnionSourceMismatch { .. }
             | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
-                match self.union_member_related_line(Some(reason), start, length) {
+                match self.union_member_related_line(Some(reason), start, length, 0) {
                     Some(line) => vec![line],
                     None => return None,
                 }
@@ -774,18 +779,26 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
 
-        Some(self.normalize_related_information(related, RelatedInformationPolicy::ELABORATION))
+        // The two callers (`emit_render_request`,
+        // `emit_render_request_at_anchor`) normalize again under the request's
+        // policy. Skipping the intermediate pass keeps the depth-aware sort
+        // running exactly once on the final list.
+        Some(related)
     }
 
     /// Build the child-relation elaboration line (`Type 'C' is not assignable
     /// to type 'T'.`) for a [`UnionSourceMismatch`] or
     /// [`ConditionalBranchMismatch`] reason. Used to surface the root mismatch
-    /// one level beneath a union-typed or conditional-typed failure.
+    /// `depth` levels beneath a union-typed or conditional-typed failure —
+    /// `0` for a top-level union mismatch (`Type 'A | B' is not assignable
+    /// to T.` -> `Type 'B' is not assignable to T.`) and `2` when nested
+    /// under a `Types of property` header plus its leaf.
     fn union_member_related_line(
         &mut self,
         reason: Option<&tsz_solver::SubtypeFailureReason>,
         start: u32,
         length: u32,
+        depth: u8,
     ) -> Option<DiagnosticRelatedInformation> {
         let (child_source, child_target) = match reason? {
             tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
@@ -818,7 +831,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&member_str, &target_str],
             ),
-            depth: 0,
+            depth,
         })
     }
 
@@ -875,12 +888,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Sort related information for consistent, deterministic fingerprint ordering.
-        // This ensures fingerprint-only tests match tsc's expected diagnostic output.
+        // Sort related information for consistent, deterministic fingerprint
+        // ordering. `depth` precedes the textual tiebreaker so a chain stays in
+        // outer-to-inner order: at the same anchor (file, start) a depth-0
+        // header (e.g. "Types of property 'p' are incompatible.") always
+        // precedes its depth-1+ leaves (e.g. "Type 'X' is not assignable to
+        // type 'Y'."). Without the depth key, the alphabetic compare reverses
+        // chains because "Type " (with a trailing space) sorts before "Types"
+        // — swapping the displayed type/interface output order between the
+        // main message and its note. Within the same depth the message-text
+        // tiebreaker still gives deterministic order when distinct code paths
+        // append items in different sequences.
         normalized.sort_by(|a, b| {
             a.file
                 .cmp(&b.file)
                 .then(a.start.cmp(&b.start))
+                .then(a.depth.cmp(&b.depth))
                 .then(a.message_text.cmp(&b.message_text))
         });
 
