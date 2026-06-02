@@ -9,6 +9,9 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
+            return outcome;
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request = crate::query_boundaries::assignability::RelationRequest::assignability_reason(
             source, target,

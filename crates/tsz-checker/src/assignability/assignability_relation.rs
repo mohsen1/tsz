@@ -240,6 +240,54 @@ impl<'a> CheckerState<'a> {
         outcome
     }
 
+    /// Same-base-application variance fast path on **un-evaluated** inputs,
+    /// mirroring `is_assignable_to`. Returns `Some(related: true)` only when the
+    /// variance fast path definitively accepts (e.g. `Foo<A>` vs `Foo<B>` whose
+    /// measured variance permits the argument relation).
+    ///
+    /// Diagnostic-reason relation-outcome helpers must run this *before*
+    /// `prepare_assignability_inputs`: evaluating up front expands the
+    /// applications to object shapes and loses the variance fast path, which
+    /// then measures recursively-defined types as invariant and emits spurious
+    /// `TS2322`/`TS2345`. Only the definitive-accept case is short-circuited, so
+    /// non-variance diagnostics (excess property, weak union, …) are unaffected.
+    pub(crate) fn variance_accepted_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<crate::query_boundaries::assignability::RelationOutcome> {
+        if source == target {
+            return None;
+        }
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
+        let target = self.substitute_this_type_if_needed(target);
+        let source = self.normalize_awaited_application_args_for_variance(source);
+        let target = self.normalize_awaited_application_args_for_variance(target);
+        let flags = self.ctx.pack_relation_flags();
+        let inputs = AssignabilityQueryInputs {
+            db: self.ctx.types,
+            resolver: &self.ctx,
+            source,
+            target,
+            flags,
+            inheritance_graph: &self.ctx.inheritance_graph,
+            sound_mode: self.ctx.sound_mode(),
+        };
+        matches!(
+            check_application_variance_assignability(&inputs),
+            Some(true)
+        )
+        .then(|| crate::query_boundaries::assignability::RelationOutcome {
+            related: true,
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        })
+    }
+
     fn relation_outcome_with_env(
         &mut self,
         source: TypeId,
