@@ -466,15 +466,12 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn undefined_identifier_type_text(
         &self,
-        expr_idx: NodeIndex,
+        _expr_idx: NodeIndex,
     ) -> Option<String> {
-        // Only the `undefined` *identifier* form falls back to `any` here;
-        // the `UndefinedKeyword` token is handled by earlier passes and
-        // must not be reclassified as `any` (its type is `undefined`).
-        let node = self.arena.get(expr_idx)?;
-        (node.kind == SyntaxKind::Identifier as u16
-            && self.is_unbound_undefined_value_reference(expr_idx))
-        .then(|| "any".to_string())
+        // Intentionally returns None so the fallback resolves via the solver:
+        // TypeId::UNDEFINED → "undefined" (strict_null_checks on) or "any" (off).
+        // Returning "any" unconditionally bypassed the strict-null-checks gate.
+        None
     }
 
     fn nullish_guarded_return_type_text(
