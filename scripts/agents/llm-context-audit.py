@@ -101,7 +101,9 @@ def audit() -> tuple[list[str], dict[str, Any]]:
     skill_paths = sorted(
         {
             *ROOT.glob(".agents/skills/*/SKILL.md"),
+            *ROOT.glob(".agents/skills/*/QUICKREF.md"),
             *ROOT.glob(".claude/skills/*/SKILL.md"),
+            *ROOT.glob(".claude/skills/*/QUICKREF.md"),
         }
     )
     metrics["skill_file_count"] = len(skill_paths)
