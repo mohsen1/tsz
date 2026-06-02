@@ -162,6 +162,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         };
 
+        // Honors a function- or block-local type alias that shadows a same-named
+        // file-level type. Returns `Some` strictly for genuine nested-local
+        // shadowing so the name-first ordering used for imported/lib types is
+        // otherwise preserved.
+        let local_shadow_def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+            self.resolve_local_shadow_def_id(node_idx)
+        };
+
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
         let computed_unique_symbol_name =
@@ -397,7 +405,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_type_query_override(&type_query_override)
         .with_computed_name_resolver(&computed_name_resolver)
-        .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
+        .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+        .with_local_shadow_def_id_resolver(&local_shadow_def_id_resolver);
         if use_qualified_names && self.type_node_is_in_lib_declaration(idx) {
             lowering = lowering.prefer_name_def_id_resolution();
         }

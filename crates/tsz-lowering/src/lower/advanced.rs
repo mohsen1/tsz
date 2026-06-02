@@ -780,6 +780,15 @@ impl<'a> TypeLowering<'a> {
                 return self.lower_lazy_def_reference(def_id);
             }
 
+            // A function- or block-local declaration that shadows a same-named
+            // file-level type must win over the name-first resolution below (which
+            // only consults file/global scope). This resolver returns `Some`
+            // strictly for that nested-local shadowing case, so imported/lib name
+            // resolution is otherwise unaffected.
+            if let Some(def_id) = self.resolve_local_shadow_def_id(node_idx) {
+                return self.lower_lazy_def_reference(def_id);
+            }
+
             // Must resolve to DefId.
             //
             // Same-arena lowering should prefer the NodeIndex-based path because it

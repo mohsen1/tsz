@@ -55,6 +55,12 @@ pub struct TypeLowering<'a> {
     /// Optional `DefId` resolver - resolves identifier nodes to `DefIds`.
     /// Resolves identifier nodes to `DefId`s for type identity.
     pub(super) def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
+    /// Optional resolver that returns a `DefId` only when a simple identifier
+    /// lexically resolves to a function- or block-local declaration shadowing a
+    /// same-named file-level type. Consulted before the name-first resolution in
+    /// `prefer_name_def_id_resolution` mode so local shadows win without
+    /// disturbing imported/lib name resolution. Returns `None` otherwise.
+    pub(super) local_shadow_def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
     /// Optional value resolver for typeof queries.
     pub(super) value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
     /// Optional name-based `DefId` resolver — fallback for cross-arena resolution.
@@ -390,6 +396,7 @@ impl<'a> TypeLowering<'a> {
             interner: interner.as_type_database(),
             type_resolver: resolvers.type_resolver,
             def_id_resolver: resolvers.def_id_resolver,
+            local_shadow_def_id_resolver: None,
             value_resolver: resolvers.value_resolver,
             computed_name_resolver: None,
             computed_name_resolver_with_arena: None,
@@ -506,6 +513,7 @@ impl<'a> TypeLowering<'a> {
             interner: self.interner,
             type_resolver: self.type_resolver,
             def_id_resolver: self.def_id_resolver,
+            local_shadow_def_id_resolver: self.local_shadow_def_id_resolver,
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
             computed_name_resolver_with_arena: self.computed_name_resolver_with_arena,
@@ -840,6 +848,18 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
+    /// Set the local-shadow `DefId` resolver. It is consulted before the
+    /// name-first resolution (see `prefer_name_def_id_resolution`) and returns a
+    /// `DefId` only when a simple identifier resolves to a function- or
+    /// block-local declaration shadowing a same-named file-level type.
+    pub fn with_local_shadow_def_id_resolver(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
+    ) -> Self {
+        self.local_shadow_def_id_resolver = Some(resolver);
+        self
+    }
+
     /// Prefer identifier-text DefId resolution over raw NodeIndex-based resolution.
     ///
     /// This should only be enabled in cross-arena lowering contexts where `NodeIndex`
@@ -980,6 +1000,14 @@ impl<'a> TypeLowering<'a> {
     /// `DefIds` are Solver-owned identifiers that don't require Binder context.
     pub(super) fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
         self.def_id_resolver.and_then(|resolver| resolver(node_idx))
+    }
+
+    /// Resolve a node to the `DefId` of a function- or block-local declaration
+    /// that shadows a same-named file-level type, if such a resolver is provided.
+    /// Returns `None` for every non-shadowing reference.
+    pub(super) fn resolve_local_shadow_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
+        self.local_shadow_def_id_resolver
+            .and_then(|resolver| resolver(node_idx))
     }
 
     /// Resolve a node to a value symbol ID if a resolver is provided.
