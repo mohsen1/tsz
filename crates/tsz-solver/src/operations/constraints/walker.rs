@@ -1247,12 +1247,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Create fresh inference variables for the source function's type parameters
                     for tp in &s_fn.type_params {
                         let var = ctx.fresh_var();
-                        use std::fmt::Write;
-                        src_placeholder_buf.clear();
-                        let global_id = crate::operations::generic_call::PLACEHOLDER_COUNTER
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        write!(src_placeholder_buf, "__infer_src_{global_id}")
-                            .expect("write to String is infallible");
+                        let placeholder_id = self.checker.next_inference_placeholder_id();
+                        crate::operations::generic_call::write_src_placeholder_name(
+                            &mut src_placeholder_buf,
+                            placeholder_id,
+                        );
                         let placeholder_atom = self.interner.intern_string(&src_placeholder_buf);
                         ctx.register_type_param(placeholder_atom, var, tp.is_const);
 

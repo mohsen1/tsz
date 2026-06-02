@@ -163,6 +163,10 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
                 .assign_relation_outcome(b_resolved, a_resolved)
                 .related
     }
+
+    fn next_inference_placeholder_id(&mut self) -> u64 {
+        self.state.ctx.next_inference_placeholder_id()
+    }
 }
 
 impl CheckerState<'_> {

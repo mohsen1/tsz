@@ -6,7 +6,7 @@ use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{constraint_is_primitive_type_with_resolver, unique_placeholder_name};
+use super::{constraint_is_primitive_type_with_resolver, write_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Fast path for direct single-parameter generic calls:
@@ -592,7 +592,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
-            unique_placeholder_name(&mut placeholder_buf);
+            let placeholder_id = self.checker.next_inference_placeholder_id();
+            write_placeholder_name(&mut placeholder_buf, placeholder_id);
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
