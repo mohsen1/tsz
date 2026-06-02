@@ -23,3 +23,12 @@ TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExt
 # accepted rows for coAndContraVariantInferences2/correlatedUnions; tracked in
 # #12260.
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+
+# Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
+# Mapped/keyof family tracked in #8432; large-union intersections tracked in
+# #12260; JSX/import.meta subset tracked in #12261.
+TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
+TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
+TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
+TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts

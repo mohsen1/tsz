@@ -53,7 +53,7 @@ denominators.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| Accepted-regression strictness | `6` listed tests (justified in `conformance-accepted-regressions.txt`, Refs PR #12157 and #12247) |
+| Accepted-regression strictness | `10` listed tests (justified in `conformance-accepted-regressions.txt`, Refs PR #12157, #12260, and #12238) |
 | JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
@@ -70,9 +70,10 @@ The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
 remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete. It currently lists `6` justified entries: the
-fingerprint-only diffs introduced alongside PR #12157's net-positive snapshot
-refresh, plus current TypeScript-corpus drift tracked in #12247. The strictness
+cleanup as complete. It currently lists `10` justified entries: the
+fingerprint-only diff introduced alongside PR #12157's net-positive snapshot
+refresh, current TypeScript-corpus drift tracked in #12260, and ready-review
+aggregate drift tracked from PR #12238 in #8432, #12260, and #12261. The strictness
 gate is non-empty and each entry should be paid down in follow-up PRs.
 
 ## Evidence From Current Audit
