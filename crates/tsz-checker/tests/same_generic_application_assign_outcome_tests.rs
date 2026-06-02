@@ -13,7 +13,7 @@
 //! when the boundary returned `failure=None`, to avoid changing what
 //! `outcome.failure`-reading predicates observe (see
 //! `core_statement_checks.rs:413-426` and the discussion on
-//! https://github.com/mohsen1/tsz/pull/12239#discussion_r3342820552). The
+//! <https://github.com/mohsen1/tsz/pull/12239#discussion_r3342820552>). The
 //! TS2322 elaboration tested here does NOT consume `assign_relation_outcome
 //! .outcome.failure` — it consumes `analyze_assignability_failure` directly
 //! in `error_reporter/assignability.rs:602` — so the gating in
