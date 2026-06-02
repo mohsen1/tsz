@@ -1,7 +1,9 @@
 //! Declaration emit helpers: type query resolution, symbol accessibility,
 //! unique symbol nameability, and module path resolution utilities.
 
-use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
+use crate::query_boundaries::common::{
+    collect_referenced_types, collect_referenced_types_in_order, lazy_def_id,
+};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -358,8 +360,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
-        for &type_id in &referenced_types {
+        let referenced_types = collect_referenced_types_in_order(self.ctx.types, inferred_type);
+        for type_id in referenced_types {
             if let Some(info) = check_type(self, type_id) {
                 return Some(info);
             }

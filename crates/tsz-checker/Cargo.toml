@@ -1903,6 +1903,10 @@ name = "object_assign_identity_tests"
 path = "tests/object_assign_identity_tests.rs"
 
 [[test]]
+name = "ts2883_order_tests"
+path = "tests/ts2883_order_tests.rs"
+
+[[test]]
 name = "ts2536_keyof_string_index_signature_tests"
 path = "tests/ts2536_keyof_string_index_signature_tests.rs"
 

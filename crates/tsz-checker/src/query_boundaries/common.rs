@@ -420,6 +420,13 @@ pub(crate) fn collect_referenced_types(
     tsz_solver::visitor::collect_referenced_types(db, type_id)
 }
 
+pub(crate) fn collect_referenced_types_in_order(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<TypeId> {
+    tsz_solver::visitor::collect_referenced_types_in_order(db, type_id)
+}
+
 pub(crate) fn collect_enum_def_ids(
     db: &dyn TypeDatabase,
     type_id: TypeId,

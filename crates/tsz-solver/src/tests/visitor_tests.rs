@@ -978,6 +978,55 @@ fn test_collect_referenced_types_transitive_and_unique() {
 }
 
 #[test]
+fn test_collect_referenced_types_in_order_preserves_visitor_order() {
+    let interner = TypeInterner::new();
+    let first = interner.lazy(DefId(11));
+    let second = interner.lazy(DefId(22));
+    let nested = interner.tuple(vec![
+        TupleElement {
+            type_id: second,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let root = interner.tuple(vec![
+        TupleElement {
+            type_id: first,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: nested,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: first,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let reachable = collect_referenced_types_in_order(&interner, root);
+
+    assert_eq!(
+        reachable,
+        vec![root, first, nested, second, TypeId::NUMBER],
+        "ordered collection must be pre-order and unique"
+    );
+}
+
+#[test]
 fn test_collect_infer_bindings_skips_terminal_types() {
     let interner = TypeInterner::new();
     let infer_name = interner.intern_string("T");

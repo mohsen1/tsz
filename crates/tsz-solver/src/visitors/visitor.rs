@@ -1025,6 +1025,14 @@ pub fn collect_referenced_types(types: &dyn TypeDatabase, type_id: TypeId) -> Fx
     collect_all_types(types, type_id)
 }
 
+/// Collect all types referenced by a type in visitor order.
+///
+/// Use this when the caller needs a deterministic "first referenced type"
+/// answer. Membership-only callers should use [`collect_referenced_types`].
+pub fn collect_referenced_types_in_order(types: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    collect_all_types_in_order(types, type_id)
+}
+
 /// Test a type against a predicate function.
 ///
 /// # Example
@@ -1053,6 +1061,7 @@ where
 pub struct RecursiveTypeCollector<'a> {
     types: &'a dyn TypeDatabase,
     collected: FxHashSet<TypeId>,
+    ordered: Vec<TypeId>,
     guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
@@ -1061,6 +1070,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         Self {
             types,
             collected: FxHashSet::default(),
+            ordered: Vec::new(),
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::ShallowTraversal,
             ),
@@ -1070,7 +1080,15 @@ impl<'a> RecursiveTypeCollector<'a> {
     /// Collect all types reachable from the given type.
     pub fn collect(&mut self, type_id: TypeId) -> FxHashSet<TypeId> {
         self.visit(type_id);
+        self.ordered.clear();
         std::mem::take(&mut self.collected)
+    }
+
+    /// Collect all types reachable from the given type in visitor order.
+    pub fn collect_in_order(&mut self, type_id: TypeId) -> Vec<TypeId> {
+        self.visit(type_id);
+        self.collected.clear();
+        std::mem::take(&mut self.ordered)
     }
 
     fn visit(&mut self, type_id: TypeId) {
@@ -1082,7 +1100,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         // Look up before entering the guard so we can short-circuit
         // terminal kinds without paying the guard's HashSet round-trip.
         let Some(key) = self.types.lookup(type_id) else {
-            self.collected.insert(type_id);
+            self.record(type_id);
             return;
         };
 
@@ -1105,7 +1123,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                 | TypeData::ModuleNamespace(_)
                 | TypeData::UnresolvedTypeName(_)
         ) {
-            self.collected.insert(type_id);
+            self.record(type_id);
             return;
         }
 
@@ -1116,9 +1134,15 @@ impl<'a> RecursiveTypeCollector<'a> {
             _ => return,
         }
 
-        self.collected.insert(type_id);
+        self.record(type_id);
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.visit_key(&key));
         self.guard.leave(type_id);
+    }
+
+    fn record(&mut self, type_id: TypeId) {
+        if self.collected.insert(type_id) {
+            self.ordered.push(type_id);
+        }
     }
 
     fn visit_key(&mut self, key: &TypeData) {
@@ -1318,6 +1342,12 @@ impl<'a> RecursiveTypeCollector<'a> {
 pub fn collect_all_types(types: &dyn TypeDatabase, type_id: TypeId) -> FxHashSet<TypeId> {
     let mut collector = RecursiveTypeCollector::new(types);
     collector.collect(type_id)
+}
+
+/// Collect all types recursively reachable from a root type in visitor order.
+pub fn collect_all_types_in_order(types: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    let mut collector = RecursiveTypeCollector::new(types);
+    collector.collect_in_order(type_id)
 }
 
 // =============================================================================
