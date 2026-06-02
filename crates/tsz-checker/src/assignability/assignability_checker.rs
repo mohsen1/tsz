@@ -685,9 +685,13 @@ impl<'a> CheckerState<'a> {
         if type_id.is_intrinsic() {
             return;
         }
-        if crate::state_domain::type_environment::lazy::global_resolution_fuel_exhausted() {
-            return;
-        }
+        // Do NOT gate on global_resolution_fuel_exhausted() here.  The inner
+        // guards inside ensure_refs_resolved (and ensure_application_symbols_resolved)
+        // already exit the materialization worklist when global fuel is exhausted,
+        // bounding total work per call to O(1).  Gating the entire readiness step
+        // here caused subsequent DOM/lib relation checks in the same file to skip
+        // their input step entirely, silently dropping TS2322/TS2345 diagnostics
+        // after the first large-lib type graph was materialized (issue #12144).
         self.ensure_refs_resolved(type_id);
         self.ensure_application_symbols_resolved(type_id);
     }
@@ -1461,14 +1465,25 @@ impl<'a> CheckerState<'a> {
                 }
                 increment_refs_resolution_fuel();
                 increment_global_resolution_fuel();
-                if global_resolution_fuel_exhausted() {
-                    break;
-                }
+                let at_fuel_limit = global_resolution_fuel_exhausted();
+                // Always call resolve_and_insert_def_type even when global fuel is
+                // exhausted: the call is typically a fast cache hit for lib types that
+                // were computed during type-environment building, and the resolver needs
+                // the TypeEnvironment entry to evaluate a Lazy(def_id) during
+                // assignability checks.  Without this, exhausted-fuel calls silently
+                // leave subsequent DOM/lib type refs unresolvable, causing the relation
+                // checker to treat unresolved Lazy types as compatible (issue #12144).
+                // When at the fuel limit we still resolve the direct def_id but skip
+                // adding its result to the worklist so transitive work stays bounded.
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
+                    && !at_fuel_limit
                 {
                     worklist.push(result);
+                }
+                if at_fuel_limit {
+                    break;
                 }
             }
         }

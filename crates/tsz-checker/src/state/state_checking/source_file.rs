@@ -412,6 +412,14 @@ impl<'a> CheckerState<'a> {
             if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
                 seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
+            // Reset resolution fuel between top-level statements so that a
+            // large-lib type-graph materialisation in one statement (e.g. a DOM
+            // call that triggers the full HTMLElement prototype chain) does not
+            // exhaust the global budget and cause subsequent statements in the
+            // same file to receive ERROR types, silently dropping TS2322/TS2345
+            // diagnostics (issue #12144).  The inner worklist guards inside
+            // `ensure_refs_resolved` still bound the work per statement.
+            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {
                 self.ctx.is_unreachable = true;
