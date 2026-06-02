@@ -673,22 +673,37 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        // Pre-scan: collect setter and getter names for accessor pair handling
+        // Pre-scan: collect setter and getter names for accessor pair handling.
+        // Also collect computed accessor source texts for pairs that lack type
+        // info to resolve via emittable_computed_property_name_text.
         let mut setter_names = rustc_hash::FxHashSet::<String>::default();
         let mut getter_names = rustc_hash::FxHashSet::<String>::default();
+        let mut computed_setter_source_texts = rustc_hash::FxHashSet::<String>::default();
+        let mut computed_getter_source_texts = rustc_hash::FxHashSet::<String>::default();
         for &idx in &object.elements.nodes {
             if let Some(n) = self.arena.get(idx) {
                 if n.kind == syntax_kind_ext::SET_ACCESSOR {
-                    if let Some(acc) = self.arena.get_accessor(n)
-                        && let Some(name) = self.object_literal_member_name_text(acc.name)
-                    {
-                        setter_names.insert(name);
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.object_literal_member_name_text(acc.name) {
+                            setter_names.insert(name);
+                        } else if let Some(name_node) = self.arena.get(acc.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
+                        {
+                            computed_setter_source_texts.insert(src.trim().to_string());
+                        }
                     }
-                } else if n.kind == syntax_kind_ext::GET_ACCESSOR
-                    && let Some(acc) = self.arena.get_accessor(n)
-                    && let Some(name) = self.object_literal_member_name_text(acc.name)
-                {
-                    getter_names.insert(name);
+                } else if n.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.object_literal_member_name_text(acc.name) {
+                            getter_names.insert(name);
+                        } else if let Some(name_node) = self.arena.get(acc.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
+                        {
+                            computed_getter_source_texts.insert(src.trim().to_string());
+                        }
+                    }
                 }
             }
         }
@@ -703,13 +718,19 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            // Try to resolve the member name first. If the name resolves (e.g.
+            // via infer_property_name_text for `[Symbol.isConcatSpreadable]`),
+            // use it directly. Only fall through to the non-nameable index-
+            // signature path when the name cannot be reproduced at all.
+            let name_text = self.object_literal_member_name_text(name_idx);
+
             // A computed key whose expression cannot be reproduced as a literal
             // property name (e.g. `[this.a]`) is not a named member in tsc's
             // output. tsc represents it through the object's synthesized index
             // signature, so emit that solver-derived signature instead of the
             // raw source slice. Each index signature is emitted once even when
             // several members share the same non-nameable key shape.
-            if self.is_non_nameable_computed_member_key(name_idx) {
+            if name_text.is_none() && self.is_non_nameable_computed_member_key(name_idx) {
                 if !emitted_index_signatures
                     && let Some(index_entries) =
                         self.object_literal_synthesized_index_signature_entries(object_expr_idx)
@@ -722,7 +743,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let Some(name) = self.object_literal_member_name_text(name_idx) else {
+            let Some(name) = name_text else {
                 continue;
             };
             if name.is_empty() || name == ":" {
