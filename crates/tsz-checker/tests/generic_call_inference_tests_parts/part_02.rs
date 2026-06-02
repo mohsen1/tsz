@@ -89,6 +89,31 @@ function flatMapChildren2<T>(node: Node, cb: (child: Node) => readonly T[] | T |
 }
 
 #[test]
+fn readonly_array_predicate_call_keeps_direct_argument_inference() {
+    let source = r#"
+interface Node { kind: number; }
+interface TypeNode extends Node { typeInfo: string; }
+interface NodeArray<T extends Node> extends Array<T> {
+    someProp: string;
+}
+
+declare function tryCast<TOut extends TIn, TIn = any>(
+    value: TIn | undefined,
+    test: (value: TIn) => value is TOut
+): TOut;
+declare function isNodeArray<T extends Node>(array: readonly T[]): array is NodeArray<T>;
+declare const types: readonly TypeNode[];
+
+const x = tryCast(types, isNodeArray);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2345),
+        "readonly direct argument inference should not be replaced by mutable predicate candidate. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conformance_probe_infer_from_generic_function_return_types_2() {
     let source = r#"
 type Mapper<T, U> = (x: T) => U;

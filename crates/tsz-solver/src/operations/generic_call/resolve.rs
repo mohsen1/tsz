@@ -12,35 +12,8 @@ use crate::types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
-fn is_bare_foreign_type_param(
-    interner: &dyn crate::construction::TypeDatabase,
-    ty: TypeId,
-    local_type_params: &FxHashSet<tsz_common::Atom>,
-    local_placeholders: &[tsz_common::Atom],
-) -> bool {
-    if ty.is_intrinsic() {
-        return false;
-    }
-    match interner.lookup(ty) {
-        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
-            !local_type_params.contains(&info.name) && !local_placeholders.contains(&info.name)
-        }
-        _ => false,
-    }
-}
-
-fn is_substantive_inference_candidate(
-    interner: &dyn crate::construction::TypeDatabase,
-    ty: TypeId,
-    local_type_params: &FxHashSet<tsz_common::Atom>,
-    local_placeholders: &[tsz_common::Atom],
-) -> bool {
-    !ty.is_any_unknown_or_error()
-        && !is_bare_foreign_type_param(interner, ty, local_type_params, local_placeholders)
-        && !crate::visitor::contains_type_parameters(interner, ty)
-        && !crate::type_queries::contains_infer_types_db(interner, ty)
-}
-
+use super::inference_helpers::{is_bare_foreign_type_param, is_substantive_inference_candidate};
+use super::readonly_direct_inference;
 use super::{
     constraint_contains_primitive_constrained_type_param,
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
@@ -226,6 +199,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: TypeId,
         priority: crate::types::InferencePriority,
     ) {
+        let source = readonly_direct_inference::wrap_readonly_annotation_source(
+            self.interner.as_type_database(),
+            source,
+            self.arg_source_is_readonly_annotation
+                .get(arg_index)
+                .copied()
+                .unwrap_or(false),
+        );
+
         if !self
             .arg_source_is_type_annotation
             .get(arg_index)
@@ -2341,6 +2323,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     [single] => *single,
                     bounds => infer_ctx.best_common_type(bounds),
                 }
+            } else {
+                ty
+            };
+            let ty = if direct_param_vars.contains(&var) {
+                readonly_direct_inference::restore_direct_inference(
+                    self.interner.as_type_database(),
+                    &mut infer_ctx,
+                    var,
+                    ty,
+                )
             } else {
                 ty
             };

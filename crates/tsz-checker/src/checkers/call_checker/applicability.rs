@@ -2,7 +2,7 @@
 
 use super::CheckerCallAssignabilityAdapter;
 use crate::query_boundaries::checkers::call::{
-    resolve_call, resolve_call_with_arg_sources, resolve_new,
+    CallArgSourceOptions, resolve_call, resolve_call_with_arg_sources, resolve_new,
 };
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -143,6 +143,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
         arg_source_is_type_annotation: &[bool],
+        arg_source_is_readonly_annotation: &[bool],
     ) -> tsz_solver::operations::CallWithCheckerResult {
         self.ensure_relation_input_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
@@ -154,10 +155,13 @@ impl<'a> CheckerState<'a> {
             &mut checker,
             func_type,
             arg_types,
-            force_bivariant_callbacks,
-            contextual_type,
-            actual_this_type,
-            arg_source_is_type_annotation,
+            &CallArgSourceOptions {
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+                arg_source_is_type_annotation,
+                arg_source_is_readonly_annotation,
+            },
         )
     }
 
@@ -174,8 +178,11 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
         arg_source_is_type_annotation: &[bool],
+        arg_source_is_readonly_annotation: &[bool],
     ) -> tsz_solver::operations::CallWithCheckerResult {
-        if arg_source_is_type_annotation.iter().any(|&m| m) {
+        if arg_source_is_type_annotation.iter().any(|&m| m)
+            || arg_source_is_readonly_annotation.iter().any(|&m| m)
+        {
             self.resolve_call_with_checker_adapter_and_arg_sources(
                 func_type,
                 arg_types,
@@ -183,6 +190,7 @@ impl<'a> CheckerState<'a> {
                 contextual_type,
                 actual_this_type,
                 arg_source_is_type_annotation,
+                arg_source_is_readonly_annotation,
             )
         } else {
             self.resolve_call_with_checker_adapter(

@@ -202,6 +202,10 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// Per-argument marker for sources whose type came from an explicit type
     /// annotation/assertion rather than a fresh expression.
     pub(crate) arg_source_is_type_annotation: Vec<bool>,
+    /// Per-argument marker for typed identifiers declared with a readonly
+    /// array/tuple annotation whose computed argument type was normalized to the
+    /// mutable inner container before generic inference.
+    pub(crate) arg_source_is_readonly_annotation: Vec<bool>,
     /// The `this` type provided by the caller (e.g. `obj` in `obj.method()`)
     pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
@@ -308,6 +312,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             force_bivariant_callbacks: false,
             contextual_type: None,
             arg_source_is_type_annotation: Vec::new(),
+            arg_source_is_readonly_annotation: Vec::new(),
             actual_this_type: None,
             constraint_recursion_depth: Cell::new(0),
             constraint_step_count: Cell::new(0),
@@ -353,6 +358,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .extend_from_slice(markers);
     }
 
+    pub fn set_arg_source_is_readonly_annotation(&mut self, markers: &[bool]) {
+        self.arg_source_is_readonly_annotation.clear();
+        self.arg_source_is_readonly_annotation
+            .extend_from_slice(markers);
+    }
+
     /// Returns true if the first argument came from a type assertion (e.g. `1 as 1`).
     /// Non-fresh literals from assertions are preserved rather than widened.
     pub(crate) fn is_first_arg_type_annotated(&self) -> bool {
@@ -386,6 +397,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> bool {
         let non_fresh = crate::relations::freshness::widen_freshness(self.interner, arg_type);
         if self.checker.is_assignable_to(non_fresh, constraint) {
+            return true;
+        }
+        let evaluated = self.checker.evaluate_type(non_fresh);
+        if evaluated != non_fresh && self.checker.is_assignable_to(evaluated, constraint) {
             return true;
         }
         self.arg_satisfies_constraint_via_readonly_widening(non_fresh, constraint)

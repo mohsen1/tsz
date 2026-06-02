@@ -361,3 +361,36 @@ type B = StarBoxed<number, boolean>;
         "Imported generic aliases should follow barrel re-exports to the declaration file; got: {diags:#?}"
     );
 }
+
+#[test]
+fn local_ref_type_params_ignore_cross_file_raw_symbol_owner_collision() {
+    let diags = check_multi_file_with_global_index(
+        &[
+            (
+                "sources/remote.ts",
+                r#"
+export type Remote<A, B> = { first: A; second: B };
+"#,
+            ),
+            (
+                "sources/main.ts",
+                r#"
+type Local<T> = { value: T };
+type UseLocal = Local<string>;
+"#,
+            ),
+        ],
+        "sources/main.ts",
+        CheckerOptions::default(),
+    );
+
+    let type_arg_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2314 | 2315 | 2558))
+        .collect();
+    assert_eq!(
+        type_arg_errors.len(),
+        0,
+        "Current-file generic aliases must not read type parameters from a colliding cross-file raw SymbolId; got: {diags:#?}"
+    );
+}

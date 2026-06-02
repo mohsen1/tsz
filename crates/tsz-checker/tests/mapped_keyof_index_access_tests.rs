@@ -60,7 +60,24 @@ declare const key: keyof {foo(): void};
 spyObj[key].and.returnValue(1);
 "#;
 
-    let diags = check_strict(source);
+    let diags = tsz_checker::test_utils::check_multi_file_with_global_index(
+        &[
+            (
+                "remote.ts",
+                r#"
+export type Remote<A, B> = { first: A; second: B };
+export type OtherKey = "remote";
+"#,
+            ),
+            ("test.ts", source),
+        ],
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
     assert!(
         has_code(&diags, 2339),
         "expected TS2339 for returnValue on Function, got: {diags:#?}"
@@ -121,6 +138,8 @@ fn mapped_keyof_index_access_assigns_to_value_type() {
 function f<T>(obj: { [k in keyof T]: number }, key: keyof T): void {
     const x: number = obj[key];
 }
+
+type ArgMap = { a: number, b: string };
 "#;
 
     let diags = check_strict(source);
@@ -188,6 +207,111 @@ processRecord(r);
     assert!(
         no_errors(&diags),
         "UnionRecord should remain a per-key correlated union, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn mapped_keyof_tuple_rest_context_preserves_local_alias_scope() {
+    let source = r#"
+type TypeMap = {
+    foo: string,
+    bar: number
+};
+type Keys = keyof TypeMap;
+type HandlerMap = { [P in Keys]: (x: TypeMap[P]) => void };
+const handlers: HandlerMap = {
+    foo: s => s.length,
+    bar: n => n.toFixed(2)
+};
+type DataEntry<K extends Keys = Keys> = { [P in K]: {
+    type: P,
+    data: TypeMap[P]
+}}[K];
+const data: DataEntry[] = [
+    { type: 'foo', data: 'abc' },
+    { type: 'bar', data: 42 },
+];
+function process<K extends Keys>(data: DataEntry<K>[]) {
+    data.forEach(block => {
+        if (block.type in handlers) {
+            handlers[block.type](block.data)
+        }
+    });
+}
+process(data);
+
+interface DocumentEventMap {
+    click: { x: number };
+    scroll: { y: number };
+}
+type Ev<K extends keyof DocumentEventMap> = { [P in K]: {
+    readonly name: P;
+    readonly once?: boolean;
+    readonly callback: (ev: DocumentEventMap[P]) => void;
+}}[K];
+function processEvents<K extends keyof DocumentEventMap>(events: Ev<K>[]) {
+    for (const event of events) {
+        event.callback({} as DocumentEventMap[K]);
+    }
+}
+function createEventListener<K extends keyof DocumentEventMap>({ name, once = false, callback }: Ev<K>): Ev<K> {
+    return { name, once, callback };
+}
+const clickEvent = createEventListener({
+    name: "click",
+    callback: ev => ev.x,
+});
+const scrollEvent = createEventListener({
+    name: "scroll",
+    callback: ev => ev.y,
+});
+processEvents([clickEvent, scrollEvent]);
+
+function ff1() {
+    type ArgMap = {
+        sum: [a: number, b: number],
+        concat: [a: string, b: string, c: string]
+    }
+    type Keys = keyof ArgMap;
+    const funs: { [P in Keys]: (...args: ArgMap[P]) => void } = {
+        sum: (a, b) => a + b,
+        concat: (a, b, c) => a + b + c
+    }
+    function apply<K extends Keys>(funKey: K, ...args: ArgMap[K]) {
+        const fn = funs[funKey];
+        fn(...args);
+    }
+    const x1 = apply('sum', 1, 2)
+    const x2 = apply('concat', 'str1', 'str2', 'str3')
+}
+type ArgMap = { a: number, b: string };
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        no_errors(&diags),
+        "function-local ArgMap/Keys should contextually type rest handlers and calls, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn required_mapped_index_read_removes_optional_undefined() {
+    let source = r#"
+interface Foo {
+    bar?: string
+}
+
+declare function takeString(value: string): void;
+
+function readRequired<T extends keyof Foo>(prop: T, value: Required<Foo>) {
+    takeString(value[prop]);
+}
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        no_errors(&diags),
+        "Required<Foo>[T] should read as string, not string | undefined: {diags:#?}"
     );
 }
 

@@ -827,6 +827,14 @@ impl<'a> CheckerState<'a> {
         } else {
             Vec::new()
         };
+        let generic_inference_arg_readonly_markers = if is_generic_call {
+            self.call_arg_source_readonly_annotation_markers(
+                args,
+                generic_inference_arg_types.len(),
+            )
+        } else {
+            Vec::new()
+        };
         let call_resolution_contextual_type = if is_generic_call {
             // Generic calls in contextual positions need the outer request at the
             // solver boundary, even when they have arguments. The checker-side
@@ -852,7 +860,9 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
+            } else if generic_inference_arg_source_markers.iter().any(|&m| m)
+                || generic_inference_arg_readonly_markers.iter().any(|&m| m)
+            {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &generic_inference_arg_types,
@@ -860,6 +870,7 @@ impl<'a> CheckerState<'a> {
                     call_resolution_contextual_type,
                     actual_this_type,
                     &generic_inference_arg_source_markers,
+                    &generic_inference_arg_readonly_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(
@@ -1067,6 +1078,8 @@ impl<'a> CheckerState<'a> {
                 .sanitize_generic_inference_arg_types(call.expression, args, &refreshed_arg_types);
             let retry_arg_source_markers =
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
+            let retry_arg_readonly_markers = self
+                .call_arg_source_readonly_annotation_markers(args, retry_generic_arg_types.len());
             let mut retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
@@ -1078,7 +1091,9 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if retry_arg_source_markers.iter().any(|&m| m) {
+            } else if retry_arg_source_markers.iter().any(|&m| m)
+                || retry_arg_readonly_markers.iter().any(|&m| m)
+            {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &retry_generic_arg_types,
@@ -1086,6 +1101,7 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     actual_this_type,
                     &retry_arg_source_markers,
+                    &retry_arg_readonly_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(

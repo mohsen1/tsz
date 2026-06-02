@@ -37,6 +37,7 @@ impl<'a> InferenceContext<'a> {
     fn resolve_covariant_against_contra(
         &self,
         covariant_result: TypeId,
+        covariant_has_readonly_source: bool,
         concrete_contra_candidates: &[InferenceCandidate],
         from_array_element: bool,
         mut external_is_subtype: Option<&mut dyn FnMut(TypeId, TypeId) -> bool>,
@@ -62,6 +63,17 @@ impl<'a> InferenceContext<'a> {
             let contra_result = self.resolve_from_contra_candidates(concrete_contra_candidates);
             if contra_result == TypeId::NEVER {
                 return covariant_result;
+            }
+            if covariant_has_readonly_source {
+                let contra_assignable_to_covariant = if let Some(ref mut ext) = external_is_subtype
+                {
+                    ext(contra_result, covariant_widened)
+                } else {
+                    self.is_subtype(contra_result, covariant_widened)
+                };
+                if contra_assignable_to_covariant {
+                    return covariant_widened;
+                }
             }
         }
         self.choose_covariant_or_contra(
@@ -553,6 +565,7 @@ impl<'a> InferenceContext<'a> {
                 // object literal type is not assignable to Props.
                 self.resolve_covariant_against_contra(
                     covariant_result,
+                    candidates.iter().any(|c| c.from_readonly_source),
                     &concrete_contra_candidates,
                     candidates.iter().any(|c| c.from_array_element),
                     external_is_subtype
@@ -1769,6 +1782,7 @@ impl<'a> InferenceContext<'a> {
                 if !concrete_contra_candidates.is_empty() {
                     self.resolve_covariant_against_contra(
                         covariant_result,
+                        candidates.iter().any(|c| c.from_readonly_source),
                         &concrete_contra_candidates,
                         candidates.iter().any(|c| c.from_array_element),
                         external_is_subtype

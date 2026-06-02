@@ -17,7 +17,6 @@ use crate::types::{
     TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
-
 /// Returns the declared `this` type only when it constrains the receiver. Per
 /// tsc's `checkApplicableSignature` gate (`thisType !== voidType`, source of
 /// TS2684), a callable declared `this: void` opts out of the receiver check
@@ -1812,7 +1811,6 @@ pub fn infer_call_signature<C: AssignabilityChecker>(
     let mut evaluator = CallEvaluator::new(interner, checker);
     evaluator.infer_call_signature(sig, arg_types)
 }
-
 pub fn infer_generic_function<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
@@ -1829,6 +1827,7 @@ pub struct ResolveCallOptions<'a> {
     pub contextual_type: Option<TypeId>,
     pub actual_this_type: Option<TypeId>,
     pub arg_source_is_type_annotation: &'a [bool],
+    pub arg_source_is_readonly_annotation: &'a [bool],
 }
 
 pub fn resolve_call_with_checker<C: AssignabilityChecker>(
@@ -1850,10 +1849,10 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
             contextual_type,
             actual_this_type,
             arg_source_is_type_annotation: &[],
+            arg_source_is_readonly_annotation: &[],
         },
     )
 }
-
 pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
@@ -1866,6 +1865,7 @@ pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     evaluator.set_contextual_type(opts.contextual_type);
     evaluator.set_actual_this_type(opts.actual_this_type);
     evaluator.set_arg_source_is_type_annotation(opts.arg_source_is_type_annotation);
+    evaluator.set_arg_source_is_readonly_annotation(opts.arg_source_is_readonly_annotation);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
     let instantiated_params = evaluator.last_instantiated_params.take();

@@ -31,7 +31,13 @@ impl<'a> CheckerState<'a> {
                     .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             })
             .flatten();
+        let current_non_import_symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
         let symbol_meta = local_alias_symbol
+            .or(current_non_import_symbol)
             .or_else(|| self.get_cross_file_symbol(sym_id))
             .map(|symbol| {
                 (

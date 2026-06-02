@@ -69,6 +69,10 @@ pub(crate) struct InferenceCandidate {
     /// Candidate came from array element inference (`T[]` vs a literal array).
     /// tsc's BCT widening applies to these in `NoInfer<T>` positions.
     pub(crate) from_array_element: bool,
+    /// Candidate came from a readonly array-like source. Used when mixed
+    /// co/contra inference would otherwise replace a direct readonly argument
+    /// with a mutable callback parameter candidate.
+    pub(crate) from_readonly_source: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -129,7 +133,7 @@ impl UnifyValue for InferenceInfo {
         // Deduplicate upper bounds using helper
         extend_dedup(&mut merged.upper_bounds, &b.upper_bounds);
 
-        if merged.resolved.is_none() {
+        if b.resolved.is_some() {
             merged.resolved = b.resolved;
         }
         Ok(merged)
@@ -664,6 +668,7 @@ impl<'a> InferenceContext<'a> {
                 object_property_name: candidate.object_property_name,
                 source_is_type_annotation: candidate.source_is_type_annotation,
                 from_array_element: candidate.from_array_element,
+                from_readonly_source: candidate.from_readonly_source,
             });
         }
 
@@ -1195,6 +1200,7 @@ impl<'a> InferenceContext<'a> {
             object_property_name: None,
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
+            from_readonly_source: self.candidate_is_from_readonly_source(ty),
         };
         self.table.union_value(
             root,
@@ -1286,6 +1292,7 @@ impl<'a> InferenceContext<'a> {
             object_property_name: context.object_property_name,
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
+            from_readonly_source: self.candidate_is_from_readonly_source(ty),
         };
         if self.in_contra_mode {
             // In contravariant context (e.g., callback parameter structural
@@ -1306,6 +1313,30 @@ impl<'a> InferenceContext<'a> {
                     ..InferenceInfo::default()
                 },
             );
+        }
+    }
+
+    fn candidate_is_from_readonly_source(&self, ty: TypeId) -> bool {
+        self.in_readonly_source_context || self.type_is_readonly_array_like(ty)
+    }
+
+    fn type_is_readonly_array_like(&self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(ty) {
+            Some(TypeData::ReadonlyType(inner)) => {
+                matches!(
+                    self.interner.lookup(inner),
+                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                ) || self.type_is_readonly_array_like(inner)
+            }
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.type_is_readonly_array_like(member)),
+            _ => false,
         }
     }
 
@@ -1518,6 +1549,23 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         info.candidates.iter().any(|c| c.source_is_type_annotation)
+    }
+
+    /// Returns true when the winning covariant candidate type was produced
+    /// while descending through a readonly array/tuple source.
+    pub fn has_readonly_source_candidate_for(&mut self, var: InferenceVar, ty: TypeId) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .any(|candidate| candidate.type_id == ty && candidate.from_readonly_source)
+    }
+
+    pub fn set_resolved_type(&mut self, var: InferenceVar, ty: TypeId) {
+        let root = self.table.find(var);
+        let mut info = self.table.probe_value(root);
+        info.resolved = Some(ty);
+        self.table.union_value(root, info);
     }
 }
 

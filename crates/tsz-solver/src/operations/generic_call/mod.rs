@@ -542,6 +542,7 @@ fn instantiate_call_type(
 mod contextual_signature_instantiation;
 mod inference_helpers;
 mod normalization;
+mod readonly_direct_inference;
 pub mod request;
 mod resolve;
 pub mod result;

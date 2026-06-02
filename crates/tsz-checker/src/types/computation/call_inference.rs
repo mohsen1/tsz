@@ -20,8 +20,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{FunctionShape, TypeId};
 
@@ -1008,6 +1008,210 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn readonly_array_like_annotation_for_identifier_argument(
+        &mut self,
+        arg_idx: NodeIndex,
+        arg_type: TypeId,
+    ) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let stable_declarations = {
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+            symbol
+                .stable_declarations
+                .iter()
+                .copied()
+                .chain(std::iter::once(symbol.stable_value_declaration))
+                .filter(|loc| loc.is_known())
+                .collect::<Vec<_>>()
+        };
+
+        for stable_location in stable_declarations {
+            let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
+                continue;
+            };
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let annotation = arena
+                .get_variable_declaration(decl_node)
+                .map(|decl| decl.type_annotation)
+                .or_else(|| {
+                    arena
+                        .get_parameter(decl_node)
+                        .map(|param| param.type_annotation)
+                })
+                .unwrap_or(NodeIndex::NONE);
+            if annotation.is_none() {
+                continue;
+            }
+
+            let declared = if std::ptr::eq(arena, self.ctx.arena) {
+                self.get_type_from_type_node(annotation)
+            } else if stable_location.has_file_idx()
+                && stable_location.file_idx != self.ctx.current_file_idx as u32
+            {
+                self.type_of_value_declaration_for_cross_file_symbol(
+                    sym_id,
+                    decl_idx,
+                    stable_location.file_idx as usize,
+                )
+            } else if !std::ptr::eq(arena, self.ctx.arena)
+                && let Some(target_file_idx) = self.ctx.get_file_idx_for_arena(arena)
+                && target_file_idx != self.ctx.current_file_idx
+            {
+                self.type_of_value_declaration_for_cross_file_symbol(
+                    sym_id,
+                    decl_idx,
+                    target_file_idx,
+                )
+            } else {
+                self.type_of_value_declaration_for_symbol(sym_id, decl_idx)
+            };
+
+            if self.is_matching_readonly_array_like_annotation(declared, arg_type) {
+                return Some(declared);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn call_arg_source_readonly_annotation_markers(
+        &self,
+        args: &[NodeIndex],
+        arg_type_count: usize,
+    ) -> Vec<bool> {
+        if args.len() == arg_type_count {
+            return args
+                .iter()
+                .map(|&arg_idx| self.call_arg_source_is_readonly_typed_identifier(arg_idx))
+                .collect();
+        }
+
+        let mut markers = Vec::with_capacity(arg_type_count);
+        for &arg_idx in args {
+            markers.push(self.call_arg_source_is_readonly_typed_identifier(arg_idx));
+        }
+        markers.resize(arg_type_count, false);
+        markers
+    }
+
+    fn call_arg_source_is_readonly_typed_identifier(&self, arg_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+
+        symbol
+            .stable_declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(symbol.stable_value_declaration))
+            .filter(|loc| loc.is_known())
+            .any(|loc| {
+                self.ctx
+                    .node_at_stable_location(loc)
+                    .is_some_and(|(decl_idx, arena)| {
+                        let Some(decl_node) = arena.get(decl_idx) else {
+                            return false;
+                        };
+                        let annotation = arena
+                            .get_variable_declaration(decl_node)
+                            .map(|decl| decl.type_annotation)
+                            .or_else(|| {
+                                arena
+                                    .get_parameter(decl_node)
+                                    .map(|param| param.type_annotation)
+                            })
+                            .unwrap_or(NodeIndex::NONE);
+                        annotation.is_some()
+                            && self.annotation_is_readonly_array_like(arena, annotation)
+                    })
+            })
+    }
+
+    fn annotation_is_readonly_array_like(&self, arena: &NodeArena, annotation: NodeIndex) -> bool {
+        let annotation = arena.skip_parenthesized(annotation);
+        let Some(annotation_node) = arena.get(annotation) else {
+            return false;
+        };
+        if annotation_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return false;
+        }
+        let Some(operator) = arena.get_type_operator(annotation_node) else {
+            return false;
+        };
+        if operator.operator != tsz_scanner::SyntaxKind::ReadonlyKeyword as u16 {
+            return false;
+        }
+
+        let type_node = arena.skip_parenthesized(operator.type_node);
+        arena.get(type_node).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARRAY_TYPE || node.kind == syntax_kind_ext::TUPLE_TYPE
+        })
+    }
+
+    fn is_matching_readonly_array_like_annotation(
+        &self,
+        declared: TypeId,
+        arg_type: TypeId,
+    ) -> bool {
+        if !self.is_readonly_array_like_wrapper(declared) {
+            return false;
+        }
+        if common::unwrap_readonly(self.ctx.types, declared) == arg_type {
+            return true;
+        }
+
+        if let (Some(declared_elem), Some(arg_elem)) = (
+            common::array_element_type(self.ctx.types, declared),
+            common::array_element_type(self.ctx.types, arg_type),
+        ) {
+            return declared_elem == arg_elem;
+        }
+
+        if let (Some(declared_elems), Some(arg_elems)) = (
+            common::tuple_elements(self.ctx.types, declared),
+            common::tuple_elements(self.ctx.types, arg_type),
+        ) {
+            return declared_elems.len() == arg_elems.len()
+                && declared_elems.iter().zip(arg_elems.iter()).all(|(l, r)| {
+                    l.type_id == r.type_id && l.optional == r.optional && l.rest == r.rest
+                });
+        }
+
+        false
+    }
+
+    fn is_readonly_array_like_wrapper(&self, type_id: TypeId) -> bool {
+        let Some(inner) = common::get_readonly_inner(self.ctx.types, type_id) else {
+            return false;
+        };
+        common::array_element_type(self.ctx.types, inner).is_some()
+            || common::tuple_elements(self.ctx.types, inner).is_some()
+    }
+
     pub(crate) fn inference_type_is_anyish(&self, ty: TypeId) -> bool {
         common::is_type_deeply_any(self.ctx.types, ty)
     }
@@ -1064,6 +1268,13 @@ impl<'a> CheckerState<'a> {
             {
                 changed = true;
                 arg_type = self.ctx.types.this_type();
+            }
+
+            if let Some(declared) =
+                self.readonly_array_like_annotation_for_identifier_argument(arg_idx, arg_type)
+            {
+                changed = true;
+                arg_type = declared;
             }
 
             let sanitized_arg = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
