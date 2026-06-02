@@ -166,3 +166,108 @@ const v: Target = { a: 123, b: 1 };
         "expected a TS2322 for the `a` value mismatch; got {diags:?}"
     );
 }
+
+// ── Multiple-missing-property (MissingProperties) cases ──────────────────────
+
+/// When two properties are missing and both live in the same mapped intersection
+/// member, each missing property gets its own elaboration line.
+#[test]
+fn multiple_missing_in_mapped_member_elaborates_each() {
+    let diags = diagnostics(
+        r#"
+type Map1<T> = { [K in keyof T]: T[K] };
+type Target = Map1<{ a: string; b: number; c: boolean }> & { d: string };
+const v: Target = { d: "x" };
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "a"),
+        "expected elaboration for missing `a`; got {diags:?}"
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "b"),
+        "expected elaboration for missing `b`; got {diags:?}"
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "c"),
+        "expected elaboration for missing `c`; got {diags:?}"
+    );
+}
+
+/// Properties missing from *different* intersection members each get an
+/// elaboration line pointing to their respective requiring member.
+#[test]
+fn multiple_missing_across_different_members_elaborates_each() {
+    let diags = diagnostics(
+        r#"
+type Map1<T> = { [K in keyof T]: T[K] };
+type Target = Map1<{ x: string }> & { y: number };
+const v: Target = {};
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "x"),
+        "expected elaboration for missing `x` in mapped member; got {diags:?}"
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "y"),
+        "expected elaboration for missing `y` in plain member; got {diags:?}"
+    );
+}
+
+/// Anti-hardcoding: different iteration-variable / property / alias spellings
+/// must not affect whether elaboration fires for the multi-property case.
+#[test]
+fn multiple_missing_renamed_vars_elaborates() {
+    let diags = diagnostics(
+        r#"
+type Wrap<U> = { [Q in keyof U]: U[Q] };
+type Combined = Wrap<{ alpha: string; beta: number }> & { gamma: boolean };
+const w: Combined = { gamma: true };
+"#,
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "alpha"),
+        "expected elaboration for missing `alpha`; got {diags:?}"
+    );
+    assert!(
+        has_missing_member_elaboration(&diags, "beta"),
+        "expected elaboration for missing `beta`; got {diags:?}"
+    );
+}
+
+/// A plain (non-mapped) intersection alias is normalised to an object type by
+/// the solver before it reaches the error reporter, so multiple missing
+/// properties produce TS2739 (the standard missing-properties message) rather
+/// than the intersection-member elaboration.  This verifies we don't regress
+/// the TS2739 path while the mapped-intersection elaboration is active.
+#[test]
+fn plain_intersection_alias_multiple_missing_gives_ts2739() {
+    let diags = diagnostics(
+        r#"
+type Target = { a: string; b: number } & { c: boolean };
+const v: Target = {};
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2739),
+        "plain intersection with multiple missing properties must emit TS2739; got {diags:?}"
+    );
+}
+
+/// Negative: a complete source must not trigger any missing-member elaboration,
+/// even for multi-property intersection targets.
+#[test]
+fn multiple_missing_complete_source_no_error() {
+    let diags = diagnostics(
+        r#"
+type Map1<T> = { [K in keyof T]: T[K] };
+type Target = Map1<{ a: string; b: number }> & { c: boolean };
+const v: Target = { a: "s", b: 1, c: true };
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2322 || d.code == 2741),
+        "a complete source must not produce any assignability error; got {diags:?}"
+    );
+}

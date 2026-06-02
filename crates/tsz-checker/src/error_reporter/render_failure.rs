@@ -1528,8 +1528,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2739/TS2740 when the target is an intersection type.
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
-            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+        // Evaluated form is checked too: a mapped-type alias like `Mapped<{ a, b }> & { c }`
+        // may only resolve to an intersection after evaluation.
+        // The jsdoc anchor path also enters here (intersection_for_members = None in that case)
+        // and receives bare TS2322 without per-property elaboration, matching tsc's output.
+        let intersection_for_members =
+            self.resolve_intersection_target_for_display(target_type, target);
+        if intersection_for_members.is_some()
             || self.anchor_jsdoc_type_tag_targets_intersection_alias(idx)
         {
             let src_str = self.format_type_diagnostic(source);
@@ -1538,13 +1543,24 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
             );
-            return Diagnostic::error(
+            let mut diag = Diagnostic::error(
                 file_name,
                 start,
                 length,
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+            if let Some(intersection) = intersection_for_members {
+                self.push_intersection_member_elaboration(
+                    &mut diag,
+                    intersection,
+                    property_names,
+                    &src_str,
+                    start,
+                    length,
+                );
+            }
+            return diag;
         }
 
         // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have

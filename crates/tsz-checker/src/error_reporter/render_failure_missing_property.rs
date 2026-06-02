@@ -210,30 +210,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2741 when the target type is an intersection type.
-        let target_evaluated_for_intersection = self.evaluate_type_with_env(target);
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
-            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
-            || crate::query_boundaries::common::is_intersection_type(
-                self.ctx.types,
-                target_evaluated_for_intersection,
-            )
+        // tsc keeps the top-level TS2322 but elaborates which intersection member requires the
+        // missing property; returning the bare TS2322 alone hid this root reason
+        // ("intersection fallback hides root property mismatch").
+        if let Some(intersection) =
+            self.resolve_intersection_target_for_display(target_type, target)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            // The intersection matched by the guard above is both the target
-            // shown in the message and the type whose members we search for the
-            // one requiring the missing property — compute it once.
-            let intersection_for_members = if crate::query_boundaries::common::is_intersection_type(
-                self.ctx.types,
-                target_evaluated_for_intersection,
-            ) {
-                target_evaluated_for_intersection
-            } else if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
-            {
-                target
-            } else {
-                target_type
-            };
-            let tgt_str = self.format_type_diagnostic(intersection_for_members);
+            let tgt_str = self.format_type_diagnostic(intersection);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -245,31 +229,14 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            // tsc keeps the top-level TS2322 above, but elaborates which
-            // intersection member requires the missing property:
-            //   Property 'X' is missing in type 'S' but required in type '<member>'.
-            // Returning the bare TS2322 alone hid this root reason ("intersection
-            // fallback hides root property mismatch").
-            if let Some(member) =
-                self.intersection_member_requiring_property(intersection_for_members, property_name)
-            {
-                let prop_name_display =
-                    self.missing_property_name_for_display(property_name, member);
-                let member_str = self.format_type_diagnostic(member);
-                let elaboration = format_message(
-                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[&prop_name_display, &src_str, &member_str],
-                );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: diag.file.clone(),
-                    start,
-                    length,
-                    message_text: elaboration,
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    depth: 0,
-                });
-            }
+            self.push_intersection_member_elaboration(
+                &mut diag,
+                intersection,
+                &[property_name],
+                &src_str,
+                start,
+                length,
+            );
             return diag;
         }
 
@@ -440,8 +407,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2741 when the target is an intersection type.
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
-            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+        if self
+            .resolve_intersection_target_for_display(target_type, target)
+            .is_some()
         {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str_full = self.format_type_diagnostic(target);
@@ -687,7 +655,7 @@ impl<'a> CheckerState<'a> {
     /// expanded object). Returns `None` when no member requires the property
     /// (e.g. the requirement comes from an index signature), leaving the caller
     /// with the bare top-level message.
-    fn intersection_member_requiring_property(
+    pub(super) fn intersection_member_requiring_property(
         &mut self,
         intersection: TypeId,
         property_name: tsz_common::interner::Atom,
@@ -716,6 +684,42 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Append one elaboration line to `diag` for each property in
+    /// `property_names` that is required by an intersection member.
+    ///
+    /// Mirrors the elaboration tsc appends for missing-property mismatches on
+    /// intersection targets:
+    /// `Property 'X' is missing in type 'S' but required in type '<member>'`.
+    pub(super) fn push_intersection_member_elaboration(
+        &mut self,
+        diag: &mut Diagnostic,
+        intersection: TypeId,
+        property_names: &[tsz_common::interner::Atom],
+        src_str: &str,
+        start: u32,
+        length: u32,
+    ) {
+        for &prop in property_names {
+            if let Some(member) = self.intersection_member_requiring_property(intersection, prop) {
+                let prop_name_display = self.missing_property_name_for_display(prop, member);
+                let member_str = self.format_type_diagnostic(member);
+                let elaboration = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop_name_display, src_str, &member_str],
+                );
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start,
+                    length,
+                    message_text: elaboration,
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    depth: 0,
+                });
+            }
+        }
     }
 
     /// For TS2739 source display, unfold wrapper aliases like
