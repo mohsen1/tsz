@@ -20,10 +20,7 @@ impl<'a> CheckerState<'a> {
             return Some(query_display);
         }
         if let Some(static_type) = self.static_schema_alias_element_structural_type(element_type) {
-            return Some(self.format_static_schema_array_structural_type(
-                static_type,
-                format_peer,
-            ));
+            return Some(self.format_static_schema_array_structural_type(static_type, format_peer));
         }
         let schema_type = self
             .static_schema_application_schema_type(element_type)
@@ -33,16 +30,10 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| self.resolve_type_query_type(schema_type));
         let schema_type = self.evaluate_type_for_assignability(schema_type);
         if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
-            return Some(self.format_static_schema_array_structural_type(
-                static_type,
-                format_peer,
-            ));
+            return Some(self.format_static_schema_array_structural_type(static_type, format_peer));
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
-        Some(self.format_static_schema_array_structural_type(
-            evaluated_element,
-            format_peer,
-        ))
+        Some(self.format_static_schema_array_structural_type(evaluated_element, format_peer))
     }
 
     fn static_schema_alias_element_structural_type(
@@ -90,6 +81,11 @@ impl<'a> CheckerState<'a> {
         self.is_static_schema_application(body)
             .then_some(body)
             .and_then(|body| self.static_schema_element_structural_type(body))
+    }
+
+    fn is_static_schema_application(&self, type_id: TypeId) -> bool {
+        self.static_schema_application_schema_type(type_id)
+            .is_some()
     }
 
     pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {

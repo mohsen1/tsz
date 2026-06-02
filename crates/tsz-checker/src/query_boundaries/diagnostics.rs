@@ -71,10 +71,9 @@ pub(crate) fn is_global_object_interface_for_diagnostic(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    if type_id == TypeId::OBJECT
-        || db
-            .get_boxed_type(tsz_solver::IntrinsicKind::Object)
-            .is_some_and(|object_type| object_type == type_id)
+    if db
+        .get_boxed_type(tsz_solver::IntrinsicKind::Object)
+        .is_some_and(|object_type| object_type == type_id)
     {
         return true;
     }
