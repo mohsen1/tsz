@@ -292,6 +292,36 @@ impl<'a> CheckerState<'a> {
         let mut result = self.resolve_property_access_via_boundary(object_type, prop_name);
         if matches!(
             result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && let Some(def_id) = self
+            .ctx
+            .definition_store
+            .find_def_for_type(object_type)
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type))
+            && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(delegate_arena) = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref)
+            && symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+            && self.symbol_has_builtin_lib_declaration_provenance(sym_id, symbol, delegate_arena)
+            && !self
+                .ctx
+                .file_local_type_shadow_for_lib_name(&symbol.escaped_name)
+        {
+            let name = symbol.escaped_name.clone();
+            if let Some(member_type) =
+                self.resolve_simple_lib_interface_own_property(&name, prop_name)
+            {
+                result =
+                    tsz_solver::operations::property::PropertyAccessResult::simple(member_type);
+            }
+        }
+        if matches!(
+            result,
             tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
                 from_index_signature: false,

@@ -1359,18 +1359,15 @@ impl<'a> CheckerState<'a> {
         if missing_props.is_empty() {
             return;
         }
-        if provided_attrs.is_empty()
-            && tag_name_idx.is_some_and(|tag_name_idx| {
-                self.get_jsx_tag_name_text(tag_name_idx)
-                    .as_bytes()
-                    .first()
-                    .is_some_and(|ch| ch.is_ascii_lowercase())
-            })
-            && jsx_queries::missing_props_are_iterator_protocol_noise(
-                self.ctx.types,
-                &missing_props,
-            )
-        {
+        if tag_name_idx.is_some_and(|tag_name_idx| {
+            self.get_jsx_tag_name_text(tag_name_idx)
+                .as_bytes()
+                .first()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
+        }) && jsx_queries::missing_props_are_iterator_protocol_noise(
+            self.ctx.types,
+            &missing_props,
+        ) {
             return;
         }
         let mut missing_names: Vec<_> = missing_props.into_iter().map(|prop| prop.name).collect();

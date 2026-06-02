@@ -262,6 +262,9 @@ impl<'a> CheckerState<'a> {
         // Grammar check: TS17000 for empty expressions in JSX attributes.
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(opts.attributes_idx);
+        if self.ctx.deferred_jsx_import_source_error.is_some() {
+            return;
+        }
 
         // Normalize managed/evaluated JSX props before any checks so conditional,
         // mapped, and application-based surfaces (e.g.

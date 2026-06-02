@@ -751,10 +751,7 @@ impl<'a> CheckerState<'a> {
             }
             SubtypeFailureReason::UnionSourceMismatch { .. }
             | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
-                match self.union_member_related_line(Some(reason), start, length, 0) {
-                    Some(line) => vec![line],
-                    None => return None,
-                }
+                vec![self.union_member_related_line(Some(reason), start, length, 0)?]
             }
             _ => return None,
         };

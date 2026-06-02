@@ -10,37 +10,41 @@
 //!
 //! Scope (intentionally narrow for soundness — anything else returns `None` and
 //! falls back to the full-materialization path):
-//! - Own **plain property signatures** only (`prop: T`). Methods, accessors,
-//!   index signatures, call/construct signatures, and computed/symbol-named
-//!   members take the full path.
+//! - Plain property signatures only (`prop: T` / `prop?: T`). Methods,
+//!   accessors, index signatures, call/construct signatures, readonly writes,
+//!   and computed/symbol-named members take the full path.
 //! - A single own declaration of the member. Members declared more than once
 //!   (overloads / split declarations) take the full path.
-//! - Heritage-inherited members are **not** resolved here yet; an own-member
-//!   miss returns `None` so the inherited-member lookup stays on the proven
-//!   full path.
+//! - Heritage-inherited members can be resolved when the inherited annotation
+//!   does not reference the base interface's type parameters. Parameter-dependent
+//!   inherited members fall back to full materialization for substitution.
 //!
 //! [`resolve_lib_type_by_name`]: super::lib_resolution::CheckerState::resolve_lib_type_by_name
 
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
+use tsz_parser::parser::syntax_kind_ext::{self, PROPERTY_SIGNATURE};
 use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::lib_decls::{collect_lib_decls_with_arenas_in_contexts, resolve_lib_fallback_arena};
+use super::lib_name_text::entity_name_text_in_arena;
 use super::lib_resolution::{lib_def_id_from_node, resolve_lib_node_in_arenas};
 use super::lib_resolution_selected::selected_lib_symbol_for_name;
 
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 
 impl CheckerState<'_> {
-    /// Resolve a single **own plain property** `prop_name` of the simple lib
-    /// interface named `name`, returning its lowered member type without
-    /// materializing the rest of the interface.
+    /// Resolve a single plain property `prop_name` of the simple lib interface
+    /// named `name`, returning its lowered member type without materializing the
+    /// rest of the interface.
     ///
     /// Returns `None` (caller falls back to full materialization) when:
     /// - the interface symbol cannot be selected,
-    /// - the member is not an own plain property signature,
+    /// - the member is not a plain property signature,
     /// - the member is declared more than once (overload/split declaration),
     /// - the member has a computed/symbol name, or
     /// - lowering the member's annotation fails.
@@ -52,6 +56,16 @@ impl CheckerState<'_> {
         &mut self,
         name: &str,
         prop_name: &str,
+    ) -> Option<TypeId> {
+        let mut visited = FxHashSet::default();
+        self.resolve_simple_lib_interface_property(name, prop_name, &mut visited)
+    }
+
+    fn resolve_simple_lib_interface_property(
+        &mut self,
+        name: &str,
+        prop_name: &str,
+        visited: &mut FxHashSet<SymbolId>,
     ) -> Option<TypeId> {
         if self.ctx.skip_lib_type_resolution {
             return None;
@@ -73,6 +87,9 @@ impl CheckerState<'_> {
 
         let (sym_id, selected_binder_arc) =
             selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders)?;
+        if !visited.insert(sym_id) {
+            return None;
+        }
         let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
         let symbol = selected_binder.get_symbol_with_libs(sym_id, &lib_binders)?;
 
@@ -90,7 +107,7 @@ impl CheckerState<'_> {
         // Find the single own plain-property-signature declaration of `prop_name`
         // across the interface's declarations. Bail (None) on any ambiguity so
         // overloads/split declarations keep their full-path semantics.
-        let mut member: Option<(NodeIndex, &NodeArena)> = None;
+        let mut member: Option<(NodeIndex, &NodeArena, Vec<SymbolId>)> = None;
         for &(decl_idx, arena) in &decls_with_arenas {
             let Some(node) = arena.get(decl_idx) else {
                 continue;
@@ -101,6 +118,19 @@ impl CheckerState<'_> {
                 // Skip it; the interface body decl is elsewhere in the list.
                 continue;
             };
+            let type_param_symbols = interface
+                .type_parameters
+                .as_ref()
+                .map(|params| {
+                    self.lib_interface_type_param_symbols(
+                        selected_binder,
+                        arena,
+                        params,
+                        &decls_with_arenas,
+                        fallback_arena,
+                    )
+                })
+                .unwrap_or_default();
             for &member_idx in &interface.members.nodes {
                 let Some(member_node) = arena.get(member_idx) else {
                     continue;
@@ -124,11 +154,72 @@ impl CheckerState<'_> {
                     // Declared more than once — ambiguous, fall back.
                     return None;
                 }
-                member = Some((member_idx, arena));
+                member = Some((member_idx, arena, type_param_symbols.clone()));
             }
         }
 
-        let (member_idx, member_arena) = member?;
+        let (member_idx, member_arena, type_param_symbols) = if let Some(member) = member {
+            member
+        } else {
+            let mut heritage_bases = Vec::new();
+            for &(decl_idx, arena) in &decls_with_arenas {
+                let Some(node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = arena.get_interface(node) else {
+                    continue;
+                };
+                let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+                    continue;
+                };
+                for &clause_idx in &heritage_clauses.nodes {
+                    let Some(clause_node) = arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                        continue;
+                    };
+                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    for &type_idx in &heritage.types.nodes {
+                        let Some(type_node) = arena.get(type_idx) else {
+                            continue;
+                        };
+                        let (expr_idx, _type_arguments) =
+                            if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                                (
+                                    expr_type_args.expression,
+                                    expr_type_args.type_arguments.as_ref(),
+                                )
+                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                if let Some(type_ref) = arena.get_type_ref(type_node) {
+                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
+                                } else {
+                                    (type_idx, None)
+                                }
+                            } else {
+                                (type_idx, None)
+                            };
+                        if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx) {
+                            heritage_bases.push(base_name.to_string());
+                        }
+                    }
+                }
+            }
+            let mut inherited_member = None;
+            for base_name in heritage_bases {
+                if let Some(member_type) =
+                    self.resolve_simple_lib_interface_property(&base_name, prop_name, visited)
+                {
+                    if inherited_member.is_some() {
+                        return None;
+                    }
+                    inherited_member = Some(member_type);
+                }
+            }
+            return inherited_member;
+        };
         let member_node = member_arena.get(member_idx)?;
         let sig = member_arena.get_signature(member_node)?;
         if sig.type_annotation == NodeIndex::NONE {
@@ -137,11 +228,23 @@ impl CheckerState<'_> {
             // shape rather than reimplement the default here.
             return None;
         }
-        // Optional and readonly properties carry extra read/write semantics
-        // (`?` interacts with `exactOptionalPropertyTypes`; `readonly` affects
-        // the write type). Leave those on the full path so their exact behavior
-        // is authoritative — this fast path only handles plain `prop: T`.
-        if sig.question_token || self.has_readonly_modifier(&sig.modifiers) {
+        if !type_param_symbols.is_empty()
+            && self.type_annotation_references_type_params(
+                selected_binder,
+                member_arena,
+                sig.type_annotation,
+                &type_param_symbols,
+                &decls_with_arenas,
+                fallback_arena,
+            )
+        {
+            return None;
+        }
+        // Readonly properties carry extra write semantics. Leave those on the
+        // full path so their exact behavior is authoritative. Optional plain
+        // properties are safe here because property access returns the read
+        // annotation type; optionality itself is tracked by full object shapes.
+        if self.has_readonly_modifier(&sig.modifiers) {
             return None;
         }
 
@@ -192,5 +295,47 @@ impl CheckerState<'_> {
             return None;
         }
         Some(member_type)
+    }
+
+    fn lib_interface_type_param_symbols(
+        &self,
+        binder: &tsz_binder::BinderState,
+        arena: &NodeArena,
+        params: &tsz_parser::parser::NodeList,
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> Vec<SymbolId> {
+        params
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = arena.get(param_idx)?;
+                let param = arena.get_type_parameter(param_node)?;
+                resolve_lib_node_in_arenas(binder, param.name, decls_with_arenas, fallback_arena)
+            })
+            .collect()
+    }
+
+    fn type_annotation_references_type_params(
+        &self,
+        binder: &tsz_binder::BinderState,
+        arena: &NodeArena,
+        root: NodeIndex,
+        type_param_symbols: &[SymbolId],
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if arena.get_identifier_text(idx).is_some()
+                && let Some(sym_id) =
+                    resolve_lib_node_in_arenas(binder, idx, decls_with_arenas, fallback_arena)
+                && type_param_symbols.contains(&sym_id)
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
     }
 }
