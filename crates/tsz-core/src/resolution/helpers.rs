@@ -158,37 +158,49 @@ pub(crate) fn match_export_pattern(pattern: &str, subpath: &str) -> Option<Strin
     Some(subpath[start..end].to_string())
 }
 
-/// Returns the specificity of an export/import pattern for tie-breaking.
+/// Specificity ranking key for an `exports`/`imports` subpath key.
 ///
-/// Per Node.js `PACKAGE_IMPORTS_EXPORTS_RESOLVE` spec, when multiple patterns
-/// match a subpath, the most specific one wins. Specificity is defined as:
+/// `(base_length, is_pattern, total_length)`, compared lexicographically with
+/// "larger wins". This mirrors Node.js `PATTERN_KEY_COMPARE` (the comparator
+/// behind `PACKAGE_IMPORTS_EXPORTS_RESOLVE`, which tsc reimplements as
+/// `comparePatternKeys`) so the most specific key is chosen independently of
+/// JSON declaration order:
 ///
-/// 1. **Primary**: length of the prefix (characters before `*`). A longer prefix
-///    means the pattern is more anchored to the start of the subpath.
-/// 2. **Secondary**: length of the suffix (characters after `*`). A longer suffix
-///    means the pattern is more anchored to the end of the subpath.
+/// 1. **`base_length`** — the anchored prefix length. For a single-`*` key this
+///    is `indexOf('*') + 1`; for a non-wildcard key (exact or `/`-suffixed
+///    directory) it is the full key length. A longer base is more specific and
+///    wins first. This is what lets a long directory key (`"./lib/"`, base 6)
+///    correctly outrank a short wildcard (`"./*"`, base 3), and a wildcard
+///    (`"./lib/*"`, base 7) outrank that directory key.
+/// 2. **`is_pattern`** — `1` for keys containing `*`, else `0`. At equal base
+///    length a wildcard key beats a directory/exact key, matching Node rules
+///    7–8 (`if keyA does not contain "*" return 1`). Without this term `"./"`
+///    and `"./*"` tie on base length `2`, and the winner flips with JSON key
+///    order — the "different physical files between rows" divergence.
+/// 3. **`total_length`** — longer keys win last (Node rules 9–10). For two
+///    wildcards with equal base this orders by suffix length, e.g. `"./*.js"`
+///    beats `"./*"`.
 ///
-/// Exact (non-wildcard) and directory patterns use `(pattern.len(), 0)` since
-/// they always beat a wildcard match of the same or shorter length.
-///
-/// When two patterns have equal `(prefix_len, suffix_len)`, the first one in
-/// JSON source order wins — callers must iterate in insertion order (use
-/// `IndexMap`) and update `best_match` only on strict improvement (`>`).
-pub(crate) fn export_pattern_specificity(pattern: &str) -> (usize, usize) {
+/// True ties (identical ranking) resolve to the first key in iteration order, so
+/// callers must iterate an insertion-order map (`IndexMap`) and update only on
+/// strict improvement (`>`).
+pub(crate) fn export_pattern_specificity(pattern: &str) -> (usize, usize, usize) {
+    let len = pattern.len();
     if let Some(star_pos) = pattern.find('*') {
-        (star_pos, pattern.len() - star_pos - 1)
+        (star_pos + 1, 1, len)
     } else {
-        (pattern.len(), 0)
+        (len, 0, len)
     }
 }
 
 /// Find the most-specific pattern entry that matches `target`.
 ///
-/// Iterates `patterns` in order and returns the entry whose `(prefix_len, suffix_len)`
-/// specificity is largest. Equal-specificity ties resolve to the first entry in
-/// iteration order — callers must use an insertion-order map (`IndexMap`) to get
-/// deterministic JSON-source-order tie-breaking per the Node.js/TypeScript spec.
-type BestExportPatternEntry<'a> = ((usize, usize), &'a str, String, &'a PackageExports);
+/// Iterates `patterns` in order and returns the entry whose
+/// [`export_pattern_specificity`] ranking is largest. Equal-ranking ties resolve
+/// to the first entry in iteration order — callers must use an insertion-order
+/// map (`IndexMap`) to get deterministic JSON-source-order tie-breaking per the
+/// Node.js/TypeScript spec.
+type BestExportPatternEntry<'a> = ((usize, usize, usize), &'a str, String, &'a PackageExports);
 
 pub(crate) fn find_best_export_pattern<'a>(
     patterns: impl Iterator<Item = (&'a String, &'a PackageExports)>,
@@ -739,6 +751,69 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;
+
+    /// Pick the winning key from `keys` for `subpath`, returning the key text.
+    /// Mirrors how the resolver calls `find_best_export_pattern` over a subpath
+    /// `IndexMap`, but keeps the test free of filesystem probing.
+    fn best_key<'a>(keys: &'a [&'a str], subpath: &str) -> Option<&'a str> {
+        // A stable dummy value per key — only the selected *key* matters here.
+        let entries: IndexMap<String, PackageExports> = keys
+            .iter()
+            .map(|k| (k.to_string(), PackageExports::String(String::new())))
+            .collect();
+        find_best_export_pattern(entries.iter(), |p| match_export_pattern(p, subpath))
+            .map(|(pattern, _, _)| keys.iter().copied().find(|k| *k == pattern).unwrap())
+    }
+
+    #[test]
+    fn export_pattern_specificity_mirrors_pattern_key_compare() {
+        // Wildcard key: base = indexOf('*') + 1, flagged as a pattern.
+        assert_eq!(export_pattern_specificity("./*"), (3, 1, 3));
+        assert_eq!(export_pattern_specificity("./lib/*"), (7, 1, 7));
+        assert_eq!(export_pattern_specificity("./*.js"), (3, 1, 6));
+        // Directory / exact key: base = full length, not a pattern.
+        assert_eq!(export_pattern_specificity("./"), (2, 0, 2));
+        assert_eq!(export_pattern_specificity("./lib/"), (6, 0, 6));
+        assert_eq!(export_pattern_specificity("./foo"), (5, 0, 5));
+    }
+
+    #[test]
+    fn find_best_export_pattern_prefers_wildcard_over_equal_base_directory_either_order() {
+        // `"./*"` (base 3) must beat `"./"` (base 2) for `./foo`, no matter the
+        // JSON declaration order. Before the PATTERN_KEY_COMPARE fix these tied
+        // on `(prefix_len, suffix_len)` and the winner flipped with key order,
+        // resolving the same specifier to different physical files between rows.
+        assert_eq!(best_key(&["./", "./*"], "./foo"), Some("./*"));
+        assert_eq!(best_key(&["./*", "./"], "./foo"), Some("./*"));
+    }
+
+    #[test]
+    fn find_best_export_pattern_longer_directory_base_beats_short_wildcard() {
+        // A longer anchored directory prefix is more specific than a short
+        // wildcard (Node orders by base length first): `"./lib/"` (base 6) wins
+        // over `"./*"` (base 3) for `./lib/x`, independent of order.
+        assert_eq!(best_key(&["./*", "./lib/"], "./lib/x"), Some("./lib/"));
+        assert_eq!(best_key(&["./lib/", "./*"], "./lib/x"), Some("./lib/"));
+        // …but a wildcard with an even longer base reclaims the win.
+        assert_eq!(best_key(&["./lib/", "./lib/*"], "./lib/x"), Some("./lib/*"));
+        assert_eq!(best_key(&["./lib/*", "./lib/"], "./lib/x"), Some("./lib/*"));
+    }
+
+    #[test]
+    fn find_best_export_pattern_orders_wildcards_by_base_then_total_length() {
+        // Longer prefix before `*` wins.
+        assert_eq!(
+            best_key(&["./*", "./feature/*"], "./feature/btn"),
+            Some("./feature/*")
+        );
+        assert_eq!(
+            best_key(&["./feature/*", "./*"], "./feature/btn"),
+            Some("./feature/*")
+        );
+        // Equal base length → longer total (longer suffix) wins.
+        assert_eq!(best_key(&["./*", "./*.js"], "./a.js"), Some("./*.js"));
+        assert_eq!(best_key(&["./*.js", "./*"], "./a.js"), Some("./*.js"));
+    }
 
     #[test]
     fn types_versions_compiler_version_uses_trimmed_value_and_fallback() {
