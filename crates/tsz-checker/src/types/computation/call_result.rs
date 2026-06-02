@@ -607,6 +607,49 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Whether any call argument is a spread of *indeterminate* length.
+    ///
+    /// A spread provides an unknown number of positional values when it is a
+    /// non-tuple iterable/array, **or** an open-ended tuple whose flattened rest
+    /// is array-backed (e.g. `[number, ...string[]]`, `[...number[], string]`).
+    /// In both cases tsc reports TS2556 at the spread site, and the arity
+    /// diagnostics TS2554/TS2555 must not cascade afterwards.
+    ///
+    /// Array-literal spreads (`...[1, 2, 3]`) are excluded: they were already
+    /// expanded into a known number of positional arguments during call
+    /// checking, so their length is determinate and a genuine arity error should
+    /// still fire.
+    pub(crate) fn call_has_indeterminate_length_spread(&mut self, args: &[NodeIndex]) -> bool {
+        args.iter().any(|&arg_idx| {
+            if let Some(n) = self.ctx.arena.get(arg_idx)
+                && n.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread_data) = self.ctx.arena.get_spread(n)
+            {
+                let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                if let Some(expr_node) = self.ctx.arena.get(inner_idx)
+                    && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    && self.ctx.arena.get_literal_expr(expr_node).is_some()
+                {
+                    return false;
+                }
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
+                // Non-tuple spread (array/iterable) -> indeterminate length.
+                // Open-ended tuple spread (array-backed flattened rest) -> also
+                // indeterminate. A fully fixed-length tuple keeps a known count.
+                common::tuple_elements(self.ctx.types, spread_type).is_none()
+                    || crate::query_boundaries::checkers::call::tuple_variable_rest_offset(
+                        self.ctx.types,
+                        spread_type,
+                    )
+                    .is_some()
+            } else {
+                false
+            }
+        })
+    }
+
     fn callback_prefers_argument_level_return_mismatch(&self, arg_idx: NodeIndex) -> bool {
         let Some(func) = self
             .callback_function_index(arg_idx)
@@ -885,35 +928,9 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let has_non_tuple_spread = args.iter().any(|&arg_idx| {
-                        if let Some(n) = self.ctx.arena.get(arg_idx)
-                            && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                            && let Some(spread_data) = self.ctx.arena.get_spread(n)
-                        {
-                            // Array literal spreads (e.g., ...[1, 2, 3]) were already
-                            // expanded to individual arguments during call checking,
-                            // so they have a known count — treat them like tuples.
-                            let inner_idx =
-                                self.ctx.arena.skip_parenthesized(spread_data.expression);
-                            if let Some(expr_node) = self.ctx.arena.get(inner_idx)
-                                && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                && self.ctx.arena.get_literal_expr(expr_node).is_some()
-                            {
-                                return false;
-                            }
-                            let spread_type = self.get_type_of_node(spread_data.expression);
-                            let spread_type = self.resolve_type_for_property_access(spread_type);
-                            let spread_type = self.resolve_lazy_type(spread_type);
-                            crate::query_boundaries::common::tuple_elements(
-                                self.ctx.types,
-                                spread_type,
-                            )
-                            .is_none()
-                        } else {
-                            false
-                        }
-                    });
+                    let has_non_tuple_spread = self.call_has_indeterminate_length_spread(args);
                     if has_non_tuple_spread {
+                        // TS2556 was already emitted; don't cascade with TS2555/TS2554.
                     } else if actual < expected_min && expected_max.is_none() {
                         self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
                     } else {

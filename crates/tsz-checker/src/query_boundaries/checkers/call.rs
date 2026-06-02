@@ -2,12 +2,28 @@ use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
-use tsz_solver::{FunctionShape, TypeId};
+use tsz_solver::{FunctionShape, TupleElement, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
+
+/// Positional offset of the first variable-length rest element in a tuple
+/// spread, or `None` for a fully fixed-length tuple (or non-tuple). See
+/// `tsz_solver::type_queries::tuple_variable_rest_offset`.
+pub(crate) fn tuple_variable_rest_offset(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    tsz_solver::type_queries::tuple_variable_rest_offset(db, type_id)
+}
+
+/// Slice-taking form of [`tuple_variable_rest_offset`] for callers that already
+/// hold the tuple's elements (avoids a second tuple lookup).
+pub(crate) fn tuple_slice_variable_rest_offset(
+    db: &dyn TypeDatabase,
+    elements: &[TupleElement],
+) -> Option<usize> {
+    tsz_solver::type_queries::tuple_slice_variable_rest_offset(db, elements)
+}
 
 pub(crate) fn rest_array_element_type_for_type(
     db: &dyn TypeDatabase,

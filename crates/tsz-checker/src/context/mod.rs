@@ -1213,6 +1213,19 @@ pub struct CheckerContext<'a> {
     /// Used with `resolved_module_paths` to look up cross-file imports.
     pub current_file_idx: usize,
 
+    /// Deterministic allocator state for inference-placeholder names, packed as
+    /// `(file_namespace << 32) | next_sequence`.
+    ///
+    /// The high 32 bits are captured from `current_file_idx` at the start of
+    /// each file check (see `begin_file_inference_placeholders`) so `__infer_*`
+    /// names stay program-unique even under parallel file checking, while
+    /// staying independent of the temporary `current_file_idx` switches that
+    /// cross-file import resolution performs. The low 32 bits are a per-file
+    /// counter, reset each file so the names a given file produces are
+    /// identical on every run regardless of thread scheduling or how many
+    /// placeholders other files allocated.
+    pub inference_placeholder_state: Cell<u64>,
+
     /// Resolved module specifiers for this file (multi-file CLI mode).
     ///
     /// Wrapped in `Arc` so the CLI per-file driver can share the

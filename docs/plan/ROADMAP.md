@@ -53,12 +53,12 @@ denominators.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| Accepted-regression strictness | `0` listed tests |
+| Accepted-regression strictness | `4` listed tests (justified in `conformance-accepted-regressions.txt`, Refs PR #12157) |
 | JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `37` open `bug` issues in live GitHub orientation |
-| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlist budget exhausted at `23 / 23` tracked calls |
+| Open bug issues | `111` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
+| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlist budget exhausted at `20 / 20` tracked calls |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -70,7 +70,10 @@ The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
 remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete.
+cleanup as complete. It currently lists `4` justified entries (the
+fingerprint-only diffs introduced alongside PR #12157's net-positive snapshot
+refresh), so the strictness gate is non-empty and each entry should be paid
+down in follow-up PRs.
 
 ## Evidence From Current Audit
 
@@ -121,7 +124,7 @@ changes the picture.
    precomputed declaration/public-API summary.
 8. Output-surgery audit is green again: the current audit reports `0`
    unallowlisted calls and `0` stale allowlist entries. The allowlist budget is
-   still exhausted at `23 / 23` tracked calls, so Studio-C/D/F emit work should
+   still exhausted at `20 / 20` tracked calls, so Studio-C/D/F emit work should
    pay down or justify existing entries before adding new output-surgery calls.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad

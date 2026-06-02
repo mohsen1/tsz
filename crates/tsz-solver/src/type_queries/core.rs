@@ -229,6 +229,71 @@ pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     None
 }
 
+/// Positional offset of the first *variable-length* rest element in a tuple
+/// spread, or `None` when the tuple is fully fixed-length (or not a tuple).
+///
+/// A tuple is "open-ended" when, after flattening nested fixed-length tuple
+/// rests, it still contains a rest element whose source is an array (e.g.
+/// `[number, ...string[]]`) or another open-ended tuple. Such a tuple has an
+/// indeterminate length, exactly like a bare array spread.
+///
+/// The returned offset counts the fixed positional slots that precede the first
+/// variable rest (fixed elements contribute one slot; a fully-fixed nested tuple
+/// rest contributes its flattened length). tsc treats an open-ended tuple spread
+/// like an array spread: the variable portion must land on a rest parameter, so
+/// this offset is the argument position that must be a rest-parameter position
+/// for the spread to be valid. When it is not, the call site reports TS2556.
+///
+/// Readonly wrappers, type-parameter/`infer` constraints, and alias
+/// applications are seen through via [`get_tuple_elements`].
+pub fn tuple_variable_rest_offset(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    let elements = super::data::get_tuple_elements(db, type_id)?;
+    tuple_slice_variable_rest_offset(db, &elements)
+}
+
+/// Slice-taking form of [`tuple_variable_rest_offset`], for callers that have
+/// already fetched the tuple's elements (e.g. the call-argument spread
+/// expansion) and want to avoid a second [`get_tuple_elements`] lookup.
+pub fn tuple_slice_variable_rest_offset(
+    db: &dyn TypeDatabase,
+    elements: &[crate::types::TupleElement],
+) -> Option<usize> {
+    let mut offset = 0usize;
+    tuple_elements_variable_rest_offset(db, elements, &mut offset)
+}
+
+/// Recursive worker for [`tuple_variable_rest_offset`].
+///
+/// Advances `offset` past fixed positional slots (including fully-fixed nested
+/// tuple rests) and returns `Some(absolute_offset)` at the first variable rest.
+/// Returns `None` for a fully fixed-length element list, leaving `offset` at the
+/// total flattened fixed-slot count so an enclosing tuple can continue counting.
+fn tuple_elements_variable_rest_offset(
+    db: &dyn TypeDatabase,
+    elements: &[crate::types::TupleElement],
+    offset: &mut usize,
+) -> Option<usize> {
+    for element in elements {
+        if !element.rest {
+            *offset += 1;
+            continue;
+        }
+        match super::data::get_tuple_elements(db, element.type_id) {
+            // Nested tuple rest: a fully-fixed nested tuple just contributes its
+            // own fixed slots; a nested open-ended tuple surfaces its variable
+            // rest at the combined offset.
+            Some(inner) => {
+                if let Some(found) = tuple_elements_variable_rest_offset(db, &inner, offset) {
+                    return Some(found);
+                }
+            }
+            // Array-backed (or otherwise non-tuple) rest: variable length.
+            None => return Some(*offset),
+        }
+    }
+    None
+}
+
 /// Check if a type is invokable (has call signatures, not just construct signatures).
 ///
 /// This is more specific than `is_callable_type` - it ensures the type can be called

@@ -15,18 +15,46 @@ use crate::types::{TypeData, TypeId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_common::Atom;
 
-/// Global counter for generating unique inference placeholder names.
+/// Process-global fallback counter for inference placeholder ids.
+///
 /// Each `InferenceContext` starts its variable counter at 0, so placeholder
-/// names like `__infer_0` collide across contexts when interned as Atoms.
-/// This counter ensures every placeholder gets a globally unique name.
+/// names like `__infer_0` would collide across contexts when interned as
+/// Atoms. A monotonic id keeps every placeholder name program-unique.
+///
+/// This global is only used by callers that lack a file-scoped checker
+/// (internal relation probes and unit-test harnesses) via
+/// [`next_global_placeholder_id`]. The primary generic-call inference path
+/// routes through [`crate::operations::core::AssignabilityChecker::next_inference_placeholder_id`],
+/// whose checker override derives a *deterministic* per-file id. Mixing a
+/// shared mutable counter into that path made placeholder names that leak into
+/// diagnostics (e.g. unresolved `infer` witnesses) unstable across runs and
+/// across parallel file checks, because the value depended on thread
+/// scheduling and on how many placeholders earlier files had allocated.
 pub(crate) static PLACEHOLDER_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Generate a unique placeholder name for an inference variable.
-pub(crate) fn unique_placeholder_name(buf: &mut String) {
+/// Allocate the next process-global placeholder id (fallback path).
+pub(crate) fn next_global_placeholder_id() -> u64 {
+    PLACEHOLDER_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Write the inference-placeholder name `__infer_{id}` into `buf`.
+///
+/// `buf` is cleared first so callers can reuse a single allocation across
+/// type parameters.
+pub(crate) fn write_placeholder_name(buf: &mut String, id: u64) {
     use std::fmt::Write;
-    let id = PLACEHOLDER_COUNTER.fetch_add(1, Ordering::Relaxed);
     buf.clear();
     write!(buf, "__infer_{id}").expect("write to String is infallible");
+}
+
+/// Write the higher-order source placeholder name `__infer_src_{id}` into `buf`.
+///
+/// `buf` is cleared first so callers can reuse a single allocation across
+/// type parameters.
+pub(crate) fn write_src_placeholder_name(buf: &mut String, id: u64) {
+    use std::fmt::Write;
+    buf.clear();
+    write!(buf, "__infer_src_{id}").expect("write to String is infallible");
 }
 
 /// Check if a type constraint is a primitive type (string, number, boolean, bigint, symbol)

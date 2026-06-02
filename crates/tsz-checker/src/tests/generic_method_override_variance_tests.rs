@@ -40,26 +40,113 @@ fn assert_has_2430(src: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Output-only constrained type parameter — valid override.
+// Single-signature method-local generic on base, non-generic implementation:
+// tsc preserves the target's universal quantification and rejects when the
+// constrained parameter appears in a covariant (or invariant) position of
+// the return type. Earlier revisions of this file asserted the opposite,
+// matching an over-permissive `getBaseSignature`-style erasure path that
+// has since been removed; the structural rule now matches tsc.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn no_false_2416_output_only_constrained_param() {
-    assert_no_2416(
+fn keeps_2416_single_sig_output_param_covariant_position() {
+    // `Box<P>` has property `tag: P | number`, so `P` appears in a covariant
+    // position of the return type. A concrete `Box<string>` is not a valid
+    // override because the caller could instantiate `P` with a narrower
+    // subtype of `string` and expect `Box<that subtype>` back.
+    assert_has_2416(
         "interface Box<P extends string> { tag: P | number }
          interface I { m<P extends string>(x: number): Box<P> }
          class C implements I { m(x: number): Box<string> { return {} as any } }",
     );
 }
 
-// Same structural rule with a different type-parameter name — proves the fix
-// is not keyed on a particular identifier (§25).
+// Same structural rule with a different type-parameter name — proves the rule
+// is not keyed on a particular identifier.
 #[test]
-fn no_false_2416_output_only_constrained_param_renamed() {
-    assert_no_2416(
+fn keeps_2416_single_sig_output_param_covariant_position_renamed() {
+    assert_has_2416(
         "interface Box<Z extends string> { tag: Z | number }
          interface I { m<Z extends string>(x: number): Box<Z> }
          class C implements I { m(x: number): Box<string> { return {} as any } }",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Contravariant return position: a constrained method-local type parameter
+// inside a function/callback return is contravariant in the outer return
+// covariance, so `FBox<string>` IS a valid implementation of `FBox<P>` for
+// any `P extends string`. tsc accepts this; tsz must too.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_2416_single_sig_constrained_param_contravariant_position() {
+    assert_no_2416(
+        "interface FBox<P extends string> { apply: (value: P) => void }
+         interface I { m<T extends string>(x: number): FBox<T> }
+         class C implements I { m(x: number): FBox<string> { return {} as any } }",
+    );
+}
+
+// Phantom type parameter (does not appear in any property): erasable, valid
+// override. tsc accepts.
+#[test]
+fn no_false_2416_single_sig_phantom_constrained_param() {
+    assert_no_2416(
+        "interface PBox<P extends string> {}
+         interface I { m<T extends string>(x: number): PBox<T> }
+         class C implements I { m(x: number): PBox<string> { return {} as any } }",
+    );
+}
+
+// Constrained method-local type parameter appears only in *input* position:
+// the implementation's wider parameter accepts any narrower instantiation,
+// so the override is valid. tsc accepts.
+#[test]
+fn no_false_2416_single_sig_constrained_param_input_only() {
+    assert_no_2416(
+        "interface I { m<T extends string>(x: T): void }
+         class C implements I { m(x: string): void {} }",
+    );
+}
+
+// Bare type parameter in return position: the implementation can never
+// satisfy the universal quantification. tsc rejects.
+#[test]
+fn keeps_2416_single_sig_bare_param_in_return() {
+    assert_has_2416(
+        "interface I { m<T extends string>(): T }
+         class C implements I { m(): string { return \"\" } }",
+    );
+}
+
+// Invariant container (read+write of same parameter): variance is invariant,
+// so the override must be rejected. tsc rejects.
+#[test]
+fn keeps_2416_single_sig_invariant_position() {
+    assert_has_2416(
+        "interface Cell<P extends string> { read: P; write: (v: P) => void }
+         interface I { m<T extends string>(x: number): Cell<T> }
+         class C implements I { m(x: number): Cell<string> { return {} as any } }",
+    );
+}
+
+// Mixed inheritance chain: `class C extends Base<concrete> implements I` where
+// `I` has a method-local generic with a covariant return. The variance
+// rejection must apply through the implements check even when the offending
+// method is inherited from the extends base (TS2420 family is also acceptable
+// — the regression guard is that *some* diagnostic surfaces, not silent
+// acceptance).
+#[test]
+fn keeps_diagnostic_for_inherited_variance_violation_in_mixed_chain() {
+    let codes = crate::test_utils::check_source_codes(
+        "interface I { m<T extends string>(x: number): { read: T } }
+         class Base { m(x: number): { read: string } { return { read: \"\" } } }
+         class C extends Base implements I {}",
+    );
+    assert!(
+        codes.contains(&2416) || codes.contains(&2420) || codes.contains(&2430),
+        "expected TS2416/TS2420/TS2430 for inherited variance violation; got {codes:?}"
     );
 }
 

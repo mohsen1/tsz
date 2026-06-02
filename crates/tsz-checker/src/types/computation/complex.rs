@@ -1752,34 +1752,7 @@ impl<'a> CheckerState<'a> {
                     // TSC only emits TS2556 in this case, not TS2555/TS2554.
                     // However, tuple spreads have known length, so TS2554 should
                     // still fire for those.
-                    let has_non_tuple_spread = args.iter().any(|&arg_idx| {
-                        if let Some(n) = self.ctx.arena.get(arg_idx)
-                            && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                            && let Some(spread_data) = self.ctx.arena.get_spread(n)
-                        {
-                            // Array literal spreads (e.g., ...[1, 2, 3]) were already
-                            // expanded to individual arguments during call checking,
-                            // so they have a known count — treat them like tuples.
-                            let inner_idx =
-                                self.ctx.arena.skip_parenthesized(spread_data.expression);
-                            if let Some(expr_node) = self.ctx.arena.get(inner_idx)
-                                && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                && self.ctx.arena.get_literal_expr(expr_node).is_some()
-                            {
-                                return false;
-                            }
-                            let spread_type = self.get_type_of_node(spread_data.expression);
-                            let spread_type = self.resolve_type_for_property_access(spread_type);
-                            let spread_type = self.resolve_lazy_type(spread_type);
-                            crate::query_boundaries::common::tuple_elements(
-                                self.ctx.types,
-                                spread_type,
-                            )
-                            .is_none()
-                        } else {
-                            false
-                        }
-                    });
+                    let has_non_tuple_spread = self.call_has_indeterminate_length_spread(args);
                     if has_non_tuple_spread {
                         // TS2556 was already emitted; don't cascade with TS2555/TS2554.
                     } else if actual < expected_min && expected_max.is_none() {

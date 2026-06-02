@@ -180,14 +180,57 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            // Conditional type (`T extends U ? X : Y`). TypeLowering builds the
+            // type but does not re-enter `compute_type` for the component type
+            // nodes, so grammar checks embedded in those handlers (e.g. the
+            // tuple rest-element TS2574 check) would never run for tuples nested
+            // in a conditional. Mirror tsc's `checkSourceElement` recursion by
+            // grammar-checking the component type nodes before lowering.
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                self.check_conditional_type_component_grammar(idx);
+                let import_overrides = self.collect_import_type_overrides(idx);
+                self.lower_with_resolvers_impl(idx, true, true, Some(&import_overrides))
+            }
+
             // Fall back to TypeLowering for type nodes not handled above
-            // (conditional types, indexed access types, etc.). Pre-resolve any
-            // import() type references with &mut self first — TypeLowering cannot
-            // do module resolution, so we supply the results as a pre-resolved map.
+            // (indexed access types, etc.). Pre-resolve any import() type
+            // references with &mut self first — TypeLowering cannot do module
+            // resolution, so we supply the results as a pre-resolved map.
             _ => {
                 let import_overrides = self.collect_import_type_overrides(idx);
                 self.lower_with_resolvers_impl(idx, true, true, Some(&import_overrides))
             }
+        }
+    }
+
+    /// Grammar-check the check clause of a conditional type.
+    ///
+    /// `TypeLowering` resolves conditional types without re-entering
+    /// `compute_type` for their parts, so grammar checks that live in the
+    /// per-node handlers (notably the tuple rest-element TS2574 check) are
+    /// skipped for tuples nested in a conditional's check clause. We re-enter
+    /// `check` for the check type, mirroring tsc's `checkSourceElement`
+    /// recursion, so `[...T] extends ... ? ... : ...` reports the same
+    /// rest-element diagnostics as a free-standing `[...T]`.
+    ///
+    /// Only the check clause is re-checked. The extends clause may legally use
+    /// rest-position `infer` (`[infer A, ...infer B]`), where `...infer B`
+    /// infers the tail as an array and must not be flagged by TS2574, and the
+    /// true/false branches may reference parameters introduced by those `infer`
+    /// declarations, which are not in scope outside conditional lowering. The
+    /// check clause cannot reference such inferred parameters.
+    fn check_conditional_type_component_grammar(&mut self, idx: NodeIndex) {
+        let Some(check_type) = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| self.ctx.arena.get_conditional_type(node))
+            .map(|cond| cond.check_type)
+        else {
+            return;
+        };
+        if !check_type.is_none() {
+            self.check(check_type);
         }
     }
 
@@ -341,6 +384,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let mut elements = Vec::new();
             let mut seen_optional = false;
             let mut seen_rest = false;
+            // `tsc`'s `checkTupleType` runs a single ordering-grammar loop and
+            // `break`s after the first violation (TS2574 rest-not-array, TS1265
+            // rest-after-rest, TS1266 optional-after-rest, TS1257
+            // required-after-optional), so at most one such diagnostic is
+            // emitted per tuple. We keep building element types after a
+            // violation but suppress further ordering diagnostics to match.
+            let mut grammar_broke = false;
 
             for &elem_idx in &tuple_type.elements.nodes {
                 if elem_idx.is_none() {
@@ -353,13 +403,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 use tsz_parser::parser::syntax_kind_ext;
                 if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
-                    if seen_rest {
+                    if seen_rest && !grammar_broke {
                         self.ctx.error(
                             elem_node.pos,
                             elem_node.end - elem_node.pos,
                             crate::diagnostics::diagnostic_messages::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT.to_string(),
                             crate::diagnostics::diagnostic_codes::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT,
                         );
+                        grammar_broke = true;
                     }
                     seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
@@ -375,10 +426,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let elem_type =
                             self.check_tuple_rest_type_node(inner_idx, is_rest_optional);
                         if is_rest_optional
-                            && !self.is_array_or_tuple_type(elem_type)
-                            && Self::ast_kind_is_obviously_non_array(self.ctx.arena, inner_idx)
+                            && !grammar_broke
+                            && !self.rest_element_type_is_array_like(elem_type)
                         {
                             self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
+                            grammar_broke = true;
                         }
                         elements.push(TupleElement {
                             type_id: elem_type,
@@ -394,27 +446,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             elements.extend(spread_elements);
                             continue;
                         }
-                        let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
-                            || Self::ast_kind_is_obviously_array_or_tuple(
-                                self.ctx.arena,
-                                wrapped.type_node,
-                            );
-                        if is_concrete_rest {
-                            if seen_rest {
-                                self.ctx.error(
-                                    elem_node.pos,
-                                    elem_node.end - elem_node.pos,
-                                    crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
-                                    crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
-                                );
-                            }
-                            seen_rest = true;
-                        } else if Self::ast_kind_is_obviously_non_array(
-                            self.ctx.arena,
+                        self.check_tuple_rest_element_grammar(
+                            elem_type,
                             wrapped.type_node,
-                        ) {
-                            self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
-                        }
+                            elem_node.pos,
+                            elem_node.end,
+                            &mut seen_rest,
+                            &mut grammar_broke,
+                        );
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name: None,
@@ -445,30 +484,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 elements.extend(spread_elements);
                                 continue;
                             }
-                            let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
-                                || Self::ast_kind_is_obviously_array_or_tuple(
-                                    self.ctx.arena,
-                                    data.type_node,
-                                );
-                            if is_concrete_rest {
-                                if seen_rest {
-                                    self.ctx.error(
-                                        elem_node.pos,
-                                        elem_node.end - elem_node.pos,
-                                        crate::diagnostics::diagnostic_messages::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT.to_string(),
-                                        crate::diagnostics::diagnostic_codes::A_REST_ELEMENT_CANNOT_FOLLOW_ANOTHER_REST_ELEMENT,
-                                    );
-                                }
-                                seen_rest = true;
-                            } else if Self::ast_kind_is_obviously_non_array(
-                                self.ctx.arena,
+                            self.check_tuple_rest_element_grammar(
+                                elem_type,
                                 data.type_node,
-                            ) {
-                                self.emit_rest_element_type_must_be_array(
-                                    elem_node.pos,
-                                    elem_node.end,
-                                );
-                            }
+                                elem_node.pos,
+                                elem_node.end,
+                                &mut seen_rest,
+                                &mut grammar_broke,
+                            );
                         } else if data.question_token || misplaced_optional_marker {
                             if misplaced_optional_marker {
                                 self.ctx.error(
@@ -478,22 +501,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     crate::diagnostics::diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N,
                                 );
                             }
-                            if seen_rest {
+                            if seen_rest && !grammar_broke {
                                 self.ctx.error(
                                     elem_node.pos,
                                     elem_node.end - elem_node.pos,
                                     crate::diagnostics::diagnostic_messages::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT.to_string(),
                                     crate::diagnostics::diagnostic_codes::AN_OPTIONAL_ELEMENT_CANNOT_FOLLOW_A_REST_ELEMENT,
                                 );
+                                grammar_broke = true;
                             }
                             seen_optional = true;
-                        } else if seen_optional {
+                        } else if seen_optional && !grammar_broke {
                             self.ctx.error(
                                 elem_node.pos,
                                 elem_node.end - elem_node.pos,
                                 crate::diagnostics::diagnostic_messages::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT.to_string(),
                                 crate::diagnostics::diagnostic_codes::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT,
                             );
+                            grammar_broke = true;
                         }
 
                         elements.push(TupleElement {
@@ -506,13 +531,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else {
                     // Regular element
                     // TS1257: A required element cannot follow an optional element
-                    if seen_optional {
+                    if seen_optional && !grammar_broke {
                         self.ctx.error(
                             elem_node.pos,
                             elem_node.end - elem_node.pos,
                             crate::diagnostics::diagnostic_messages::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT.to_string(),
                             crate::diagnostics::diagnostic_codes::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT,
                         );
+                        grammar_broke = true;
                     }
                     let elem_type = self.check(elem_idx);
                     elements.push(TupleElement {

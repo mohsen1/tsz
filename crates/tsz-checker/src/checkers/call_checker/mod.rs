@@ -10,6 +10,7 @@ mod applicability;
 mod candidate_collection;
 mod diagnostics;
 mod overload_resolution;
+mod spread_arity;
 
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
@@ -162,6 +163,10 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
                 .state
                 .assign_relation_outcome(b_resolved, a_resolved)
                 .related
+    }
+
+    fn next_inference_placeholder_id(&mut self) -> u64 {
+        self.state.ctx.next_inference_placeholder_id()
     }
 }
 

@@ -122,10 +122,10 @@ assert.doesNotMatch(
 const prepArtifactJob = workflow.match(
   /  bench-prep-artifact:[\s\S]+?  bench:/,
 )?.[0] ?? "";
-assert.doesNotMatch(
+assert.match(
   prepArtifactJob,
-  /^\s*["']\/?bench-prep\.(?:env|tar)["'],?$/m,
-  "bench-prep-artifact must not trust root-level Cloud Build artifact paths",
+  /copy_from_cloudbuild_manifest\(\) \{[\s\S]+["']\/bench-prep\.env["'][\s\S]+["']bench-prep\.env["'][\s\S]+["']\/bench-prep\.tar["'][\s\S]+["']bench-prep\.tar["'][\s\S]+if copy_from_cloudbuild_manifest[\s\S]+if validate_downloaded_prep_artifact; then[\s\S]+exit 0/,
+  "bench-prep-artifact may recover exact-build root-level Cloud Build artifacts only after validating target SHA and PGO",
 );
 
 const latestFallbacks = prepArtifactJob.match(
@@ -157,8 +157,14 @@ assert.match(
 
 assert.match(
   workflow,
-  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\./,
-  "bench gate should let active runs finish and skip duplicate automatic runs",
+  /active_run_id: \$\{\{ steps\.gate\.outputs\.active_run_id \}\}[\s\S]+active_run_sha: \$\{\{ steps\.gate\.outputs\.active_run_sha \}\}[\s\S]+active_run_url: \$\{\{ steps\.gate\.outputs\.active_run_url \}\}/,
+  "bench gate should expose the active benchmark run that caused duplicate automatic runs to skip",
+);
+
+assert.match(
+  workflow,
+  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\.[\s\S]+echo "active_run_id=\$\{active_run_id\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_sha=\$\{active_run_sha\}" >> "\$GITHUB_OUTPUT"[\s\S]+echo "active_run_url=\$\{active_run_url\}" >> "\$GITHUB_OUTPUT"/,
+  "bench gate should let active runs finish, skip duplicate automatic runs, and remember the blocker",
 );
 
 assert.doesNotMatch(
@@ -167,10 +173,64 @@ assert.doesNotMatch(
   "bench gate must not cancel active benchmark runs just because main moved",
 );
 
-assert.doesNotMatch(
+assert.match(
   workflow,
-  /bench-prep-target-fresh:|bench-target-fresh:|catchup_main_sha|Trigger benchmark catch-up/,
-  "benchmark workflow should not kill or chase in-flight runs when main moves a few commits",
+  /catch-up:[\s\S]+needs: \[bench-gate, bench-prep-artifact, bench, publish\][\s\S]+github\.event_name == 'workflow_run'[\s\S]+needs\.bench-gate\.outputs\.should_run == 'true'[\s\S]+needs\.publish\.result != 'success'/,
+  "benchmark workflow should schedule catch-up only after a publish-capable workflow_run exits without publishing",
+);
+
+assert.match(
+  workflow,
+  /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{GITHUB_REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'[\s\S]+if \[\[ "\$\{target_sha\}" == "\$\{main_sha\}" \]\]; then[\s\S]+skipping catch-up dispatch/,
+  "benchmark catch-up should only dispatch when main moved beyond the non-publishing target",
+);
+
+assert.match(
+  workflow,
+  /gh run list --repo "\$\{GITHUB_REPOSITORY\}" --workflow bench\.yml --branch main --status in_progress[\s\S]+select\(\.databaseId != \$\{\{ github\.run_id \}\}\)[\s\S]+gh run list --repo "\$\{GITHUB_REPOSITORY\}" --workflow bench\.yml --branch main --status queued[\s\S]+Another Bench run is already active; skipping catch-up dispatch/,
+  "benchmark catch-up should avoid dispatching when another Bench run is already active",
+);
+
+assert.match(
+  workflow,
+  /Bench target \$\{target_sha\} did not publish and main is now \$\{main_sha\}; dispatching one catch-up Bench run\.[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+'{"ref":"main","inputs":\{"publish_latest_pgo":false\}}'/,
+  "benchmark catch-up should dispatch one fresh main benchmark run after a stale non-publish",
+);
+
+assert.match(
+  workflow,
+  /catch-up-after-active:[\s\S]+needs: bench-gate[\s\S]+needs\.bench-gate\.outputs\.should_run != 'true'[\s\S]+needs\.bench-gate\.outputs\.active_run_id != ''/,
+  "gate-only duplicate Bench runs should keep a recovery path after the active run completes",
+);
+
+assert.match(
+  workflow,
+  /max_active_minutes=180[\s\S]+Waiting for active Bench run \$\{ACTIVE_RUN_ID\}[\s\S]+gh run view "\$\{ACTIVE_RUN_ID\}"[\s\S]+--json status,createdAt --jq '\{status,createdAt\}'[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} is still \$\{active_status:-unknown\} after at least \$\{max_active_minutes\} minutes; treating it as stale for catch-up\./,
+  "active-run catch-up should wait for the blocking Bench run to complete or age out as stale",
+);
+
+assert.match(
+  workflow,
+  /select\(\.name == "bench-publish" and \.conclusion == "success"\)[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published benchmark data; skipping catch-up dispatch\./,
+  "active-run catch-up should stand down when the blocking Bench run published data",
+);
+
+assert.match(
+  workflow,
+  /if \[\[ "\$\{target_sha\}" != "\$\{main_sha\}" \]\]; then[\s\S]+Skipped Bench target \$\{target_sha\} is behind current main \$\{main_sha\}; a newer main Bench event owns catch-up\./,
+  "active-run catch-up should only dispatch from the skipped duplicate that still represents current main",
+);
+
+assert.match(
+  workflow,
+  /--json databaseId,event,headSha,url[\s\S]+\.event == "workflow_dispatch"[\s\S]+A dispatched Bench catch-up is already active; skipping duplicate dispatch\./,
+  "active-run catch-up should avoid duplicate workflow_dispatch benchmark catch-ups",
+);
+
+assert.match(
+  workflow,
+  /Active Bench run \$\{ACTIVE_RUN_ID\} completed without bench-publish; dispatching one fresh main Bench run for \$\{main_sha\}\.[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+'{"ref":"main","inputs":\{"publish_latest_pgo":false\}}'/,
+  "active-run catch-up should dispatch one fresh main benchmark run when the blocker did not publish",
 );
 
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";

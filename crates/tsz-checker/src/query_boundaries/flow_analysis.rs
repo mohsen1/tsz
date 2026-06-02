@@ -668,6 +668,20 @@ pub(crate) fn extract_predicate_signature(
     tsz_solver::type_queries::flow::extract_predicate_signature(db, type_id)
 }
 
+/// Re-export for flow narrowing: extract the predicate signature from a callee
+/// type while treating overloaded (multi-call-signature) callables as having no
+/// statically-derivable predicate. The predicate for an overloaded call must
+/// come from the signature overload resolution selected at the call site, not
+/// from scanning every overload.
+pub(crate) fn extract_predicate_signature_for_narrowing(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<ExtractedPredicateSignature> {
+    tsz_solver::type_queries::predicate_narrowing::extract_predicate_signature_for_narrowing(
+        db, type_id,
+    )
+}
+
 /// Check if a type is only `false` or `never` (used for assertion-function detection).
 pub(crate) fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_only_false_or_never(db, type_id)

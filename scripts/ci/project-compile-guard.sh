@@ -625,6 +625,7 @@ check_project() {
   fi
   [[ -n "$_cache_file" ]] && \
     write_compile_cache "$_fp" "$rc" "$file_count" "$exit_class" "$diagnostic_delta" "$_cache_file"
+  return 0
 }
 
 should_check_project() {
@@ -712,6 +713,7 @@ run_required_projects() {
       fi
     fi
   done
+  return 0
 }
 
 run_canary_projects() {
@@ -723,6 +725,7 @@ run_canary_projects() {
       fi
     fi
   done
+  return 0
 }
 
 case "$PROJECT_SET" in
@@ -748,3 +751,5 @@ if [[ "$FAILURES" -gt 0 ]]; then
     exit 1
   fi
 fi
+
+exit 0

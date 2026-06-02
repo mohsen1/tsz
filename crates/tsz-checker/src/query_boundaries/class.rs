@@ -58,6 +58,36 @@ fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) ->
     false
 }
 
+/// Returns true when the standard (generic-erasing) assignability relation is
+/// safe to use as a fallback for member-override compatibility checks.
+///
+/// tsc's `compareSignaturesRelated` only canonicalizes (erases) the target's
+/// method-local type parameters when the *source* signature carries its own.
+/// Otherwise the target's type parameters stay universally quantified, so the
+/// standard tsz relation (which erases method-local generics) must not undo
+/// the strict relation's correct rejection. The fallback remains safe — and
+/// active for `any`-propagation cases like `IteratorResult<T, any>` vs
+/// `IteratorResult<T, void>` — when target has no method-local type parameters
+/// or when source has its own.
+pub(crate) fn generic_erasure_fallback_is_safe(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    !has_method_local_type_params(checker.ctx.types, target)
+        || has_method_local_type_params(checker.ctx.types, source)
+}
+
+/// Convenience wrapper around `callable_signature_is_generic` that treats
+/// non-callable types as "no method-local generics" — the right default for
+/// member-override gating where a non-callable member can never leak
+/// universal quantification.
+fn has_method_local_type_params(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    callable_signature_is_generic(db, type_id).unwrap_or(false)
+}
+
 fn callable_mentions_nonlocal_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     let signature_mentions_nonlocal = |type_params: &[tsz_solver::types::TypeParamInfo],
                                        params: &[tsz_solver::types::ParamInfo],
@@ -455,16 +485,17 @@ pub(crate) fn implementation_signature_covers_interface_overloads(
     let target = unwrap_single_property_value_type(checker, target);
     let source_sigs = member_call_signatures(checker.ctx.types, source);
     let target_sigs = member_call_signatures(checker.ctx.types, target);
-    if source_sigs.len() != 1 || target_sigs.is_empty() {
+    // Require a single source signature and a genuinely overloaded target
+    // (multiple call signatures). Single-target comparisons are ordinary
+    // override compatibility — the strict relation must govern there so
+    // target's universally-quantified method-local type parameters stay
+    // opaque (tsc rejects `(x: number) => Box<string>` as an override of
+    // `<T extends string>(x: number) => Box<T>`).
+    if source_sigs.len() != 1 || target_sigs.len() < 2 {
         return false;
     }
 
     let source_type = call_signature_function_type(checker, &source_sigs[0]);
-    if target_sigs.len() == 1 {
-        let target_type = call_signature_function_type(checker, &target_sigs[0]);
-        return overload_return_base_matches_and_params_cover(checker, source_type, target_type);
-    }
-
     target_sigs.iter().all(|target_sig| {
         let target_type = call_signature_function_type(checker, target_sig);
         // Do not reuse the broad overload-implementation relation here: Array's
@@ -527,13 +558,14 @@ pub(crate) fn should_report_own_member_type_mismatch(
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
     }
-    // Fallback: when the strict no-erase-generics relation rejects but the
-    // standard assignable-to relation accepts, the rejection is generic-arity
-    // bookkeeping rather than a real mismatch (e.g. `IteratorResult<T, any>`
-    // source vs `IteratorResult<T, void>` target — `any` is a universal sink
-    // for the standard relation but the strict path keeps the args nominally
-    // distinct). tsc does not emit TS2416 here.
-    if checker.assign_relation_outcome(source, target).related {
+    // Fallback for any-propagation cases (e.g. `IteratorResult<T, any>` vs
+    // `IteratorResult<T, void>`) where the strict path keeps args nominally
+    // distinct but tsc accepts. Gated by `generic_erasure_fallback_is_safe`
+    // so the fallback does not leak universal quantification when target has
+    // method-local type parameters and source does not.
+    if generic_erasure_fallback_is_safe(checker, source, target)
+        && checker.assign_relation_outcome(source, target).related
+    {
         return false;
     }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {

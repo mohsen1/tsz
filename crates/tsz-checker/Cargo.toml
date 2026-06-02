@@ -31,8 +31,16 @@ web-time = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "inference_placeholder_determinism_tests"
+path = "tests/inference_placeholder_determinism_tests.rs"
+
+[[test]]
 name = "type_only_import_reexport_tests"
 path = "tests/type_only_import_reexport_tests.rs"
+
+[[test]]
+name = "variadic_tuple_spread_arity_ts2556_tests"
+path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 
 [[test]]
 name = "closure_boundary_property_narrowing_tests"
@@ -45,6 +53,10 @@ path = "tests/assignment_branch_merge_narrowing_tests.rs"
 [[test]]
 name = "mapped_remapped_excess_function_property_tests"
 path = "tests/mapped_remapped_excess_function_property_tests.rs"
+
+[[test]]
+name = "mapped_type_diagnostic_display_tests"
+path = "tests/mapped_type_diagnostic_display_tests.rs"
 
 [[test]]
 name = "cross_file_lib_generic_heritage_tests"
@@ -771,6 +783,10 @@ name = "keyof_mapped_as_clause_tests"
 path = "tests/keyof_mapped_as_clause_tests.rs"
 
 [[test]]
+name = "mapped_as_clause_identity_modifier_tests"
+path = "tests/mapped_as_clause_identity_modifier_tests.rs"
+
+[[test]]
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 
@@ -957,10 +973,6 @@ path = "tests/ts2367_comparison_overlap_tests.rs"
 [[test]]
 name = "enum_indexed_access_tests"
 path = "tests/enum_indexed_access_tests.rs"
-
-[[test]]
-name = "indexed_access_concrete_missing_key_ts2536_tests"
-path = "tests/indexed_access_concrete_missing_key_ts2536_tests.rs"
 
 [[test]]
 name = "enum_member_cache_tests"
