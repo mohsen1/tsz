@@ -181,6 +181,28 @@ pub struct PendingImplicitAnyVar {
     pub kind: PendingImplicitAnyKind,
 }
 
+/// Closure/function-expression circular return-site state for the active file.
+///
+/// `sites` are deferred functions whose return expressions read a variable
+/// symbol still being resolved; they centralize TS7022/TS7023/TS7024 emission
+/// and suppress downstream relation noise. `lazy` is the subset whose
+/// self-reference is benign (no contextual return type and no recursive callee
+/// self-invocation): those sites still widen the variable to `any`, but their
+/// diagnostic is suppressed to match `tsc`, which resolves such deferred
+/// references on demand without an error (#10675).
+#[derive(Clone, Debug, Default)]
+pub struct PendingCircularReturnSites {
+    pub sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
+    pub lazy: FxHashMap<SymbolId, Vec<NodeIndex>>,
+}
+
+impl PendingCircularReturnSites {
+    pub fn clear(&mut self) {
+        self.sites.clear();
+        self.lazy.clear();
+    }
+}
+
 /// In-progress object literal initializer for a variable declaration.
 ///
 /// TypeScript allows later property initializers to reference earlier properties
@@ -845,13 +867,7 @@ pub struct CheckerContext<'a> {
     /// Closure/function-expression sites whose return expressions read a variable
     /// symbol currently being resolved. Used to centralize TS7022/TS7023/TS7024
     /// emission and suppress downstream relation noise from the circularity.
-    pub pending_circular_return_sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
-    /// Subset of [`Self::pending_circular_return_sites`] whose self-reference is
-    /// a benign *lazy* deferred reference (no contextual return type and no
-    /// recursive callee self-invocation). These sites still widen the variable
-    /// to `any`, but their TS7022/TS7023 emission is suppressed to match `tsc`,
-    /// which resolves such references on demand without a diagnostic (#10675).
-    pub pending_lazy_circular_return_sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
+    pub pending_circular_return_sites: PendingCircularReturnSites,
     /// Extra tracking depth for method/accessor return-site circularity when a
     /// construct consults those bodies immediately during type computation
     /// (currently the `for...of` iterator protocol path).

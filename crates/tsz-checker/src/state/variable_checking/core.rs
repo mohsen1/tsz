@@ -1124,33 +1124,13 @@ impl<'a> CheckerState<'a> {
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;
-                // Lazy deferred self-references (no contextual return type, no
-                // recursive callee self-invocation) still widen to `any` above
-                // but must NOT emit TS7022/TS7023: tsc resolves them on demand
-                // without a diagnostic. Keeping the widening (rather than
-                // suppressing the recording) preserves type behaviour for every
-                // other circular case, so this only drops a tsz-only false
-                // positive. See issue #10675.
-                let lazy_circular_return =
-                    self.all_circular_return_sites_are_lazy(sym_id, &circular_return_sites);
-                if let Some(ref name) = var_name
-                    && !lazy_circular_return
-                {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        var_decl.name,
-                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
-                        &[name],
-                    );
-                    for &site_idx in &circular_return_sites {
-                        self.emit_circular_return_site_diagnostic(
-                            site_idx,
-                            Some(name.as_str()),
-                            var_decl.name,
-                            var_decl.initializer,
-                        );
-                    }
-                }
+                self.emit_circular_initializer_diagnostic_unless_lazy(
+                    var_name.as_deref(),
+                    var_decl.name,
+                    var_decl.initializer,
+                    sym_id,
+                    &circular_return_sites,
+                );
             } else if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()

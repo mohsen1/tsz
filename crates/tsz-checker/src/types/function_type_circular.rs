@@ -70,6 +70,7 @@ impl<'a> CheckerState<'a> {
             let sites = self
                 .ctx
                 .pending_circular_return_sites
+                .sites
                 .entry(sym_id)
                 .or_default();
             if !sites.contains(&function_idx) {
@@ -78,7 +79,8 @@ impl<'a> CheckerState<'a> {
             if is_lazy {
                 let lazy_sites = self
                     .ctx
-                    .pending_lazy_circular_return_sites
+                    .pending_circular_return_sites
+                    .lazy
                     .entry(sym_id)
                     .or_default();
                 if !lazy_sites.contains(&function_idx) {
@@ -101,7 +103,7 @@ impl<'a> CheckerState<'a> {
         if sites.is_empty() {
             return false;
         }
-        let Some(lazy) = self.ctx.pending_lazy_circular_return_sites.get(&sym_id) else {
+        let Some(lazy) = self.ctx.pending_circular_return_sites.lazy.get(&sym_id) else {
             return false;
         };
         sites.iter().all(|site| lazy.contains(site))

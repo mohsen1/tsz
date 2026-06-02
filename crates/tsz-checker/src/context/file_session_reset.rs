@@ -209,7 +209,6 @@ impl<'a> CheckerContext<'a> {
 
         // Pending-circular-return sites + no-overload call nodes.
         self.pending_circular_return_sites.clear();
-        self.pending_lazy_circular_return_sites.clear();
         self.no_overload_call_nodes.clear();
         self.non_closure_circular_return_tracking_depth = 0;
 
