@@ -9,14 +9,15 @@ import zlib from "node:zlib";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 
 const SVG_WIDTH = 760;
-const SVG_HEIGHT = 112;
+const SVG_HEIGHT = 128;
 const PNG_WIDTH = SVG_WIDTH;
 const PNG_HEIGHT = SVG_HEIGHT;
-const BAR_X = 120;
-const BAR_WIDTH = 530;
-const BAR_HEIGHT = 30;
-const FIRST_BAR_Y = 22;
-const SECOND_BAR_Y = 62;
+const BAR_LABEL_X = 28;
+const BAR_X = 104;
+const BAR_WIDTH = 520;
+const BAR_HEIGHT = 24;
+const FIRST_BAR_Y = 50;
+const SECOND_BAR_Y = 84;
 const TINY_BENCHMARK_MAX_LINES = 200;
 const MONOSPACE_FONT = "'SF Mono','Cascadia Code','JetBrains Mono','Fira Code',Menlo,Consolas,monospace";
 const THEMES = {
@@ -24,20 +25,20 @@ const THEMES = {
     background: "#ffffff",
     border: "#d1d9e0",
     title: "#1f2328",
-    text: "#59636e",
-    muted: "#8b949e",
-    track: "#f6f8fa",
+    text: "#24292f",
+    muted: "#57606a",
+    track: "#d0d7de",
     tsz: "#cf222e",
     tsgo: "#0550ae",
   },
   dark: {
     background: "#0d1117",
     border: "#30363d",
-    title: "#e6edf3",
-    text: "#8b949e",
+    title: "#f0f6fc",
+    text: "#f0f6fc",
     muted: "#6e7681",
-    track: "#161b22",
-    tsz: "#ff7b72",
+    track: "#30363d",
+    tsz: "#ff8182",
     tsgo: "#58a6ff",
   },
 };
@@ -334,15 +335,15 @@ function summaryLabel(summary) {
     : 1 / summary.speedup;
   return summary.winner === "tie"
     ? "tsz and tsgo are even"
-    : `${summary.winner} ${factor.toFixed(1)}x faster`;
+    : `${summary.winner} is ${factor.toFixed(1)}x faster`;
 }
 
 function renderBar({ y, label, value, maxValue, color, duration, colors }) {
   const width = scaledBarWidth(value, maxValue);
-  return `<text x="34" y="${y + 20}" fill="${colors.text}" font-size="15" font-weight="700">${escapeXml(label)}</text>
-  <rect x="${BAR_X}" y="${y}" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" rx="7" fill="${colors.track}"/>
-  <rect x="${BAR_X}" y="${y}" width="${width.toFixed(1)}" height="${BAR_HEIGHT}" rx="7" fill="${color}"/>
-  <text x="${BAR_X + BAR_WIDTH + 16}" y="${y + 20}" fill="${colors.title}" font-size="15" font-weight="700">${escapeXml(duration)}</text>`;
+  return `<text x="${BAR_LABEL_X}" y="${y + 17}" fill="${colors.text}" font-size="15" font-weight="700">${escapeXml(label)}</text>
+  <rect x="${BAR_X}" y="${y}" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" fill="${colors.track}"/>
+  <rect x="${BAR_X}" y="${y}" width="${width.toFixed(1)}" height="${BAR_HEIGHT}" fill="${color}"/>
+  <text x="${BAR_X + BAR_WIDTH + 16}" y="${y + 17}" fill="${colors.title}" font-size="15" font-weight="700">${escapeXml(duration)}</text>`;
 }
 
 export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
@@ -350,6 +351,7 @@ export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
   const summary = createReadmePerfSummary(data);
   const maxMs = Math.max(summary.tszMs, summary.tsgoMs, 1);
   const headline = summaryLabel(summary);
+  const rowsLabel = summary.rows ? `${summary.rows} rows` : "";
   const desc = summary.rows
     ? `${headline} across ${summary.rows} successful micro benchmark rows.`
     : "No successful benchmark timing pairs were available for the README performance chart.";
@@ -357,8 +359,10 @@ export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_WIDTH}" height="${SVG_HEIGHT}" viewBox="0 0 ${SVG_WIDTH} ${SVG_HEIGHT}" role="img" aria-labelledby="title desc">
   <title id="title">tsz benchmark performance</title>
   <desc id="desc">${escapeXml(desc)}</desc>
-  <rect width="${SVG_WIDTH}" height="${SVG_HEIGHT}" rx="12" fill="${colors.background}"/>
+  <rect width="${SVG_WIDTH}" height="${SVG_HEIGHT}" fill="${colors.background}"/>
   <g font-family="${MONOSPACE_FONT}">
+  <text x="${BAR_LABEL_X}" y="28" fill="${colors.title}" font-size="18" font-weight="800">${escapeXml(headline)}</text>
+  <text x="${SVG_WIDTH - BAR_LABEL_X}" y="28" text-anchor="end" fill="${colors.muted}" font-size="12" font-weight="700">${escapeXml(rowsLabel)}</text>
   ${renderBar({
     y: FIRST_BAR_Y,
     label: "tsz",
@@ -384,18 +388,29 @@ export function renderReadmePerfSvg(data, { theme = "light" } = {}) {
 
 function drawPngBar(canvas, { y, label, value, maxValue, color, duration, colors }) {
   const width = scaledBarWidth(value, maxValue);
-  drawBitmapText(canvas, label, 34, y + 8, 2, colors.text);
+  drawBitmapText(canvas, label, BAR_LABEL_X, y + 5, 2, colors.text);
   fillRect(canvas, BAR_X, y, BAR_WIDTH, BAR_HEIGHT, colors.track);
   fillRect(canvas, BAR_X, y, width, BAR_HEIGHT, color);
-  drawBitmapText(canvas, duration, BAR_X + BAR_WIDTH + 16, y + 8, 2, colors.title);
+  drawBitmapText(canvas, duration, BAR_X + BAR_WIDTH + 16, y + 5, 2, colors.title);
 }
 
 function renderFallbackReadmePerfPng(data, { theme = "light" } = {}) {
   const colors = themeColors(theme);
   const summary = createReadmePerfSummary(data);
   const maxMs = Math.max(summary.tszMs, summary.tsgoMs, 1);
+  const headline = summaryLabel(summary);
+  const rowsLabel = summary.rows ? `${summary.rows} rows` : "";
 
   const canvas = createRgbaCanvas(PNG_WIDTH, PNG_HEIGHT, colors.background);
+  drawBitmapText(canvas, headline, BAR_LABEL_X, 18, 2, colors.title);
+  drawBitmapText(
+    canvas,
+    rowsLabel,
+    PNG_WIDTH - BAR_LABEL_X - bitmapTextWidth(rowsLabel, 1),
+    21,
+    1,
+    colors.muted,
+  );
 
   drawPngBar(canvas, {
     y: FIRST_BAR_Y,
