@@ -746,11 +746,14 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                             diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                         );
+                    } else {
+                        // If cross_file_span is None, the overload's source position could not be
+                        // determined (e.g. the arena has no source file, or this is a synthesized
+                        // declaration). TS2394 must be anchored at the overload, not the
+                        // implementation, so suppress this overload and keep scanning for a later
+                        // incompatible overload whose source span can be reported.
+                        continue;
                     }
-                    // If cross_file_span is None, the overload's source position could not be
-                    // determined (e.g. the arena has no source file, or this is a synthesized
-                    // declaration). TS2394 must be anchored at the overload, not the
-                    // implementation — so we suppress the diagnostic rather than misanchor it.
                 }
                 // TSC only reports the first incompatible overload per function.
                 break;
@@ -1279,5 +1282,123 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerContext, CheckerOptions};
+    use crate::diagnostics::Diagnostic;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
+    use smallvec::smallvec;
+    use std::sync::Arc;
+    use tsz_binder::{BinderState, SymbolId};
+    use tsz_parser::parser::{NodeArena, ParserState};
+
+    fn overload_decls_for_symbol(
+        arena: &NodeArena,
+        symbol_id: SymbolId,
+        binder: &BinderState,
+    ) -> Vec<NodeIndex> {
+        let symbol = binder
+            .get_symbol(symbol_id)
+            .unwrap_or_else(|| panic!("symbol {symbol_id:?} should exist for overload probe"));
+
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .filter(|decl_idx| {
+                let Some(node) = arena.get(*decl_idx) else {
+                    return false;
+                };
+                arena
+                    .get_function(node)
+                    .is_some_and(|function| function.body.is_none())
+            })
+            .collect()
+    }
+
+    fn diagnostics_for(
+        arena: &Arc<NodeArena>,
+        binder: &BinderState,
+        root: NodeIndex,
+        types: &TypeInterner,
+    ) -> Vec<Diagnostic> {
+        let mut checker = CheckerState {
+            ctx: CheckerContext::new(
+                arena.as_ref(),
+                binder,
+                types,
+                "fixture.ts".to_string(),
+                CheckerOptions::default(),
+            ),
+        };
+        checker.check_source_file(root);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn ts2394_cross_file_unresolved_span_continues_to_later_resolvable_overload() {
+        let source = r#"
+function parseArg(x: string): string;
+function parseArg(x: boolean): boolean;
+function parseArg(x: number): string {
+    return "ok";
+}
+"#;
+
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let arena = Arc::new(parser.get_arena().clone());
+        let types = TypeInterner::new();
+        let parse_arg = binder
+            .file_locals
+            .get("parseArg")
+            .unwrap_or_else(|| panic!("fixture symbol parseArg should exist"));
+        let overloads = overload_decls_for_symbol(arena.as_ref(), parse_arg, &binder);
+        assert!(
+            overloads.len() >= 2,
+            "fixture should have at least two overload signatures"
+        );
+
+        let baseline = diagnostics_for(&arena, &binder, root, &types);
+        let baseline_ts2394 = baseline.iter().filter(|d| d.code == 2394).count();
+        assert_eq!(
+            baseline_ts2394, 1,
+            "intra-file overload mismatch should report one TS2394 before declaration-arena injection, got: {baseline:?}",
+        );
+
+        let mut synthetic_arena = (*arena).clone();
+        synthetic_arena.source_files.clear();
+        Arc::make_mut(&mut binder.declaration_arenas).insert(
+            (parse_arg, overloads[0]),
+            smallvec![Arc::new(synthetic_arena)],
+        );
+
+        let injected = diagnostics_for(&arena, &binder, root, &types);
+        let ts2394: Vec<_> = injected.iter().filter(|d| d.code == 2394).collect();
+        assert_eq!(
+            ts2394.len(),
+            1,
+            "unresolvable first overload span should be suppressed, then the later resolvable overload should still report TS2394; got: {injected:?}",
+        );
+
+        let second_overload_start = source
+            .find("parseArg(x: boolean)")
+            .expect("find second overload name") as u32;
+        let impl_start = source
+            .find("parseArg(x: number)")
+            .expect("find implementation name") as u32;
+        let diagnostic_start = ts2394[0].start;
+        assert!(
+            diagnostic_start >= second_overload_start && diagnostic_start < impl_start,
+            "TS2394 should anchor to the later resolvable overload, not the implementation; start={diagnostic_start}, second_overload_start={second_overload_start}, impl_start={impl_start}"
+        );
     }
 }

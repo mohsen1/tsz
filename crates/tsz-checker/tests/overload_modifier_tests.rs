@@ -548,12 +548,9 @@ b = a;
 // (overload_compatibility.rs, the `else { ... }` branch at lines ~741-754), the
 // diagnostic is suppressed entirely rather than misanchored at the implementation.
 //
-// NOTE on path reachability: the `cross_file_span = None` suppression path is only
-// triggered when `decl_in_current = false` (overload declaration lives in a cross-file
-// arena, not the current checker's arena). In single-file unit tests all declarations
-// are in the current arena, so `decl_in_current` is always `true`. The cross-file path
-// requires multi-file binder merging (`declaration_arenas`/`symbol_arenas` populated by
-// the full LSP project checker). It is exercised by the LSP fourslash integration suite.
+// NOTE on path reachability: the direct `cross_file_span = None` suppression path
+// requires declaration-arena injection, so it is covered in the overload compatibility
+// module tests. The tests below verify the public observable invariant.
 //
 // The tests below verify the observable invariant that covers BOTH paths: TS2394 is never
 // anchored at or after the implementation's start position, regardless of how many
@@ -636,11 +633,9 @@ fn ts2394_method_overload_error_anchors_at_overload_not_impl() {
 // Structural rule covered: "when tsc emits TS2394 it anchors at the overload name; tsz
 // must do the same and must never fall back to anchoring at the implementation."
 //
-// Note: the `cross_file_span = None` suppression branch (overload_compatibility.rs ~line
-// 741-754) requires multi-file binder merging and is not reachable from single-file unit
-// tests. The invariant tested here — no TS2394 at impl position — subsumes that branch:
-// any regression in the suppression path would either produce no diagnostic (correct) or
-// emit at the implementation (caught by the `impl_start` assertion below).
+// Note: the direct `cross_file_span = None` suppression branch is covered in the
+// overload compatibility module tests. This integration test covers the public invariant:
+// TS2394 must not appear at the implementation position.
 #[test]
 fn ts2394_impl_position_never_anchored_across_overload_shapes() {
     // Each tuple: (source, impl_name_start_byte).
