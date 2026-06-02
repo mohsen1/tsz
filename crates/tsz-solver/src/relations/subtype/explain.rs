@@ -827,13 +827,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if self.check_subtype(member, target).is_true() {
                     continue;
                 }
-                // Elaborate only when the first failing member fails as a simple
-                // leaf relation (e.g. `undefined` vs `number`). A member that
-                // fails structurally (object/array/etc.) needs its own
-                // `Type 'M' is not assignable to type 'T'.` header before its
-                // sub-chain; that elaboration is owned by the structural render
-                // paths, so leave those to the existing top-level handling rather
-                // than producing a headerless, mis-indented chain here.
+                // Elaborate the first failing member beneath the union-to-target
+                // line, mirroring tsc which always drills into that member. Only
+                // *self-heading* reasons are surfaced: leaf relations
+                // (`undefined`/literal/intrinsic mismatch) and the property
+                // reasons (`MissingProperty`/`MissingProperties`), whose rendered
+                // message already names the member type (`Property 'a' is missing
+                // in type '{ b: 2; }' …` / `Type '{ c: 3; }' is missing the
+                // following properties …`). They need no extra `Type 'M' is not
+                // assignable …` header, so `UnionSourceMismatch` reproduces tsc's
+                // chain exactly. Richer structural reasons (property-type/tuple
+                // element mismatches) do require that header, which the renderer
+                // does not emit on this path, so they fall through to the bare
+                // union line rather than a mis-indented chain.
                 let nested = self.explain_failure_guarded(member, target);
                 if let Some(nested) = nested
                     && matches!(
@@ -841,6 +847,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         SubtypeFailureReason::TypeMismatch { .. }
                             | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
                             | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                            | SubtypeFailureReason::MissingProperty { .. }
+                            | SubtypeFailureReason::MissingProperties { .. }
                     )
                 {
                     return Some(SubtypeFailureReason::UnionSourceMismatch {
