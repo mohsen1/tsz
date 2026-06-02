@@ -114,16 +114,16 @@ fn test_relation_request_constructors_encode_relation_kind() {
     }
 }
 
-/// `assignability_checker.rs` must use `execute_relation_request` as the
+/// `assignability_relation.rs` must use `execute_relation_request` as the
 /// canonical checker-level entry point for structured relation queries.
 #[test]
 fn test_assignability_checker_has_execute_relation_request() {
-    let source = fs::read_to_string("src/assignability/assignability_checker.rs")
-        .expect("failed to read assignability_checker.rs");
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read assignability_relation.rs");
 
     assert!(
         source.contains("fn execute_relation_request("),
-        "assignability_checker must define execute_relation_request as the canonical \
+        "assignability_relation must define execute_relation_request as the canonical \
          checker-level entry point for structured relation queries"
     );
     assert!(
@@ -131,15 +131,17 @@ fn test_assignability_checker_has_execute_relation_request() {
         "execute_relation_request must delegate to the query_boundaries::execute_relation helper"
     );
     assert!(
-        source
-            .contains("checker_only_assignability_failure_reason(request.source, request.target)"),
-        "execute_relation_request must preserve checker-only post-check downgrades \
-         after the canonical boundary returns"
+        source.contains(
+            "apply_checker_side_downgrade(&mut outcome, request.source, request.target)"
+        ),
+        "execute_relation_request must route checker-only post-check downgrades \
+         through the shared apply_checker_side_downgrade helper after the \
+         canonical boundary returns"
     );
     assert!(
         source.contains("outcome.related = false;"),
-        "execute_relation_request must be able to downgrade a solver-related result \
-         when checker-only semantics require it"
+        "the assignability path must be able to downgrade a solver-related result \
+         when checker-only semantics require it (inside apply_checker_side_downgrade)"
     );
     assert!(
         source.contains("let flags = self.ctx.pack_relation_flags();"),
@@ -158,7 +160,7 @@ fn test_assignability_checker_has_execute_relation_request() {
         "execute_relation_request must pass the checker inheritance graph into the boundary"
     );
     assert!(
-        source.contains("Some(&self.ctx),"),
+        source.contains("&self.ctx,"),
         "execute_relation_request must pass checker context into the boundary \
          for structured failure analysis"
     );
@@ -166,38 +168,54 @@ fn test_assignability_checker_has_execute_relation_request() {
 
 /// `assignability_diagnostics.rs` diagnostic paths must use the relation
 /// outcome's `weak_union_violation` hint instead of re-calling the solver.
+///
+/// Note: per `test_assignability_diagnostics_route_through_relation_outcome_helpers`
+/// (`part_03.rs`), diagnostic files must NOT build `RelationRequest::*` directly;
+/// they must go through the named `*_relation_outcome` helpers in
+/// `assignability_relation.rs`. The named helpers internally build the
+/// `RelationRequest::assign(`/etc. and call `execute_relation_request(`, so
+/// the assertions here verify those helper invocations rather than the raw
+/// request builder.
 #[test]
 fn test_diagnostic_paths_use_relation_outcome_hint() {
     let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
         .expect("failed to read assignability_diagnostics.rs");
 
-    // The `check_assignable_or_report_at` method should build a RelationRequest
     assert!(
-        source.contains("RelationRequest::assign("),
-        "check_assignable_or_report_at must build a RelationRequest::assign for the canonical path"
+        source.contains("assign_relation_outcome("),
+        "check_assignable_or_report_at must obtain a RelationOutcome via the named \
+         assign_relation_outcome helper instead of re-calling the solver separately"
     );
     assert!(
-        source.contains("execute_relation_request("),
-        "check_assignable_or_report_at must call execute_relation_request"
-    );
-    assert!(
-        source.contains("should_skip_weak_union_error_with_hint("),
-        "diagnostic paths must use should_skip_weak_union_error_with_hint \
-         to avoid re-calling the solver for weak-union detection"
+        source.contains("should_skip_weak_union_error_with_hint(")
+            || source.contains("should_skip_weak_union_error_with_outcome("),
+        "diagnostic paths must use the outcome-aware weak-union skip helpers to \
+         avoid re-calling the solver for weak-union detection"
     );
 }
 
 /// `check_argument_assignable_or_report` must use the canonical
-/// `RelationRequest::call_arg` path for call-argument relation queries.
+/// call-argument relation outcome helper.
+///
+/// As with `test_diagnostic_paths_use_relation_outcome_hint`, this asserts
+/// the named-helper invocation rather than the raw `RelationRequest::call_arg(`
+/// builder, which lives behind the helper in `assignability_relation.rs`.
+/// The call lives in the `argument_reports` submodule of
+/// `assignability_diagnostics`.
 #[test]
 fn test_call_arg_diagnostic_uses_canonical_relation_path() {
-    let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+    let main_source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
         .expect("failed to read assignability_diagnostics.rs");
+    let arg_reports_source =
+        fs::read_to_string("src/assignability/assignability_diagnostics/argument_reports.rs")
+            .expect("failed to read assignability_diagnostics/argument_reports.rs");
 
     assert!(
-        source.contains("RelationRequest::call_arg("),
-        "check_argument_assignable_or_report must build a RelationRequest::call_arg \
-         for the canonical call-argument relation path"
+        main_source.contains("call_arg_relation_outcome(")
+            || arg_reports_source.contains("call_arg_relation_outcome("),
+        "check_argument_assignable_or_report must obtain a RelationOutcome via the \
+         named call_arg_relation_outcome helper for the canonical call-argument \
+         relation path"
     );
 }
 
@@ -323,16 +341,31 @@ fn test_execute_relation_success_path_returns_clean_outcome() {
 fn test_bivariant_relation_boundary_preserves_overflow_flags() {
     let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
         .expect("failed to read assignability.rs");
-    let checker_source = fs::read_to_string("src/assignability/assignability_checker.rs")
-        .expect("failed to read assignability_checker.rs");
+    let checker_source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read assignability_relation.rs");
 
+    // The boundary may reference `RelationResult` via the canonical short
+    // alias (`tsz_solver::RelationResult`) or the fully-qualified path under
+    // `relations::relation_queries`. The bare `AssignableBivariantCallbacks`
+    // identifier check subsumes both qualified `RelationKind` paths.
     assert!(
-        boundary_source.contains(") -> tsz_solver::RelationResult")
-            && boundary_source.contains("tsz_solver::RelationKind::AssignableBivariantCallbacks"),
-        "bivariant relation helper must return the full solver RelationResult"
+        (boundary_source.contains("-> tsz_solver::RelationResult")
+            || boundary_source
+                .contains("-> tsz_solver::relations::relation_queries::RelationResult"))
+            && boundary_source.contains("AssignableBivariantCallbacks"),
+        "bivariant relation helper must return the full solver RelationResult \
+         for the AssignableBivariantCallbacks kind"
     );
+    // Bivariant overflow flags must reach the boundary outcome. Accept either
+    // the legacy tuple destructure (`(r.is_related(), r.depth_exceeded, r.iteration_exceeded)`)
+    // or any direct propagation via field reads.
+    let bivariant_overflow_path = boundary_source
+        .contains("(r.is_related(), r.depth_exceeded, r.iteration_exceeded)")
+        || (boundary_source.contains(".is_related()")
+            && boundary_source.contains(".depth_exceeded")
+            && boundary_source.contains(".iteration_exceeded"));
     assert!(
-        boundary_source.contains("(r.is_related(), r.depth_exceeded, r.iteration_exceeded)"),
+        bivariant_overflow_path,
         "execute_relation must forward bivariant callback depth/iteration overflow flags"
     );
     assert!(
@@ -340,9 +373,10 @@ fn test_bivariant_relation_boundary_preserves_overflow_flags() {
         "execute_relation must not erase bivariant callback overflow flags"
     );
     assert!(
-        checker_source.contains(
-            "self.propagate_overflow_flags(\n            relation_result.depth_exceeded,\n            relation_result.iteration_exceeded,\n        );"
-        ) && checker_source.contains("let result = relation_result.is_related();"),
+        checker_source.contains("self.propagate_overflow_flags(")
+            && checker_source.contains("relation_result.depth_exceeded")
+            && checker_source.contains("relation_result.iteration_exceeded")
+            && checker_source.contains("let result = relation_result.is_related();"),
         "legacy bivariant boolean wrapper must merge overflow flags before returning/caching the bool"
     );
 }

@@ -1468,16 +1468,33 @@ impl<'a> CheckerState<'a> {
 
     /// Check if source object literal has properties that don't exist in target.
     ///
-    pub(crate) fn analyze_assignability_failure(
+    /// Pre-evaluation failure detectors that work on the *raw* (unevaluated)
+    /// source/target. These cover failure shapes the structural solver pass
+    /// cannot reconstruct after `prepare_assignability_inputs` collapses the
+    /// operands to their evaluated form:
+    ///
+    /// 1. `S[T1]` vs `S[T2]` distinct type-parameter keys — both halves
+    ///    evaluate to the same shared constraint, erasing the `T1`/`T2`
+    ///    identity needed for the TS2322 + TS5075 elaboration chain.
+    /// 2. Abstract → non-abstract constructor — the abstractness flag lives
+    ///    on the symbol and the checker override consults it before any
+    ///    structural walk; the evaluated shapes are otherwise compatible.
+    /// 3. Same-generic application (`C<A..>` vs `C<B..>`) — the applications
+    ///    evaluate to object shapes losing the type-argument identity, which
+    ///    suppresses tsc's direct-argument elaboration chain.
+    ///
+    /// Returns `None` when none of the pre-evaluation detectors fires.
+    /// Cheap by design — none of these probes runs a fresh `CompatChecker`
+    /// solver pass; they only inspect type-data shape and symbol flags.
+    /// Used both as `analyze_assignability_failure`'s pre-pass and as the
+    /// cheap fallback for callers (like `assign_relation_outcome`) that
+    /// already exhausted the solver-side reason and only need to recover the
+    /// raw-input cases.
+    pub(crate) fn raw_input_failure_reason(
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
-        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
-        // collapses to the same evaluated shape (the constraint), so the
-        // structural pipeline loses the IndexAccess form before it can
-        // produce the TS2322 + TS5075 elaboration chain. Detect the
-        // mismatch on the unevaluated inputs and surface it directly.
+    ) -> Option<tsz_solver::SubtypeFailureReason> {
         if let Some(reason) =
             crate::query_boundaries::assignability::index_access_pair_distinct_type_param_keys_failure_reason(
                 self.ctx.types,
@@ -1486,38 +1503,28 @@ impl<'a> CheckerState<'a> {
                 target,
             )
         {
-            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
-                weak_union_violation: false,
-                failure_reason: Some(reason),
-            };
+            return Some(reason);
         }
 
-        // The abstract→non-abstract constructor rejection lives in a checker
-        // override (it needs symbol abstractness) and is detected on the raw
-        // declared types, so the structural failure walk over the evaluated
-        // inputs produces no reason. Surface the structured reason directly so
-        // the TS2517 elaboration is rendered after the top-level TS2322/TS2345.
         if let Some(reason) = self.abstract_constructor_assignment_failure_reason(source, target) {
-            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
-                weak_union_violation: false,
-                failure_reason: Some(reason),
-            };
+            return Some(reason);
         }
 
-        // Same-generic application (`C<A..>` vs `C<B..>`): tsc elaborates the
-        // differing type arguments directly. The structural pipeline evaluates
-        // the applications to object shapes (losing the type-argument identity)
-        // and would emit a `Types of property 'x' are incompatible.` wrapper
-        // that tsc does not produce, so detect it on the raw operands first.
-        if let Some(reason) =
-            crate::query_boundaries::assignability::same_generic_application_failure_reason(
-                self.ctx.types,
-                &self.ctx,
-                &self.ctx,
-                source,
-                target,
-            )
-        {
+        crate::query_boundaries::assignability::same_generic_application_failure_reason(
+            self.ctx.types,
+            &self.ctx,
+            &self.ctx,
+            source,
+            target,
+        )
+    }
+
+    pub(crate) fn analyze_assignability_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        if let Some(reason) = self.raw_input_failure_reason(source, target) {
             return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
                 failure_reason: Some(reason),

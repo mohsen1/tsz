@@ -203,3 +203,60 @@ fn test_assignability_diagnostics_route_through_relation_outcome_helpers() {
         violations.join("\n")
     );
 }
+
+/// Guard: the checker-side downgrade pattern is centralized in a single
+/// `apply_checker_side_downgrade` helper so every consumer agrees on the
+/// "solver said related, checker overrides to not-related" semantics rather
+/// than open-coding the conditional at each callsite. The reason that backs
+/// the downgrade is consumed by the TS2322/TS2345 emit path through
+/// `analyze_assignability_failure` (in `error_reporter/assignability.rs:602`),
+/// which runs `raw_input_failure_reason` as a pre-pass — so the elaborated
+/// diagnostic chain stays intact without the helper itself populating
+/// `outcome.failure`. Populating `outcome.failure` from the downgrade has
+/// unrelated semantic side-effects on `outcome.failure`-reading predicates in
+/// `core_statement_checks.rs` (see #12239 conformance regression on
+/// `coAndContraVariantInferences2.ts` and `correlatedUnions.ts`).
+#[test]
+fn test_checker_only_downgrade_preserves_failure_reason_through_gateway() {
+    let source = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
+
+    assert!(
+        source.contains("fn apply_checker_side_downgrade("),
+        "assignability_relation.rs must define a single apply_checker_side_downgrade \
+         helper so all checker-side downgrades agree on the downgrade semantics"
+    );
+
+    let downgrade_body = extract_method_body(&source, "fn apply_checker_side_downgrade(");
+    assert!(
+        downgrade_body.contains("outcome.related = false;"),
+        "apply_checker_side_downgrade must force outcome.related to false when the \
+         checker-only reason fires"
+    );
+    assert!(
+        downgrade_body.contains("checker_only_assignability_failure_reason("),
+        "apply_checker_side_downgrade must consult \
+         checker_only_assignability_failure_reason to decide whether to downgrade"
+    );
+
+    let exec_body = extract_method_body(&source, "fn execute_relation_request(");
+    assert!(
+        exec_body.contains("apply_checker_side_downgrade("),
+        "execute_relation_request must route checker-side downgrades through \
+         apply_checker_side_downgrade so the gateway's downgrade semantics live \
+         in one place"
+    );
+}
+
+/// Slice the body of a Rust method from `source` starting at `fn_signature`
+/// and ending at the matching `}` (assumes 4-space indented method body).
+fn extract_method_body<'a>(source: &'a str, fn_signature: &str) -> &'a str {
+    let start = source
+        .find(fn_signature)
+        .unwrap_or_else(|| panic!("{fn_signature} not found"));
+    let after = &source[start..];
+    let end = after
+        .find("\n    }\n")
+        .unwrap_or_else(|| panic!("{fn_signature} must close with a method-end '}}'"));
+    &after[..end]
+}
