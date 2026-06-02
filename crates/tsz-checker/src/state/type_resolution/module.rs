@@ -1077,9 +1077,7 @@ impl<'a> CheckerState<'a> {
         target_file_idx: usize,
         module_specifier: Option<&str>,
     ) {
-        // Programs without any module augmentation pay no cost here. This
-        // matters because the helper is now invoked once per visited file in
-        // `collect_reexported_symbols`'s wildcard chain.
+        // Skip the wildcard-chain helper cost when no augmentations exist.
         if !self.ctx.program_has_module_augmentations() {
             return;
         }
