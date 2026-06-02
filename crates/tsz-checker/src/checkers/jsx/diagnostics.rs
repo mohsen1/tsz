@@ -361,16 +361,33 @@ impl<'a> CheckerState<'a> {
             return Some(display);
         }
 
-        if let Some(display) =
-            self.jsx_library_managed_structural_final_fallback_display(props_type)
+        let is_lma_surface =
+            crate::query_boundaries::checkers::jsx::library_managed_attributes_infer_surface(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                props_type,
+            );
+        let is_lma_display_surface =
+            Self::jsx_conditional_display_has_lma_infer_metadata(raw_display.as_str());
+        if !is_lma_surface && !is_lma_display_surface {
+            return None;
+        }
+
+        if is_lma_surface
+            && let Some(display) =
+                self.jsx_library_managed_structural_final_fallback_display(props_type)
         {
             return Some(display);
         }
 
-        // When the managed props conditional remains in display form, the
+        // When the managed props conditional remains only in display form, the
         // concrete function props are the final fallback branch.
         if let Some(display) = Self::jsx_final_conditional_else_display(&raw_display) {
             return Some(display);
+        }
+
+        if !is_lma_surface {
+            return None;
         }
 
         let normalized = self.normalize_jsx_required_props_target(props_type);
@@ -391,6 +408,25 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+    }
+
+    fn jsx_conditional_display_has_lma_infer_metadata(display: &str) -> bool {
+        let has_prop_types_infer = display
+            .match_indices("propTypes")
+            .any(|(idx, _)| Self::jsx_property_infer_display_at(display, idx));
+        let has_default_props_infer = display
+            .match_indices("defaultProps")
+            .any(|(idx, _)| Self::jsx_property_infer_display_at(display, idx));
+        has_prop_types_infer || has_default_props_infer
+    }
+
+    fn jsx_property_infer_display_at(display: &str, property_idx: usize) -> bool {
+        let tail = &display[property_idx..];
+        let Some(colon_idx) = tail.find(':') else {
+            return false;
+        };
+        let after_colon = tail[colon_idx + ':'.len_utf8()..].trim_start();
+        after_colon.starts_with("infer ")
     }
 
     fn jsx_library_managed_structural_final_fallback_display(
