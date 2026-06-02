@@ -404,6 +404,221 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
 }
 
 // =============================================================================
+// Variadic-tuple instantiation of homomorphic mapped types.
+//
+// Structural rule: when `{ [K in keyof T]: T[K] }` is instantiated with a
+// variadic tuple source, the result must preserve each element's flags
+// (fixed / optional / rest), each rest element's type must remain array-
+// shaped (`...E[]` stays as `...E[]`, not `...E`), and each element's mapped
+// type must come from that element's own position, not from the union of
+// every element type.
+//
+// These tests cover the `instantiate_type` -> `evaluate_type` round-trip
+// (the instantiator's fast path for `keyof T` mapped types over tuples), not
+// the `evaluate_mapped` path alone. They sit alongside
+// `test_instantiate_mapped_over_tuple_preserves_tuple` and the wrapper-
+// template test above.
+// =============================================================================
+
+/// Helper: build the `{ [K in keyof T]: T[K] }` identity homomorphic mapped
+/// where the iteration variable is named `iter_name`. Returns the `MappedType`
+/// `TypeId` so the test can instantiate it with `T = ...`.
+fn build_identity_mapped_type(
+    interner: &TypeInterner,
+    iter_name: &str,
+) -> (TypeId, tsz_common::interner::Atom) {
+    use crate::types::{MappedType, TypeParamInfo};
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string(iter_name);
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
+    let template = interner.index_access(t_type, k_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    (mapped, t_name)
+}
+
+/// Assert that the identity homomorphic mapped
+/// `{ [<iter_name> in keyof T]: T[<iter_name>] }` round-trips the
+/// `build_elements`-built tuple `T` through the `instantiate_type` →
+/// `evaluate_type` pipeline. The closure receives the interner so the
+/// element `TypeId`s are interned in the same arena as the mapped type.
+fn assert_identity_mapped_round_trips(
+    iter_name: &str,
+    build_elements: impl FnOnce(&TypeInterner) -> Vec<crate::types::TupleElement>,
+) {
+    use crate::evaluation::evaluate::evaluate_type;
+    let interner = TypeInterner::new();
+    let (mapped, t_name) = build_identity_mapped_type(&interner, iter_name);
+    let source = interner.tuple(build_elements(&interner));
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+    assert_eq!(
+        result, source,
+        "identity homomorphic mapped over the source tuple must \
+         reproduce the same tuple via the instantiate path"
+    );
+}
+
+/// `Mp<[string, ...number[]]>` must produce the same `[string, ...number[]]`
+/// tuple. The pre-fix path bound K = "i" for every position and copied the
+/// rest's inner element type into the rest slot, producing the structurally
+/// invalid `[string, ...number]` (rest with non-array `type_id`).
+#[test]
+fn test_instantiate_mapped_over_trailing_rest_tuple_preserves_array_rest() {
+    use crate::types::TupleElement;
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::fixed(TypeId::STRING),
+            TupleElement::rest(i.array(TypeId::NUMBER)),
+        ]
+    });
+}
+
+/// Renamed iteration variable (`P` instead of `K`). The fix must be
+/// name-blind — changing the iter var must not affect rest handling.
+#[test]
+fn test_instantiate_mapped_over_trailing_rest_tuple_renamed_iter_var() {
+    use crate::types::TupleElement;
+    assert_identity_mapped_round_trips("P", |i| {
+        vec![
+            TupleElement::fixed(TypeId::BOOLEAN),
+            TupleElement::rest(i.array(TypeId::STRING)),
+        ]
+    });
+}
+
+/// Leading rest: `[...string[], number]` must round-trip too. The fix
+/// must work whether the rest is at the start, middle, or end.
+#[test]
+fn test_instantiate_mapped_over_leading_rest_tuple_preserves_shape() {
+    use crate::types::TupleElement;
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::rest(i.array(TypeId::STRING)),
+            TupleElement::fixed(TypeId::NUMBER),
+        ]
+    });
+}
+
+/// Middle rest with prefix and suffix: `[string, ...number[], boolean]`.
+/// Both fixed elements must resolve to their own types, not the union of
+/// every element type.
+#[test]
+fn test_instantiate_mapped_over_middle_rest_tuple_preserves_shape() {
+    use crate::types::TupleElement;
+    assert_identity_mapped_round_trips("K", |i| {
+        vec![
+            TupleElement::fixed(TypeId::STRING),
+            TupleElement::rest(i.array(TypeId::NUMBER)),
+            TupleElement::fixed(TypeId::BOOLEAN),
+        ]
+    });
+}
+
+/// Wrapper template `{ value: T[K] }` over a variadic tuple. Each fixed
+/// element should map to `{ value: <element type> }` and the rest should
+/// stay array-shaped as `...{ value: number }[]`.
+#[test]
+fn test_instantiate_mapped_over_trailing_rest_tuple_with_wrapper_template() {
+    use crate::evaluation::evaluate::evaluate_type;
+    use crate::types::{MappedType, PropertyInfo, TupleElement, TypeParamInfo};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
+
+    let index_access = interner.index_access(t_type, k_type);
+    let value_atom = interner.intern_string("value");
+    let template = interner.object(vec![PropertyInfo::new(value_atom, index_access)]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let source = interner.tuple(vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement::rest(interner.array(TypeId::NUMBER)),
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(tuple_id)) => {
+            let elements = interner.tuple_list(tuple_id);
+            assert_eq!(elements.len(), 2, "Expected 2 tuple elements");
+            assert!(
+                !elements[0].rest,
+                "first element of `[string, ...number[]]` should be fixed"
+            );
+            assert!(
+                elements[1].rest,
+                "second element should preserve `rest: true`"
+            );
+            // The rest element's type_id must be Array(...) so the tuple
+            // is structurally valid.
+            assert!(
+                matches!(interner.lookup(elements[1].type_id), Some(TypeData::Array(_))),
+                "rest element type_id must remain Array<>; got {:?}",
+                interner.lookup(elements[1].type_id)
+            );
+        }
+        other => panic!(
+            "expected wrapper-mapped over variadic tuple to stay a tuple; got {other:?}"
+        ),
+    }
+}
+
+// =============================================================================
 // Tests for template_has_lazy_application_in_composite and
 // type_contains_lazy_application (new helper for Conditional check/extends)
 // =============================================================================
