@@ -709,87 +709,59 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // will match correctly.
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
-            } else {
-                // Non-generic source vs a genuinely generic target with no shared
-                // type-parameter identity. Follow tsc's `getBaseSignature` for the
-                // subset of the target's type parameters that are *only observed
-                // through a generic application* — i.e. they appear exclusively as a
-                // type argument such as the alias `A` in `AliasedRawBuilder<O, A>`,
-                // never as a directly-observable value type. Each such constrained
-                // parameter is instantiated to its constraint before structural
-                // comparison, so a concrete implementation whose result satisfies the
-                // constraint is accepted. This matches tsc for overloaded generic
-                // builder methods like
-                // `as<A extends string>(alias: Expression<any>): Aliased<T, A>`, where
-                // an implementation returning `Aliased<T, string>` is a valid override.
-                //
-                // Any type parameter that appears *bare* in a value position (a direct
-                // parameter/return type, including inside a nested callback signature,
-                // e.g. `T` in `() => T` or `(arg: T) => U`) stays opaque. The caller
-                // fully controls such a parameter, so a concrete implementation cannot
-                // satisfy every instantiation: `(x: string) => string` remains
-                // incompatible with `<T>(x: T) => T`, and
-                // `new () => MyClass` remains incompatible with
-                // `new <T extends {...}>() => T`. Unconstrained parameters also stay
-                // opaque (no meaningful constraint to erase to).
+            } else if self.erase_generics {
+                // Standard path: tsc's `getBaseSignature` for the subset of
+                // target's type parameters observed only through a generic
+                // application (e.g. alias `A` in `AliasedRawBuilder<O, A>`),
+                // not bare in a value position. Each erasable parameter is
+                // instantiated to its constraint so a concrete implementation
+                // whose result satisfies the constraint is accepted (matches
+                // tsc for overloaded generic builder methods). Bare or
+                // unconstrained parameters stay opaque.
                 let mut target_canonical = TypeSubstitution::new();
-                let mut has_opaque_remaining = false;
                 for tp in &target_instantiated.type_params {
                     let tp_id = self.interner.type_param(*tp);
-                    let erasable = match tp.constraint {
-                        Some(constraint) if constraint != TypeId::UNKNOWN => {
-                            let appears_bare = target_instantiated
-                                .params
-                                .iter()
-                                .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
-                                || target_instantiated
-                                    .this_type
-                                    .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
-                                || self.type_param_appears_bare(
-                                    target_instantiated.return_type,
-                                    tp_id,
-                                );
-                            if appears_bare {
-                                false
-                            } else {
-                                target_canonical.insert(tp.name, constraint);
-                                true
-                            }
+                    if let Some(constraint) = tp.constraint
+                        && constraint != TypeId::UNKNOWN
+                    {
+                        let appears_bare = target_instantiated
+                            .params
+                            .iter()
+                            .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
+                            || target_instantiated
+                                .this_type
+                                .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
+                            || self.type_param_appears_bare(target_instantiated.return_type, tp_id);
+                        if !appears_bare {
+                            target_canonical.insert(tp.name, constraint);
                         }
-                        _ => false,
-                    };
-                    if !erasable {
-                        has_opaque_remaining = true;
                     }
                 }
-
-                // A target type parameter that survives erasure stays genuinely
-                // quantified. A non-generic source that is itself pinned to an
-                // outer-scope type parameter cannot satisfy that quantification, so
-                // strict member-compatibility checks (TS2416/TS2430) must still
-                // reject it — e.g. `interface I<T> extends A { a: (x: T) => T[] }`
-                // against base `a: <T>(x: T) => T[]`. Application-only-constrained
-                // parameters were already erased above and no longer count as
-                // remaining quantification, which is what lets a concrete builder
-                // override such as `as(...): AliasedRawBuilder<O, string>` through.
-                if has_opaque_remaining && !self.erase_generics {
-                    let source_mentions_outer_type_params =
-                        source_instantiated.params.iter().any(|p| {
-                            crate::visitor::contains_type_parameters(self.interner, p.type_id)
-                        }) || source_instantiated.this_type.is_some_and(|t| {
-                            crate::visitor::contains_type_parameters(self.interner, t)
-                        }) || crate::visitor::contains_type_parameters(
-                            self.interner,
-                            source_instantiated.return_type,
-                        );
-                    if source_mentions_outer_type_params {
-                        self.type_param_equivalences.truncate(equiv_start);
-                        return SubtypeResult::False;
-                    }
-                }
-
                 target_instantiated =
                     self.instantiate_function_shape(&target_instantiated, &target_canonical);
+            } else {
+                // Strict member-compatibility (TS2416/TS2430): tsc's
+                // `compareSignaturesRelated` only canonicalizes target's
+                // method-local type parameters when source has its own.
+                // With a non-generic source, target stays universally
+                // quantified — comparing target's `T` opaquely naturally
+                // enforces variance (a covariant `Box<T>` rejects the
+                // implementation, a contravariant `FBox<T>` accepts it).
+                // Overloaded-builder overrides that need the erasure escape
+                // hatch are short-circuited upstream by
+                // `implementation_signature_covers_interface_overloads`.
+                let mentions =
+                    |ty: TypeId| crate::visitor::contains_type_parameters(self.interner, ty);
+                if source_instantiated
+                    .params
+                    .iter()
+                    .any(|p| mentions(p.type_id))
+                    || source_instantiated.this_type.is_some_and(mentions)
+                    || mentions(source_instantiated.return_type)
+                {
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return SubtypeResult::False;
+                }
             }
         }
 

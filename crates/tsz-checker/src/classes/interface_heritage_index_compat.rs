@@ -143,17 +143,17 @@ impl<'a> CheckerState<'a> {
         derived: TypeId,
         base: TypeId,
     ) -> bool {
-        let Some(derived_generic) =
-            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, derived)
-        else {
-            return false;
-        };
-        let Some(base_generic) =
-            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, base)
-        else {
-            return false;
-        };
-        if !derived_generic && !base_generic {
+        // Match tsc's `compareSignaturesRelated`: target's method-local type
+        // parameters are canonicalized only when source has its own. Without
+        // method-local generics on the source (derived), target stays
+        // universally quantified and a concrete implementation cannot satisfy
+        // `<T extends C>(x: T) => T`; the genuine overloaded-builder cases
+        // that need that escape hatch are handled separately by
+        // `implementation_signature_covers_interface_overloads`.
+        use crate::query_boundaries::class::callable_signature_is_generic;
+        if !callable_signature_is_generic(self.ctx.types, derived).unwrap_or(false)
+            || callable_signature_is_generic(self.ctx.types, base).is_none()
+        {
             return false;
         }
         self.diagnostic_relation_boolean_guard(derived, base)
