@@ -11,6 +11,10 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+MAX_INSTRUCTION_BYTES = 20_000
+MAX_INSTRUCTION_LINES = 260
+MAX_SKILL_LINES = 120
+MAX_SKILL_WORDS = 900
 FORBIDDEN_HOOK_FRAGMENTS = (
     "cat \"$root/AGENTS.md\"",
     "cat '$root/AGENTS.md'",
@@ -83,6 +87,45 @@ def audit() -> tuple[list[str], dict[str, Any]]:
     instruction_text = agents_real.read_text(encoding="utf-8")
     metrics["instruction_lines"] = len(instruction_text.splitlines())
     metrics["instruction_bytes"] = len(instruction_text.encode("utf-8"))
+    if metrics["instruction_bytes"] > MAX_INSTRUCTION_BYTES:
+        findings.append(
+            "AGENTS.md/.claude/CLAUDE.md exceeds token-efficiency budget: "
+            f"{metrics['instruction_bytes']} bytes > {MAX_INSTRUCTION_BYTES}"
+        )
+    if metrics["instruction_lines"] > MAX_INSTRUCTION_LINES:
+        findings.append(
+            "AGENTS.md/.claude/CLAUDE.md exceeds line budget: "
+            f"{metrics['instruction_lines']} lines > {MAX_INSTRUCTION_LINES}"
+        )
+
+    skill_paths = sorted(
+        {
+            *ROOT.glob(".agents/skills/*/SKILL.md"),
+            *ROOT.glob(".claude/skills/*/SKILL.md"),
+        }
+    )
+    metrics["skill_file_count"] = len(skill_paths)
+    max_skill_lines = 0
+    max_skill_words = 0
+    for skill_path in skill_paths:
+        text = skill_path.read_text(encoding="utf-8")
+        line_count = len(text.splitlines())
+        word_count = len(text.split())
+        max_skill_lines = max(max_skill_lines, line_count)
+        max_skill_words = max(max_skill_words, word_count)
+        rel_path = skill_path.relative_to(ROOT)
+        if line_count > MAX_SKILL_LINES:
+            findings.append(
+                f"{rel_path} exceeds skill line budget: "
+                f"{line_count} lines > {MAX_SKILL_LINES}"
+            )
+        if word_count > MAX_SKILL_WORDS:
+            findings.append(
+                f"{rel_path} exceeds skill word budget: "
+                f"{word_count} words > {MAX_SKILL_WORDS}"
+            )
+    metrics["max_skill_lines"] = max_skill_lines
+    metrics["max_skill_words"] = max_skill_words
 
     for rel_path in (".codex/hooks.json", ".claude/settings.json"):
         path = ROOT / rel_path

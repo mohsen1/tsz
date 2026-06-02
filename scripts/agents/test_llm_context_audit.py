@@ -22,6 +22,10 @@ class LlmContextAuditTests(unittest.TestCase):
         self.assertTrue(metrics["same_instruction_target"])
         self.assertTrue(metrics["agents_is_symlink"])
         self.assertGreater(metrics["instruction_lines"], 0)
+        self.assertLessEqual(metrics["instruction_lines"], 260)
+        self.assertLessEqual(metrics["instruction_bytes"], 20_000)
+        self.assertLessEqual(metrics["max_skill_lines"], 120)
+        self.assertLessEqual(metrics["max_skill_words"], 900)
 
     def test_forbidden_hook_fragments_are_reported(self):
         with mock.patch.object(
@@ -80,6 +84,48 @@ class LlmContextAuditTests(unittest.TestCase):
                 ".codex/config.toml sets CLAUDE_CODE_MAX_OUTPUT_TOKENS" in finding
                 for finding in findings
             ),
+            findings,
+        )
+
+    def test_instruction_budget_is_reported(self):
+        original_read_text = pathlib.Path.read_text
+
+        def fake_read_text(path, *args, **kwargs):
+            if pathlib.Path(path).name == "CLAUDE.md":
+                return "\n".join(f"line {i}" for i in range(300))
+            return original_read_text(path, *args, **kwargs)
+
+        with mock.patch.object(pathlib.Path, "read_text", fake_read_text):
+            findings, _metrics = llm_context_audit.audit()
+
+        self.assertTrue(
+            any("exceeds line budget" in finding for finding in findings),
+            findings,
+        )
+
+    def test_skill_budget_is_reported(self):
+        original_glob = pathlib.Path.glob
+        original_read_text = pathlib.Path.read_text
+        fake_skill = ROOT / ".agents" / "skills" / "fake" / "SKILL.md"
+
+        def fake_glob(path, pattern):
+            if str(path) == str(ROOT) and pattern == ".agents/skills/*/SKILL.md":
+                return [fake_skill]
+            if str(path) == str(ROOT) and pattern == ".claude/skills/*/SKILL.md":
+                return []
+            return original_glob(path, pattern)
+
+        def fake_read_text(path, *args, **kwargs):
+            if pathlib.Path(path) == fake_skill:
+                return "\n".join("word" for _ in range(130))
+            return original_read_text(path, *args, **kwargs)
+
+        with mock.patch.object(pathlib.Path, "glob", fake_glob):
+            with mock.patch.object(pathlib.Path, "read_text", fake_read_text):
+                findings, _metrics = llm_context_audit.audit()
+
+        self.assertTrue(
+            any("SKILL.md exceeds skill line budget" in finding for finding in findings),
             findings,
         )
 

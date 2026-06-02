@@ -5,139 +5,69 @@ description: Create, refresh, and publish TSZ pull requests with correct coordin
 
 # TSZ PR Coordination
 
-Use this skill for TSZ PR state, especially before pushing a branch or changing
-draft/WIP/ready status. It complements `tsz-ci-pr`: use this skill for the
-coordination contract and `tsz-ci-pr` for check triage. Merge and queue-label
-coordination belongs to an explicit manager or queue-owner agent, not every
-implementation agent.
+Use for PR body/state/label/review coordination. Use `tsz-ci-pr` for failing
+checks and queue status.
 
-## Required Identity
+## Rules
 
-Use a stable `AgentName`. If assigned to a canonical lane, use that lane name
-in PR bodies and substantive comments. Do not create generated runner labels
-such as `agent:claude-*` or typo labels such as `agnet:*`.
+- Stable `AgentName` in PR bodies and substantive comments.
+- Use canonical `agent:*` labels only from `docs/plan/agents/README.md`; at
+  most one per PR.
+- Implementation agents manage their own PRs. Manager/queue-owner agents handle
+  cross-PR queueing and merge order.
+- If you are not the manager/queue owner, do not merge or add `merge-queue` as
+  routine implementation work.
 
-Canonical ownership labels are documented in
-`docs/plan/agents/README.md`. Apply at most one `agent:*` label to a PR.
+## Before Publish
 
-## Role Split
+```bash
+git status --short --branch
+git diff --stat
+git diff --check
+gh pr list --state open --limit 100 --json number,title,isDraft,headRefName,baseRefName,labels,updatedAt,url
+scripts/agents/ensure-agent-labels.sh --audit
+```
 
-Individual implementation agents own only their own PRs. They should:
-
-- keep their PR body, labels, WIP/draft state, verification, and review replies
-  current,
-- mark their own PR ready only when implementation and verification are done and
-  the lane permits it,
-- leave a signed readiness or blocker note for the manager agent,
-- avoid queue sweeps, merge decisions, or queue changes on unrelated PRs.
-
-Manager or queue-owner agents handle cross-PR coordination. They may:
-
-- inspect the full PR queue and ownership state,
-- decide merge order and dependency handoffs,
-- add or remove `merge-queue` when policy and exact-head PR-head checks allow
-  it,
-- verify queued PRs landed or leave signed blocker comments.
-
-If you are not acting as the manager/queue owner, do not merge PRs or add
-`merge-queue` as part of routine implementation work.
-
-## Before Publishing
-
-1. Inspect scope:
-
-   ```bash
-   git status --short --branch
-   git diff --stat
-   git diff --check
-   ```
-
-2. Confirm the branch and overlap:
-
-   ```bash
-   gh pr list --state open --limit 100 --json number,title,isDraft,headRefName,baseRefName,labels,updatedAt,url
-   scripts/agents/ensure-agent-labels.sh --audit
-   ```
-
-3. Stage only files that belong to the requested PR. If dirty files are mixed,
-   leave unrelated files unstaged.
+Stage only files in scope.
 
 ## PR Body
 
-Use the repo template and fill every section. Never rely on `--fill` alone.
-Read `references/pr-body-checklist.md` when creating or materially editing a
-body.
-
-Minimum sections:
+Never rely on `--fill` alone. Read `references/pr-body-checklist.md` when
+creating or materially editing a body. Required sections:
 
 ```markdown
 ## Agent
 AgentName: <AgentName>
-
 ## Track
 <roadmap track and PR type>
-
 ## Invariant
 When <condition>, <expected behavior>; this PR changes <owner/surface>.
-
 ## Scope
 - <files or systems>
-
 ## Project Corpus Impact
 - Row: n/a
 - Bug family: n/a
 - Evidence: <why n/a or affected row evidence>
-
 ## Verification
 - <commands or CI gates>
-
 ## Coordination Notes
 - <overlap, dependencies, WIP state, follow-ups>
 ```
 
-After creating or editing the PR, verify the remote body:
+Verify remote body after create/edit:
 
 ```bash
 gh pr view <number> --json body
 ```
 
-## WIP And Draft State
+## WIP, Ready, Reviews
 
-Treat a PR as WIP if it is draft, has a `WIP` label, starts with `[WIP]`, or
-declares a blocker in the body. Do not mark ready or add `merge-queue` until
-the current head is genuinely ready.
-
-Whenever adding `WIP`, adding `[WIP]`, or converting a PR back to draft because
-it is blocked, immediately leave a signed PR comment with:
-
-- `AgentName`,
-- why the PR is WIP,
-- current blocker or active work,
-- next owner/action,
-- verification already run.
-
-## Ready Handoff
-
-Before marking your own PR ready or handing it to the manager:
-
-1. Remove WIP markers only after implementation and verification are complete.
-2. Confirm the latest pushed head SHA is the one you reviewed.
-3. Confirm the PR body has current verification and Project Corpus Impact.
-4. Comment with remaining risks, dependencies, or a clear "ready for manager
-   review/queue" note.
-
-Do not use auto-merge as a CI watcher or queue signal. Unless you are the
-manager/queue owner, leave merge-queue decisions to the manager after
-exact-head PR-head checks are complete. `Queue Tested` is produced by the merge
-queue after `merge-queue` is added; it does not need to be present before a
-ready handoff.
-
-## Review Responses
-
-When a substantive review arrives:
-
-1. Read the comment or thread.
-2. React or reply so the reviewer knows it was seen.
-3. Leave a concise signed PR comment saying whether you fixed it, will fix it,
-   or disagree and why.
-4. Update the PR body when the review changes scope, risk, or verification.
+- WIP means draft, `WIP` label, `[WIP]` title, or blocker in body. Do not mark
+  ready or queue.
+- Any WIP/draft/blocker transition needs an immediate signed comment with
+  reason, blocker/current work, next owner/action, and verification run.
+- Before ready handoff: remove WIP markers, review latest pushed head, update
+  body verification/Project Corpus Impact, and leave a signed readiness/risk
+  note for manager review.
+- For substantive reviews: read, react/reply, leave a signed fix/will-fix/
+  disagree note, and update body if scope/risk/verification changed.
