@@ -6,7 +6,7 @@
 use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 // Per-thread file-existence cache for module-resolution hot loops.
 // `try_file_with_suffixes_and_extension` and friends probe many candidate
@@ -40,6 +40,38 @@ pub(crate) fn cached_is_file(path: &Path) -> bool {
 /// current thread; rayon worker threads keep their own cache entries.
 pub(crate) fn clear_file_exists_cache() {
     FILE_EXISTS.with(|cache| cache.borrow_mut().clear());
+}
+
+/// Collapse `.` and `..` segments in a path without touching the filesystem.
+///
+/// Path identity in the resolver and downstream file graph is textual: two
+/// `PathBuf`s with different segment shapes are treated as distinct files even
+/// when they refer to the same physical location. tsconfig `paths` targets,
+/// `baseUrl`-joined specifiers, package.json `main`/`exports` targets, and
+/// container-relative specifiers can all introduce stray `./` or `../` segments
+/// that survive `Path::join` (which preserves the literal components). Probing
+/// against an unnormalized candidate produces an unnormalized resolved path,
+/// which then splits declaration identity across alias branches.
+///
+/// Leading `..` segments are preserved when there is nothing to pop, mirroring
+/// `path.Normalize` in tsc. An earlier copy in `relative_resolution.rs`
+/// silently popped past the root; this consolidation removes that divergence.
+pub(crate) fn normalize_path_segments(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 pub(crate) fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {

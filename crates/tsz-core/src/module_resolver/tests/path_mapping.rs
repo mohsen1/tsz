@@ -382,3 +382,198 @@ fn test_path_mapping_extensionless_alias_follows_tsc_group_order() {
         );
     }
 }
+
+// ── path segment normalization (issue #10896) ────────────────────────────────
+//
+// Structural rule: when a `paths` target text contains `./` or `../` segments,
+// or when `baseUrl` is itself non-canonical, the substituted candidate path
+// must be segment-normalized before file probing. Without this, the resolved
+// `PathBuf` retains the literal text (`<base>/./lib/foo.d.ts`,
+// `<base>/lib/../shared/foo.d.ts`) and the same physical declaration ends up
+// represented by two distinct path keys depending on which alias branch
+// produced it — splitting declaration identity in the project file graph.
+//
+// The rule is independent of the wildcard variable name and of the alias key
+// spelling; the tests below vary both to keep the fix structural.
+
+#[test]
+fn test_path_mapping_dot_slash_target_resolves_to_canonical_path() {
+    // `paths: { "@app/*": ["./src/*"] }` — the leading `./` in the target must
+    // not survive into `resolved_path`.
+    let fx = TempFixture::new();
+    fx.write("src/widget.ts", "export const w = 1;");
+    fx.write("index.ts", "import '@app/widget';");
+
+    let options = make_options(fx.path(), vec![pm("@app/*", "@app/", &["./src/*"])]);
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("@app/widget", &fx.join("index.ts"), Span::new(0, 11))
+        .expect("@app/widget should resolve");
+
+    let expected = fx.join("src/widget.ts");
+    assert_eq!(
+        resolved.resolved_path, expected,
+        "leading `./` segment must be normalized out of the resolved path",
+    );
+    assert!(
+        !resolved
+            .resolved_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::CurDir)),
+        "resolved path must contain no `.` components, got {:?}",
+        resolved.resolved_path,
+    );
+}
+
+#[test]
+fn test_path_mapping_parent_dir_target_resolves_to_canonical_path() {
+    // `paths: { "@util/*": ["./lib/../shared/*"] }` — embedded `..` must be
+    // canonicalized.
+    let fx = TempFixture::new();
+    fx.write("shared/helpers.ts", "export const h = 1;");
+    fx.write("index.ts", "import '@util/helpers';");
+
+    let options = make_options(
+        fx.path(),
+        vec![pm("@util/*", "@util/", &["./lib/../shared/*"])],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("@util/helpers", &fx.join("index.ts"), Span::new(0, 13))
+        .expect("@util/helpers should resolve via alias with `..` segment");
+
+    let expected = fx.join("shared/helpers.ts");
+    assert_eq!(
+        resolved.resolved_path, expected,
+        "embedded `..` segments must be normalized out of the resolved path",
+    );
+    assert!(
+        !resolved
+            .resolved_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir)),
+        "resolved path must contain no `..` components, got {:?}",
+        resolved.resolved_path,
+    );
+}
+
+#[test]
+fn test_path_mapping_two_aliases_to_same_file_share_resolved_path() {
+    // Two distinct alias keys whose substituted targets refer to the same
+    // physical `.d.ts` file must produce identical `resolved_path` values, even
+    // when one target uses a `./` prefix and the other uses an embedded `..`.
+    // The wildcard variable name in each pattern is deliberately different
+    // (`*` is the only allowed placeholder, but the prefix/suffix shape varies)
+    // to prove the rule is structural, not name-keyed.
+    let fx = TempFixture::new();
+    fx.write("shared/api.d.ts", "export declare const v: number;");
+    fx.write("index.ts", "import '@alpha/api'; import '@beta/api';");
+
+    let options = make_options(
+        fx.path(),
+        vec![
+            pm("@alpha/*", "@alpha/", &["./shared/*.d.ts"]),
+            // Same logical export reached through a `..` detour.
+            pm("@beta/*", "@beta/", &["./lib/../shared/*.d.ts"]),
+        ],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+
+    let via_alpha = resolver
+        .resolve("@alpha/api", &fx.join("index.ts"), Span::new(0, 10))
+        .expect("@alpha/api must resolve");
+    let via_beta = resolver
+        .resolve("@beta/api", &fx.join("index.ts"), Span::new(0, 9))
+        .expect("@beta/api must resolve");
+
+    assert_eq!(
+        via_alpha.resolved_path, via_beta.resolved_path,
+        "two aliases targeting the same `.d.ts` must share resolved_path \
+         to preserve declaration identity across alias branches",
+    );
+    assert_eq!(via_alpha.resolved_path, fx.join("shared/api.d.ts"));
+}
+
+#[test]
+fn test_path_mapping_relative_import_and_alias_share_resolved_path() {
+    // Alias-resolved import and relative-import resolution of the same file
+    // must yield identical `resolved_path`s. The alias target uses `./`, while
+    // the relative import joins through a parent directory: both must collapse
+    // to the same canonical declaration path.
+    let fx = TempFixture::new();
+    fx.write("src/api.ts", "export const v = 1;");
+    fx.write("src/sub/index.ts", "import '../api';");
+    fx.write("index.ts", "import '@app/api';");
+
+    let options = make_options(fx.path(), vec![pm("@app/*", "@app/", &["./src/*"])]);
+    let mut resolver = ModuleResolver::new(&options);
+
+    let via_alias = resolver
+        .resolve("@app/api", &fx.join("index.ts"), Span::new(0, 8))
+        .expect("@app/api must resolve via alias");
+    let via_relative = resolver
+        .resolve("../api", &fx.join("src/sub/index.ts"), Span::new(0, 6))
+        .expect("../api must resolve via relative import");
+
+    assert_eq!(
+        via_alias.resolved_path, via_relative.resolved_path,
+        "alias-resolved and relative-import paths to the same file must match",
+    );
+    assert_eq!(via_alias.resolved_path, fx.join("src/api.ts"));
+}
+
+#[test]
+fn test_path_mapping_baseurl_with_non_canonical_dir_resolves_canonically() {
+    // A `baseUrl` joined with a `paths` target whose substitution introduces a
+    // `..` must still produce a canonical resolved path. This case mirrors the
+    // upstream symptom where row-level conditional fixtures select alternate
+    // alias branches with shared physical targets.
+    let fx = TempFixture::new();
+    fx.write("pkg/index.ts", "export const x = 1;");
+    fx.write("index.ts", "import 'pkg-alias';");
+
+    // baseUrl is the fixture root; the target dives into a sibling and back up.
+    let options = make_options(
+        fx.path(),
+        vec![pm("pkg-alias", "pkg-alias", &["./sub/../pkg/index"])],
+    );
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("pkg-alias", &fx.join("index.ts"), Span::new(0, 9))
+        .expect("pkg-alias must resolve via canonicalised baseUrl-joined target");
+
+    assert_eq!(resolved.resolved_path, fx.join("pkg/index.ts"));
+}
+
+#[test]
+fn test_path_mapping_unbalanced_parent_dirs_preserve_leading_dotdot() {
+    // Lower-level invariant for the consolidated `normalize_path_segments`:
+    // when there is nothing to pop, the leading `..` must be preserved so that
+    // probe results remain accurate against relative roots. The earlier
+    // `relative_resolution.rs` copy silently dropped these, which would have
+    // mis-resolved alias targets that climb above the alias-relative base.
+    let fx = TempFixture::new();
+    fx.write("widget.ts", "export const w = 1;");
+
+    // The alias jumps two levels up from a nested `lib/inner/` and lands back
+    // at the fixture root. The intermediate physical directory exists, so the
+    // OS-level walk succeeds either way; the assertion is that the *textual*
+    // resolved path is canonical (no surviving `..` segments).
+    fx.write("lib/inner/.gitkeep", "");
+    fx.write("alias-root.ts", "import 'p';");
+    let options = make_options(fx.path(), vec![pm("p", "p", &["./lib/inner/../../widget"])]);
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("p", &fx.join("alias-root.ts"), Span::new(0, 1))
+        .expect("p must resolve via canonicalised `..` chain");
+
+    assert_eq!(resolved.resolved_path, fx.join("widget.ts"));
+    assert!(
+        !resolved
+            .resolved_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir)),
+        "no surviving `..` in {:?}",
+        resolved.resolved_path,
+    );
+}

@@ -8,9 +8,9 @@ use super::{
     ResolutionFailure, ResolvedModule,
 };
 use crate::config::ModuleResolutionKind;
-use crate::module_resolver_helpers::KNOWN_EXTENSIONS;
+use crate::module_resolver_helpers::{KNOWN_EXTENSIONS, normalize_path_segments};
 use crate::span::Span;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 impl ModuleResolver {
     const fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
@@ -331,20 +331,4 @@ impl ModuleResolver {
             span: specifier_span,
         })
     }
-}
-
-fn normalize_path_segments(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
