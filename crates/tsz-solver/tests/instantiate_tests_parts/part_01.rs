@@ -421,8 +421,8 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
 // =============================================================================
 
 /// Helper: build the `{ [K in keyof T]: T[K] }` identity homomorphic mapped
-/// where the iteration variable is named `iter_name`. Returns the MappedType
-/// TypeId so the test can instantiate it with `T = ...`.
+/// where the iteration variable is named `iter_name`. Returns the `MappedType`
+/// `TypeId` so the test can instantiate it with `T = ...`.
 fn build_identity_mapped_type(
     interner: &TypeInterner,
     iter_name: &str,
@@ -487,7 +487,7 @@ fn assert_identity_mapped_round_trips(
 /// `Mp<[string, ...number[]]>` must produce the same `[string, ...number[]]`
 /// tuple. The pre-fix path bound K = "i" for every position and copied the
 /// rest's inner element type into the rest slot, producing the structurally
-/// invalid `[string, ...number]` (rest with non-array type_id).
+/// invalid `[string, ...number]` (rest with non-array `type_id`).
 #[test]
 fn test_instantiate_mapped_over_trailing_rest_tuple_preserves_array_rest() {
     use crate::types::TupleElement;

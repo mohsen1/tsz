@@ -1543,7 +1543,7 @@ impl<'a> TypeInstantiator<'a> {
                             /// Rest of `Array<E>` / `readonly E[]` — rewrite the
                             /// resolved source to `Array<E>` and bind K = number;
                             /// the result must re-wrap in `Array<>` so the rest's
-                            /// type_id stays array-shaped.
+                            /// `type_id` stays array-shaped.
                             RestArray(TypeId),
                             /// Rest of an opaque type (type parameter, lazy ref,
                             /// etc.) — bind K = number on the existing template
@@ -1639,10 +1639,11 @@ impl<'a> TypeInstantiator<'a> {
                                     self.interner.union2(mapped_type, TypeId::UNDEFINED),
                                     elem.optional,
                                 ),
-                                (ElemBinding::OpaqueRest, _) => (mapped_type, elem.optional),
+                                (ElemBinding::OpaqueRest, _) | (_, None) => {
+                                    (mapped_type, elem.optional)
+                                }
                                 (_, Some(MappedModifier::Add)) => (mapped_type, true),
                                 (_, Some(MappedModifier::Remove)) => (mapped_type, false),
-                                (_, None) => (mapped_type, elem.optional),
                             };
 
                             new_elements.push(crate::types::TupleElement {
