@@ -15,6 +15,7 @@
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::ScannerSnapshot;
 
+use crate::parser::node::NodeArenaPoolLengths;
 use crate::parser::state::ParserState;
 
 /// Snapshot of every parser-state field that a speculative `parse_*` call is
@@ -27,6 +28,15 @@ pub(crate) struct ParserCheckpoint {
     parse_diagnostics_len: usize,
     arena_nodes_len: usize,
     arena_extended_info_len: usize,
+    /// Lengths of every typed data pool at checkpoint time. Without this,
+    /// failed speculations leave orphaned pool entries (identifiers, `type_refs`,
+    /// etc.) that inflate peak memory and degrade cache efficiency on files with
+    /// many recursive/generic types.
+    arena_pool_lengths: NodeArenaPoolLengths,
+    /// Scanner diagnostic high-water mark at checkpoint time. Restoring this
+    /// ensures the position-dedup logic in `parse_error_at` sees the correct
+    /// "lastError" tail after rollback rather than a stale post-speculation mark.
+    scanner_diagnostics_high_water_mark: usize,
     deferred_module_close_braces: u32,
     abort_intersection_continuation: bool,
     fallback_import_type_options_once: bool,
@@ -52,6 +62,8 @@ impl ParserState {
             parse_diagnostics_len: self.parse_diagnostics.len(),
             arena_nodes_len: self.arena.nodes.len(),
             arena_extended_info_len: self.arena.extended_info.len(),
+            arena_pool_lengths: self.arena.pool_checkpoint(),
+            scanner_diagnostics_high_water_mark: self.scanner_diagnostics_high_water_mark,
             deferred_module_close_braces: self.deferred_module_close_braces,
             abort_intersection_continuation: self.abort_intersection_continuation,
             fallback_import_type_options_once: self.fallback_import_type_options_once,
@@ -77,6 +89,8 @@ impl ParserState {
             parse_diagnostics_len,
             arena_nodes_len,
             arena_extended_info_len,
+            arena_pool_lengths,
+            scanner_diagnostics_high_water_mark,
             deferred_module_close_braces,
             abort_intersection_continuation,
             fallback_import_type_options_once,
@@ -96,6 +110,8 @@ impl ParserState {
         self.parse_diagnostics.truncate(parse_diagnostics_len);
         self.arena.nodes.truncate(arena_nodes_len);
         self.arena.extended_info.truncate(arena_extended_info_len);
+        self.arena.restore_pool_checkpoint(&arena_pool_lengths);
+        self.scanner_diagnostics_high_water_mark = scanner_diagnostics_high_water_mark;
         self.deferred_module_close_braces = deferred_module_close_braces;
         self.abort_intersection_continuation = abort_intersection_continuation;
         self.fallback_import_type_options_once = fallback_import_type_options_once;
@@ -124,11 +140,23 @@ impl ParserState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::node::IdentifierData;
+    use tsz_common::interner::Atom;
+    use tsz_scanner::SyntaxKind;
 
     fn fresh_parser(source: &str) -> ParserState {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         parser.next_token();
         parser
+    }
+
+    fn make_test_identifier(text: &str) -> IdentifierData {
+        IdentifierData {
+            atom: Atom::NONE,
+            escaped_text: text.to_string(),
+            original_text: None,
+            type_arguments: None,
+        }
     }
 
     /// A no-op speculation must leave every captured field unchanged.
@@ -142,6 +170,9 @@ mod tests {
         let diag_len_before = parser.parse_diagnostics.len();
         let nodes_len_before = parser.arena.nodes.len();
         let ext_len_before = parser.arena.extended_info.len();
+        let identifiers_len_before = parser.arena.identifiers.len();
+        let type_refs_len_before = parser.arena.type_refs.len();
+        let hwm_before = parser.scanner_diagnostics_high_water_mark;
 
         parser.speculate(|_| ());
 
@@ -152,6 +183,9 @@ mod tests {
         assert_eq!(parser.parse_diagnostics.len(), diag_len_before);
         assert_eq!(parser.arena.nodes.len(), nodes_len_before);
         assert_eq!(parser.arena.extended_info.len(), ext_len_before);
+        assert_eq!(parser.arena.identifiers.len(), identifiers_len_before);
+        assert_eq!(parser.arena.type_refs.len(), type_refs_len_before);
+        assert_eq!(parser.scanner_diagnostics_high_water_mark, hwm_before);
     }
 
     /// Mutations performed inside the speculation body — scanner advance,
@@ -221,5 +255,94 @@ mod tests {
         assert_eq!(parser.current_token, token_before);
         assert_eq!(parser.scanner.save_state().pos, pos_before);
         assert!(!parser.saw_arrow_parameter_recovery);
+    }
+
+    /// Arena typed-pool lengths are restored on rollback — no orphaned entries.
+    ///
+    /// Before this fix, `restore_speculation_checkpoint` only truncated
+    /// `arena.nodes` and `arena.extended_info`. Every typed pool (identifiers,
+    /// `type_refs`, etc.) retained entries created during a failed speculation,
+    /// causing unbounded memory growth and cache degradation in files with many
+    /// complex generic types. This test verifies that rollback also reclaims
+    /// typed pool allocations.
+    #[test]
+    fn speculation_rollback_reclaims_typed_pool_entries() {
+        let mut parser = fresh_parser("a b c");
+
+        let idents_before = parser.arena.identifiers.len();
+        let type_refs_before = parser.arena.type_refs.len();
+        let nodes_before = parser.arena.nodes.len();
+
+        parser.speculate(|p| {
+            p.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                0,
+                1,
+                make_test_identifier("T"),
+            );
+        });
+
+        // After rollback, typed pools must be at pre-speculation lengths.
+        assert_eq!(
+            parser.arena.identifiers.len(),
+            idents_before,
+            "identifiers pool leaked after speculation rollback"
+        );
+        assert_eq!(
+            parser.arena.type_refs.len(),
+            type_refs_before,
+            "type_refs pool leaked after speculation rollback"
+        );
+        assert_eq!(
+            parser.arena.nodes.len(),
+            nodes_before,
+            "nodes leaked after speculation rollback"
+        );
+    }
+
+    /// Pool rollback is stable across nested speculations: inner rollback does
+    /// not undo outer committed allocations, and outer rollback undoes both.
+    #[test]
+    fn nested_speculation_pool_rollback_is_correct() {
+        let mut parser = fresh_parser("a b c d");
+
+        let outer_idents_before = parser.arena.identifiers.len();
+
+        // Outer speculation: one committed identifier, one nested failure.
+        let outer_checkpoint = parser.speculation_checkpoint();
+
+        // Commit an identifier at the outer level (this stays after outer commit).
+        parser.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            1,
+            make_test_identifier("Outer"),
+        );
+        let after_outer_add = parser.arena.identifiers.len();
+
+        // Inner speculation: allocate then roll back.
+        parser.speculate(|p| {
+            p.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                1,
+                2,
+                make_test_identifier("Inner"),
+            );
+        });
+
+        // Inner rollback must restore to after-outer-add length.
+        assert_eq!(
+            parser.arena.identifiers.len(),
+            after_outer_add,
+            "inner rollback undid outer allocation"
+        );
+
+        // Outer rollback restores everything including the outer allocation.
+        parser.restore_speculation_checkpoint(outer_checkpoint);
+        assert_eq!(
+            parser.arena.identifiers.len(),
+            outer_idents_before,
+            "outer rollback did not restore to pre-speculation length"
+        );
     }
 }
