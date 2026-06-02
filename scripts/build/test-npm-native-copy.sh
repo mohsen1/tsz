@@ -43,4 +43,10 @@ for bin in tsz tsz-server try-tsz; do
   fi
 done
 
+try_pkg_bin="$PROJECT_ROOT/npm/try-tsz-$suffix/bin"
+if [[ ! -x "$try_pkg_bin/try-tsz$ext" ]]; then
+  echo "missing packaged try-tsz native binary: $try_pkg_bin/try-tsz$ext" >&2
+  exit 1
+fi
+
 echo "native npm copy smoke passed for $suffix"

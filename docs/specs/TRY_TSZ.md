@@ -125,8 +125,8 @@ Repository layout:
   submission.
 - Extend the npm assembly scripts so the public unscoped package `try-tsz`
   installs a launcher that selects the platform binary.
-- Reuse the existing native platform package pattern from the `tsz` npm
-  distribution where practical.
+- Publish unscoped native helper packages named `try-tsz-<platform>` so the MVP
+  does not depend on scoped npm package permissions.
 
 Compiler invocation:
 
@@ -261,7 +261,8 @@ Integration tests:
 Packaging tests:
 
 - Local npm pack installs `try-tsz` and exposes the `try-tsz` binary.
-- Platform binary selection mirrors the existing `tsz` npm package behavior.
+- Platform binary selection uses the matching `try-tsz-<platform>` helper
+  package.
 - `npx try-tsz -p tsconfig.json` works in a sample project without modifying
   source, lockfiles, or dependency folders.
 

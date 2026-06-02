@@ -150,6 +150,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  try-tsz (main package)"
   for p in "${BUILD_PLATFORMS[@]}"; do
     echo "  @mohsen-azimi/tsz-$p"
+    echo "  try-tsz-$p"
   done
   exit 0
 fi
@@ -202,6 +203,8 @@ if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
     # Copy binaries to the platform package
     pkg_bin="$NPM_DIR/@mohsen-azimi/tsz-$platform_suffix/bin"
     mkdir -p "$pkg_bin"
+    try_pkg_bin="$NPM_DIR/try-tsz-$platform_suffix/bin"
+    mkdir -p "$try_pkg_bin"
 
     for bin_name in "${BINARIES[@]}"; do
       ext=""
@@ -218,6 +221,10 @@ if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
       if [ -f "$src" ]; then
         cp "$src" "$pkg_bin/$bin_name$ext"
         chmod +x "$pkg_bin/$bin_name$ext"
+        if [ "$bin_name" = "try-tsz" ]; then
+          cp "$src" "$try_pkg_bin/$bin_name$ext"
+          chmod +x "$try_pkg_bin/$bin_name$ext"
+        fi
         echo "    Copied $bin_name$ext ($(du -h "$pkg_bin/$bin_name$ext" | cut -f1))"
       else
         echo "    ERROR: binary not found: $bin_name$ext" >&2
@@ -383,20 +390,20 @@ echo ""
 echo "==> Assembling try-tsz package..."
 
 mkdir -p "$TRY_PKG/bin"
-TRY_TSZ_VERSION="$CARGO_VERSION" TRY_TSZ_PKG_FILE="$TRY_PKG/package.json" node - <<'NODE'
+TRY_TSZ_VERSION="$CARGO_VERSION" TRY_TSZ_PKG_FILE="$TRY_PKG/package.json" NPM_DIR="$NPM_DIR" node - <<'NODE'
 const fs = require("fs");
 const version = process.env.TRY_TSZ_VERSION;
 const pkgFile = process.env.TRY_TSZ_PKG_FILE;
 const platforms = [
-  "darwin-arm64",
-  "darwin-x64",
-  "linux-x64",
-  "linux-arm64",
-  "win32-x64",
-  "win32-arm64",
+  { suffix: "darwin-arm64", os: "darwin", cpu: "arm64" },
+  { suffix: "darwin-x64", os: "darwin", cpu: "x64" },
+  { suffix: "linux-x64", os: "linux", cpu: "x64" },
+  { suffix: "linux-arm64", os: "linux", cpu: "arm64" },
+  { suffix: "win32-x64", os: "win32", cpu: "x64" },
+  { suffix: "win32-arm64", os: "win32", cpu: "arm64" },
 ];
 const optionalDependencies = Object.fromEntries(
-  platforms.map((platform) => [`@mohsen-azimi/tsz-${platform}`, version]),
+  platforms.map(({ suffix }) => [`try-tsz-${suffix}`, version]),
 );
 const pkg = {
   name: "try-tsz",
@@ -416,6 +423,30 @@ const pkg = {
   files: ["bin/", "LICENSE.txt"],
 };
 fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + "\n");
+
+const commonMetadata = {
+  license: "Apache-2.0",
+  author: "Mohsen Azimi <mohsen@users.noreply.github.com>",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/mohsen1/tsz.git",
+  },
+};
+
+for (const { suffix, os, cpu } of platforms) {
+  const pkgDir = `${process.env.NPM_DIR}/try-tsz-${suffix}`;
+  fs.mkdirSync(`${pkgDir}/bin`, { recursive: true });
+  const nativePkg = {
+    name: `try-tsz-${suffix}`,
+    version,
+    description: `Native try-tsz binary for ${suffix}`,
+    ...commonMetadata,
+    os: [os],
+    cpu: [cpu],
+    files: ["bin/", "LICENSE.txt"],
+  };
+  fs.writeFileSync(`${pkgDir}/package.json`, JSON.stringify(nativePkg, null, 2) + "\n");
+}
 NODE
 
 cat > "$TRY_PKG/bin/try-tsz.js" <<'NODE'
@@ -443,9 +474,9 @@ if (!suffix) {
 const exe = process.platform === "win32" ? "try-tsz.exe" : "try-tsz";
 let binary;
 try {
-  binary = require.resolve(`@mohsen-azimi/tsz-${suffix}/bin/${exe}`);
+  binary = require.resolve(`try-tsz-${suffix}/bin/${exe}`);
 } catch {
-  console.error(`Missing try-tsz native package @mohsen-azimi/tsz-${suffix}`);
+  console.error(`Missing try-tsz native package try-tsz-${suffix}`);
   process.exit(1);
 }
 
@@ -469,6 +500,12 @@ NODE
 
 chmod +x "$TRY_PKG/bin/try-tsz.js"
 cp "$PROJECT_ROOT/LICENSE.txt" "$TRY_PKG/LICENSE.txt"
+for entry in "${PLATFORMS[@]}"; do
+  read -r npm_suffix _ <<< "$entry"
+  try_platform_pkg="$NPM_DIR/try-tsz-$npm_suffix"
+  mkdir -p "$try_platform_pkg"
+  cp "$PROJECT_ROOT/LICENSE.txt" "$try_platform_pkg/LICENSE.txt"
+done
 
 echo ""
 echo "==> Build complete!"
@@ -476,6 +513,7 @@ echo "    Main package: $MAIN_PKG"
 echo "    Try package:  $TRY_PKG"
 for platform_suffix in "${BUILD_PLATFORMS[@]}"; do
   echo "    Platform:     $NPM_DIR/@mohsen-azimi/tsz-$platform_suffix"
+  echo "    Try platform: $NPM_DIR/try-tsz-$platform_suffix"
 done
 echo ""
 echo "To test locally:"
@@ -483,11 +521,15 @@ echo "  cd $MAIN_PKG && npm link"
 echo "  tsz --noEmit"
 echo ""
 echo "To publish:"
-echo "  # Publish platform packages first:"
+echo "  # Publish try-tsz platform packages first:"
+for platform_suffix in "${BUILD_PLATFORMS[@]}"; do
+  echo "  cd $NPM_DIR/try-tsz-$platform_suffix && npm publish --access public"
+done
+echo "  # Then publish try-tsz package:"
+echo "  cd $TRY_PKG && npm publish --access public"
+echo "  # Publish scoped tsz platform packages separately:"
 for platform_suffix in "${BUILD_PLATFORMS[@]}"; do
   echo "  cd $NPM_DIR/@mohsen-azimi/tsz-$platform_suffix && npm publish --access public"
 done
-echo "  # Then publish main package:"
+echo "  # Then publish scoped tsz main package:"
 echo "  cd $MAIN_PKG && npm publish --access public"
-echo "  # Publish try-tsz package:"
-echo "  cd $TRY_PKG && npm publish --access public"
