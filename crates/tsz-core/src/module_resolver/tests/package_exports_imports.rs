@@ -915,3 +915,74 @@ fn test_is_valid_bare_imports_target_rejects_absolute_and_relative() {
     // Windows drive paths.
     assert!(!is_valid_bare_imports_target("C:/abs.d.ts"));
 }
+
+/// A `*` pattern key must outrank an equal-base directory key regardless of
+/// JSON declaration order. Both packages below expose the same two keys for
+/// `./foo` — a `"./*"` wildcard (→ `dist/foo`) and a `"./"` directory prefix
+/// (→ `src/foo`) — differing only in declaration order. Per Node.js
+/// `PATTERN_KEY_COMPARE`, `"./*"` (base length 3) always beats `"./"`
+/// (base length 2), so both must resolve to the same physical `dist` file.
+/// Before the fix the two keys tied on `(prefix_len, suffix_len)` and the
+/// winner flipped with key order, so the same specifier resolved to different
+/// physical files between rows.
+#[test]
+fn test_wildcard_export_beats_directory_key_independent_of_declaration_order() {
+    use std::fs;
+
+    fn resolve_foo(dir: &std::path::Path, exports_json: &str) -> std::path::PathBuf {
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir.join("node_modules/pkg/dist")).unwrap();
+        fs::create_dir_all(dir.join("node_modules/pkg/src")).unwrap();
+        fs::create_dir_all(dir.join("app")).unwrap();
+
+        fs::write(
+            dir.join("node_modules/pkg/package.json"),
+            format!(r#"{{"name":"pkg","exports":{exports_json}}}"#),
+        )
+        .unwrap();
+        // Both candidate targets exist on disk, so selection — not mere
+        // existence — decides which physical file wins.
+        fs::write(
+            dir.join("node_modules/pkg/dist/foo.d.ts"),
+            "export declare const from_dist: number;",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules/pkg/src/foo.d.ts"),
+            "export declare const from_src: number;",
+        )
+        .unwrap();
+        fs::write(dir.join("app/index.ts"), "import { x } from 'pkg/foo';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+        let resolved = resolver
+            .resolve("pkg/foo", &dir.join("app/index.ts"), Span::new(15, 24))
+            .expect("pkg/foo must resolve through the `./*` wildcard export")
+            .resolved_path;
+        let _ = fs::remove_dir_all(dir);
+        resolved
+    }
+
+    // Wildcard declared AFTER the directory key (the order that regressed).
+    let dir_then_star = std::env::temp_dir().join("tsz_test_exports_dir_then_star");
+    let resolved_a = resolve_foo(&dir_then_star, r#"{"./":"./src/","./*":"./dist/*.js"}"#);
+    assert_eq!(
+        resolved_a,
+        dir_then_star.join("node_modules/pkg/dist/foo.d.ts"),
+        "`./*` must win over `./` even when declared second"
+    );
+
+    // Wildcard declared BEFORE the directory key — same winner.
+    let star_then_dir = std::env::temp_dir().join("tsz_test_exports_star_then_dir");
+    let resolved_b = resolve_foo(&star_then_dir, r#"{"./*":"./dist/*.js","./":"./src/"}"#);
+    assert_eq!(
+        resolved_b,
+        star_then_dir.join("node_modules/pkg/dist/foo.d.ts"),
+        "`./*` must win over `./` regardless of declaration order"
+    );
+}
