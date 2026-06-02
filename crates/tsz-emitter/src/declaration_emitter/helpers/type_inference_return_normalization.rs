@@ -797,9 +797,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let mapped_alias_text =
             self.source_type_alias_type_text(source_arena, mapped_alias_name)?;
+        let mapped_type_param_name = Self::first_mapped_type_parameter_name(&mapped_alias_text)?;
         if !mapped_alias_text.contains("undefined extends")
-            || !mapped_alias_text.contains("? K : never")
-            || !mapped_alias_text.contains("? never : K")
+            || !mapped_alias_text.contains(&format!("? {mapped_type_param_name} : never"))
+            || !mapped_alias_text.contains(&format!("? never : {mapped_type_param_name}"))
         {
             return None;
         }
@@ -831,6 +832,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|text| text.trim().trim_end_matches(';').trim().to_string());
         }
         None
+    }
+
+    fn first_mapped_type_parameter_name(type_text: &str) -> Option<&str> {
+        let bracket_start = type_text.find('[')? + 1;
+        let mapped_tail = type_text.get(bracket_start..)?;
+        let in_pos = mapped_tail.find(" in ")?;
+        let name = mapped_tail.get(..in_pos)?.trim();
+        Self::is_simple_identifier_text(name).then_some(name)
     }
 
     fn leading_balanced_brace_text(text: &str) -> Option<String> {

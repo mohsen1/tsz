@@ -1317,3 +1317,67 @@ let y = complete(value);
         None
     );
 }
+
+#[test]
+fn exported_call_preserves_inexact_optional_mapped_intersection_surface() {
+    let output = emit_test_dts_with_binding(
+        r#"
+type InexactOptionals<A> = {
+    [K in keyof A as undefined extends A[K] ? K : never]?: undefined extends A[K]
+    ? A[K] | undefined
+    : A[K];
+} & {
+    [K in keyof A as undefined extends A[K] ? never : K]: A[K];
+};
+
+type In = {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}
+
+type Out = InexactOptionals<In>
+
+const foo = <A = {}>() => (x: Out & A) => null
+
+export const baddts = foo()
+"#,
+    );
+
+    assert_eq!(
+        output.trim(),
+        "export declare const baddts: (x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => any;"
+    );
+}
+
+#[test]
+fn exported_call_preserves_renamed_inexact_optional_mapped_intersection_surface() {
+    let output = emit_test_dts_with_binding(
+        r#"
+type Loose<T> = {
+    [Key in keyof T as undefined extends T[Key] ? Key : never]?: undefined extends T[Key]
+    ? T[Key] | undefined
+    : T[Key];
+} & {
+    [Key in keyof T as undefined extends T[Key] ? never : Key]: T[Key];
+};
+
+type Input = {
+    maybe?: string;
+    count: number;
+    nil: undefined;
+}
+
+type Result = Loose<Input>
+
+const make = <Extra = {}>() => (value: Result & Extra) => null
+
+export const publicValue = make()
+"#,
+    );
+
+    assert_eq!(
+        output.trim(),
+        "export declare const publicValue: (value: {\n    maybe?: string | undefined;\n    nil?: undefined;\n} & {\n    count: number;\n}) => any;"
+    );
+}
