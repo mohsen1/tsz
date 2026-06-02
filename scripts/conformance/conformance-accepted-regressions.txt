@@ -25,8 +25,9 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 # Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
 # Mapped/keyof family tracked in #8432; large-union intersections tracked in
 # #12260; JSX/import.meta subset tracked in #12261.
-# intersectionsOfLargeUnions2.ts resolved on PR #12243 exact head (removed).
+# importMeta.ts resolved on PR #12243 exact head (removed).
+# intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
 TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
-TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
