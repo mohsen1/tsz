@@ -127,6 +127,40 @@ var value = new Outer.Box<Outer.Item>();
 }
 
 #[test]
+fn test_named_constructor_interface_uses_signature_type_parameter_defaults() {
+    let output = emit_dts_with_binding(
+        r#"
+interface Holder<Value> {
+    value: Value;
+}
+
+interface HolderFactory {
+    new <Payload = number>(value?: Payload): Holder<Payload>;
+}
+
+declare const Holder: HolderFactory;
+
+let inferredDefault = new Holder();
+let inferredArgument = new Holder("text");
+let explicitArgument = new Holder<boolean>();
+"#,
+    );
+
+    assert!(
+        output.contains("declare let inferredDefault: Holder<number>;"),
+        "Expected construct signature default type argument to be reused: {output}"
+    );
+    assert!(
+        output.contains("declare let inferredArgument: Holder<string>;"),
+        "Expected construct signature argument inference to be reused: {output}"
+    );
+    assert!(
+        output.contains("declare let explicitArgument: Holder<boolean>;"),
+        "Expected construct signature explicit type argument to be reused: {output}"
+    );
+}
+
+#[test]
 fn test_generic_call_this_type_descriptor_intersections_preserve_source_surfaces() {
     let output = emit_dts_with_binding(
         r#"
