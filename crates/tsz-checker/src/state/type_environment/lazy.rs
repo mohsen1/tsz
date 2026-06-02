@@ -773,21 +773,47 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Second check: the Application may be cached from the first evaluation,
-        // causing the cycle to fire on a Conditional instead of the Application.
-        // Check if the evaluated result contains a CONCRETE Application referencing
-        // the alias (i.e., Application(Lazy(def_id), args) where args have no type
-        // params). A concrete self-reference that survives evaluation means the
-        // expansion didn't converge — infinite recursion.
+        // Second check: a concrete self-application of the alias can survive the
+        // first evaluation because the evaluator leaves a recursive reference in a
+        // non-tail position (a function return or object/mapped property, e.g. the
+        // `Curry<T, R>` inside `(h: H) => Curry<T, R>`) deferred — so a residual
+        // `Application(alias, args)` is the norm, not proof of infinite expansion.
+        // It is divergence evidence only when it makes no *progress*: at a use site
+        // (the checked type is itself a concrete application of the alias) compare
+        // the structural argument weight of the input against each residual — a
+        // residual that strictly shrinks is converging toward the base case (a
+        // variadic tuple tail) and must not raise TS2589, while one that stays the
+        // same size (`Foo<unknown>` -> `Foo<unknown>`) or grows is divergent. When
+        // there is no input application to compare against (the definition-site
+        // pass evaluates the conditional body directly), any surviving concrete
+        // self-reference stays divergent, preserving definition-site TS2589.
         let result = eval_result.result;
         if result != type_id && result != TypeId::ERROR {
             let db = self.ctx.types.as_type_database();
-            if crate::query_boundaries::common::contains_concrete_application_with_def(
+            let residuals = crate::query_boundaries::state::type_environment::collect_concrete_applications_with_def(
                 db,
                 result,
                 alias_def_id,
+            );
+            match crate::query_boundaries::state::type_environment::self_application_arg_weight(
+                db,
+                type_id,
+                alias_def_id,
             ) {
-                return true;
+                None => return !residuals.is_empty(),
+                Some(input_weight) => {
+                    let diverges = residuals.iter().any(|&residual| {
+                        crate::query_boundaries::state::type_environment::self_application_arg_weight(
+                            db,
+                            residual,
+                            alias_def_id,
+                        )
+                        .is_none_or(|residual_weight| residual_weight >= input_weight)
+                    });
+                    if diverges {
+                        return true;
+                    }
+                }
             }
         }
         false

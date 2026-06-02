@@ -560,6 +560,44 @@ let s: StringOnly<"hello">;
 }
 
 #[test]
+fn terminating_nested_recursive_conditional_over_tuple_no_ts2589() {
+    // The recursive reference `Curry<Tail, Result>` sits in a *non-tail*
+    // position — the return type of a function — so the evaluator leaves the
+    // final step deferred in the result rather than expanding it inline. The
+    // driving tuple argument loses an element each step, so the recursion
+    // terminates and `tsc` emits no TS2589. Regression for the false positive
+    // where the surviving deferred self-application was mistaken for infinite
+    // instantiation.
+    let source = r#"
+type Curry<Args extends any[], Result> =
+    Args extends [infer Head, ...infer Tail] ? (head: Head) => Curry<Tail, Result> : Result;
+type Applied = Curry<[number, string, boolean], void>;
+let applied: Applied;
+"#;
+    assert!(
+        !has_error_with_code(source, 2589),
+        "terminating tuple recursion through a function-return self-reference must not emit TS2589"
+    );
+}
+
+#[test]
+fn terminating_object_nested_recursive_conditional_over_tuple_no_ts2589() {
+    // Same structural case as above but with the recursive reference nested in
+    // an object property instead of a function return. Distinct binder names
+    // confirm the fix keys on the structural recursion shape, not identifiers.
+    let source = r#"
+type Walk<Items extends readonly unknown[], Seed> =
+    Items extends [infer First, ...infer Rest] ? { value: First; next: Walk<Rest, Seed> } : Seed;
+type Path = Walk<[1, 2, 3], null>;
+let path: Path;
+"#;
+    assert!(
+        !has_error_with_code(source, 2589),
+        "terminating tuple recursion through an object-property self-reference must not emit TS2589"
+    );
+}
+
+#[test]
 fn ts2589_message_text() {
     let source = r#"
 type Foo<T extends "true", B> = { "true": Foo<T, Foo<T, B>> }[T];
