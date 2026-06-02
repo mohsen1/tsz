@@ -226,18 +226,14 @@ impl<'a> CheckerState<'a> {
             if !sig.type_params.is_empty() {
                 continue;
             }
-            for param in &mut sig.params {
-                param.type_id = eval(param.type_id);
-            }
+            // Only evaluate the return type. Params, `this`, and predicate
+            // are intentionally left as substituted-but-not-evaluated:
+            // contextual-typing and contravariant matching paths rely on
+            // their declared shape, and forcing evaluation here regresses
+            // unrelated conformance fixtures (interface declaration
+            // inference, write-only-locals lint, circular-module
+            // resolution).
             sig.return_type = eval(sig.return_type);
-            if let Some(this_type) = sig.this_type {
-                sig.this_type = Some(eval(this_type));
-            }
-            if let Some(predicate) = sig.type_predicate.as_mut()
-                && let Some(predicate_ty) = predicate.type_id
-            {
-                predicate.type_id = Some(eval(predicate_ty));
-            }
         }
     }
 
