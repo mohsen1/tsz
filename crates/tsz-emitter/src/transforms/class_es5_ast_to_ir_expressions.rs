@@ -620,8 +620,8 @@ impl<'a> AstToIr<'a> {
 
     /// Base operator for an ES5-lowerable private-field compound assignment
     /// (`+=` -> `+`). Returns `None` for `=`, exponent (`**=`), and logical
-    /// (`&&= ||= ??=`) assignments: those need a different lowering (`Math.pow`
-    /// / short-circuit) and stay on the existing fallthrough as follow-ups.
+    /// (`&&= ||= ??=`) assignments: `**=`/`&&=`/`||=` are handled separately by
+    /// `private_exp_or_logical_compound_ir`, and `??=` stays on the fallthrough.
     const fn es5_private_compound_base_op(token: u16) -> Option<&'static str> {
         Some(match token {
             t if t == SyntaxKind::PlusEqualsToken as u16 => "+",
@@ -637,6 +637,69 @@ impl<'a> AstToIr<'a> {
             t if t == SyntaxKind::BarEqualsToken as u16 => "|",
             _ => return None,
         })
+    }
+
+    /// Lower `this.#x **= v` / `this.#x &&= v` / `this.#x ||= v` for a known
+    /// private slot, or `None` to fall through.
+    ///
+    /// - `**=` is an *unconditional* write, so it folds to
+    ///   `__classPrivateFieldSet(this, _C_x, Math.pow(__classPrivateFieldGet(this, _C_x, "f"), v), "f")`
+    ///   for both fields and accessors. ES5/ES3 — this transform's only targets
+    ///   — have no `**` operator, so `Math.pow` is always required.
+    /// - `&&=` / `||=` are *conditional* writes. The always-write fold
+    ///   `set(this, _C_x, get() && v, "f")` is observably equivalent only when
+    ///   the slot has no write side effect, i.e. a plain field (kind `"f"`): for
+    ///   a field, `a &&= b` ≡ `a = (a && b)` because the short-circuit value is
+    ///   stored idempotently. For an accessor the setter would run when the short
+    ///   circuit says skip, so accessor short-circuit assignment falls through.
+    ///   `??=` also falls through: at ES5 the `??` itself needs nullish lowering.
+    ///
+    /// A conditional-expression rhs is parenthesized because `&&`/`||` bind
+    /// tighter than `?:`, mirroring the main emitter's private-field policy.
+    fn private_exp_or_logical_compound_ir(
+        &self,
+        operator_token: u16,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let (receiver_idx, clean) = self.private_mutation_target(left_idx)?;
+
+        if operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
+            let get_ir = self.private_field_get_ir(receiver_idx, &clean)?;
+            let rhs = self.convert_expression(right_idx);
+            let powed = IRNode::call(
+                IRNode::PropertyAccess {
+                    object: Box::new(IRNode::id("Math")),
+                    property: "pow".into(),
+                },
+                vec![get_ir, rhs],
+            );
+            return self.private_field_set_ir(receiver_idx, &clean, powed);
+        }
+
+        let short_op = if operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16 {
+            "&&"
+        } else if operator_token == SyntaxKind::BarBarEqualsToken as u16 {
+            "||"
+        } else {
+            return None;
+        };
+        // Short-circuit assignment may only be folded into an unconditional set
+        // for a plain field; accessors keep their conditional-write semantics.
+        if self.private_write_info(&clean).map(|(_, kind)| kind) != Some("f") {
+            return None;
+        }
+        let get_ir = self.private_field_get_ir(receiver_idx, &clean)?;
+        let mut rhs = self.convert_expression(right_idx);
+        if self
+            .arena
+            .get(right_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+        {
+            rhs = IRNode::Parenthesized(Box::new(rhs));
+        }
+        let folded = IRNode::binary(get_ir, short_op, rhs);
+        self.private_field_set_ir(receiver_idx, &clean, folded)
     }
 
     /// Lower `recv.#x++` / `recv.#x--` for a known private field/accessor slot.
@@ -761,6 +824,14 @@ impl<'a> AstToIr<'a> {
                 if let Some(set_ir) = self.private_field_set_ir(receiver_idx, &clean, new_value) {
                     return set_ir;
                 }
+            }
+
+            // Private field exponent (`**=`) and short-circuit (`&&=`/`||=`)
+            // compound assignment. See `private_exp_or_logical_compound_ir`.
+            if let Some(lowered) =
+                self.private_exp_or_logical_compound_ir(bin.operator_token, bin.left, bin.right)
+            {
+                return lowered;
             }
 
             let left = self.convert_expression(bin.left);
@@ -1201,6 +1272,115 @@ mod optional_chain_in_class_member_tests {
         assert!(
             output.contains("__classPrivateFieldSet(this, _Plain_p, 9, \"f\")"),
             "Plain `this.#p = 9` must still lower to a single set.\nOutput:\n{output}"
+        );
+    }
+
+    // Structural rule: the ES5 class-IR converter must lower private-field
+    // exponent (`**=`) and short-circuit (`&&=`/`||=`) compound assignment to a
+    // get-fold-set form instead of an un-assignable `__classPrivateFieldGet(...)
+    // **= v`. `**=` is an unconditional write (fields + accessors); `&&=`/`||=`
+    // fold to an always-write set only for plain fields, where it is observably
+    // equivalent. `??=` and accessor short-circuit stay on the fallthrough. The
+    // rule keys on the member's storage slot and kind, never on its spelling.
+
+    #[test]
+    fn private_field_exponent_assign_lowers_through_math_pow() {
+        let output =
+            emit_es5("class E {\n    #x = 2;\n    m() {\n        this.#x **= 3;\n    }\n}\n");
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _E_x, Math.pow(__classPrivateFieldGet(this, _E_x, \"f\"), 3), \"f\")"
+            ),
+            "Private `#x **= 3` must lower through `Math.pow`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("**="),
+            "ES5 output must not retain the `**=` operator.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_accessor_exponent_assign_threads_get_and_set_storage() {
+        // `**=` is unconditional, so it is also correct for accessors: read from
+        // get-storage, write to set-storage, kind "a".
+        let output = emit_es5(
+            "class Box {\n    get #v() { return 2; }\n    set #v(x: number) {}\n    grow() {\n        this.#v **= 4;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _Box_v_set, Math.pow(__classPrivateFieldGet(this, _Box_v_get, \"a\"), 4), \"a\")"
+            ),
+            "Accessor `#v **= 4` must read get-storage and write set-storage.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_logical_and_assign_folds_to_set_get_and_rhs() {
+        let output = emit_es5(
+            "class A {\n    #flag = true;\n    m() {\n        this.#flag &&= false;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _A_flag, __classPrivateFieldGet(this, _A_flag, \"f\") && false, \"f\")"
+            ),
+            "Private `#flag &&= false` must fold to set(get() && rhs).\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("&&="),
+            "Lowered output must not retain `&&=`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_logical_or_assign_folds_to_set_get_or_rhs() {
+        let output = emit_es5(
+            "class O {\n    #cache = 0;\n    m(v: number) {\n        this.#cache ||= v;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _O_cache, __classPrivateFieldGet(this, _O_cache, \"f\") || v, \"f\")"
+            ),
+            "Private `#cache ||= v` must fold to set(get() || rhs).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_logical_assign_parenthesizes_conditional_rhs() {
+        // `||` binds tighter than `?:`, so a conditional rhs must be parenthesized
+        // or the assignment silently reparses as `(get() || a) ? b : c`.
+        let output = emit_es5(
+            "declare const a: any;\nclass C {\n    #x = 0;\n    m() {\n        this.#x ||= a ? 1 : 2;\n    }\n}\n",
+        );
+        assert!(
+            output.contains(
+                "__classPrivateFieldSet(this, _C_x, __classPrivateFieldGet(this, _C_x, \"f\") || (a ? 1 : 2), \"f\")"
+            ),
+            "Conditional rhs of `||=` must be parenthesized.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_field_nullish_assign_stays_on_fallthrough() {
+        // Out of scope: `??=` needs ES5 nullish lowering of the folded `??`.
+        // This guards the documented scope boundary (no accidental partial fold).
+        let output =
+            emit_es5("class N {\n    #x = 0;\n    m() {\n        this.#x ??= 9;\n    }\n}\n");
+        assert!(
+            !output.contains("Math.pow") && !output.contains("\"f\") ?? "),
+            "`??=` must not be partially folded; it stays on the fallthrough.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn private_accessor_short_circuit_assign_stays_on_fallthrough() {
+        // Out of scope: an accessor `&&=` would call the setter even when the
+        // short circuit says skip, so the always-write fold is unsafe here.
+        let output = emit_es5(
+            "class Acc {\n    get #v() { return 1; }\n    set #v(x: number) {}\n    m() {\n        this.#v &&= 3;\n    }\n}\n",
+        );
+        assert!(
+            !output.contains("__classPrivateFieldSet(this, _Acc_v_set, __classPrivateFieldGet"),
+            "Accessor `&&=` must not be folded to an always-write set.\nOutput:\n{output}"
         );
     }
 }
