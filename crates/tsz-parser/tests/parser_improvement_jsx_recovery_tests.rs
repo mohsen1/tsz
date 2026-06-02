@@ -1333,3 +1333,138 @@ declare namespace Util {
 "#,
     );
 }
+
+// ─── in_jsx_attribute_initializer_element flag ───────────────────────────────
+//
+// `parse_jsx_spread_attribute` and `parse_jsx_expression_for_attribute` must
+// set `in_jsx_attribute_initializer_element = true` around their expression
+// parse so that `parse_jsx_element_name` emits TS1003 "Identifier expected."
+// (not TS1005 "'}' expected.") when an unexpected `}` appears inside those
+// attribute expressions.
+
+#[test]
+fn test_jsx_expression_attribute_simple_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+const x = <div className={"hello"} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_spread_attribute_simple_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+const props = { a: 1 };
+const x = <div {...props} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_expression_attribute_nested_jsx_no_errors() {
+    // Nested JSX element inside an attribute expression.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+declare function Wrapper(p: any): JSX.Element;
+declare function Inner(p: any): JSX.Element;
+const x = <Wrapper children={<Inner />} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_spread_attribute_object_expression_no_errors() {
+    // Object literal inside spread attribute.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+const x = <div {...{ a: 1, b: 2 }} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_attribute_expression_stray_lt_gives_ts1109() {
+    // Inside a JSX attribute `{` block, `<}` is parsed as comparison (`<` operator)
+    // because `}` is not a valid JSX element-name start in expression mode.
+    // The right operand of `<` is missing, so the parser gives TS1109 "Expression expected."
+    let source = r#"const x = <div x={<}/>;"#;
+    let (parser, _) = parse_source_named("test.tsx", source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1109),
+        "Expected TS1109 for `<}}` as comparison in JSX attribute expression, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsx_children_stray_lt_before_brace_gives_ts1005() {
+    // In JSX children context, `<}` attempts to open a child element. The `}`
+    // token (scanned as JsxText) is not a valid element name start. Because we
+    // are NOT inside an attribute initializer, tsz emits TS1005 "'}' expected."
+    // matching the tsc recovery heuristic for stray close-brace in JSX text.
+    let source = r#"const x = <div><}</div>;"#;
+    let (parser, _) = parse_source_named("test.tsx", source);
+    let diagnostics = parser.get_diagnostics();
+    // In JSX children context (flag is false), tsz emits TS1005 "'}' expected."
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1005),
+        "Expected TS1005 for stray `}}` as JSX element name in children context, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsx_expression_attribute_arrow_function_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+declare function Btn(p: any): JSX.Element;
+const x = <Btn onClick={() => console.log("click")} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_expression_attribute_ternary_no_errors() {
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+declare function Comp(p: any): JSX.Element;
+declare const flag: boolean;
+const x = <Comp value={flag ? "yes" : "no"} />;
+"#,
+    );
+}
+
+#[test]
+fn test_jsx_multiple_spread_and_expression_attributes_no_errors() {
+    // Multiple mixed attribute types on the same element.
+    assert_no_errors_named(
+        "test.tsx",
+        r#"
+declare namespace JSX { interface Element {} }
+declare function h(t: any, p: any): JSX.Element;
+declare const extra: Record<string, unknown>;
+declare const label: string;
+const x = <div id="root" {...extra} className={label} />;
+"#,
+    );
+}
