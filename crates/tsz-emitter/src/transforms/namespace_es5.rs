@@ -154,7 +154,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// Mark this emitter as targeting ES5 (disables `let` in namespace IIFE bodies).
-    pub fn set_target_es5(&mut self, es5: bool) {
+    pub const fn set_target_es5(&mut self, es5: bool) {
         self.target_es5 = es5;
         self.transformer.set_target_es5(es5);
     }
