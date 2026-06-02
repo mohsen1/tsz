@@ -98,6 +98,96 @@ function f<T, U extends T, K extends keyof T>(x: { [P in K]: T[P] }, y: { [P in 
 }
 
 #[test]
+fn broad_string_mapped_assignment_source_displays_as_index_signature() {
+    let messages = ts2322_messages(
+        r#"
+function f<Key extends string>(
+    left: { [Name in Key]: number },
+    right: { [Slot in string]: number },
+) {
+    left = right;
+}
+"#,
+    );
+
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '{ [x: string]: number; }' is not assignable to type '{ [Name in Key]: number; }'."
+        )),
+        "expected broad mapped source to display as a structural string index signature, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Record<string")),
+        "inline broad mapped source must not be repainted as Record, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn broad_number_mapped_assignment_source_displays_as_index_signature() {
+    let messages = ts2322_messages(
+        r#"
+function f<Idx extends number>(
+    left: { [Cell in Idx]: boolean },
+    right: { [Offset in number]: boolean },
+) {
+    left = right;
+}
+"#,
+    );
+
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '{ [x: number]: boolean; }' is not assignable to type '{ [Cell in Idx]: boolean; }'."
+        )),
+        "expected broad mapped source to display as a structural number index signature, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn broad_string_mapped_assignment_source_preserves_generic_value_type() {
+    let messages = ts2322_messages(
+        r#"
+function f<Key extends string, Value>(
+    left: { [Name in Key]: number },
+    right: { [Slot in string]: Value },
+) {
+    left = right;
+}
+"#,
+    );
+
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '{ [x: string]: Value; }' is not assignable to type '{ [Name in Key]: number; }'."
+        )),
+        "expected broad mapped source to keep unrelated generic value type, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn explicit_generic_mapped_alias_source_surface_is_preserved() {
+    let messages = ts2322_messages(
+        r#"
+type Bag<Value> = { [Key in string]: Value };
+function f(right: Bag<string>) {
+    let left: number;
+    left = right;
+}
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message
+                .contains("Type 'Bag<string>' is not assignable to type 'number'.")),
+        "explicit generic mapped alias should keep its declared source surface, got: {messages:#?}"
+    );
+}
+
+#[test]
 fn generic_application_arg_preserves_homomorphic_index_alias_surface() {
     let messages = ts2322_messages(
         r#"

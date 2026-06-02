@@ -1646,6 +1646,11 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.rebuilt_array_source_display(declared_type, target) {
             return Some(display);
         }
+        if let Some(display) =
+            self.broad_mapped_index_signature_source_display(declared_type, target)
+        {
+            return Some(display);
+        }
 
         // Preserve literal property types from declared annotations while
         // leaving fresh object-literal display_properties to the widening path.
