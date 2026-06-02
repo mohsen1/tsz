@@ -11,7 +11,8 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::node_flags;
 use tsz_parser::syntax::transform_utils::{
-    contains_new_target_reference, contains_super_reference,
+    collect_class_computed_name_this_references, contains_new_target_reference,
+    contains_super_reference,
 };
 
 #[path = "class_es5_ast_to_ir_classes.rs"]
@@ -242,6 +243,17 @@ impl<'a> AstToIr<'a> {
         let has_substitution = substitution.is_some();
         self.current_this_substitution.set(substitution);
         has_substitution
+    }
+
+    fn current_this_substitution_text(&self) -> Option<String> {
+        let substitution = self.current_this_substitution.take();
+        let text = substitution
+            .as_ref()
+            .map(|substitution| match substitution {
+                ThisSubstitution::Identifier(alias) | ThisSubstitution::Raw(alias) => alias.clone(),
+            });
+        self.current_this_substitution.set(substitution);
+        text
     }
 
     fn current_this_ir(&self) -> IRNode {
@@ -491,6 +503,19 @@ impl<'a> AstToIr<'a> {
                 self.convert_object_literal(idx)
             }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
+            k if k == syntax_kind_ext::CLASS_EXPRESSION
+                && self.class_expression_has_computed_name_this(idx)
+                && self.has_current_this_substitution() =>
+            {
+                if let Some(this_alias) = self.current_this_substitution_text() {
+                    IRNode::ASTRefWithInheritedComputedNameThis {
+                        node: idx,
+                        this_alias: this_alias.into(),
+                    }
+                } else {
+                    IRNode::ASTRef(idx)
+                }
+            }
             k if k == syntax_kind_ext::CLASS_EXPRESSION
                 && self.has_super
                 && !self.is_static.get()

@@ -5,11 +5,19 @@ use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
 fn emit(source: &str, target: ScriptTarget) -> String {
+    emit_with_define(source, target, false)
+}
+
+fn emit_with_define(
+    source: &str,
+    target: ScriptTarget,
+    use_define_for_class_fields: bool,
+) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let options = PrinterOptions {
         target,
-        use_define_for_class_fields: false,
+        use_define_for_class_fields,
         ..Default::default()
     };
     let ctx = EmitContext::with_options(options.clone());
@@ -19,6 +27,73 @@ fn emit(source: &str, target: ScriptTarget) -> String {
     printer.set_source_text(source);
     printer.emit(root);
     printer.get_output().to_string()
+}
+
+#[test]
+fn es2015_nested_class_computed_names_use_enclosing_static_this_alias() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("class Inner {\n        constructor() {\n            this[_c] = 456;"),
+        "Instance computed field should use the captured computed-name temp in the constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b = _a.c,\n    _c = _a.c,\n") && output.contains("_d[_b] = 123,"),
+        "Computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_nested_class_computed_names_use_enclosing_static_this_alias() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("_b = _a.c, _c = _a.c,\n        _d[_b] = 123,"),
+        "ES5 computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Inner[_b] = 123")
+            && !output.contains("_b = this.c")
+            && !output.contains("_c = this.c"),
+        "ES5 nested class computed names must not fall back to unbound `this` or run the static assignment before key evaluation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit_with_define(source, ScriptTarget::ES5, true);
+
+    assert!(
+        output.contains("_b = _a.c, _c = _a.c,\n            Object.defineProperty(_d, _b, {"),
+        "ES5 define-mode static computed field should use the enclosing static alias for key evaluation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty(Inner, _b")
+            && !output.contains("_b = this.c")
+            && !output.contains("_c = this.c"),
+        "ES5 define-mode computed names must not use unbound `this`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2022_static_block_field_initializer_captures_nested_class_computed_names() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES2022);
+
+    assert!(
+        output.contains("static { this.bar = (_c = () => { _a = this.c, _b = this.c; },"),
+        "Native static field block should capture nested class computed names against the enclosing `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor() {")
+            && output.contains("this[_b] = 456;")
+            && output.contains("static { _c(); }")
+            && output.contains("static { this[_a] = 123; }"),
+        "Nested class fields should consume the captured keys in instance and static initializers.\nOutput:\n{output}"
+    );
 }
 
 #[test]

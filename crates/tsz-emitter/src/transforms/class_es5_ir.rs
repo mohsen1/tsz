@@ -224,6 +224,9 @@ pub struct ES5ClassTransformer<'a> {
     /// static-context `<super>.m`. `None` for a top-level/static definition
     /// site, where computed names keep static-like super access.
     inherited_computed_name_super: Option<String>,
+    /// Raw expression used for `this` in computed property names when this
+    /// class expression is evaluated inside an enclosing static initializer.
+    inherited_computed_name_this: Option<String>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -269,6 +272,7 @@ impl<'a> ES5ClassTransformer<'a> {
             emit_computed_props_outside: Cell::new(false),
             outer_rename_map: FxHashMap::default(),
             inherited_computed_name_super: None,
+            inherited_computed_name_this: None,
         }
     }
 
@@ -284,6 +288,10 @@ impl<'a> ES5ClassTransformer<'a> {
     /// computed property names.
     pub fn set_inherited_computed_name_super(&mut self, super_name: String) {
         self.inherited_computed_name_super = Some(super_name);
+    }
+
+    pub fn set_inherited_computed_name_this(&mut self, this_alias: String) {
+        self.inherited_computed_name_this = Some(this_alias);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
@@ -1146,6 +1154,10 @@ impl<'a> ES5ClassTransformer<'a> {
             return IRNode::Raw(raw.into());
         }
 
+        if let Some(alias) = self.inherited_computed_name_this.as_ref() {
+            return self.convert_expression_static_with_raw_this_substitution(idx, alias);
+        }
+
         if is_static {
             self.convert_expression_static(idx)
         } else {
@@ -1786,7 +1798,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 if consumed_computed_auto_accessor_entries.contains(&entry_idx) {
                     continue;
                 }
-                let expr_ir = self.convert_expression(*expr_idx);
+                let expr_ir = if let Some(alias) = self.inherited_computed_name_this.as_ref() {
+                    self.convert_expression_static_with_raw_this_substitution(*expr_idx, alias)
+                } else {
+                    self.convert_expression(*expr_idx)
+                };
                 if let Some(temp) = temp_name {
                     comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
                 } else {

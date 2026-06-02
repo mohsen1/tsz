@@ -1133,7 +1133,7 @@ impl<'a> Printer<'a> {
         let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
-        // Computed property name hoisting for targets < ES2022.
+        // Computed property name hoisting for class fields that will be lowered.
         // tsc hoists non-constant computed property name expressions to temp variables
         // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
         // the class body can reference the temp instead of the original expression.
@@ -1141,8 +1141,7 @@ impl<'a> Printer<'a> {
         // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
         // Methods and accessors keep their computed names inline in ES6+.
         // After the class body, a comma expression joins all assignments and side effects.
-        let needs_computed_prop_hoisting =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let needs_computed_prop_hoisting = target_needs_field_lowering;
         // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
         if needs_computed_prop_hoisting {
@@ -1432,6 +1431,28 @@ impl<'a> Printer<'a> {
             computed_prop_entries_consumed_by_member_name.push(entry_idx);
         }
 
+        let native_computed_prop_evaluator = if emits_as_class_expression
+            && needs_computed_prop_hoisting
+            && !target_needs_static_block_lowering
+        {
+            computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                })
+                .then(|| self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        if native_computed_prop_evaluator.is_some() {
+            for entry_idx in 0..computed_prop_entries.len() {
+                if !computed_prop_entries_consumed_by_member_name.contains(&entry_idx) {
+                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
+                }
+            }
+        }
+
         let needs_computed_prop_comma_expr = emits_as_class_expression
             && computed_prop_entries
                 .iter()
@@ -1439,8 +1460,12 @@ impl<'a> Printer<'a> {
                 .any(|(entry_idx, _)| {
                     !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
                 });
-        let needs_any_comma_expr =
+        let needs_native_computed_prop_evaluator_comma_expr =
+            native_computed_prop_evaluator.is_some();
+        let needs_class_expr_temp =
             needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
+        let needs_any_comma_expr =
+            needs_class_expr_temp || needs_native_computed_prop_evaluator_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && !self.emitting_concise_arrow_return_argument
             && self
@@ -1451,13 +1476,42 @@ impl<'a> Printer<'a> {
                     parent.kind != syntax_kind_ext::RETURN_STATEMENT
                         && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 });
-        let class_expr_temp = if needs_any_comma_expr {
+        if needs_native_computed_prop_evaluator_comma_expr {
+            if class_expr_comma_needs_parens {
+                self.write("(");
+            }
+            if let Some(evaluator) = native_computed_prop_evaluator.as_ref() {
+                self.write(evaluator);
+                self.write(" = () => { ");
+                let mut emitted_entry = false;
+                for (entry_idx, (temp_name, expr_idx, _)) in
+                    computed_prop_entries.iter().enumerate()
+                {
+                    if !computed_prop_entries_consumed_by_member_name.contains(&entry_idx) {
+                        continue;
+                    }
+                    if emitted_entry {
+                        self.write(", ");
+                    }
+                    emitted_entry = true;
+                    if let Some(temp) = temp_name {
+                        self.write(temp);
+                        self.write(" = ");
+                    }
+                    self.emit_expression(*expr_idx);
+                }
+                self.write("; },");
+                self.write_line();
+                self.increase_indent();
+            }
+        }
+        let class_expr_temp = if needs_class_expr_temp {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
             } else {
                 self.make_class_static_temp_name_hoisted(_idx)
             };
-            if class_expr_comma_needs_parens {
+            if class_expr_comma_needs_parens && !needs_native_computed_prop_evaluator_comma_expr {
                 self.write("(");
             }
             self.write(&temp);
@@ -1785,6 +1839,7 @@ impl<'a> Printer<'a> {
             target_supports_native_private_names,
             has_legacy_private_name_member_decorators,
             needs_computed_prop_hoisting,
+            native_computed_prop_evaluator: native_computed_prop_evaluator.as_deref(),
             private_fields: &private_fields,
             private_duplicate_conflicts: &private_duplicate_conflicts,
             auto_accessor_member_map: &auto_accessor_member_map,
@@ -1897,6 +1952,7 @@ impl<'a> Printer<'a> {
             externalized_static_initializer_uses_undefined_receiver,
             computed_side_effects_emitted_in_static_block,
             class_expr_comma_needs_parens,
+            needs_native_computed_prop_evaluator_comma_expr,
             needs_computed_prop_comma_expr,
             needs_static_comma_expr,
             needs_private_comma_expr,
