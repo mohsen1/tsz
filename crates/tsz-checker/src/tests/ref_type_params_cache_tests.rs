@@ -6,6 +6,17 @@ use crate::test_utils::check_source_diagnostics;
 /// that arity validation still fires when argument counts are wrong.
 
 #[test]
+fn alias_body_explicit_type_refs_use_validator_only_path() {
+    let checker_source = std::fs::read_to_string("src/types/type_checking/type_alias_checking.rs")
+        .expect("read type alias checker");
+    assert!(
+        checker_source.contains("check_explicit_type_reference_for_alias_body_validation"),
+        "alias body validation should validate explicit type reference arguments \
+         without forcing full type-reference lowering"
+    );
+}
+
+#[test]
 fn multiple_refs_to_same_two_param_utility_no_spurious_errors() {
     let diags = check_source_diagnostics(
         r#"
