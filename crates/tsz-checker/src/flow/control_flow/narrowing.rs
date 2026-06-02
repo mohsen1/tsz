@@ -1920,6 +1920,22 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some((path, is_optional));
             }
 
+            // When `tsc` narrows `target` through `alias.prop === value` where
+            // `const alias = target`, it follows the const alias back to its
+            // initializer.  Check whether `base_expr` is a const alias whose
+            // un-annotated initializer references `target` directly.
+            //
+            // Structural rule: `const alias = target` (no type annotation, no
+            // assignment after declaration) makes `alias.prop` a valid proxy
+            // for `target.prop` in discriminant comparisons.
+            if let Some((_, init)) = self.const_condition_initializer(base_expr) {
+                let init_stripped = self.skip_parenthesized(init);
+                if self.is_matching_reference(init_stripped, target) {
+                    path.reverse();
+                    return Some((path, is_optional));
+                }
+            }
+
             current = base_expr;
         }
     }
