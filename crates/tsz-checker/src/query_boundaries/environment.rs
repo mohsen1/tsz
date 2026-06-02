@@ -246,6 +246,17 @@ impl EnvironmentCapabilities {
         }
     }
 
+    /// Whether the deprecated `assert` import-attribute keyword is a *hard*
+    /// grammar error in the current module mode.
+    ///
+    /// In `node20`/`nodenext` `tsc` reports TS2880 and stops (suppressing the
+    /// later CommonJS / type-only attribute checks); under the other modes that
+    /// support import attributes (`node18`, `esnext`, `preserve`) it is only a
+    /// non-fatal deprecation warning and grammar checking continues.
+    pub(crate) const fn import_assert_is_hard_error(&self) -> bool {
+        self.module.is_node20_or_nodenext()
+    }
+
     /// Check config compatibility and return any diagnostics.
     ///
     /// Currently checks:

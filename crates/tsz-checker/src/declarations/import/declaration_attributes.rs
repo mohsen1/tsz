@@ -57,8 +57,35 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS2880: Check that `assert` keyword is not used (deprecated in favor of `with`).
-    pub(crate) fn check_import_attributes_deprecated_assert(&mut self, attributes_idx: NodeIndex) {
+    /// Grammar validation for an import/export declaration's attributes clause
+    /// (`with { ... }` / `assert { ... }`).
+    ///
+    /// This mirrors `tsc`'s `checkImportAttributes` ordering exactly. The order
+    /// matters because each step *returns* (suppressing later steps), and the
+    /// diagnostic code depends on whether the deprecated `assert` keyword or the
+    /// `with` keyword was used:
+    ///
+    /// 1. A type-only declaration carrying an *effective* `resolution-mode`
+    ///    override is allowed — nothing else is reported.
+    /// 2. Module option does not support import attributes → TS2823 (`with`) /
+    ///    TS2821 (`assert`), return.
+    /// 3. `assert` under `node20`/`nodenext` → TS2880, return (the keyword is a
+    ///    hard error in these modes, so no further attribute check runs).
+    /// 4. `assert` under any other supported module → TS2880, but continue (it
+    ///    is only a deprecation warning there).
+    /// 5. Statement compiles to a CommonJS `require` → TS2856 (`with`) / TS2836
+    ///    (`assert`), return.
+    /// 6. Type-only declaration → TS2857 (`with`) / TS2822 (`assert`), return.
+    ///
+    /// Steps 5 and 6 are deliberately ordered CommonJS-before-type-only: `tsc`
+    /// reports the require-incompatibility even for `import type` statements,
+    /// because the grammar check does not depend on whether the binding is
+    /// erased.
+    pub(crate) fn check_import_attributes_grammar(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
         if attributes_idx.is_none() {
             return;
         }
@@ -66,106 +93,120 @@ impl<'a> CheckerState<'a> {
         let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
             return;
         };
-
         let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
             return;
         };
+        let uses_with = attrs_data.token == SyntaxKind::WithKeyword as u16;
+        let node_pos = attr_node.pos;
+        let node_len = attr_node.end.saturating_sub(attr_node.pos);
 
-        // token stores the SyntaxKind of the keyword used (AssertKeyword vs WithKeyword)
-        // Route through the capability boundary to check ignore_deprecations.
-        if attrs_data.token == SyntaxKind::AssertKeyword as u16
-            && self
-                .ctx
-                .capabilities
-                .check_import_assert_deprecated()
-                .is_some()
-        {
-            // Error spans the `assert` keyword (6 characters), positioned at the node start
-            self.error_at_position(
-                attr_node.pos,
-                6, // length of "assert"
-                diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
-                diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
-            );
-        }
-    }
-
-    /// TS2823: Check that import attributes are only used with supported module options.
-    ///
-    /// Routes through the environment capability boundary (`check_feature_gate`)
-    /// to determine whether a diagnostic should be emitted.
-    pub(crate) fn check_import_attributes_module_option(
-        &mut self,
-        attributes_idx: NodeIndex,
-        declaration_is_type_only: bool,
-    ) {
-        if attributes_idx.is_none() {
-            return;
-        }
-
-        use crate::query_boundaries::capabilities::FeatureGate;
-        if self
-            .ctx
-            .capabilities
-            .check_feature_gate(FeatureGate::ImportAttributes)
-            .is_some()
-            && !self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only)
-            && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
-        {
-            self.error_at_position(
-                attr_node.pos,
-                attr_node.end.saturating_sub(attr_node.pos),
-                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
-                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
-            );
-        }
-    }
-
-    pub(crate) fn check_import_attributes_commonjs_or_type_only(
-        &mut self,
-        attributes_idx: NodeIndex,
-        declaration_is_type_only: bool,
-    ) {
-        if attributes_idx.is_none() {
-            return;
-        }
-
+        // Step 1: a valid `resolution-mode` override on a type-only declaration
+        // is accepted; nothing else is reported.
         if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
             return;
         }
 
+        // Step 2: the module option must support import attributes at all.
         use crate::query_boundaries::capabilities::FeatureGate;
-        if self
+        if !self
             .ctx
             .capabilities
-            .check_feature_gate(FeatureGate::ImportAttributes)
-            .is_some()
+            .feature_available(FeatureGate::ImportAttributes)
         {
-            return;
-        }
-
-        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
-            return;
-        };
-
-        if declaration_is_type_only {
-            self.error_at_position(
-                attr_node.pos,
-                attr_node.end.saturating_sub(attr_node.pos),
-                diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
-                diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+            self.report_import_attribute_grammar_error(
+                node_pos,
+                node_len,
+                uses_with,
+                (
+                    diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                    diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                ),
+                (
+                    diagnostic_messages::IMPORT_ASSERTIONS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                    diagnostic_codes::IMPORT_ASSERTIONS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                ),
             );
             return;
         }
 
+        // Steps 3 & 4: the deprecated `assert` keyword. In `node20`/`nodenext`
+        // it is a hard error that emits TS2880 (unconditionally) and stops; in
+        // the other supported modes it is only a deprecation warning (gated on
+        // `ignoreDeprecations`) and grammar checking continues.
+        if !uses_with {
+            let hard_error = self.ctx.capabilities.import_assert_is_hard_error();
+            if hard_error
+                || self
+                    .ctx
+                    .capabilities
+                    .check_import_assert_deprecated()
+                    .is_some()
+            {
+                self.error_at_position(
+                    node_pos,
+                    6, // length of "assert"
+                    diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                    diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                );
+            }
+            if hard_error {
+                return;
+            }
+        }
+
+        // Step 5: statements that compile to a CommonJS `require` cannot carry
+        // attributes. This is checked before the type-only rule to match `tsc`.
         if self.import_declaration_emits_commonjs() {
-            self.error_at_position(
-                attr_node.pos,
-                attr_node.end.saturating_sub(attr_node.pos),
-                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
-                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+            self.report_import_attribute_grammar_error(
+                node_pos,
+                node_len,
+                uses_with,
+                (
+                    diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                    diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                ),
+                (
+                    diagnostic_messages::IMPORT_ASSERTIONS_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                    diagnostic_codes::IMPORT_ASSERTIONS_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                ),
+            );
+            return;
+        }
+
+        // Step 6: type-only declarations cannot carry attributes.
+        if declaration_is_type_only {
+            self.report_import_attribute_grammar_error(
+                node_pos,
+                node_len,
+                uses_with,
+                (
+                    diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                    diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                ),
+                (
+                    diagnostic_messages::IMPORT_ASSERTIONS_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                    diagnostic_codes::IMPORT_ASSERTIONS_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                ),
             );
         }
+    }
+
+    /// Emit an import-attribute grammar error at `pos..pos+len`, selecting the
+    /// `with`-keyword diagnostic or its deprecated `assert`-keyword counterpart.
+    fn report_import_attribute_grammar_error(
+        &mut self,
+        pos: u32,
+        len: u32,
+        uses_with: bool,
+        with_diagnostic: (&'static str, u32),
+        assert_diagnostic: (&'static str, u32),
+    ) {
+        let (message, code) = if uses_with {
+            with_diagnostic
+        } else {
+            assert_diagnostic
+        };
+        self.error_at_position(pos, len, message, code);
     }
 
     pub(crate) fn import_declaration_emits_commonjs(&self) -> bool {

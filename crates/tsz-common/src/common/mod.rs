@@ -383,6 +383,16 @@ impl ModuleKind {
         matches!(self, Self::Node16 | Self::Node18)
     }
 
+    /// Check if this is `Node20` or `NodeNext` specifically.
+    ///
+    /// These map to Node 22+, where the deprecated `assert` import-attribute
+    /// keyword is a hard grammar error (TS2880) rather than a non-fatal
+    /// deprecation warning.
+    #[must_use]
+    pub const fn is_node20_or_nodenext(self) -> bool {
+        matches!(self, Self::Node20 | Self::NodeNext)
+    }
+
     /// Check if this uses ES modules (import/export)
     ///
     /// Returns true only for pure ES module systems where `export =` is forbidden.

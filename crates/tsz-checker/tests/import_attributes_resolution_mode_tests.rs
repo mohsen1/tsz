@@ -655,14 +655,17 @@ fn cjs_json_default_import_does_not_emit_ts1192() {
     );
 }
 
-/// Regression for Devin 🟡 on PR #2644: type-only imports in CJS files
-/// must emit TS2857 ("Import attributes cannot be used with type-only
-/// imports or exports") rather than TS2856 ("Import attributes are not
-/// allowed on statements that compile to CommonJS 'require' calls"),
-/// because type-only imports are erased at compile time and never produce
-/// `require()` calls. The type-only check must run before the CJS check.
+/// A type-only import that *also* compiles to a CommonJS `require` reports the
+/// CommonJS-incompatibility error, not the type-only error.
+///
+/// `tsc`'s `checkImportAttributes` checks the CommonJS condition *before* the
+/// type-only condition, so for `import type value from "pkg" with { ... }` in a
+/// `.cts` file it emits TS2856 ("Import attributes are not allowed on statements
+/// that compile to CommonJS 'require' calls"), never TS2857. Verified against
+/// `tsc` 6.0.2. (A prior revision asserted the opposite ordering, which did not
+/// match `tsc`.)
 #[test]
-fn cjs_type_only_import_with_attributes_reports_ts2857_not_ts2856() {
+fn cjs_type_only_import_with_attributes_reports_ts2856_not_ts2857() {
     let diagnostics = check_resolution_mode(
         "main.cts",
         r#"import type value from "pkg" with { type: "json" };"#,
@@ -672,11 +675,88 @@ fn cjs_type_only_import_with_attributes_reports_ts2857_not_ts2856() {
     );
 
     assert!(
-        diagnostics.iter().any(|d| d.code == 2857),
-        "Expected TS2857 for type-only import attributes in a CJS file, got: {diagnostics:?}"
+        diagnostics.iter().any(|d| d.code == 2856),
+        "Expected TS2856 for type-only import attributes in a CJS file (CommonJS check runs before the type-only check), got: {diagnostics:?}"
     );
     assert!(
-        diagnostics.iter().all(|d| d.code != 2856),
-        "Did not expect TS2856 for type-only import attributes in a CJS file (type-only imports never compile to require), got: {diagnostics:?}"
+        diagnostics.iter().all(|d| d.code != 2857),
+        "Did not expect TS2857: the CommonJS-incompatibility error takes precedence, got: {diagnostics:?}"
     );
+}
+
+/// Broad parity matrix for import-attribute grammar diagnostics.
+///
+/// Each row was verified against `tsc` 6.0.2 (`--strict --module <m>
+/// --moduleResolution nodenext`). The expectation is the exact set of
+/// import-attribute grammar codes `tsc` emits for that combination of module
+/// option, attribute keyword (`with`/`assert`), type-only-ness and emit kind
+/// (`.mts` = ESM, `.cts` = CommonJS).
+///
+/// The ordering that this exercises (and that a prior implementation got
+/// wrong): module-support (TS2823/TS2821) → assert deprecation (TS2880) →
+/// CommonJS-incompatibility (TS2856/TS2836) → type-only (TS2857/TS2822), with
+/// each step suppressing later ones except the non-fatal `assert` warning under
+/// `node18`.
+#[test]
+fn import_attribute_grammar_matrix_matches_tsc() {
+    // Import-attribute grammar codes we assert on; all other diagnostics
+    // (module resolution, etc.) are ignored so the matrix stays focused.
+    const ATTR_CODES: [u32; 7] = [2821, 2822, 2823, 2836, 2856, 2857, 2880];
+
+    // (module, keyword, type_only, esm, expected_codes)
+    let cases: &[(ModuleKind, &str, bool, bool, &[u32])] = &[
+        // node16: module does not support import attributes at all.
+        (ModuleKind::Node16, "with", false, true, &[2823]),
+        (ModuleKind::Node16, "with", true, false, &[2823]),
+        (ModuleKind::Node16, "assert", false, true, &[2821]),
+        (ModuleKind::Node16, "assert", true, false, &[2821]),
+        // node18: supported; `assert` is only a (non-fatal) deprecation warning.
+        (ModuleKind::Node18, "with", false, true, &[]),
+        (ModuleKind::Node18, "with", false, false, &[2856]),
+        (ModuleKind::Node18, "with", true, true, &[2857]),
+        (ModuleKind::Node18, "with", true, false, &[2856]),
+        (ModuleKind::Node18, "assert", false, true, &[2880]),
+        (ModuleKind::Node18, "assert", false, false, &[2836, 2880]),
+        (ModuleKind::Node18, "assert", true, true, &[2822, 2880]),
+        (ModuleKind::Node18, "assert", true, false, &[2836, 2880]),
+        // node20 / nodenext: `assert` is a hard error (TS2880) that suppresses
+        // the CommonJS and type-only checks.
+        (ModuleKind::Node20, "with", false, true, &[]),
+        (ModuleKind::Node20, "with", false, false, &[2856]),
+        (ModuleKind::Node20, "with", true, true, &[2857]),
+        (ModuleKind::Node20, "with", true, false, &[2856]),
+        (ModuleKind::Node20, "assert", false, false, &[2880]),
+        (ModuleKind::Node20, "assert", true, true, &[2880]),
+        (ModuleKind::Node20, "assert", true, false, &[2880]),
+        (ModuleKind::NodeNext, "with", true, false, &[2856]),
+        (ModuleKind::NodeNext, "with", true, true, &[2857]),
+        (ModuleKind::NodeNext, "assert", true, false, &[2880]),
+        (ModuleKind::NodeNext, "assert", false, false, &[2880]),
+    ];
+
+    for &(module, keyword, type_only, esm, expected) in cases {
+        let file_name = if esm { "main.mts" } else { "main.cts" };
+        let type_prefix = if type_only { "type " } else { "" };
+        let source =
+            format!("import {type_prefix}value from \"pkg\" {keyword} {{ type: \"json\" }};");
+
+        let diagnostics = check_resolution_mode(file_name, &source, 1, module, Some(esm));
+
+        let mut got: Vec<u32> = diagnostics
+            .iter()
+            .map(|d| d.code)
+            .filter(|c| ATTR_CODES.contains(c))
+            .collect();
+        got.sort_unstable();
+        got.dedup();
+
+        let mut want: Vec<u32> = expected.to_vec();
+        want.sort_unstable();
+
+        assert_eq!(
+            got, want,
+            "module={module:?} keyword={keyword} type_only={type_only} esm={esm}: \
+             expected import-attribute codes {want:?}, got {got:?} (all: {diagnostics:?})"
+        );
+    }
 }
