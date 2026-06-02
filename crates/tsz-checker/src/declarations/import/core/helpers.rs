@@ -135,27 +135,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn lookup_file_is_esm(&self, file_name: &str) -> Option<bool> {
         let map = self.ctx.file_is_esm_map.as_ref()?;
-        let normalized = file_name.replace('\\', "/");
-        let trimmed = normalized.trim_start_matches('/');
-        let slash_trimmed = format!("/{trimmed}");
-        for candidate in [
-            file_name,
-            normalized.as_str(),
-            trimmed,
-            slash_trimmed.as_str(),
-        ] {
-            if let Some(&is_esm) = map.get(candidate) {
-                return Some(is_esm);
-            }
-        }
-        map.iter().find_map(|(path, is_esm)| {
-            let path = path.replace('\\', "/");
-            (path == normalized
-                || path == trimmed
-                || path.ends_with(&normalized)
-                || path.ends_with(trimmed))
-            .then_some(*is_esm)
-        })
+        crate::context::lookup_file_is_esm_in_map(map, file_name)
     }
 
     pub(crate) fn current_file_emit_resolution_mode(

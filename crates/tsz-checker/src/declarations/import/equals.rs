@@ -881,14 +881,8 @@ impl<'a> CheckerState<'a> {
                 let target_is_json = file_name.ends_with(".json");
                 let target_ext_is_esm =
                     !target_is_json && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
-                let target_is_esm = target_ext_is_esm
-                    || self
-                        .ctx
-                        .file_is_esm_map
-                        .as_ref()
-                        .and_then(|m| m.get(file_name))
-                        .copied()
-                        .unwrap_or(false);
+                let target_is_esm =
+                    target_ext_is_esm || self.lookup_file_is_esm(file_name).unwrap_or(false);
                 if target_is_esm {
                     let message = format_message(
                         diagnostic_messages::MODULE_CANNOT_BE_IMPORTED_USING_THIS_CONSTRUCT_THE_SPECIFIER_ONLY_RESOLVES_TO_AN,

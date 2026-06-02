@@ -50,12 +50,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        self.ctx
-            .file_is_esm_map
-            .as_ref()
-            .and_then(|map| map.get(file_name))
-            .copied()
-            .unwrap_or(false)
+        self.lookup_file_is_esm(file_name).unwrap_or(false)
     }
 
     /// In Node20/NodeNext require-style consumers, a target ESM file can
