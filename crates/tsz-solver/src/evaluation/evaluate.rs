@@ -721,7 +721,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // defining `DefId` stay opaque so later passes with a richer
         // resolver can expand them.
         let Some(def_id) = self.resolve_application_def_id(app.base) else {
-            return original_type_id;
+            return self.evaluate_application_no_def_id(app_id, original_type_id);
         };
 
         tracing::trace!(
