@@ -139,6 +139,10 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.transformer.set_target_es5(es5);
+    }
+
     pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
         self.transformer.dynamic_import_promise_counter.set(next_id);
     }

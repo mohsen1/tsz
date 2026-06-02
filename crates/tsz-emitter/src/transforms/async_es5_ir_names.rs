@@ -56,6 +56,13 @@ impl<'a> AsyncES5Transformer<'a> {
         self.module_kind = kind;
     }
 
+    /// Set whether the emit target is ES5. When `false` (ES2015+), dynamic
+    /// `import()` branches inside the generator body use arrow functions
+    /// instead of `function` expressions.
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.target_es5 = es5;
+    }
+
     pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
         self.downlevel_iteration = enabled;
     }

@@ -157,6 +157,9 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) class_super_is_static: bool,
     /// Module kind for dynamic `import()` lowering inside generator bodies.
     pub(super) module_kind: ModuleKind,
+    /// Whether the emit target is ES5. Controls arrow-vs-`function` form in
+    /// dynamic-import lowering inside async generator bodies.
+    pub(super) target_es5: bool,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
     pub(in crate::transforms) dynamic_import_promise_counter: Cell<u32>,
     /// Active async-lowered loop labels and the generator label that implements
@@ -202,6 +205,7 @@ impl<'a> AsyncES5Transformer<'a> {
             class_super_name: "_super".to_string(),
             class_super_is_static: false,
             module_kind: ModuleKind::None,
+            target_es5: false,
             dynamic_import_promise_counter: Cell::new(1),
             labeled_continue_targets: Vec::new(),
             labeled_break_targets: Vec::new(),
