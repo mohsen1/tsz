@@ -1973,11 +1973,8 @@ impl<'a> CheckerState<'a> {
         if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
             return false;
         }
-        self.ctx
-            .file_is_esm_map
-            .as_ref()
-            .and_then(|map| map.get(file_name))
-            .is_some_and(|is_esm| !*is_esm)
+        self.lookup_file_is_esm(file_name)
+            .is_some_and(|is_esm| !is_esm)
     }
 
     /// Check if the target module's resolved file is in a `node_modules` directory.

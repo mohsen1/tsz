@@ -182,8 +182,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(is_esm) = self
             .file_is_esm_map
             .as_ref()
-            .and_then(|map| map.get(file_name))
-            .copied()
+            .and_then(|map| super::lookup_file_is_esm_in_map(map, file_name))
         {
             return Some(if is_esm {
                 ResolutionModeOverride::Import
