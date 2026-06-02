@@ -1,19 +1,23 @@
-//! Regression coverage for the `assign_relation_outcome` path on
-//! same-generic `C<A..>` vs `C<B..>` mismatches.
+//! Regression coverage for the TS2322 elaboration chain on same-generic
+//! `C<A..>` vs `C<B..>` mismatches.
 //!
-//! Before #12239 the TS2322 family routed through `assign_relation_outcome`
-//! could observe a `(related=false, failure=None)` outcome OR an outcome
-//! carrying a property-wrapper reason ("Types of property 'x' are
-//! incompatible") instead of tsc's direct type-argument elaboration: the
-//! checker-side `is_assignable_to` fast-paths rejected the relation while
-//! the solver's evaluated-shape pass either yielded no reason or yielded a
-//! wrapper reason from the evaluated object shape.
+//! `analyze_assignability_failure` runs `raw_input_failure_reason` as a
+//! pre-pass and early-returns the raw same-generic-application reason. That
+//! reason is rendered as a nested elaboration entry on the top-level TS2322
+//! diagnostic (via `related_information`), not as a separate top-level
+//! diagnostic, so the TS2322 chain keeps tsc's direct type-argument
+//! elaboration ("Type 'string' is not assignable to type 'number'.") even
+//! when the boundary's evaluated-shape pass produces a wrapper reason.
 //!
-//! The fix routes the raw-input `same_generic_application_failure_reason`
-//! detector through `assign_relation_outcome` BEFORE the boundary's
-//! evaluated-shape pass, so the direct argument elaboration always wins.
-//! `analyze_assignability_failure` had this ordering already; this test
-//! exercises the parallel `assign_relation_outcome` path that emits TS2322.
+//! Note: `assign_relation_outcome` itself only recovers the raw-input reason
+//! when the boundary returned `failure=None`, to avoid changing what
+//! `outcome.failure`-reading predicates observe (see
+//! `core_statement_checks.rs:413-426` and the discussion on
+//! https://github.com/mohsen1/tsz/pull/12239#discussion_r3342820552). The
+//! TS2322 elaboration tested here does NOT consume `assign_relation_outcome
+//! .outcome.failure` — it consumes `analyze_assignability_failure` directly
+//! in `error_reporter/assignability.rs:602` — so the gating in
+//! `assign_relation_outcome` does not weaken this elaboration.
 
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::check_source_diagnostics;
@@ -22,24 +26,40 @@ fn diagnostics(source: &str) -> Vec<Diagnostic> {
     check_source_diagnostics(source)
 }
 
-/// Collect the full diagnostic chain text from `message_text` plus any
-/// `related_information` sub-messages, recursively. TS2322 elaborations
-/// (e.g. "Types of property 'x' are incompatible." → "Type 'string' is
-/// not assignable to type 'number'.") live as nested related-information
-/// entries on the top-level diagnostic, not as separate top-level diags.
-fn full_chain_text(diag: &Diagnostic) -> String {
-    let mut out = diag.message_text.clone();
+/// Return true iff `diag` (TS2322) has at least one related-information
+/// entry whose message asserts the differing direct type arguments. The
+/// canonical tsc forms are:
+///
+/// - `Type 'A' is not assignable to type 'B'.`
+/// - `Types of property '<name>' are incompatible.` followed by the above
+///
+/// We check for the former exact wording, which can only be produced by the
+/// nested elaboration — the top-level message wraps the operands in
+/// `'Box<A>'`/`'Box<B>'` style and CANNOT yield the bare argument forms.
+fn has_argument_elaboration(diag: &Diagnostic, source_arg: &str, target_arg: &str) -> bool {
+    let needle = format!("Type '{source_arg}' is not assignable to type '{target_arg}'.");
+    diag.related_information
+        .iter()
+        .any(|related| related.message_text.contains(&needle))
+}
+
+/// Pretty-print a TS2322 diagnostic and its related-information chain for
+/// assertion failure output.
+fn format_chain(diag: &Diagnostic) -> String {
+    let mut out = format!("[top] {}", diag.message_text);
     for related in &diag.related_information {
-        out.push_str(" / ");
-        out.push_str(&related.message_text);
+        out.push_str(&format!(
+            "\n  [related@{}] {}",
+            related.start, related.message_text
+        ));
     }
     out
 }
 
 /// Assignment from `Box<string>` to `Box<number>` (same generic, differing
-/// args) must produce a TS2322 whose elaboration chain mentions the
-/// differing type arguments — not a bare top-level mismatch with no inner
-/// cause.
+/// args) must produce a TS2322 with a nested argument elaboration entry
+/// ("Type 'string' is not assignable to type 'number'."), not just a bare
+/// top-level "Type 'Box<string>' is not assignable to type 'Box<number>'."
 #[test]
 fn same_generic_application_assign_keeps_argument_elaboration() {
     let source = r#"
@@ -53,17 +73,26 @@ declare const b: Box<number> = a;
         !ts2322.is_empty(),
         "expected TS2322 on Box<string> -> Box<number>, got: {diags:?}"
     );
-    let chain = ts2322
+
+    // Must have the nested argument elaboration on at least one TS2322
+    // diagnostic. The top-level message embeds the operands as `'Box<string>'`
+    // / `'Box<number>'` so a substring check for `'string'`/`'number'` would
+    // be satisfied vacuously — assert the exact tsc elaboration wording
+    // instead, which can only come from the nested chain.
+    let has_elaboration = ts2322
         .iter()
-        .map(|d| full_chain_text(d))
-        .collect::<Vec<_>>()
-        .join(" || ");
-    let elaborates_arguments = chain.contains("'string'") && chain.contains("'number'");
+        .any(|d| has_argument_elaboration(d, "string", "number"));
     assert!(
-        elaborates_arguments,
-        "TS2322 must elaborate the differing type arguments (string vs number) \
-         instead of a bare top-level mismatch with no inner cause. \
-         got chain: {chain}"
+        has_elaboration,
+        "TS2322 must include a nested argument elaboration \
+         \"Type 'string' is not assignable to type 'number'.\" \
+         (mirrors tsc's direct type-argument chain). \
+         got diagnostics:\n{}",
+        ts2322
+            .iter()
+            .map(|d| format_chain(d))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
     );
 }
 
@@ -82,15 +111,20 @@ declare const dst: Container<string> = src;
         !ts2322.is_empty(),
         "expected TS2322 on Container<boolean> -> Container<string>, got: {diags:?}"
     );
-    let chain = ts2322
+
+    let has_elaboration = ts2322
         .iter()
-        .map(|d| full_chain_text(d))
-        .collect::<Vec<_>>()
-        .join(" || ");
-    let elaborates_arguments = chain.contains("'boolean'") && chain.contains("'string'");
+        .any(|d| has_argument_elaboration(d, "boolean", "string"));
     assert!(
-        elaborates_arguments,
-        "TS2322 must elaborate the differing type arguments (boolean vs string) \
-         regardless of identifier names. got chain: {chain}"
+        has_elaboration,
+        "TS2322 must include a nested argument elaboration \
+         \"Type 'boolean' is not assignable to type 'string'.\" \
+         regardless of identifier names. \
+         got diagnostics:\n{}",
+        ts2322
+            .iter()
+            .map(|d| format_chain(d))
+            .collect::<Vec<_>>()
+            .join("\n---\n")
     );
 }
