@@ -1545,3 +1545,56 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/gh-pages.yml/dispatches" \
             -d '{"ref":"main"}'
+
+  catch-up:
+    name: bench-catch-up
+    needs: [bench-gate, bench-prep-artifact, bench, publish]
+    if: >-
+      always() &&
+      github.event_name == 'workflow_run' &&
+      needs.bench-gate.outputs.should_run == 'true' &&
+      needs.publish.result != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch fresh benchmark after non-publishing run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -z "${main_sha}" ]]; then
+            echo "Could not read current main SHA; skipping benchmark catch-up dispatch."
+            exit 0
+          fi
+          if [[ "${target_sha}" == "${main_sha}" ]]; then
+            echo "Benchmark target ${target_sha} is current main; skipping catch-up dispatch."
+            exit 0
+          fi
+
+          active_runs="$(
+            {
+              gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --status in_progress --limit 20 \
+                --json databaseId,headSha,url \
+                --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+              gh run list --repo "${GITHUB_REPOSITORY}" --workflow bench.yml --branch main --status queued --limit 20 \
+                --json databaseId,headSha,url \
+                --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+            } | sort -u
+          )"
+          if [[ -n "${active_runs}" ]]; then
+            echo "Another Bench run is already active; skipping catch-up dispatch."
+            printf '%s\n' "${active_runs}"
+            exit 0
+          fi
+
+          echo "Bench target ${target_sha} did not publish and main is now ${main_sha}; dispatching one catch-up Bench run."
+          curl -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/bench.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"publish_latest_pgo":false}}'
