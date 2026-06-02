@@ -639,7 +639,11 @@ impl<'a> CheckerState<'a> {
                 // Open-ended tuple spread (array-backed flattened rest) -> also
                 // indeterminate. A fully fixed-length tuple keeps a known count.
                 common::tuple_elements(self.ctx.types, spread_type).is_none()
-                    || common::tuple_variable_rest_offset(self.ctx.types, spread_type).is_some()
+                    || crate::query_boundaries::checkers::call::tuple_variable_rest_offset(
+                        self.ctx.types,
+                        spread_type,
+                    )
+                    .is_some()
             } else {
                 false
             }
