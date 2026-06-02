@@ -34,6 +34,39 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     contains_target_reference(arena, node_idx, ReferenceTarget::This)
 }
 
+/// Check if an AST node contains a literal `this` keyword reference, excluding
+/// `super`.
+///
+/// [`contains_this_reference`] intentionally also matches `super` because an
+/// ES5-lowered arrow that calls `super.m(...)` threads the captured `_this`
+/// receiver. Deciding whether a *static* member initializer needs the
+/// class-value alias (`var _a; _a = Class;`) is a different question: a bare
+/// static `super.x` access lowers to `_super.x` and never references the class
+/// value, so it must not force the alias. This shares the same lexical
+/// boundaries as [`contains_this_reference`] — transparent through arrows and
+/// computed member names (so `this` inside a nested class expression's computed
+/// name is still found), opaque through ordinary functions and non-computed
+/// class member bodies — but only the `this` keyword counts.
+#[must_use]
+pub fn contains_this_keyword_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    if node.kind == SyntaxKind::ThisKeyword as u16 {
+        return true;
+    }
+    if node.is_identifier()
+        && arena
+            .get_identifier(node)
+            .is_some_and(|identifier| identifier.escaped_text == "this")
+    {
+        return true;
+    }
+    target_reference_children(arena, node_idx, ReferenceTarget::This)
+        .into_iter()
+        .any(|child_idx| contains_this_keyword_reference(arena, child_idx))
+}
+
 /// Check whether an ES5-lowered arrow body must capture lexical `this`.
 ///
 /// An arrow captures `this` when it spells `this`, OR when it contains a
