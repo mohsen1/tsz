@@ -704,7 +704,8 @@ fn import_attribute_grammar_matrix_matches_tsc() {
     const ATTR_CODES: [u32; 7] = [2821, 2822, 2823, 2836, 2856, 2857, 2880];
 
     // (module, keyword, type_only, esm, expected_codes)
-    let cases: &[(ModuleKind, &str, bool, bool, &[u32])] = &[
+    type GrammarCase = (ModuleKind, &'static str, bool, bool, &'static [u32]);
+    let cases: &[GrammarCase] = &[
         // node16: module does not support import attributes at all.
         (ModuleKind::Node16, "with", false, true, &[2823]),
         (ModuleKind::Node16, "with", true, false, &[2823]),
