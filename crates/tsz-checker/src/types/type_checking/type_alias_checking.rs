@@ -1411,11 +1411,16 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let _ = if nested_in_type_literal {
-                    self.get_type_from_type_node_in_type_literal(node_idx)
-                } else {
-                    self.get_type_from_type_node(node_idx)
-                };
+                if !self.check_explicit_type_reference_for_alias_body_validation(
+                    node_idx,
+                    nested_in_type_literal,
+                ) {
+                    let _ = if nested_in_type_literal {
+                        self.get_type_from_type_node_in_type_literal(node_idx)
+                    } else {
+                        self.get_type_from_type_node(node_idx)
+                    };
+                }
                 self.check_styled_component_inner_component_constraint(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
