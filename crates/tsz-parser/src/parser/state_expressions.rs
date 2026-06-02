@@ -426,7 +426,7 @@ impl ParserState {
             return self.parse_conditional_expression(left, start_pos);
         }
 
-        let right = self.parse_binary_expression_rhs(left, op, precedence);
+        let right = self.parse_binary_expression_rhs(op, precedence);
         // Use token_full_start() (start of next lookahead token's trivia) rather than
         // token_end() (end of that token). After parse_binary_expression_rhs returns, the
         // scanner sits on the first token not part of this expression. token_full_start()
@@ -484,73 +484,67 @@ impl ParserState {
         )
     }
 
-    fn parse_binary_expression_rhs(
-        &mut self,
-        _left: NodeIndex,
-        op: SyntaxKind,
-        precedence: u8,
-    ) -> NodeIndex {
-        let is_assignment = matches!(
-            op,
-            SyntaxKind::EqualsToken
-                | SyntaxKind::PlusEqualsToken
-                | SyntaxKind::MinusEqualsToken
-                | SyntaxKind::AsteriskEqualsToken
-                | SyntaxKind::SlashEqualsToken
-                | SyntaxKind::PercentEqualsToken
-                | SyntaxKind::AsteriskAsteriskEqualsToken
-                | SyntaxKind::LessThanLessThanEqualsToken
-                | SyntaxKind::GreaterThanGreaterThanEqualsToken
-                | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-                | SyntaxKind::AmpersandEqualsToken
-                | SyntaxKind::CaretEqualsToken
-                | SyntaxKind::BarEqualsToken
-                | SyntaxKind::BarBarEqualsToken
-                | SyntaxKind::AmpersandAmpersandEqualsToken
-                | SyntaxKind::QuestionQuestionEqualsToken
-        );
-        let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
-            precedence
-        } else {
-            precedence + 1
-        };
-        let right = if is_assignment {
-            self.parse_assignment_expression()
-        } else {
-            self.parse_binary_expression(next_min)
-        };
-
+    fn parse_binary_expression_rhs(&mut self, op: SyntaxKind, precedence: u8) -> NodeIndex {
+        let right = self.parse_binary_rhs_operand(op, precedence);
         if right.is_none() {
-            // Emit TS1109 directly, bypassing distance-based suppression.
-            // tsc only suppresses at the exact same position, so a missing RHS
-            // after a binary operator always emits TS1109 even if a prior error
-            // (e.g., TS1003 from JSX) is nearby.
-            if !(!self.is_js_file()
-                && self.is_token(SyntaxKind::GreaterThanToken)
-                && self
-                    .get_source_text()
-                    .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
-                    == Some("<"))
-            {
-                self.parse_error_at_current_token(
-                    "Expression expected.",
-                    diagnostic_codes::EXPRESSION_EXPECTED,
-                );
-            }
-            let recovered = self.try_recover_binary_rhs();
-            if recovered.is_none() {
-                // Create a missing expression placeholder instead of returning
-                // `left`. Returning `left` would duplicate the left operand in
-                // the parent binary expression (e.g., `1 > > 2` would become
-                // `1 > 1 > 2` instead of `1 >  > 2`). A missing expression
-                // keeps the AST structurally correct and the emitter will
-                // output nothing for it.
-                return self.create_missing_expression();
-            }
-            return recovered;
+            return self.recover_missing_binary_rhs();
         }
 
         right
+    }
+
+    fn parse_binary_rhs_operand(&mut self, op: SyntaxKind, precedence: u8) -> NodeIndex {
+        if self.is_assignment_operator(op) {
+            self.parse_assignment_expression()
+        } else {
+            self.parse_binary_expression(Self::binary_rhs_precedence(op, precedence))
+        }
+    }
+
+    fn recover_missing_binary_rhs(&mut self) -> NodeIndex {
+        self.report_missing_binary_rhs();
+
+        let recovered = self.try_recover_binary_rhs();
+        if !recovered.is_none() {
+            return recovered;
+        }
+
+        // Create a missing expression placeholder instead of returning the
+        // left operand. Returning the left operand would duplicate it in the
+        // parent binary expression (for example, `1 > > 2` would become
+        // `1 > 1 > 2` instead of `1 >  > 2`). A missing expression keeps the
+        // AST structurally correct and the emitter will output nothing for it.
+        self.create_missing_expression()
+    }
+
+    fn report_missing_binary_rhs(&mut self) {
+        // Emit TS1109 directly, bypassing distance-based suppression. tsc only
+        // suppresses at the exact same position, so a missing RHS after a binary
+        // operator always emits TS1109 even if a prior error (for example,
+        // TS1003 from JSX) is nearby.
+        if !self.should_suppress_missing_binary_rhs_error() {
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
+    }
+
+    fn should_suppress_missing_binary_rhs_error(&self) -> bool {
+        !self.is_js_file()
+            && self.is_token(SyntaxKind::GreaterThanToken)
+            && self
+                .get_source_text()
+                .get(self.token_pos().saturating_sub(1) as usize..self.token_pos() as usize)
+                == Some("<")
+    }
+
+    const fn binary_rhs_precedence(op: SyntaxKind, precedence: u8) -> u8 {
+        if matches!(op, SyntaxKind::AsteriskAsteriskToken) {
+            precedence
+        } else {
+            precedence + 1
+        }
     }
 
     // Parse as/satisfies expression: expr as Type, expr satisfies Type
