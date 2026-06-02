@@ -532,28 +532,19 @@ class Box {
 
 #[test]
 fn overload_impl_sig_excluded_bool_arg_errors_at_call_site() {
-    // The implementation signature (x: any) must never be included in the
-    // overload candidate set. If it were, `foo(true)` would silently succeed
-    // because `true` is assignable to `any`. The error must be TS2769 anchored
-    // at the call site (argument or callee), not inside the implementation.
-    let source = r#"
+    // If the impl `(x: any)` joined the candidate set, `foo(true)` would
+    // silently succeed because `true` is assignable to `any`. The error must
+    // be TS2769 anchored at the call site, not inside the impl.
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
 function foo(x: string): string;
 function foo(x: number): number;
 function foo(x: any): any { return x; }
 foo(true);
-"#;
-    let diagnostics = check_source_with_strict_null(source);
-    let impl_start = source.find("function foo(x: any)").unwrap() as u32;
-    let impl_end = impl_start + "function foo(x: any): any { return x; }".len() as u32;
-    for diag in &diagnostics {
-        assert!(
-            diag.start < impl_start || diag.start >= impl_end,
-            "error must not be anchored inside the implementation signature, got: {diag:?}"
-        );
-    }
-    assert!(
-        diagnostics.iter().any(|d| d.code == 2769),
-        "expected TS2769 for foo(true) — impl sig must not be an overload candidate, got: {diagnostics:?}"
+"#,
+        "function foo(x: any)",
+        "function foo(x: any): any { return x; }",
+        None,
     );
 }
 
@@ -910,5 +901,169 @@ export class Foo<T> extends Base<T> {
             && d.message_text
                 .contains("not assignable to type 'Assign<T, { x: number; }>'")),
         "the initializer overload failure must not hide the real TS2322, got: {diagnostics:?}"
+    );
+}
+
+// ── Implementation-signature exclusion: structural rule ──────────────────────
+//
+// Body-less overload decls are the only externally visible call signatures.
+// The implementation signature is never a candidate.
+
+fn assert_no_diag_in_span_emits_ts2769(
+    source: &str,
+    impl_signature: &str,
+    impl_full: &str,
+    code_filter: Option<u32>,
+) {
+    let diagnostics = check_source_with_strict_null(source);
+    let impl_start = source
+        .find(impl_signature)
+        .unwrap_or_else(|| panic!("impl signature {impl_signature:?} not found in source"))
+        as u32;
+    let impl_end = impl_start + impl_full.len() as u32;
+    for diag in diagnostics
+        .iter()
+        .filter(|d| code_filter.is_none_or(|c| d.code == c))
+    {
+        assert!(
+            diag.start < impl_start || diag.start >= impl_end,
+            "error must not be anchored inside the impl, got: {diag:?}"
+        );
+    }
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2769),
+        "expected TS2769, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn overload_impl_excluded_with_renamed_parameters_p_form() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function pickP(p: string): string;
+function pickP(p: number): number;
+function pickP(p: any): any { return p; }
+pickP(true);
+"#,
+        "function pickP(p: any)",
+        "function pickP(p: any): any { return p; }",
+        None,
+    );
+}
+
+#[test]
+fn overload_impl_excluded_with_renamed_parameters_q_form() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function pickQ(q: string): string;
+function pickQ(q: number): number;
+function pickQ(q: any): any { return q; }
+pickQ([]);
+"#,
+        "function pickQ(q: any)",
+        "function pickQ(q: any): any { return q; }",
+        None,
+    );
+}
+
+#[test]
+fn overload_impl_excluded_with_three_overload_signatures() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function makeRecord(value: string): { kind: "s" };
+function makeRecord(value: number): { kind: "n" };
+function makeRecord(value: boolean): { kind: "b" };
+function makeRecord(value: any): { kind: string } { return { kind: "x" }; }
+makeRecord({ nope: 1 });
+"#,
+        "function makeRecord(value: any)",
+        "function makeRecord(value: any): { kind: string } { return { kind: \"x\" }; }",
+        None,
+    );
+}
+
+/// `unknown` impl widening — the rule keys off body presence, not type spelling.
+#[test]
+fn overload_impl_excluded_when_impl_widens_via_unknown() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function takeU(x: string): string;
+function takeU(x: number): number;
+function takeU(x: unknown): unknown { return x; }
+takeU(true);
+"#,
+        "function takeU(x: unknown)",
+        "function takeU(x: unknown): unknown { return x; }",
+        None,
+    );
+}
+
+#[test]
+fn overload_impl_excluded_for_generic_overloads_t_variant() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function transformT<T>(value: string): T;
+function transformT<T>(value: number): T;
+function transformT<T>(value: any): T { return value; }
+const s: string = transformT(true);
+"#,
+        "function transformT<T>(value: any)",
+        "function transformT<T>(value: any): T { return value; }",
+        None,
+    );
+}
+
+/// Same generic rule with `K` — proves the matrix isn't pinned to `T`.
+#[test]
+fn overload_impl_excluded_for_generic_overloads_k_variant() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+function transformK<K>(value: string): K;
+function transformK<K>(value: number): K;
+function transformK<K>(value: any): K { return value; }
+const s: string = transformK(true);
+"#,
+        "function transformK<K>(value: any)",
+        "function transformK<K>(value: any): K { return value; }",
+        None,
+    );
+}
+
+/// Single-signature function: the lone impl signature drives diagnostics.
+/// Guards against the fix regressing the no-overloads path.
+#[test]
+fn single_signature_function_uses_impl_signature_when_no_overloads_present() {
+    let source = r#"
+function onlyImpl(x: string): string { return x; }
+const n: number = onlyImpl("hi");
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "expected TS2322 from single impl signature, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2769),
+        "single-signature function must not trigger TS2769, got: {diagnostics:?}"
+    );
+}
+
+/// Class-method end-to-end witness — impl excluded across `c.method` and `c["method"]`.
+#[test]
+fn class_method_impl_excluded_across_access_paths() {
+    assert_no_diag_in_span_emits_ts2769(
+        r#"
+class Service {
+    handle(req: string): string;
+    handle(req: number): number;
+    handle(req: any): any { return req; }
+}
+const s = new Service();
+s.handle(true);
+s["handle"](true);
+"#,
+        "handle(req: any)",
+        "handle(req: any): any { return req; }",
+        Some(2769),
     );
 }
