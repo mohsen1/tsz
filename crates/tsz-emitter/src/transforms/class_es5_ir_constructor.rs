@@ -1402,15 +1402,16 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 IRNode::Undefined
             };
-            body.push(IRNode::expr_stmt(IRNode::call(
-                IRNode::RuntimeHelper(std::borrow::Cow::Borrowed("__classPrivateFieldSet")),
-                vec![
-                    receiver.clone(),
-                    IRNode::id(field.weakmap_name.clone()),
-                    value,
-                    IRNode::StringLiteral("f".into()),
-                ],
-            )));
+            // The in-constructor initializer for a private instance field is the
+            // field's definition point, so tsc emits a direct `_C_field.set(this, value)`
+            // WeakMap store (see `createPrivateInstanceFieldInitializer`). The
+            // `__classPrivateFieldSet` helper is reserved for later assignment
+            // expressions (`this.#x = v`) where a brand check is required.
+            body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
+                weakmap_name: field.weakmap_name.clone().into(),
+                key: Box::new(receiver.clone()),
+                value: Box::new(value),
+            }));
         }
     }
 

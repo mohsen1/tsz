@@ -365,12 +365,12 @@ fn new_target_es5_private_field_initializers_capture_default_constructor() {
             )
         });
     let direct_initializer = output
-        .find("__classPrivateFieldSet(this, _C_x, _newTarget")
+        .find("_C_x.set(this, _newTarget")
         .unwrap_or_else(|| {
             panic!("Private field initializer should read the capture.\nOutput:\n{output}")
         });
     let arrow_initializer = output
-        .find("__classPrivateFieldSet(this, _C_y, function () { return _newTarget; }")
+        .find("_C_y.set(this, function () { return _newTarget; }")
         .unwrap_or_else(|| {
             panic!(
                 "Private arrow field initializer should close over the capture.\nOutput:\n{output}"
@@ -409,12 +409,12 @@ fn new_target_es5_derived_private_field_initializers_capture_after_super() {
             )
         });
     let direct_initializer = output
-        .find("__classPrivateFieldSet(_this, _D_x, _newTarget")
+        .find("_D_x.set(_this, _newTarget")
         .unwrap_or_else(|| {
             panic!("Derived private field initializer should read the capture.\nOutput:\n{output}")
         });
     let arrow_initializer = output
-        .find("__classPrivateFieldSet(_this, _D_y, function () { return _newTarget; }")
+        .find("_D_y.set(_this, function () { return _newTarget; }")
         .unwrap_or_else(|| {
             panic!(
                 "Derived private arrow field initializer should close over the capture.\nOutput:\n{output}"

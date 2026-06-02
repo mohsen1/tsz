@@ -22,6 +22,7 @@ pub(super) struct ClassEs6MemberEmit<'a> {
     pub(super) target_supports_native_private_names: bool,
     pub(super) has_legacy_private_name_member_decorators: bool,
     pub(super) needs_computed_prop_hoisting: bool,
+    pub(super) erased_computed_side_effects_use_static_block: bool,
     pub(super) native_computed_prop_evaluator: Option<&'a str>,
     pub(super) private_fields: &'a [PrivateFieldInfo],
     pub(super) private_duplicate_conflicts: &'a PrivateDuplicateConflictPlan,
@@ -51,6 +52,7 @@ impl<'a> Printer<'a> {
             target_supports_native_private_names,
             has_legacy_private_name_member_decorators,
             needs_computed_prop_hoisting,
+            erased_computed_side_effects_use_static_block,
             native_computed_prop_evaluator,
             private_fields,
             private_duplicate_conflicts,
@@ -425,8 +427,12 @@ impl<'a> Printer<'a> {
                     // property accesses, element accesses, calls, assignments, etc.
                     // Simple identifiers and literals are NOT emitted (no side effects).
                     // Skip this when computed property hoisting is active — the comma
-                    // expression already handles side effects.
-                    if !needs_computed_prop_hoisting
+                    // expression already handles side effects — UNLESS the target has
+                    // native static blocks, where these side effects belong in a
+                    // `static { ... }` block (and the hoisting collection deliberately
+                    // left them out of the comma expression for that reason).
+                    if (!needs_computed_prop_hoisting
+                        || erased_computed_side_effects_use_static_block)
                         && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                         && let Some(p) = self.arena.get_property_decl(member_node)
                         && let Some(name_node) = self.arena.get(p.name)
