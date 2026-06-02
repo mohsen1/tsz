@@ -207,7 +207,7 @@ fn chained_satisfies_then_as_const_spans_correct() {
 }
 
 // ---------------------------------------------------------------------------
-// Recovery: unusual type forms on the RHS must parse without errors
+// Broad RHS type forms — each must parse without errors
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -280,12 +280,6 @@ fn as_chain_same_line_produces_two_nodes_and_no_errors() {
 
 #[test]
 fn as_does_not_chain_across_line_break() {
-    // Without the fix the parser would create a second AS_EXPRESSION wrapping
-    // the chain; after the fix exactly one node exists and spans only the first
-    // assertion.  Three sources prove the rule is structural:
-    // - as/as pair on two lines
-    // - as/satisfies pair on two lines (different operator)
-    // - as/as/as triple on three lines (more than one following break)
     for (source, expected) in [
         ("const x = v as TypeA\nas TypeB;", "v as TypeA"),
         ("const z = v as TypeA\nsatisfies TypeB;", "v as TypeA"),
@@ -319,7 +313,8 @@ fn satisfies_then_as_does_not_chain_across_line_break() {
         as_count, 0,
         "ASI must prevent as-chaining after satisfies; expected 0 AS_EXPRESSION, got {as_count}"
     );
-    assert_span(
+    assert_span_on(
+        &parser,
         source,
         syntax_kind_ext::SATISFIES_EXPRESSION,
         "v satisfies TypeA",
@@ -342,4 +337,191 @@ fn satisfies_does_not_chain_across_line_break() {
         Some("v satisfies TypeA"),
         "the single SATISFIES_EXPRESSION must cover only the first assertion"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Call-signature types after satisfies — object type with call signatures
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_with_new_signature_no_errors() {
+    assert_no_errors("const x = Ctor satisfies { new(x: string): object };");
+}
+
+#[test]
+fn satisfies_with_generic_call_signature_no_errors() {
+    assert_no_errors("const x = fn satisfies { <T>(x: T): T };");
+}
+
+// ---------------------------------------------------------------------------
+// Generic function types after satisfies
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_with_generic_function_type_in_parens_no_errors() {
+    assert_no_errors("const f = fn satisfies (<T>(x: T) => T);");
+}
+
+#[test]
+fn satisfies_with_generic_function_type_direct_no_errors() {
+    assert_no_errors("const f = fn satisfies <T>(x: T) => T;");
+}
+
+#[test]
+fn satisfies_with_complex_generic_function_type_no_errors() {
+    assert_no_errors("const f = fn satisfies <T extends object>(x: T) => Readonly<T>;");
+}
+
+// ---------------------------------------------------------------------------
+// satisfies inside callbacks and nested arrows
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_in_array_map_callback_no_errors() {
+    assert_no_errors("const arr = [1, 2, 3].map((x) => x satisfies number);");
+}
+
+#[test]
+fn satisfies_in_reduce_callback_no_errors() {
+    assert_no_errors(
+        "const r = arr.reduce((acc: number, x: number) => acc + (x satisfies number), 0);",
+    );
+}
+
+#[test]
+fn satisfies_in_nested_arrows_no_errors() {
+    assert_no_errors("const f = (a: number) => (b: number) => (a + b) satisfies number;");
+}
+
+#[test]
+fn satisfies_with_fn_type_in_nested_arrow_no_errors() {
+    assert_no_errors("const f = (fn2: unknown) => fn2 satisfies ((...args: any[]) => any);");
+}
+
+#[test]
+fn satisfies_arrow_satisfies_function_call_sig_no_errors() {
+    assert_no_errors("const f = ((x: unknown) => String(x)) satisfies { (x: unknown): string };");
+}
+
+// ---------------------------------------------------------------------------
+// satisfies with function-type unions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_with_union_of_function_types_no_errors() {
+    assert_no_errors("const x = fn satisfies ((x: string) => void) | ((x: number) => void);");
+}
+
+// ---------------------------------------------------------------------------
+// satisfies span correctness with call-signature types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_call_sig_object_type_span_correct() {
+    assert_span(
+        "const x = fn satisfies { (x: string): number };",
+        syntax_kind_ext::SATISFIES_EXPRESSION,
+        "fn satisfies { (x: string): number }",
+    );
+}
+
+#[test]
+fn satisfies_generic_fn_type_span_correct() {
+    assert_span(
+        "const f = fn satisfies (...args: string[]) => void;",
+        syntax_kind_ext::SATISFIES_EXPRESSION,
+        "fn satisfies (...args: string[]) => void",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Context isolation: `yield` and `await` are valid type names even inside
+// generator/async functions — type parsing ignores yield/await context flags.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_type_parses_await_param_name_inside_async_fn() {
+    // `await` is reserved in expression context inside async functions, but
+    // must be valid as a parameter name in a function TYPE after `satisfies`.
+    assert_no_errors("async function f() { return x satisfies (await: string) => void; }");
+}
+
+#[test]
+fn satisfies_type_parses_yield_param_name_inside_generator() {
+    // `yield` is reserved in expression context inside generators, but
+    // must be valid as a parameter name in a function TYPE after `satisfies`.
+    assert_no_errors("function* g() { return x satisfies (yield: string) => void; }");
+}
+
+#[test]
+fn satisfies_type_parses_await_as_type_identifier_in_async_fn() {
+    // `await` as a plain type reference (e.g. `type await = string`) inside
+    // async expression context must parse without reserved-word errors.
+    assert_no_errors("async function f() { const x = value satisfies await; }");
+}
+
+#[test]
+fn as_expression_type_parses_await_param_name_inside_async_fn() {
+    // Same rule applies to `as` expressions.
+    assert_no_errors("async function f() { return (x as (await: string) => void); }");
+}
+
+#[test]
+fn satisfies_type_in_async_arrow_no_errors() {
+    // Async arrow function with satisfies and a function type whose param is named `await`.
+    assert_no_errors("const f = async () => x satisfies (await: string) => void;");
+}
+
+// ---------------------------------------------------------------------------
+// Complex call-signature object types after satisfies
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_callable_object_with_property_no_errors() {
+    assert_no_errors("const x = fn satisfies { (): void; meta: string };");
+}
+
+#[test]
+fn satisfies_overloaded_call_signatures_no_errors() {
+    assert_no_errors(
+        "const f = fn satisfies { (x: string): void; (x: number): void; (x: any): void };",
+    );
+}
+
+#[test]
+fn satisfies_callable_and_constructible_no_errors() {
+    assert_no_errors("const C = cls satisfies { new(): object; (): object };");
+}
+
+// satisfies inside various compound expression contexts
+#[test]
+fn satisfies_in_for_initializer_no_errors() {
+    // CONTEXT_FLAG_DISALLOW_IN is set during for-initializer parsing.
+    // Type parsing after `satisfies` must not be confused by this flag.
+    assert_no_errors("for (let i = (0 satisfies number); i < 10; i++) {}");
+}
+
+#[test]
+fn satisfies_in_for_of_initializer_no_errors() {
+    assert_no_errors("for (const item of (arr satisfies Iterable<string>)) {}");
+}
+
+#[test]
+fn satisfies_in_switch_discriminant_no_errors() {
+    assert_no_errors("switch (value satisfies string) { case 'a': break; }");
+}
+
+// ---------------------------------------------------------------------------
+// satisfies with mapped types and conditional types as RHS
+// ---------------------------------------------------------------------------
+
+#[test]
+fn satisfies_with_mapped_type_no_errors() {
+    assert_no_errors("const x = obj satisfies { [K in keyof T]: string };");
+}
+
+#[test]
+fn satisfies_with_conditional_type_in_for_init_no_errors() {
+    // Both DISALLOW_IN (for-init) and conditional type together.
+    assert_no_errors("for (let x = (val satisfies string extends object ? never : string); ; ) {}");
 }
