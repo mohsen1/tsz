@@ -14,8 +14,8 @@ use crate::query_boundaries::state::type_resolution::{get_application_info, get_
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
+use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
-use tsz_solver::{SubtypeFailureReason, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Shared assignability core: cache lookup → compute → cache insert → trace.
@@ -184,10 +184,15 @@ impl<'a> CheckerState<'a> {
 
     /// When the solver says the relation holds but a checker-only semantic
     /// rule (e.g., iterator-result protocol mismatch) rejects it, downgrade
-    /// `outcome.related` to false AND surface the structured reason so the
-    /// `query_boundaries/assignability` gateway returns a coherent
-    /// (related, failure) pair instead of a generic TS2322/TS2345 with no
-    /// inner chain.
+    /// `outcome.related` to false. The structured reason is recovered by the
+    /// canonical TS2322/TS2345 emit path which calls
+    /// `analyze_assignability_failure` directly (in
+    /// `error_reporter/assignability.rs:602`), so the diagnostic chain stays
+    /// elaborated without populating `outcome.failure` here. Populating
+    /// `outcome.failure` from a downgrade has unrelated semantic side-effects
+    /// on `outcome.failure`-reading predicates in `core_statement_checks.rs`
+    /// (see #12239 conformance regression on `coAndContraVariantInferences2.ts`
+    /// and `correlatedUnions.ts`).
     fn apply_checker_side_downgrade(
         &mut self,
         outcome: &mut crate::query_boundaries::assignability::RelationOutcome,
@@ -197,27 +202,11 @@ impl<'a> CheckerState<'a> {
         if !outcome.related {
             return;
         }
-        let Some(reason) = self.checker_only_assignability_failure_reason(source, target) else {
-            return;
-        };
-        outcome.related = false;
-        Self::set_failure_from_reason_if_empty(outcome, reason);
-    }
-
-    /// Populate `outcome.failure` with the structured reason iff it is
-    /// currently `None`. Centralizes the boilerplate that wraps a solver
-    /// `SubtypeFailureReason` into the checker-facing `RelationFailure` and
-    /// preserves any reason the boundary already produced.
-    fn set_failure_from_reason_if_empty(
-        outcome: &mut crate::query_boundaries::assignability::RelationOutcome,
-        reason: SubtypeFailureReason,
-    ) {
-        if outcome.failure.is_none() {
-            outcome.failure = Some(
-                crate::query_boundaries::relation_types::RelationFailure::from_solver_reason(
-                    reason,
-                ),
-            );
+        if self
+            .checker_only_assignability_failure_reason(source, target)
+            .is_some()
+        {
+            outcome.related = false;
         }
     }
 
@@ -243,33 +232,10 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        let raw_source = source;
-        let raw_target = target;
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
         let mut outcome = self.execute_relation_request(&request);
-
-        // Solver pass returned `failure=None`: `is_assignable_to` rejected via
-        // a checker-side fast-path the solver cannot reconstruct after
-        // `prepare_assignability_inputs`. The raw-input detectors recover the
-        // structured reason — see `raw_input_failure_reason` for the families.
-        //
-        // This intentionally only fires when `outcome.failure` is empty. When
-        // the boundary already produced a reason (e.g. property-incompatible
-        // for `C<A..>` vs `C<B..>`), the TS2322 emit path consumes that reason
-        // via `analyze_assignability_failure`, which runs the raw-input
-        // detectors FIRST and overrides the wrapper reason there. Overriding
-        // `outcome.failure` from here would also change what
-        // `contextual_callable_member_failure_is_generic_parameter_drift` and
-        // similar `outcome.failure`-reading predicates observe, which has
-        // unrelated semantic side-effects (see #12239 review).
-        if outcome.failure.is_none()
-            && let Some(reason) = self.raw_input_failure_reason(raw_source, raw_target)
-        {
-            Self::set_failure_from_reason_if_empty(&mut outcome, reason);
-        }
-
         outcome.related = false;
         outcome
     }

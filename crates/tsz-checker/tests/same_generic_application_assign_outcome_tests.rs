@@ -9,15 +9,15 @@
 //! elaboration ("Type 'string' is not assignable to type 'number'.") even
 //! when the boundary's evaluated-shape pass produces a wrapper reason.
 //!
-//! Note: `assign_relation_outcome` itself only recovers the raw-input reason
-//! when the boundary returned `failure=None`, to avoid changing what
-//! `outcome.failure`-reading predicates observe (see
-//! `core_statement_checks.rs:413-426` and the discussion on
+//! Note: `assign_relation_outcome` itself does NOT populate `outcome.failure`
+//! with the raw-input reason — doing so changed what
+//! `outcome.failure`-reading predicates observe in `core_statement_checks.rs:413-426`
+//! and caused a real conformance regression on `coAndContraVariantInferences2.ts`
+//! and `correlatedUnions.ts` (see the review discussion on
 //! <https://github.com/mohsen1/tsz/pull/12239#discussion_r3342820552>). The
-//! TS2322 elaboration tested here does NOT consume `assign_relation_outcome
-//! .outcome.failure` — it consumes `analyze_assignability_failure` directly
-//! in `error_reporter/assignability.rs:602` — so the gating in
-//! `assign_relation_outcome` does not weaken this elaboration.
+//! TS2322 elaboration tested here flows through `analyze_assignability_failure`
+//! directly in `error_reporter/assignability.rs:602`, independent of the
+//! `assign_relation_outcome` outcome's `failure` field.
 
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::check_source_diagnostics;
