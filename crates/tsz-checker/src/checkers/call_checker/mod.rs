@@ -10,6 +10,7 @@ mod applicability;
 mod candidate_collection;
 mod diagnostics;
 mod overload_resolution;
+mod spread_arity;
 
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
