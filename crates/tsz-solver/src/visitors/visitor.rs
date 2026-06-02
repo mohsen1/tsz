@@ -697,6 +697,93 @@ pub fn contains_concrete_application_with_def(
     found
 }
 
+/// Collect every unique concrete `Application` of `target_def_id` reachable
+/// from `root` (the application's arguments contain no free type parameters).
+///
+/// This is the collecting counterpart of [`contains_concrete_application_with_def`].
+/// It lets callers re-drive a recursive alias's residual self-applications —
+/// which the evaluator may leave deferred in non-tail positions such as a
+/// function return type or object property — to a fixpoint, so a *terminating*
+/// recursion is not mistaken for an infinite one.
+pub fn collect_concrete_applications_with_def(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    target_def_id: DefId,
+) -> Vec<TypeId> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+    walk_referenced_types(types, root, |type_id| {
+        if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
+            let app = types.type_application(app_id);
+            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base)
+                && def_id == target_def_id
+            {
+                let args_are_concrete = !app
+                    .args
+                    .iter()
+                    .any(|&arg| super::visitor_predicates::contains_type_parameters(types, arg));
+                if args_are_concrete && seen.insert(type_id) {
+                    out.push(type_id);
+                }
+            }
+        }
+    });
+    out
+}
+
+/// Cheap structural-weight estimate of a single recursive type argument — the
+/// shared divergent-growth metric used both by the evaluator (to bound
+/// tail-recursive expansion) and by the checker's TS2589 convergence check.
+///
+/// Measures the dimensions along which recursive arguments shrink or grow
+/// between recursion steps: concrete string-literal length, generic
+/// template-literal span count, tuple arity, and union/intersection arity. Other
+/// shapes count as a single unit. Intentionally shallow — one level for
+/// lists/spans — so the estimate stays O(arity) and never walks an exploding
+/// type tree.
+pub fn recursive_growth_weight(types: &dyn TypeDatabase, type_id: TypeId) -> u64 {
+    match types.lookup(type_id) {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
+            types.resolve_atom_ref(atom).as_ref().len() as u64
+        }
+        Some(TypeData::TemplateLiteral(spans)) => types.template_list(spans).len() as u64,
+        Some(TypeData::Tuple(list)) => types.tuple_list(list).len() as u64,
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
+            types.type_list(list).len() as u64
+        }
+        _ => 1,
+    }
+}
+
+/// Total structural weight of the arguments of a concrete `Application` of
+/// `target_def_id`, or `None` if `type_id` is not such an application.
+///
+/// Lets callers compare a recursive alias's input application against the
+/// residual self-applications left in its evaluated result: a residual whose
+/// argument weight is strictly smaller is making progress toward the base case
+/// (e.g. a variadic tuple tail that loses an element each step) and is not, on
+/// its own, evidence of an infinite instantiation.
+pub fn self_application_arg_weight(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    target_def_id: DefId,
+) -> Option<u64> {
+    if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
+        let app = types.type_application(app_id);
+        if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base)
+            && def_id == target_def_id
+        {
+            return Some(
+                app.args
+                    .iter()
+                    .map(|&a| recursive_growth_weight(types, a))
+                    .sum(),
+            );
+        }
+    }
+    None
+}
+
 /// Collect all unique enum `DefIds` reachable from `root`.
 pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
     let mut out = Vec::new();
