@@ -1715,22 +1715,16 @@ impl ParserState {
             return false;
         }
 
-        // When a preceding line break is present, short-circuit for `[identifier in ...]`
-        // before running the bracket scan.  The bracket scan uses raw scanner calls that
-        // do not re-enter template-continuation mode after a `TemplateHead` substitution,
-        // so template literals inside `as` clauses can confuse the depth counter.
-        // `look_ahead_is_mapped_type_start` is a cheap two-token peek that avoids the
-        // scan entirely for the common mapped-type case.
-        if self.look_ahead_is_mapped_type_start() {
-            return true;
-        }
-
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
         self.next_token(); // skip `[`
         let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
         let mut bracket_depth = 1_u32;
+        // Track template substitution nesting so `}` inside a template is
+        // re-scanned as TemplateMiddle/TemplateTail rather than treated as a
+        // plain CloseBraceToken that would confuse the bracket-depth counter.
+        let mut template_depth = 0_u32;
         while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             match self.token() {
                 SyntaxKind::OpenBracketToken => {
@@ -1739,6 +1733,22 @@ impl ParserState {
                 }
                 SyntaxKind::CloseBracketToken => {
                     bracket_depth -= 1;
+                    self.next_token();
+                }
+                SyntaxKind::TemplateHead => {
+                    // Entering a template literal with substitutions.
+                    template_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBraceToken if template_depth > 0 => {
+                    // Re-scan `}` as a template continuation to consume the
+                    // TemplateMiddle/TemplateTail token and stay in sync with
+                    // the template literal structure.
+                    self.scanner.re_scan_template_token(false);
+                    self.current_token = self.scanner.get_token();
+                    if matches!(self.current_token, SyntaxKind::TemplateTail) {
+                        template_depth -= 1;
+                    }
                     self.next_token();
                 }
                 _ => {
