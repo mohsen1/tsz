@@ -1114,9 +1114,11 @@ impl<'a> CheckerState<'a> {
     ///   TS1470 here, which diverged from `tsc`.
     /// * System and ES2020+ support `import.meta` natively, so no error.
     ///
-    /// The default-module case (`None`) is resolved to a concrete module kind
-    /// by the driver before checking, so it never reaches this branch as
-    /// `None` for an ES2020+ target.
+    /// `ModuleKind::None` is the unspecified/unresolved sentinel: the driver
+    /// resolves it to a concrete module kind (per `--target`) before checking,
+    /// and `tsc`'s own check runs on the *resolved* kind. So a bare `None`
+    /// emits no module diagnostic here — the resolved kind (e.g. CommonJS for a
+    /// low target, ES2020 otherwise) drives the decision once it is set.
     pub(in crate::types_domain) fn check_import_meta_module_support(
         &mut self,
         node_idx: NodeIndex,
@@ -1143,11 +1145,14 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
                 );
             }
-        } else if module_kind != ModuleKind::System
+        } else if module_kind != ModuleKind::None
+            && module_kind != ModuleKind::System
             && (module_kind as u32) < (ModuleKind::ES2020 as u32)
         {
             // CommonJS, AMD, UMD, ES2015: import.meta is unavailable for the
             // whole module mode, not a per-file CJS-output decision (TS1343).
+            // `None` is excluded — it is the unresolved default, not an
+            // explicit sub-ES2020 module choice.
             self.error_at_node(
                 node_idx,
                 diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_ES2020_E,

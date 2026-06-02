@@ -161,6 +161,24 @@ fn node16_esm_file_supports_import_meta() {
 }
 
 #[test]
+fn default_module_none_emits_no_import_meta_diagnostic() {
+    // `ModuleKind::None` is the unresolved/default sentinel (what
+    // `CheckerOptions::default()` carries). The driver resolves it to a
+    // concrete module kind before checking, so the checker must not emit a
+    // module-kind import.meta diagnostic for a bare `None` — neither the
+    // sub-ES2020 TS1343 nor the Node-output TS1470.
+    let codes = codes(
+        "export const u = import.meta.url;",
+        "a.ts",
+        ModuleKind::None,
+    );
+    assert!(
+        !codes.contains(&TS1343) && !codes.contains(&TS1470),
+        "unresolved/default module (None) must not emit an import.meta module diagnostic; got {codes:?}"
+    );
+}
+
+#[test]
 fn nodenext_commonjs_file_emits_ts1470() {
     let codes = codes(
         "export const u = import.meta.url;",
