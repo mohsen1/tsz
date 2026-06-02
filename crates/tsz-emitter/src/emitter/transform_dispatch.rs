@@ -366,7 +366,6 @@ impl<'a> Printer<'a> {
                 if let Some(export_names) = system_export_fold.as_deref() {
                     ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
                 }
-                // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(namespace_node);
                     let entry = self
@@ -381,8 +380,6 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                 ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
-                ns_emitter
-                    .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
                 ns_emitter.set_transforms(self.transforms.clone());
                 self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                 if let Some(text) = self.source_text_for_map() {
@@ -482,9 +479,6 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                             ns_emitter.set_emit_decorator_metadata(
                                 self.ctx.options.emit_decorator_metadata,
-                            );
-                            ns_emitter.set_use_define_for_class_fields(
-                                self.ctx.options.use_define_for_class_fields,
                             );
                             ns_emitter.set_commonjs_export_names(cjs_export_names.clone());
                             ns_emitter.set_transforms(self.transforms.clone());
@@ -915,6 +909,7 @@ impl<'a> Printer<'a> {
             .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         ns_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+        ns_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         ns_emitter.set_disposable_env_context(self.next_disposable_env_id);
     }
 
@@ -1993,8 +1988,6 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                 ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
-                ns_emitter
-                    .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
                 ns_emitter.set_transforms(self.transforms.clone());
                 self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                 if let Some(text) = self.source_text_for_map() {
