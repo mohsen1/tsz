@@ -46,6 +46,7 @@
 use crate::checkers_domain::JsxChildrenContext;
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
+use crate::query_boundaries::checkers::jsx as jsx_queries;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -615,7 +616,28 @@ impl<'a> CheckerState<'a> {
             let props_has_children = matches!(
                 self.resolve_property_access_with_env(ctx.props_type, &children_prop_name),
                 PropertyAccessResult::Success { .. }
-            );
+            ) || self
+                .jsx_concrete_prop_expected_type(
+                    ctx.props_type,
+                    &children_prop_name,
+                    &mut Vec::new(),
+                )
+                .is_some()
+                || self
+                    .jsx_concrete_prop_expected_type(
+                        ctx.raw_props_type,
+                        &children_prop_name,
+                        &mut Vec::new(),
+                    )
+                    .is_some()
+                || self.jsx_declared_interface_heritage_has_property(
+                    ctx.props_type,
+                    &children_prop_name,
+                )
+                || self.jsx_declared_interface_heritage_has_property(
+                    ctx.raw_props_type,
+                    &children_prop_name,
+                );
             let intrinsic_has_children =
                 self.get_intrinsic_attributes_type().is_some_and(|ia_type| {
                     let resolved_ia = self.resolve_type_for_property_access(ia_type);
@@ -624,7 +646,20 @@ impl<'a> CheckerState<'a> {
                         PropertyAccessResult::Success { .. }
                     )
                 });
-            if has_intrinsic_key_or_ref && !props_has_children && !intrinsic_has_children {
+            let spread_named_props_target = !outcome.spread_entries.is_empty()
+                && (self
+                    .ctx
+                    .types
+                    .get_display_alias(ctx.raw_props_type)
+                    .is_some()
+                    || self.ctx.types.get_display_alias(ctx.props_type).is_some()
+                    || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.raw_props_type)
+                    || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.props_type));
+            if has_intrinsic_key_or_ref
+                && !props_has_children
+                && !intrinsic_has_children
+                && !spread_named_props_target
+            {
                 self.report_jsx_body_children_excess_property(
                     opts.tag_name_idx,
                     &opts.display_target,
@@ -732,6 +767,15 @@ impl<'a> CheckerState<'a> {
             opts.special_attr_component_type.or(opts.component_type);
         let empty_attrs_with_children_injected_props = outcome.provided_attrs.is_empty()
             && self.strip_jsx_children_injection_for_display(ctx.props_type) != ctx.props_type;
+        let spread_named_props_target = !outcome.spread_entries.is_empty()
+            && (self
+                .ctx
+                .types
+                .get_display_alias(ctx.raw_props_type)
+                .is_some()
+                || self.ctx.types.get_display_alias(ctx.props_type).is_some()
+                || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.raw_props_type)
+                || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.props_type));
 
         let class_has_missing_required_props =
             self.jsx_has_missing_required_props(ctx.props_type, &outcome.provided_attrs);
@@ -739,6 +783,7 @@ impl<'a> CheckerState<'a> {
             && !reported_special_attr_assignability
             && !outcome.has_excess_property_error
             && !outcome.spread_covers_all
+            && !spread_named_props_target
             && !ctx.skip_prop_checks
             && !opts.display_target.is_empty()
             && !empty_attrs_with_children_injected_props
@@ -917,6 +962,7 @@ impl<'a> CheckerState<'a> {
                 || (outcome.provided_attrs.is_empty() && opts.raw_props_has_type_params))
             && !outcome.has_excess_property_error
             && !outcome.spread_covers_all
+            && !spread_named_props_target
             && !ctx.skip_prop_checks
             && !outcome.has_prop_type_error
         {

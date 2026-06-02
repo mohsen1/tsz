@@ -99,7 +99,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn symbol_has_builtin_lib_declaration_provenance(
+    pub(crate) fn symbol_has_builtin_lib_declaration_provenance(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
