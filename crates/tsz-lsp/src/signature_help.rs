@@ -28,11 +28,14 @@ use crate::intrinsic_params::{
 };
 mod contextual;
 mod docs;
+mod phases;
 mod selection;
 mod shapes;
 #[cfg(test)]
 #[path = "signature_help/internal_tests.rs"]
 mod signature_help_internal_tests;
+
+use phases::TypeArgumentContext;
 
 #[cfg(test)]
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -139,13 +142,6 @@ struct SignatureCandidate {
     type_param_substitutions: Vec<(String, String)>,
 }
 
-#[derive(Clone, Copy)]
-struct TypeArgumentContext {
-    active_parameter: u32,
-    span_start: u32,
-    span_length: u32,
-}
-
 struct TextualTypeArgumentTrigger {
     callee_name: String,
     callee_offset: u32,
@@ -217,9 +213,8 @@ impl<'a> SignatureHelpProvider<'a> {
         scope_cache: Option<&mut ScopeCache>,
         scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<SignatureHelp> {
-        let offset = self
-            .line_map
-            .position_to_offset(position, self.source_text)?;
+        let trigger = self.signature_help_trigger_context(position)?;
+        let offset = trigger.offset;
 
         // In incomplete generic invocations like `foo(bar<|)`, the parser may
         // bind us to an outer call expression. Prefer explicit textual
@@ -231,15 +226,14 @@ impl<'a> SignatureHelpProvider<'a> {
             return Some(help);
         }
 
-        // 1. Find the deepest node at the cursor
-        let leaf_node = find_node_at_or_before_offset(self.arena, offset, self.source_text);
-
-        // 2. Walk up to find the nearest CallExpression, NewExpression, or TaggedTemplateExpression
         let Some((call_node_idx, call_site, call_kind)) =
-            self.find_containing_call(leaf_node, offset)
+            self.find_containing_call(trigger.leaf_node, offset)
         else {
             if let Some(help) = self.signature_help_for_contextual_variable_initializer(
-                root, leaf_node, offset, type_cache,
+                root,
+                trigger.leaf_node,
+                offset,
+                type_cache,
             ) {
                 return Some(help);
             }
@@ -256,8 +250,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
         let in_type_argument_list = type_argument_context.is_some();
 
-        // 3. Determine active parameter
-        let mut active_parameter = if let Some(ctx) = type_argument_context {
+        let active_parameter = if let Some(ctx) = type_argument_context {
             ctx.active_parameter
         } else {
             match &call_site {
@@ -272,13 +265,11 @@ impl<'a> SignatureHelpProvider<'a> {
 
         let callee_expr = call_site.expression();
 
-        // 4. Check if this is a super() call — need special handling
         let is_super_call = self
             .arena
             .get(callee_expr)
             .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
 
-        // 5. Resolve the symbol being called using ScopeWalker
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if is_super_call {
             // For super(), resolve the base class expression instead
@@ -376,75 +367,25 @@ impl<'a> SignatureHelpProvider<'a> {
             self.resolve_callee_name(callee_expr, call_kind)
         };
 
-        // 7. Extract signatures from the type
         // For super() calls, extract construct signatures (since super invokes the base constructor)
         let effective_call_kind = if is_super_call {
             CallKind::New
         } else {
             call_kind
         };
-        let has_explicit_type_args = if in_type_argument_list {
-            false
-        } else {
-            match &call_site {
-                CallSite::Regular(data) => data.type_arguments.is_some(),
-                CallSite::TaggedTemplate(_) => false,
-            }
-        };
-        // Extract source text for each explicit type argument node
-        let explicit_type_arg_texts: Vec<String> = if has_explicit_type_args {
-            if let CallSite::Regular(data) = &call_site {
-                if let Some(ref type_args) = data.type_arguments {
-                    type_args
-                        .nodes
-                        .iter()
-                        .map(|&node_idx| {
-                            if let Some(node) = self.arena.get(node_idx) {
-                                let start = node.pos as usize;
-                                let end = (node.end as usize).min(self.source_text.len());
-                                if start < end {
-                                    self.source_text[start..end].trim().to_string()
-                                } else {
-                                    "unknown".to_string()
-                                }
-                            } else {
-                                "unknown".to_string()
-                            }
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-        // For primitive intrinsic methods resolved via the no-lib fallback the type
-        // system synthesizes `(...args: any[]) => ReturnType`.  Try to build directly
-        // from the intrinsic parameter table first so we never pay the cost of
-        // `get_signatures_from_type` when the result would be discarded.
-        let intrinsic_sigs = self.try_build_intrinsic_signatures(
+        let has_explicit_type_args =
+            !in_type_argument_list && Self::call_site_has_explicit_type_args(&call_site);
+        let explicit_type_arg_texts =
+            self.explicit_type_argument_texts(&call_site, has_explicit_type_args);
+        let mut signatures = self.collect_signature_candidates_for_call(
             callee_expr,
             callee_type,
             &mut checker,
             &callee_name,
+            effective_call_kind,
             has_explicit_type_args,
             &explicit_type_arg_texts,
         );
-        let mut signatures = if let Some(sigs) = intrinsic_sigs {
-            sigs
-        } else {
-            self.get_signatures_from_type(
-                callee_type,
-                &checker,
-                effective_call_kind,
-                &callee_name,
-                has_explicit_type_args,
-                &explicit_type_arg_texts,
-            )
-        };
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -499,93 +440,23 @@ impl<'a> SignatureHelpProvider<'a> {
             return None;
         }
 
-        let arg_count = if in_type_argument_list {
-            0
-        } else {
-            match &call_site {
-                CallSite::Regular(call_expr) => call_expr.arguments.as_ref().map_or(0, |args| {
-                    args.nodes
-                        .iter()
-                        .filter(|&&arg_idx| {
-                            self.arena.get(arg_idx).is_some_and(|node| {
-                                node.kind != syntax_kind_ext::OMITTED_EXPRESSION
-                            })
-                        })
-                        .count()
-                }),
-                CallSite::TaggedTemplate(tagged) => {
-                    // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
-                    if let Some(tmpl_node) = self.arena.get(tagged.template) {
-                        if let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) {
-                            1 + tmpl_expr.template_spans.nodes.len()
-                        } else {
-                            1 // NoSubstitutionTemplateLiteral = just templateStrings
-                        }
-                    } else {
-                        1
-                    }
-                }
-            }
-        };
-        let active_signature = self.select_active_signature(
+        let display = self.select_signature_help_display(
+            call_node_idx,
+            &call_site,
+            type_argument_context,
+            offset,
             &signatures,
-            arg_count,
             active_parameter,
             &supplied_argument_types,
         );
-        if let Some(selected) = signatures.get(active_signature as usize) {
-            if selected.info.parameters.is_empty() {
-                active_parameter = 0;
-            } else {
-                let has_rest_param = selected.info.parameters.iter().any(|param| param.is_rest);
-                let max_index = selected.info.parameters.len().saturating_sub(1);
-                if has_rest_param {
-                    // Keep active_parameter advancing across concrete rest arguments,
-                    // but clamp trailing-comma empty slots back to the rest parameter.
-                    if active_parameter as usize >= arg_count
-                        && active_parameter as usize > max_index
-                    {
-                        active_parameter = max_index as u32;
-                    }
-                } else if active_parameter as usize > max_index {
-                    active_parameter = max_index as u32;
-                }
-            }
-        }
-
-        // Compute applicable span (byte offsets for the argument region)
-        let (span_start, span_length) = if let Some(ctx) = type_argument_context {
-            (ctx.span_start, ctx.span_length)
-        } else {
-            match &call_site {
-                CallSite::Regular(call_expr) => {
-                    self.compute_applicable_span(call_node_idx, call_expr)
-                }
-                CallSite::TaggedTemplate(tagged) => {
-                    // For tagged templates, span covers the template
-                    if let Some(tmpl_node) = self.arena.get(tagged.template) {
-                        let tmpl_start = tmpl_node.pos as usize;
-                        let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
-                        let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
-                        if let Some(bt) = tmpl_text.find('`') {
-                            ((tmpl_start + bt + 1) as u32, 0)
-                        } else {
-                            (tmpl_node.pos, 0)
-                        }
-                    } else {
-                        (offset, 0)
-                    }
-                }
-            }
-        };
 
         Some(SignatureHelp {
             signatures: signatures.into_iter().map(|sig| sig.info).collect(),
-            active_signature,
-            active_parameter,
-            argument_count: arg_count as u32,
-            applicable_span_start: span_start,
-            applicable_span_length: span_length,
+            active_signature: display.active_signature,
+            active_parameter: display.active_parameter,
+            argument_count: display.argument_count as u32,
+            applicable_span_start: display.span_start,
+            applicable_span_length: display.span_length,
         })
     }
 
