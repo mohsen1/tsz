@@ -12,6 +12,30 @@ pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 
+/// Collect every unique concrete `Application` of `def_id` reachable from
+/// `type_id` (arguments free of type parameters). Used by the TS2589
+/// convergence probe to re-examine a recursive alias's residual
+/// self-applications.
+pub(crate) fn collect_concrete_applications_with_def(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_id: tsz_solver::def::DefId,
+) -> Vec<TypeId> {
+    tsz_solver::visitor::collect_concrete_applications_with_def(db, type_id, def_id)
+}
+
+/// Total structural weight of the arguments of a concrete `Application` of
+/// `def_id`, or `None` if `type_id` is not such an application. The shared
+/// recursion-growth metric used to decide whether a residual self-application
+/// is converging (shrinking) or diverging.
+pub(crate) fn self_application_arg_weight(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_id: tsz_solver::def::DefId,
+) -> Option<u64> {
+    tsz_solver::visitor::self_application_arg_weight(db, type_id, def_id)
+}
+
 /// Thin wrapper around `tsz_solver::computation::TypeEvaluator`.
 ///
 /// Evaluates a complex type (conditional, mapped, index access, etc.) using

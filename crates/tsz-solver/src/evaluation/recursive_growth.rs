@@ -12,7 +12,7 @@
 use crate::def::DefId;
 use crate::instantiation::instantiate::instantiate_generic_cached;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{LiteralValue, TypeData, TypeId};
+use crate::types::{TypeData, TypeId};
 
 use super::evaluate::TypeEvaluator;
 
@@ -37,28 +37,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
 
     /// Cheap structural-weight estimate for the divergent-growth detector.
     ///
-    /// Measures the dimensions along which recursive type arguments diverge:
-    /// concrete string-literal length and generic template-literal span count
-    /// (template-literal growth, whether the argument has collapsed to a literal
-    /// yet or is still a generic `${A}${A}` that doubles its spans each step),
-    /// tuple arity (tuple growth), and union/intersection arity (intersection
-    /// growth). Other shapes count as a single unit. Intentionally shallow — one
-    /// level for lists/spans — so the estimate stays O(arity) and never itself
-    /// walks an exploding type tree.
+    /// Thin wrapper over the shared [`crate::visitor::recursive_growth_weight`]
+    /// metric so the evaluator's tail-recursion growth detector and the checker's
+    /// TS2589 convergence check measure argument growth identically.
     fn recursive_growth_weight(&self, type_id: TypeId) -> u64 {
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Literal(LiteralValue::String(atom))) => {
-                self.interner().resolve_atom_ref(atom).as_ref().len() as u64
-            }
-            Some(TypeData::TemplateLiteral(spans)) => {
-                self.interner().template_list(spans).len() as u64
-            }
-            Some(TypeData::Tuple(list)) => self.interner().tuple_list(list).len() as u64,
-            Some(TypeData::Union(list) | TypeData::Intersection(list)) => {
-                self.interner().type_list(list).len() as u64
-            }
-            _ => 1,
-        }
+        crate::visitor::recursive_growth_weight(self.interner(), type_id)
     }
 
     /// Detect divergent recursion as a recursing alias (`def_id`) is re-applied

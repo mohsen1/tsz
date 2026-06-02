@@ -1734,14 +1734,6 @@ pub(crate) fn contains_type_parameter_named_shallow(
     tsz_solver::visitor::contains_type_parameter_named_shallow(db, type_id, name)
 }
 
-pub(crate) fn contains_concrete_application_with_def(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    def_id: tsz_solver::def::DefId,
-) -> bool {
-    tsz_solver::visitor::contains_concrete_application_with_def(db, type_id, def_id)
-}
-
 pub(crate) fn no_infer_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::visitor::no_infer_inner_type(db, type_id)
 }
