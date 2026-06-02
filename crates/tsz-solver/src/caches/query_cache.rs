@@ -1764,36 +1764,30 @@ impl QueryDatabase for QueryCache<'_> {
         self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
+    // The SubtypeChecker's recursive descent is the dominant cache traffic in
+    // multi-file utility-type projects: each top-level relation query expands
+    // into many inner pairs as evaluation peels back mapped/conditional bodies.
+    // Sharing those inner results across files is what keeps per-file checkers
+    // from re-deriving the same subtree relation in every sibling. These inner
+    // entry points therefore route through the same shared-aware path used by
+    // `lookup_policy_relation_cache` / `insert_policy_relation_cache`. Writes
+    // are gated by `cache_definitive!` in the SubtypeChecker, so any value
+    // observed here is already lazy-resolution stable.
+
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = self.subtype_cache.borrow().get(&key).copied();
-        if result.is_some() {
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
-        } else {
-            self.subtype_cache_misses
-                .set(self.subtype_cache_misses.get() + 1);
-        }
-        result
+        self.lookup_policy_relation_cache(CachedPolicyRelation::Subtype, key)
     }
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
-        self.subtype_cache.borrow_mut().insert(key, result);
+        self.insert_policy_relation_cache(CachedPolicyRelation::Subtype, key, result);
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = self.assignability_cache.borrow().get(&key).copied();
-        if result.is_some() {
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
-        } else {
-            self.assignability_cache_misses
-                .set(self.assignability_cache_misses.get() + 1);
-        }
-        result
+        self.lookup_policy_relation_cache(CachedPolicyRelation::Assignability, key)
     }
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
-        self.assignability_cache.borrow_mut().insert(key, result);
+        self.insert_policy_relation_cache(CachedPolicyRelation::Assignability, key, result);
     }
 
     fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
