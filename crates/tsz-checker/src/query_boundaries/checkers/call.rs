@@ -237,15 +237,20 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     )
 }
 
+pub(crate) struct CallArgSourceOptions<'a> {
+    pub(crate) force_bivariant_callbacks: bool,
+    pub(crate) contextual_type: Option<TypeId>,
+    pub(crate) actual_this_type: Option<TypeId>,
+    pub(crate) arg_source_is_type_annotation: &'a [bool],
+    pub(crate) arg_source_is_readonly_annotation: &'a [bool],
+}
+
 pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,
     func_type: TypeId,
     arg_types: &[TypeId],
-    force_bivariant_callbacks: bool,
-    contextual_type: Option<TypeId>,
-    actual_this_type: Option<TypeId>,
-    arg_source_is_type_annotation: &[bool],
+    opts: &CallArgSourceOptions<'_>,
 ) -> tsz_solver::operations::CallWithCheckerResult {
     tsz_solver::operations::resolve_call_with_checker_and_arg_sources(
         db,
@@ -253,10 +258,11 @@ pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
         func_type,
         arg_types,
         &tsz_solver::operations::ResolveCallOptions {
-            force_bivariant_callbacks,
-            contextual_type,
-            actual_this_type,
-            arg_source_is_type_annotation,
+            force_bivariant_callbacks: opts.force_bivariant_callbacks,
+            contextual_type: opts.contextual_type,
+            actual_this_type: opts.actual_this_type,
+            arg_source_is_type_annotation: opts.arg_source_is_type_annotation,
+            arg_source_is_readonly_annotation: opts.arg_source_is_readonly_annotation,
         },
     )
 }

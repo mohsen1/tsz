@@ -19,6 +19,7 @@ TypeScript/tests/cases/compiler/noUnusedLocals_writeOnly.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts
 
-# Existing main drift exposed by PR #12237/#12242 aggregate runs; tracked in #12247.
-TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
-TypeScript/tests/cases/compiler/correlatedUnions.ts
+# Existing drift exposed by PR #12255 after resolving the previous #12247
+# accepted rows for coAndContraVariantInferences2/correlatedUnions; tracked in
+# #12260.
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts

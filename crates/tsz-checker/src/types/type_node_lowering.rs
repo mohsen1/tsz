@@ -398,7 +398,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         .with_type_query_override(&type_query_override)
         .with_computed_name_resolver(&computed_name_resolver)
         .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
-        if use_qualified_names {
+        if use_qualified_names && self.type_node_is_in_lib_declaration(idx) {
             lowering = lowering.prefer_name_def_id_resolution();
         }
         if !type_param_bindings.is_empty() {
@@ -415,5 +415,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             lowering = lowering.with_import_type_resolver(resolver);
         }
         lowering.lower_type(idx)
+    }
+
+    fn type_node_is_in_lib_declaration(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        self.ctx
+            .arena
+            .get(current)
+            .and_then(|node| self.ctx.arena.get_source_file(node))
+            .is_some_and(|source| {
+                let file_name = std::path::Path::new(&source.file_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(source.file_name.as_str());
+                source.is_declaration_file
+                    && file_name.starts_with("lib.")
+                    && file_name.ends_with(".d.ts")
+            })
     }
 }

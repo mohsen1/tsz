@@ -227,6 +227,8 @@ impl<'a> CheckerState<'a> {
         // because the call happened to be overloaded.
         let arg_source_markers =
             self.call_arg_source_type_annotation_markers(args, arg_types.len());
+        let arg_readonly_markers =
+            self.call_arg_source_readonly_annotation_markers(args, arg_types.len());
         for (idx, original_sig) in signatures.iter().enumerate() {
             let sig = self.overload_signature_for_inference(
                 original_sig,
@@ -278,6 +280,7 @@ impl<'a> CheckerState<'a> {
                     sig_contextual_type,
                     None,
                     &arg_source_markers,
+                    &arg_readonly_markers,
                 )
             };
             if let CallResult::ArgumentTypeMismatch {
@@ -1050,6 +1053,7 @@ impl<'a> CheckerState<'a> {
                         sig_contextual_type,
                         actual_this_type,
                         &arg_source_markers,
+                        &arg_readonly_markers,
                     )
                     .2;
                 let return_sub_for_preinfer = if sig_contextual_type.is_some() {
@@ -1308,6 +1312,7 @@ impl<'a> CheckerState<'a> {
                     sig_contextual_type,
                     actual_this_type,
                     &arg_source_markers,
+                    &arg_readonly_markers,
                 );
             if let CallResult::ArgumentTypeMismatch {
                 expected,
@@ -1446,6 +1451,7 @@ impl<'a> CheckerState<'a> {
                         sig_contextual_type,
                         actual_this_type,
                         &arg_source_markers,
+                        &arg_readonly_markers,
                     );
                 if retry_predicate.is_some() {
                     selected_type_predicate = retry_predicate;

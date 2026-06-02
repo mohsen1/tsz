@@ -1232,6 +1232,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         value_type
     }
 
+    fn homomorphic_mapped_source_for_index_read(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        let Some(TypeData::IndexAccess(source, idx)) = self.interner().lookup(mapped.template)
+        else {
+            return None;
+        };
+        let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx) else {
+            return None;
+        };
+        if param.name != mapped.type_param.name {
+            return None;
+        }
+
+        if let Some(keyof_source) = keyof_inner_type(self.interner(), mapped.constraint) {
+            return (source == keyof_source).then_some(source);
+        }
+
+        if matches!(
+            self.interner().lookup(source),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
+        (self.evaluate(self.interner().keyof(source)) == mapped.constraint).then_some(source)
+    }
+
     fn constrained_index_type(&mut self, index_type: TypeId) -> Option<TypeId> {
         if index_type.is_intrinsic() {
             return None;
@@ -1369,6 +1394,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let subst = TypeSubstitution::single(mapped.type_param.name, substitution_index);
 
         let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let value_type = if matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
+            && !self.interner().exact_optional_property_types()
+            && let Some(source) = self.homomorphic_mapped_source_for_index_read(&mapped)
+            && self.index_type_can_hit_optional_property(source, substitution_index)
+        {
+            crate::narrowing::utils::remove_undefined(self.interner(), value_type)
+        } else {
+            value_type
+        };
 
         Some(self.apply_mapped_optional_read_semantics(
             mapped_object_type,

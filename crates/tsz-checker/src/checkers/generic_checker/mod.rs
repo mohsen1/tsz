@@ -770,8 +770,15 @@ impl<'a> CheckerState<'a> {
             .get(type_ref_idx)
             .and_then(|node| self.ctx.arena.get_type_ref(node))
             .and_then(|type_ref| self.entity_name_text(type_ref.type_name));
+        let mut local_base_name = None;
         let mut import_base_name = None;
         if let Some(base_name) = syntax_base_name.as_deref()
+            && let Some(local_sym_id) =
+                self.current_non_import_reference_symbol_id(sym_id, base_name)
+        {
+            sym_id = local_sym_id;
+            local_base_name = Some(base_name.to_owned());
+        } else if let Some(base_name) = syntax_base_name.as_deref()
             && let Some(alias_sym_id) = self.ctx.binder.file_locals.get(base_name)
             && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
             && self.reference_symbol_is_import_alias(alias_symbol)
@@ -824,7 +831,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let lib_binders = self.get_lib_binders();
-        let base_name = import_base_name.unwrap_or_else(|| {
+        let base_name = import_base_name.or(local_base_name).unwrap_or_else(|| {
             self.get_symbol_from_registered_file_target(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
                 .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone())

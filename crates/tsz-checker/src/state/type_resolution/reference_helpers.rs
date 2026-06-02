@@ -102,10 +102,41 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> (SymbolId, Option<usize>, String) {
+        if let Some(local_sym_id) =
+            self.current_non_import_reference_symbol_id(sym_id, expected_name)
+        {
+            return (local_sym_id, None, expected_name.to_owned());
+        }
         let (sym_id, file_idx) = self
             .reference_type_params_import_target(sym_id, expected_name)
             .unwrap_or_else(|| (sym_id, self.ctx.resolve_symbol_file_index(sym_id)));
         (sym_id, file_idx, expected_name.to_owned())
+    }
+
+    pub(crate) fn current_non_import_reference_symbol_id(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Option<SymbolId> {
+        if self.reference_symbol_is_current_non_import(sym_id, expected_name) {
+            return Some(sym_id);
+        }
+        if let Some(local_sym_id) = self.ctx.binder.file_locals.get(expected_name)
+            && self.reference_symbol_is_current_non_import(local_sym_id, expected_name)
+        {
+            return Some(local_sym_id);
+        }
+        None
+    }
+
+    fn reference_symbol_is_current_non_import(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.escaped_name == expected_name && !self.reference_symbol_is_import_alias(symbol)
+        })
     }
 
     fn reference_type_params_import_target(
@@ -591,6 +622,9 @@ impl<'a> CheckerState<'a> {
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
         let mut effective_sym_id = sym_id;
+        let mut effective_file_idx = None;
+        let local_reference_sym_id =
+            self.current_non_import_reference_symbol_id(sym_id, expected_name);
         let import_target = self
             .ctx
             .binder
@@ -608,12 +642,18 @@ impl<'a> CheckerState<'a> {
                     .register_symbol_file_target(target_sym_id, target_idx);
             }
             effective_sym_id = target_sym_id;
+            effective_file_idx = target_idx;
+        } else if let Some(local_sym_id) = local_reference_sym_id {
+            effective_sym_id = local_sym_id;
         }
 
-        let Some(symbol) = self
-            .get_symbol_from_registered_file_target(effective_sym_id)
-            .or_else(|| self.get_cross_file_symbol(effective_sym_id))
-        else {
+        let current_non_import = local_reference_sym_id == Some(effective_sym_id);
+        let Some(symbol) = (if current_non_import {
+            self.ctx.binder.get_symbol(effective_sym_id)
+        } else {
+            self.get_symbol_from_registered_file_target(effective_sym_id)
+                .or_else(|| self.get_cross_file_symbol(effective_sym_id))
+        }) else {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
@@ -630,7 +670,8 @@ impl<'a> CheckerState<'a> {
             && symbol.has_any_flags(symbol_flags::INTERFACE);
 
         if symbol.has_any_flags(symbol_flags::CLASS)
-            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(effective_sym_id)
+            && let Some(file_idx) =
+                effective_file_idx.or_else(|| self.ctx.resolve_symbol_file_index(effective_sym_id))
             && !std::ptr::eq(self.ctx.get_arena_for_file(file_idx as u32), self.ctx.arena)
         {
             let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
@@ -658,13 +699,17 @@ impl<'a> CheckerState<'a> {
         let mut merged: Vec<tsz_solver::TypeParamInfo> = Vec::new();
         let mut jsdoc_fallback: Option<Vec<tsz_solver::TypeParamInfo>> = None;
         for &decl_idx in &declarations {
-            let cross_file_arena = if let Some(file_idx) =
-                self.ctx.resolve_symbol_file_index(effective_sym_id)
-                && let Some(arena) = self
-                    .ctx
-                    .all_arenas
-                    .as_ref()
-                    .and_then(|arenas| arenas.get(file_idx).cloned())
+            let cross_file_arena = if let Some(file_idx) = effective_file_idx.or_else(|| {
+                if current_non_import {
+                    None
+                } else {
+                    self.ctx.resolve_symbol_file_index(effective_sym_id)
+                }
+            }) && let Some(arena) = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(file_idx).cloned())
                 && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
             {
                 Some(arena)

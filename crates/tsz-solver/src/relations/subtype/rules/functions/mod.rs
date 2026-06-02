@@ -344,7 +344,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 // representations before comparison.
                                 let se = self.evaluate_type(source_type);
                                 let te = self.evaluate_type(target_type);
-                                se == te || self.check_subtype(se, te).is_true()
+                                if se == te || self.check_subtype(se, te).is_true() {
+                                    return true;
+                                }
+                                if let Some(target_elem) = self
+                                    .readonly_array_syntax_element(target_type)
+                                    .or_else(|| self.readonly_array_syntax_element(te))
+                                    && let Some(source_elem) =
+                                        self.predicate_array_like_element_type(source_type, se)
+                                {
+                                    return self.check_subtype(source_elem, target_elem).is_true();
+                                }
+                                false
                             }
                             (None, Some(_)) => false,
                             (Some(_), None) | (None, None) => true,
@@ -353,6 +364,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
+    }
+
+    fn predicate_array_like_element_type(&self, raw: TypeId, evaluated: TypeId) -> Option<TypeId> {
+        crate::type_queries::get_array_element_type(self.interner, raw)
+            .or_else(|| crate::type_queries::get_array_element_type(self.interner, evaluated))
+            .or_else(|| {
+                crate::objects::IndexSignatureResolver::with_resolver(self.interner, self.resolver)
+                    .resolve_number_index(raw)
+            })
+            .or_else(|| {
+                (evaluated != raw).then(|| {
+                    crate::objects::IndexSignatureResolver::with_resolver(
+                        self.interner,
+                        self.resolver,
+                    )
+                    .resolve_number_index(evaluated)
+                })?
+            })
     }
 
     /// Check parameter compatibility with method bivariance support.

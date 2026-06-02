@@ -1410,6 +1410,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if let Some(name) = self.entity_name_text(node_idx)
+            && !name.contains('.')
+            && let Some(sym_id) = self.resolve_type_symbol(node_idx)
+        {
+            let sym_id = tsz_binder::SymbolId(sym_id);
+            let def_id = if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id)
+            {
+                self.ctx.get_canonical_lib_def_id(name.as_str(), sym_id)
+            } else {
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, name.as_str())
+            };
+            self.ensure_type_alias_resolved(sym_id, def_id);
+            return Some(def_id);
+        }
+
+        if let Some(name) = self.entity_name_text(node_idx)
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
             let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
