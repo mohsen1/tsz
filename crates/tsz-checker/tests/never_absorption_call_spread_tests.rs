@@ -100,6 +100,33 @@ fn property_access_chain_on_never_receiver_does_not_cascade() {
     );
 }
 
+#[test]
+fn private_name_access_and_call_on_never_receiver_is_only_ts2339() {
+    // Private-name access on a `never` receiver behaves like a regular name:
+    // TS2339 plus the any-like fallback, so trailing calls add no TS2349.
+    let source = r#"
+class Holder {
+    #field = 0;
+    #method() {}
+    reach(empty: never) {
+        empty.#field;
+        empty.#method();
+        empty.#field();
+    }
+}
+"#;
+    let codes = check(source);
+    assert_eq!(
+        count(&codes, 2339),
+        3,
+        "private-name access on never should report TS2339 per access, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2349),
+        "private-name calls on a never receiver must not report TS2349, got: {codes:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Spreading `never`: allowed in array literals, rejected elsewhere.
 // ---------------------------------------------------------------------------

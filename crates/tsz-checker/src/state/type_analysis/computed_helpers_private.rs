@@ -395,12 +395,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        // Property access on `never` returns `never` (bottom type propagation).
-        // TSC does not emit TS18050 for property access on `never` — the result is
-        // simply `never`, which allows exhaustive narrowing patterns to work correctly.
+        // Property access on a `never` receiver reports TS2339 (every name is
+        // "nonexistent" on `never`) and yields the any-like error fallback, exactly
+        // like the regular-name path (see `property_access_type::resolve`). Returning
+        // the fallback rather than `never` matches tsc — the access collapses to the
+        // error type, so a trailing call (`thing.#m()`) does not pile on a redundant
+        // TS2349, and the failed access still flows into tsc's follow-on TS2322.
         if object_type == TypeId::NEVER {
             self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
-            return TypeId::NEVER;
+            return TypeId::ANY;
         }
 
         let (object_type_for_check, nullish_cause) = self.split_nullish_type(object_type);
