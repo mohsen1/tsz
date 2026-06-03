@@ -19,7 +19,7 @@ declare const m: StringMap;
 m["x"] = "hello";
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -31,7 +31,7 @@ declare const m: StringMap;
 m["x"] = 42;
 "#,
     );
-    assert!(c.contains(&2322), "expected TS2322, got: {:?}", c);
+    assert!(c.contains(&2322), "expected TS2322, got: {c:?}");
 }
 
 #[test]
@@ -45,7 +45,7 @@ declare const m: StringMap | NumberMap;
 const v: string = m["x"];
 "#,
     );
-    assert!(c.contains(&2322), "expected TS2322, got: {:?}", c);
+    assert!(c.contains(&2322), "expected TS2322, got: {c:?}");
 }
 
 #[test]
@@ -66,8 +66,7 @@ const v: string = m["x"];
     );
     assert!(
         c.contains(&2322),
-        "expected TS2322 for post-if access, got: {:?}",
-        c
+        "expected TS2322 for post-if access, got: {c:?}"
     );
 }
 
@@ -81,5 +80,5 @@ function assignNumber<T extends HasStrings>(m: T, key: string) {
 }
 "#,
     );
-    assert!(c.contains(&2322), "expected TS2322, got: {:?}", c);
+    assert!(c.contains(&2322), "expected TS2322, got: {c:?}");
 }

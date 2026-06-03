@@ -1055,13 +1055,12 @@ C.#x++;
     // Filter for TS2339 errors (Property does not exist)
     let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
 
+    let n = ts2339_errors.len();
     assert!(
         ts2339_errors.is_empty(),
         "Should NOT emit TS2339 for valid static private field assignments/mutations. \
         Static private field #x should be accessible on class C. \
-        Got {} TS2339 errors: {:?}",
-        ts2339_errors.len(),
-        ts2339_errors
+        Got {n} TS2339 errors: {ts2339_errors:?}"
     );
 
     // Also verify no other unexpected errors (except possibly 18013 for visibility outside class)
@@ -1072,7 +1071,6 @@ C.#x++;
 
     assert!(
         unexpected.is_empty(),
-        "Got unexpected diagnostics (only TS2339 and TS18013 were being checked for): {:?}",
-        unexpected
+        "Got unexpected diagnostics (only TS2339 and TS18013 were being checked for): {unexpected:?}"
     );
 }
