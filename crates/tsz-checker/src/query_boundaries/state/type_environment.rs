@@ -426,7 +426,7 @@ pub(crate) enum CacheEntryCollection {
 impl CacheEntryCollection {
     #[inline]
     #[must_use]
-    pub(crate) fn when_enabled(enabled: bool) -> Self {
+    pub(crate) const fn when_enabled(enabled: bool) -> Self {
         if enabled { Self::Collect } else { Self::Skip }
     }
 }
