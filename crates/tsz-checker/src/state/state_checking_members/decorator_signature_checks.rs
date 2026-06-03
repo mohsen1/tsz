@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         let Some(function_type) = self.global_function_type_id() else {
             return false;
         };
-        self.assign_relation_outcome(decorator_type, function_type)
+        self.decorator_callee_relation_outcome(decorator_type, function_type)
             .related
     }
 
@@ -516,7 +516,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         if !self
-            .assign_relation_outcome(return_type, expected_return)
+            .return_relation_outcome(return_type, expected_return)
             .related
         {
             let return_str = self.format_type_diagnostic(return_type);
@@ -659,7 +659,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if !self
-            .assign_relation_outcome(return_type, TypeId::VOID)
+            .return_relation_outcome(return_type, TypeId::VOID)
             .related
         {
             let return_str = self.format_type_diagnostic(return_type);

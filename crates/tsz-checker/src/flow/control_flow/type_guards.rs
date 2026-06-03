@@ -799,8 +799,18 @@ impl<'a> FlowAnalyzer<'a> {
                                 }
                                 let evaluated_pred =
                                     flow_query::evaluate_type_structure(self.interner, pred_ty);
-                                evaluated_pred == arg_type
-                                    || self.interner.is_assignable_to(arg_type, evaluated_pred)
+                                evaluated_pred == arg_type || {
+                                    let env = self.type_environment.map(std::cell::RefCell::borrow);
+                                    flow_query::flow_assignability_outcome(
+                                        self.interner,
+                                        env.as_deref(),
+                                        self.concrete_this_type,
+                                        arg_type,
+                                        evaluated_pred,
+                                        false,
+                                    )
+                                    .related
+                                }
                             }))
             } else {
                 false

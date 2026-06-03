@@ -17,9 +17,9 @@ fn jsx_union_props_diagnostics_use_relation_outcome_boundary() {
     let function = &source[function_start..function_end];
 
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function.matches("jsx_props_relation_outcome").count(),
         2,
-        "JSX union props compatibility decisions should route through relation outcomes"
+        "JSX union props compatibility decisions should route through JSX props relation outcomes"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),

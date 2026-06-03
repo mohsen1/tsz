@@ -476,7 +476,7 @@ impl<'a> CheckerState<'a> {
     /// whose constraint is missing or could accept primitive values. Concrete object
     /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
     /// the constraint of a type parameter that could be instantiated with a primitive.
-    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+    fn type_may_represent_primitive(&mut self, ty: TypeId) -> bool {
         // The intrinsic `object` type excludes primitives by definition
         if ty == TypeId::OBJECT {
             return false;
@@ -504,8 +504,9 @@ impl<'a> CheckerState<'a> {
                     if self.type_may_represent_primitive(c) {
                         return true;
                     }
-                    // For concrete constraints, check if a primitive is assignable
-                    self.ctx.types.is_assignable_to(TypeId::STRING, c)
+                    // For concrete constraints, check if a primitive is assignable.
+                    self.in_operator_primitive_constraint_relation_outcome(TypeId::STRING, c)
+                        .related
                 }
             };
         }
@@ -1344,7 +1345,7 @@ impl<'a> CheckerState<'a> {
                 is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
                     eval_right,
                     func_ty,
-                    &mut |src, tgt| self.is_assignable_to(src, tgt),
+                    &mut |src, tgt| self.diagnostic_relation_outcome(src, tgt).related,
                 );
             } else if self.ctx.compiler_options.no_lib {
                 // Under `--noLib`, the global `Function` type is deliberately
@@ -1404,7 +1405,7 @@ impl<'a> CheckerState<'a> {
                         if ret != TypeId::BOOLEAN
                             && ret != TypeId::ANY
                             && ret != TypeId::ERROR
-                            && !self.assign_relation_outcome(ret, TypeId::BOOLEAN).related
+                            && !self.return_relation_outcome(ret, TypeId::BOOLEAN).related
                         {
                             self.error_at_node_msg(
                                 right_idx,
@@ -1423,7 +1424,7 @@ impl<'a> CheckerState<'a> {
                                 && param_type != TypeId::ANY
                                 && param_type != TypeId::UNKNOWN
                                 && param_type != TypeId::ERROR
-                                && !self.assign_relation_outcome(lhs_type, param_type).related
+                                && !self.call_arg_relation_outcome(lhs_type, param_type).related
                             {
                                 self.error_at_node_msg(
                                     left_idx,
@@ -1466,7 +1467,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .types
             .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
-        if self.assign_relation_outcome(key_type, target).related {
+        if self
+            .in_operator_key_relation_outcome(key_type, target)
+            .related
+        {
             return;
         }
         // Source uses the widened diagnostic form so a fresh literal operand shows its
@@ -1637,13 +1641,17 @@ impl<'a> CheckerState<'a> {
                     left,
                 )
                     || left_is_index_access
-                        && self.assign_relation_outcome(left, TypeId::NUMBER).related;
+                        && self
+                            .binary_arithmetic_number_relation_outcome(left, TypeId::NUMBER)
+                            .related;
                 let right_ok =
                     crate::query_boundaries::type_computation::core::is_arithmetic_operand(
                         self.ctx.types,
                         right,
                     ) || right_is_index_access
-                        && self.assign_relation_outcome(right, TypeId::NUMBER).related;
+                        && self
+                            .binary_arithmetic_number_relation_outcome(right, TypeId::NUMBER)
+                            .related;
                 left_ok && right_ok
             }
             _ => false,

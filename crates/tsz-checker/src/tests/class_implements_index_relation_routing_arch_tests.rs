@@ -15,20 +15,22 @@ fn class_implements_index_signatures_use_relation_outcome_boundary() {
         .split("fn class_member_name_is_computed")
         .next()
         .expect("slice helper body before next helper");
+    let compact = helper.split_whitespace().collect::<String>();
 
     assert_eq!(
-        helper
-            .matches("assign_relation_outcome(source_index.value_type, target_index.value_type)")
+        compact
+            .matches("class_implements_index_value_relation_outcome(source_index.value_type,target_index.value_type,)")
             .count(),
         2,
-        "class implements string and number index signature checks should use relation outcomes"
+        "class implements string and number index signature checks should use dedicated relation outcomes"
     );
     assert!(
         helper.contains(".related"),
         "class implements index signature checks should inspect the relation outcome"
     );
     assert!(
-        !helper.contains("diagnostic_relation_boolean_guard"),
-        "class implements index signature checks should not regress to raw boolean relation guards"
+        !helper.contains("assign_relation_outcome(")
+            && !helper.contains("diagnostic_relation_boolean_guard"),
+        "class implements index signature checks should not regress to generic assign or raw boolean relation guards"
     );
 }

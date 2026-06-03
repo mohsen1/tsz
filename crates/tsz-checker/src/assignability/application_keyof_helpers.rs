@@ -210,8 +210,16 @@ impl<'a> CheckerState<'a> {
                     .and_then(|param| param.constraint)
                     .is_some_and(|constraint| {
                         constraint == source_arg
-                            || (self.is_assignable_to(source_arg, constraint)
-                                && self.is_assignable_to(constraint, source_arg))
+                            || (self
+                                .keyof_diagnostic_suppression_relation_outcome(
+                                    source_arg, constraint,
+                                )
+                                .related
+                                && self
+                                    .keyof_diagnostic_suppression_relation_outcome(
+                                        constraint, source_arg,
+                                    )
+                                    .related)
                             || query::type_param_info(self.ctx.types, constraint)
                                 .zip(query::type_param_info(self.ctx.types, source_arg))
                                 .is_some_and(|(constraint_param, source_param)| {
@@ -222,7 +230,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn keyof_interface_augmentation_literals_cover_source(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -234,8 +242,12 @@ impl<'a> CheckerState<'a> {
 
         let target_keyof_inner = query::keyof_inner_type(self.ctx.types, target);
         let source_keyof_inner = source_members.iter().find_map(|&member| {
-            query::keyof_inner_type(self.ctx.types, member)
-                .filter(|_| member == target || self.ctx.types.is_assignable_to(member, target))
+            query::keyof_inner_type(self.ctx.types, member).filter(|_| {
+                member == target
+                    || self
+                        .keyof_diagnostic_suppression_relation_outcome(member, target)
+                        .related
+            })
         });
         let Some(inner) = target_keyof_inner.or(source_keyof_inner) else {
             return false;
@@ -324,7 +336,8 @@ impl<'a> CheckerState<'a> {
                     &self.ctx,
                     member,
                 );
-            self.ctx.types.is_assignable_to(member, target)
+            self.keyof_diagnostic_suppression_relation_outcome(member, target)
+                .related
                 || query::keyof_inner_type(self.ctx.types, member)
                     .and_then(|member_inner| query::lazy_def_id(self.ctx.types, member_inner))
                     .is_some_and(|member_def_id| member_def_id == def_id)

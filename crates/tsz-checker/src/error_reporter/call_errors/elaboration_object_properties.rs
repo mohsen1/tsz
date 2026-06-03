@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
                 && !self
-                    .assign_relation_outcome(cached_prop_type, target_prop_type)
+                    .call_arg_relation_outcome(cached_prop_type, target_prop_type)
                     .related
             {
                 // If the cached type fails, try the literal type from the initializer.
@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
                 // the literal type may actually be assignable to the inferred target.
                 if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
                     if self
-                        .assign_relation_outcome(literal_type, target_prop_type)
+                        .call_arg_relation_outcome(literal_type, target_prop_type)
                         .related
                     {
                         literal_type
@@ -388,7 +388,7 @@ impl<'a> CheckerState<'a> {
                     if contextual_prop_type != TypeId::ERROR
                         && contextual_prop_type != TypeId::ANY
                         && self
-                            .assign_relation_outcome(contextual_prop_type, target_prop_type)
+                            .call_arg_relation_outcome(contextual_prop_type, target_prop_type)
                             .related
                     {
                         contextual_prop_type
@@ -427,7 +427,7 @@ impl<'a> CheckerState<'a> {
                     && duplicate_source_for_check != TypeId::ERROR
                     && duplicate_source_for_check != TypeId::ANY
                     && !self
-                        .assign_relation_outcome(duplicate_source_for_check, target_prop_type)
+                        .call_arg_relation_outcome(duplicate_source_for_check, target_prop_type)
                         .related
                 {
                     let source_prop_type_for_diagnostic =
@@ -467,7 +467,7 @@ impl<'a> CheckerState<'a> {
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
                 && !self
-                    .assign_relation_outcome(effective_source_prop, target_prop_type)
+                    .call_arg_relation_outcome(effective_source_prop, target_prop_type)
                     .related
             {
                 let source_prop_type_for_diagnostic =
@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
                         if body_type == TypeId::ERROR
                             || body_type == TypeId::ANY
                             || self
-                                .assign_relation_outcome(body_type, expected_ret)
+                                .return_relation_outcome(body_type, expected_ret)
                                 .related
                         {
                             return None;
@@ -643,7 +643,7 @@ impl<'a> CheckerState<'a> {
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
                 && !self
-                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .call_arg_relation_outcome(source_prop_type, target_prop_type)
                     .related
                 && self
                     .ctx
@@ -686,7 +686,7 @@ impl<'a> CheckerState<'a> {
 
             // Check if the property value type is assignable to the target property type
             let prop_assignable = self
-                .assign_relation_outcome(source_prop_type, target_prop_type)
+                .call_arg_relation_outcome(source_prop_type, target_prop_type)
                 .related;
             if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
@@ -946,7 +946,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if !self
-                .assign_relation_outcome(source_member_type, target_member_type)
+                .call_arg_relation_outcome(source_member_type, target_member_type)
                 .related
             {
                 return false;
@@ -1318,7 +1318,7 @@ impl<'a> CheckerState<'a> {
                 && target_element_type != TypeId::ERROR
                 && target_element_type != TypeId::ANY
                 && self
-                    .assign_relation_outcome(contextual_elem_type, target_element_type)
+                    .call_arg_relation_outcome(contextual_elem_type, target_element_type)
                     .related;
 
             // When the target element type is an index-signature-only type
@@ -1378,7 +1378,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self
-                .assign_relation_outcome(elem_type, target_element_type)
+                .call_arg_relation_outcome(elem_type, target_element_type)
                 .related
             {
                 let widen_source_display = self.array_elaboration_widening_required_for_display(
@@ -1509,7 +1509,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self
-            .assign_relation_outcome(iterated_element_type, target_element_type)
+            .call_arg_relation_outcome(iterated_element_type, target_element_type)
             .related
         {
             return false;
@@ -1613,7 +1613,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self
-                .assign_relation_outcome(source_prop_type, target_prop_type)
+                .call_arg_relation_outcome(source_prop_type, target_prop_type)
                 .related
             {
                 return false;
@@ -1744,7 +1744,7 @@ impl<'a> CheckerState<'a> {
 
         // Only elaborate when the overall assignment fails.
         if self
-            .assign_relation_outcome(init_type, declared_type)
+            .variable_initializer_relation_outcome(init_type, declared_type)
             .related
         {
             return false;

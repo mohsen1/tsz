@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id,
                     ..
-                } if self.assign_relation_outcome(type_id, prop.type_id).related
+                } if self.jsx_render_fallback_relation_outcome(type_id, prop.type_id).related
             )
         })
     }

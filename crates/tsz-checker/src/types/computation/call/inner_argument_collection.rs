@@ -1404,7 +1404,7 @@
                                 // replace the callback return with the contextual type
                                 // to prevent widening in the solver's inference.
                                 if self
-                                    .assign_relation_outcome_with_env(
+                                    .return_relation_outcome_with_env(
                                         fn_shape.return_type,
                                         ctx_return,
                                     )

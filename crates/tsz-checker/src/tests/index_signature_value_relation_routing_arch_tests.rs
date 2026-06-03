@@ -17,10 +17,14 @@ fn index_signature_value_checks_use_relation_outcome_boundary() {
     let helper = &source[function_start..function_start + function_end];
 
     assert!(
-        helper.contains(".assign_relation_outcome(member, index_value_type)")
-            && helper.contains(".assign_relation_outcome(prop_type, index_value_type)")
+        helper.contains(".index_signature_relation_outcome(member, index_value_type)")
+            && helper.contains(".index_signature_relation_outcome(prop_type, index_value_type)")
             && helper.matches(".related").count() >= 2,
-        "index-signature value relation decisions should use relation outcomes"
+        "index-signature value relation decisions should use index-signature relation outcomes"
+    );
+    assert!(
+        !helper.contains(".assign_relation_outcome("),
+        "index-signature value helper should not use generic assignment request routing"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),

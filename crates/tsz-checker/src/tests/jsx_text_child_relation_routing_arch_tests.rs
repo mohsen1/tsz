@@ -14,8 +14,8 @@ fn jsx_text_child_diagnostic_uses_relation_outcome_boundary() {
         .expect("missing JSX text child diagnostic relation branch");
 
     assert!(
-        branch.contains("assign_relation_outcome(TypeId::STRING, children_type)"),
-        "JSX text-child diagnostics should use the shared relation outcome boundary"
+        branch.contains("jsx_children_relation_outcome(TypeId::STRING, children_type)"),
+        "JSX text-child diagnostics should use the JSX children relation outcome boundary"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard(TypeId::STRING, children_type)"),

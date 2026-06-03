@@ -53,7 +53,10 @@ impl<'a> CheckerState<'a> {
             };
             if self.type_contains_error(prop_type)
                 || self
-                    .assign_relation_outcome(prop_type, string_index_value)
+                    .interface_heritage_property_index_relation_outcome(
+                        prop_type,
+                        string_index_value,
+                    )
                     .related
             {
                 continue;

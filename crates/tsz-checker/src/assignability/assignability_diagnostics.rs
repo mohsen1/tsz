@@ -3,7 +3,9 @@ use crate::query_boundaries::assignability::{
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type, suppress_raw_excess_property_failure_if_needed,
 };
+use crate::query_boundaries::common as assignability_diagnostic_common;
 use crate::query_boundaries::common::type_param_info;
+use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -13,6 +15,8 @@ use tsz_solver::TypeId;
 mod argument_reports;
 mod display_types;
 mod explicit_any_annotations;
+mod generic_argument_suppression;
+mod type_comparability;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn generic_indexed_access_argument_surface(&self, type_id: TypeId) -> bool {
@@ -28,6 +32,32 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::contains_generic_indexed_access_surface(
             self.ctx.types,
             type_id,
+        )
+    }
+
+    fn target_prefers_outer_assignment_diagnostic(&mut self, target: TypeId) -> bool {
+        let candidates = vec![
+            target,
+            self.evaluate_contextual_type(target),
+            self.resolve_type_for_property_access(target),
+            self.evaluate_type_for_assignability(target),
+        ];
+
+        crate::query_boundaries::assignability::target_prefers_outer_assignment_diagnostic(
+            self.ctx.types,
+            &self.ctx,
+            &candidates,
+        )
+    }
+
+    const fn should_preserve_missing_property_diagnostic(
+        &self,
+        outcome: &crate::query_boundaries::assignability::RelationOutcome,
+    ) -> bool {
+        matches!(
+            outcome.failure,
+            Some(RelationFailure::MissingProperty { .. })
+                | Some(RelationFailure::MissingProperties { .. })
         )
     }
 
@@ -151,7 +181,7 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        let built_outcome = self.assign_relation_outcome(source, target);
+        let built_outcome = self.assignability_reason_relation_outcome(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -244,17 +274,17 @@ impl<'a> CheckerState<'a> {
         let had_excess_property_error =
             self.check_excess_properties_for_fresh_source(source, target, source_idx);
 
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        // Use the canonical satisfies relation outcome so the weak-union hint is collected
+        // alongside the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        let outcome = self.satisfies_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -274,7 +304,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.diagnostic_relation_boolean_guard(inner, target)
+            && self.satisfies_relation_outcome(inner, target).related
         {
             return true;
         }
@@ -501,7 +531,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        if self.jsx_props_relation_outcome(source, target).related {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -602,11 +632,20 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .relation_overflow
             .set(crate::context::RelationOverflowFlags::default());
-        let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
+        let assignable = outcome.related;
         // tsc emits TS2859 ("Excessive complexity") for all relation-checker
         // overflows regardless of whether it was depth or iteration that fired.
         // TS2321 ("Excessive stack depth") fires from a separate mechanism.
         if !assignable && self.ctx.relation_overflow.get().has_overflow() {
+            if crate::query_boundaries::assignability::intersection_source_contains_target_member(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            ) {
+                return true;
+            }
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -635,10 +674,6 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-        // Use the canonical assign relation outcome so the weak-union hint
-        // can be collected alongside the failure reason.
-        let outcome = self.assign_relation_outcome(source, target);
-
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
         if self.should_skip_weak_union_error_with_outcome(
@@ -672,11 +707,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if !skip_source_elaboration
+            && !self.target_prefers_outer_assignment_diagnostic(target)
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
             return false;
         }
-        self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+        if self.target_prefers_outer_assignment_diagnostic(target)
+            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && self
+                .missing_required_properties_from_index_signature_source(source, target)
+                .is_none()
+        {
+            self.error_type_not_assignable_at_with_display_types(source, target, diag_idx);
+        } else {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+        }
         false
     }
 
@@ -812,7 +857,11 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
                 return Some(
-                    self.diagnostic_relation_boolean_guard(source_literal, structural_target),
+                    self.numeric_enum_assignment_relation_outcome(
+                        source_literal,
+                        structural_target,
+                    )
+                    .related,
                 );
             }
             return None;
@@ -866,7 +915,8 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assignability_reason_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -890,10 +940,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -907,10 +953,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self.try_elaborate_assignment_source_error(source_idx, target) {
+        if !self.target_prefers_outer_assignment_diagnostic(target)
+            && self.try_elaborate_assignment_source_error(source_idx, target)
+        {
             return false;
         }
-        self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+        if self.target_prefers_outer_assignment_diagnostic(target)
+            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && self
+                .missing_required_properties_from_index_signature_source(source, target)
+                .is_none()
+        {
+            self.error_type_not_assignable_at_with_display_types(source, target, diag_idx);
+        } else {
+            self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+        }
         false
     }
 
@@ -931,14 +988,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assignability_reason_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
 
-        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
-        // the failure reason, avoiding a redundant solver round-trip in
-        // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -972,7 +1026,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let outcome = self.assign_relation_outcome(source, target);
+        let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
         }
@@ -991,479 +1045,6 @@ impl<'a> CheckerState<'a> {
 
         self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
         false
-    }
-
-    /// Check if two object types with call/construct signatures are comparable
-    /// because at least one has generic type parameters.
-    ///
-    /// In tsc's Comparable relation, object types with generic call signatures
-    /// are considered comparable to concrete call signature objects because the
-    /// generic could potentially be instantiated to match. For example:
-    /// `{ fn<T, U extends T>(x: T, y: U): T }` is comparable to
-    /// `{ fn(x: Base, y: C): Base }` because T=Base, U=C is a valid instantiation.
-    ///
-    /// This checks both direct callable shapes (for Callable types) and
-    /// property-level callable shapes (for Object types with method properties).
-    fn objects_with_generic_signatures_are_comparable(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let source_resolved = self.evaluate_type_with_resolution(source);
-        let target_resolved = self.evaluate_type_with_resolution(target);
-
-        let src_has_generics = self.type_has_generic_signatures(source_resolved);
-        let tgt_has_generics = self.type_has_generic_signatures(target_resolved);
-
-        // At least one side must have generic type parameters
-        if !src_has_generics && !tgt_has_generics {
-            return false;
-        }
-
-        // Both must be object-like types (have callable shape or object shape)
-        let src_is_object_like = self.is_object_or_callable_type(source_resolved);
-        let tgt_is_object_like = self.is_object_or_callable_type(target_resolved);
-
-        src_is_object_like && tgt_is_object_like
-    }
-
-    /// Check if a type has any generic call/construct signatures, either directly
-    /// (Callable/Function type) or through object properties.
-    fn type_has_generic_signatures(&self, type_id: TypeId) -> bool {
-        // Check direct callable shape (CallableShape has call_signatures + construct_signatures)
-        if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-        {
-            let has_generic_sigs = shape
-                .call_signatures
-                .iter()
-                .chain(shape.construct_signatures.iter())
-                .any(|sig| !sig.type_params.is_empty());
-            if has_generic_sigs {
-                return true;
-            }
-        }
-
-        // Check direct function shape (FunctionShape has type_params)
-        if let Some(func_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            && !func_shape.type_params.is_empty()
-        {
-            return true;
-        }
-
-        // Check object properties for callable/function types with generics
-        if let Some(obj_shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-        {
-            for prop in &obj_shape.properties {
-                // Check callable property types
-                if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
-                    self.ctx.types,
-                    prop.type_id,
-                ) {
-                    let has_generic_sigs = callable
-                        .call_signatures
-                        .iter()
-                        .chain(callable.construct_signatures.iter())
-                        .any(|sig| !sig.type_params.is_empty());
-                    if has_generic_sigs {
-                        return true;
-                    }
-                }
-                // Check function property types
-                if let Some(func_shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    prop.type_id,
-                ) && !func_shape.type_params.is_empty()
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a type is object-like (Callable, Object, or Function type).
-    fn is_object_or_callable_type(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id).is_some()
-            || crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some()
-            || crate::query_boundaries::common::has_function_shape(self.ctx.types, type_id)
-    }
-
-    /// Check if two object types are comparable because their function-typed
-    /// properties have overlapping arity.
-    ///
-    /// In tsc's comparable relation, objects like `{ fn(a?: Base): void }` and
-    /// `{ fn(a?: C): void }` are considered comparable because both functions
-    /// can be called with 0 arguments (all optional). The comparable relation
-    /// threads through object properties and checks function signatures for
-    /// arity overlap, not strict assignability.
-    fn objects_with_arity_overlapping_functions_are_comparable(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        use crate::query_boundaries::common::{function_shape_for_type, object_shape_for_type};
-
-        let source_resolved = self.evaluate_type_with_resolution(source);
-        let target_resolved = self.evaluate_type_with_resolution(target);
-
-        let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
-            return false;
-        };
-        let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
-            return false;
-        };
-
-        // Need at least one common property that is a function type
-        let mut found_function_prop = false;
-
-        for target_prop in &target_shape.properties {
-            if let Some(source_prop) = source_shape
-                .properties
-                .iter()
-                .find(|p| p.name == target_prop.name)
-            {
-                // Check if both properties are function types
-                let src_func = function_shape_for_type(self.ctx.types, source_prop.type_id);
-                let tgt_func = function_shape_for_type(self.ctx.types, target_prop.type_id);
-
-                match (src_func, tgt_func) {
-                    (Some(src_fn), Some(tgt_fn)) => {
-                        found_function_prop = true;
-                        // Check arity overlap: min arity of one <= max arity of other
-                        let src_min = src_fn.params.iter().filter(|p| p.is_required()).count();
-                        let tgt_min = tgt_fn.params.iter().filter(|p| p.is_required()).count();
-                        let src_has_rest = src_fn.params.iter().any(|p| p.rest);
-                        let tgt_has_rest = tgt_fn.params.iter().any(|p| p.rest);
-                        let src_max = if src_has_rest {
-                            usize::MAX
-                        } else {
-                            src_fn.params.len()
-                        };
-                        let tgt_max = if tgt_has_rest {
-                            usize::MAX
-                        } else {
-                            tgt_fn.params.len()
-                        };
-
-                        // Arity ranges must overlap: [src_min, src_max] ∩ [tgt_min, tgt_max] ≠ ∅
-                        if src_min > tgt_max || tgt_min > src_max {
-                            return false;
-                        }
-
-                        // Thread through signature: even with overlapping arity, tsc's
-                        // comparable relation requires pairwise parameter comparability
-                        // and return-type comparability. Two optional params of unrelated
-                        // types are still comparable because both admit `undefined`
-                        // (e.g., `a?: Base` vs `a?: C`); skip those positions. Rest
-                        // params compare by their element type.
-                        let min_pairs = src_fn.params.len().min(tgt_fn.params.len());
-                        let mut sig_ok = true;
-                        for i in 0..min_pairs {
-                            let sp = &src_fn.params[i];
-                            let tp = &tgt_fn.params[i];
-                            if sp.optional && tp.optional && !sp.rest && !tp.rest {
-                                continue;
-                            }
-                            let src_t = if sp.rest {
-                                crate::query_boundaries::common::array_element_type(
-                                    self.ctx.types,
-                                    sp.type_id,
-                                )
-                                .unwrap_or(sp.type_id)
-                            } else {
-                                sp.type_id
-                            };
-                            let tgt_t = if tp.rest {
-                                crate::query_boundaries::common::array_element_type(
-                                    self.ctx.types,
-                                    tp.type_id,
-                                )
-                                .unwrap_or(tp.type_id)
-                            } else {
-                                tp.type_id
-                            };
-                            if !self.is_type_comparable_to(src_t, tgt_t) {
-                                sig_ok = false;
-                                break;
-                            }
-                        }
-                        if !sig_ok {
-                            return false;
-                        }
-                        if !self.is_type_comparable_to(src_fn.return_type, tgt_fn.return_type) {
-                            return false;
-                        }
-                    }
-                    (None, None) => {
-                        // Neither is a function type — check normal comparability
-                        let prop_comparable = self.diagnostic_relation_boolean_guard(
-                            source_prop.type_id,
-                            target_prop.type_id,
-                        ) || self.diagnostic_relation_boolean_guard(
-                            target_prop.type_id,
-                            source_prop.type_id,
-                        );
-                        if !prop_comparable {
-                            return false;
-                        }
-                    }
-                    _ => {
-                        // One is function, the other is not — not comparable
-                        return false;
-                    }
-                }
-            }
-        }
-
-        found_function_prop
-    }
-
-    /// Check if two types are comparable (overlap).
-    ///
-    /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
-    /// have any overlap. TSC's comparableRelation differs from assignability:
-    /// - For union sources: uses `someTypeRelatedToType` (ANY member suffices)
-    /// - For union targets: also checks per-member overlap
-    /// - For `TypeParameter` sources: uses apparent type (constraint or `unknown`)
-    /// - Special carve-out: two unrelated type params are NOT comparable
-    ///
-    /// Used for switch/case comparability (TS2678), equality narrowing,
-    /// relational operator checks (TS2365), etc.
-    pub(crate) fn is_type_comparable_to(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::query_boundaries::dispatch as query;
-
-        // Identity: any type is trivially comparable to itself
-        if source == target {
-            return true;
-        }
-
-        // Resolve type parameters to their apparent types for comparison.
-        // In tsc, `isTypeComparableTo` uses `getReducedApparentType` for TypeParam sources,
-        // and has a carve-out when BOTH source and target are type parameters (only comparable
-        // if one constrains to the other). See tsc checker.ts:23671-23684.
-        let source_is_tp = is_type_parameter_like(self.ctx.types, source);
-        let target_is_tp = is_type_parameter_like(self.ctx.types, target);
-
-        if source_is_tp && target_is_tp {
-            // Both are type parameters: only comparable if one constrains to the other.
-            // Unconstrained T is NOT comparable to unconstrained U.
-            return self.type_params_are_comparable(source, target);
-        }
-
-        // Resolve type parameter to apparent type (constraint or `unknown`)
-        let source_apparent = if source_is_tp {
-            self.get_type_param_apparent_type(source)
-        } else {
-            source
-        };
-        let target_apparent = if target_is_tp {
-            self.get_type_param_apparent_type(target)
-        } else {
-            target
-        };
-
-        let skip_signature_only_fast_path =
-            self.are_pure_signature_objects(source_apparent, target_apparent);
-
-        // Fast path: direct bidirectional assignability (with apparent types).
-        // Skip this for pure call/construct signature objects because TS overlap
-        // checks are stricter than general object assignability there.
-        if !skip_signature_only_fast_path
-            && (self.diagnostic_relation_boolean_guard(source_apparent, target_apparent)
-                || self.diagnostic_relation_boolean_guard(target_apparent, source_apparent))
-        {
-            return true;
-        }
-
-        // TSC's comparable relation decomposes unions and checks if ANY member
-        // is related to the other type. This handles cases like:
-        // - `User.A | User.B` comparable to `User.A` (User.A member matches)
-        // - `string & Brand` comparable to `"a"` (string member of intersection)
-
-        // Decompose source union: check if any member is assignable in either direction
-        if let Some(members) = query::union_members(self.ctx.types, source_apparent) {
-            for member in &members {
-                if self.diagnostic_relation_boolean_guard(*member, target_apparent)
-                    || self.diagnostic_relation_boolean_guard(target_apparent, *member)
-                {
-                    return true;
-                }
-            }
-        }
-
-        // Decompose target union: check if any member is assignable in either direction
-        if let Some(members) = query::union_members(self.ctx.types, target_apparent) {
-            for member in &members {
-                if self.diagnostic_relation_boolean_guard(source_apparent, *member)
-                    || self.diagnostic_relation_boolean_guard(*member, source_apparent)
-                {
-                    return true;
-                }
-            }
-        }
-
-        // Decompose intersection: `"a"` is comparable to `string & Brand` because
-        // `"a"` is assignable to `string` (one constituent). tsc's comparable relation
-        // treats intersections as comparable if the source overlaps with ANY member.
-        if let Some(members) = query::intersection_members(self.ctx.types, source_apparent) {
-            for member in &members {
-                if self.diagnostic_relation_boolean_guard(*member, target_apparent)
-                    || self.diagnostic_relation_boolean_guard(target_apparent, *member)
-                {
-                    return true;
-                }
-            }
-        }
-        if let Some(members) = query::intersection_members(self.ctx.types, target_apparent) {
-            for member in &members {
-                if self.diagnostic_relation_boolean_guard(source_apparent, *member)
-                    || self.diagnostic_relation_boolean_guard(*member, source_apparent)
-                {
-                    return true;
-                }
-            }
-        }
-
-        // Additional check: Two object types where ALL properties are optional always
-        // overlap at `{}`, making them comparable even if property types differ.
-        // Example: `{ b?: number }` vs `{ b?: string }` are comparable because both
-        // include `{}` as a valid value.
-        if self.objects_with_all_optional_common_props_overlap(source_apparent, target_apparent) {
-            return true;
-        }
-
-        if self.constructor_signature_only_objects_overlap(source_apparent, target_apparent) {
-            return true;
-        }
-
-        // Two object types where at least one has generic call/construct signatures
-        // are considered comparable by tsc's Comparable relation. This is because
-        // generic signatures can potentially be instantiated to match the concrete
-        // type, so tsc treats them as having structural overlap.
-        if self.objects_with_generic_signatures_are_comparable(source_apparent, target_apparent) {
-            return true;
-        }
-
-        // Two object types where function-typed properties have overlapping arity
-        // are comparable. For example, `{ fn(a?: Base): void }` and `{ fn(a?: C): void }`
-        // are comparable because both functions can be called with 0 args (all optional).
-        // tsc's Comparable relation threads through object properties and considers
-        // function signatures comparable when their arity ranges overlap.
-        if self.objects_with_arity_overlapping_functions_are_comparable(
-            source_apparent,
-            target_apparent,
-        ) {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if two object types have comparable properties.
-    ///
-    /// Resolves both types to their concrete shapes and checks if every common
-    /// property's type is comparable (assignable in at least one direction).
-    /// This implements the property-level threading of tsc's `comparableRelation`,
-    /// handling cases where whole-object bidirectional assignability fails but
-    /// individual property types overlap.
-    pub(crate) fn object_properties_are_comparable(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        use crate::query_boundaries::assignability::object_shape_for_type;
-        use tsz_common::Visibility;
-
-        // Skip when either type involves type parameters. Type parameter
-        // constraints overlap structurally with many types, but tsc's
-        // comparable relation for generics is stricter than per-property
-        // bidirectional assignability.
-        if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
-            || crate::query_boundaries::assignability::contains_type_parameters(
-                self.ctx.types,
-                target,
-            )
-        {
-            return false;
-        }
-
-        let source_resolved = self.evaluate_type_with_resolution(source);
-        let target_resolved = self.evaluate_type_with_resolution(target);
-
-        // Tuples are already handled element-wise by the solver's
-        // `types_are_comparable_for_assertion` (see flow.rs); the property-bag
-        // view here would treat the implicit `length` literal as a shared
-        // comparable property and falsely report overlap for casts like
-        // `[C, D] as [A, I]` where the elements don't overlap. Defer to the
-        // solver's tuple logic.
-        let source_is_tuple =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_resolved)
-                .is_some();
-        let target_is_tuple =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, target_resolved)
-                .is_some();
-        if source_is_tuple && target_is_tuple {
-            return false;
-        }
-
-        let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
-            return false;
-        };
-
-        // When target is an intersection, source must overlap with every member.
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, target_resolved)
-        {
-            return members
-                .iter()
-                .all(|&member| self.object_properties_are_comparable(source, member));
-        }
-
-        let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
-            return false;
-        };
-
-        // Skip for types with private/protected members. Classes with private
-        // properties use nominal checking — the comparable relation requires
-        // matching declarations, not just structural overlap.
-        let has_non_public = source_shape
-            .properties
-            .iter()
-            .chain(target_shape.properties.iter())
-            .any(|p| p.visibility != Visibility::Public);
-        if has_non_public {
-            return false;
-        }
-
-        // Need at least one common property
-        let mut found_common = false;
-
-        for target_prop in &target_shape.properties {
-            if let Some(source_prop) = source_shape
-                .properties
-                .iter()
-                .find(|p| p.name == target_prop.name)
-            {
-                found_common = true;
-                // Property types must be comparable (assignable in at least one direction)
-                let prop_comparable = self
-                    .diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
-                    || self.diagnostic_relation_boolean_guard(
-                        target_prop.type_id,
-                        source_prop.type_id,
-                    );
-                if !prop_comparable {
-                    return false;
-                }
-            }
-        }
-
-        found_common
     }
 
     /// Check if source object literal has properties that don't exist in target.
@@ -1747,7 +1328,7 @@ impl<'a> CheckerState<'a> {
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
-            && self.diagnostic_relation_boolean_guard(return_type, target)
+            && self.return_relation_outcome(return_type, target).related
         {
             return true;
         }
@@ -1763,7 +1344,9 @@ impl<'a> CheckerState<'a> {
             if construct_return != TypeId::VOID
                 && construct_return != TypeId::UNDEFINED
                 && construct_return != TypeId::NEVER
-                && self.diagnostic_relation_boolean_guard(construct_return, target)
+                && self
+                    .return_relation_outcome(construct_return, target)
+                    .related
             {
                 return true;
             }
@@ -1859,7 +1442,9 @@ impl<'a> CheckerState<'a> {
         }
         let value_type = value_prop.type_id;
 
-        !self.diagnostic_relation_boolean_guard(TypeId::UNDEFINED, value_type)
+        !self
+            .iterator_result_value_relation_outcome(TypeId::UNDEFINED, value_type)
+            .related
     }
 
     fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {

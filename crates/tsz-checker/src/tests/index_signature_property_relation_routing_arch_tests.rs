@@ -20,12 +20,18 @@ fn index_signature_property_checks_use_relation_outcome_boundary() {
     let compact_helper: String = helper.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        compact_helper.contains("assign_relation_outcome(member,index_value_type).related"),
-        "union property members should route index-signature value checks through relation outcome"
+        compact_helper
+            .contains("index_signature_relation_outcome(member,index_value_type).related"),
+        "union property members should route index-signature value checks through index-signature relation outcome"
     );
     assert!(
-        compact_helper.contains("assign_relation_outcome(prop_type,index_value_type).related"),
-        "property/index value checks should route through relation outcome"
+        compact_helper
+            .contains("index_signature_relation_outcome(prop_type,index_value_type).related"),
+        "property/index value checks should route through index-signature relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome("),
+        "property/index value checks should not use generic assignment request routing"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),

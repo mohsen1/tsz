@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if the specifier type is assignable to `string`
         if !self
-            .assign_relation_outcome(arg_type, TypeId::STRING)
+            .call_arg_relation_outcome(arg_type, TypeId::STRING)
             .related
         {
             let type_str = self.format_type(arg_type);
@@ -176,7 +176,7 @@ impl<'a> CheckerState<'a> {
         // TS2322 anchored at the options object, matching tsc fingerprints.
         if self.import_options_has_attribute_property(options_idx) {
             if !self
-                .assign_relation_outcome(options_type, import_call_options_type)
+                .call_arg_relation_outcome(options_type, import_call_options_type)
                 .related
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

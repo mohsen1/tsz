@@ -705,7 +705,7 @@ impl<'a> CheckerState<'a> {
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
     pub(crate) fn should_suppress_assignability_diagnostic(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
@@ -739,7 +739,11 @@ impl<'a> CheckerState<'a> {
                     &self.ctx,
                     target,
                 );
-            if resolved_keyof != target && self.ctx.types.is_assignable_to(source, resolved_keyof) {
+            if resolved_keyof != target
+                && self
+                    .keyof_diagnostic_suppression_relation_outcome(source, resolved_keyof)
+                    .related
+            {
                 return true;
             }
             if self.keyof_interface_augmentation_literals_cover_source(source, target) {

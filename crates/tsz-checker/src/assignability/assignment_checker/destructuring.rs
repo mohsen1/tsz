@@ -428,9 +428,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(spread_expr, spread_expr) {
             return;
         }
-        // Use the canonical assign relation outcome so the weak-union hint is collected
+        // Use the canonical destructuring relation outcome so the weak-union hint is collected
         // alongside the failure reason and can be reused by the skip gate.
-        let outcome = self.assign_relation_outcome(source, rest_target_type);
+        let outcome = self.destructuring_relation_outcome(source, rest_target_type);
         if outcome.related {
             return;
         }
@@ -554,7 +554,10 @@ impl<'a> CheckerState<'a> {
                                             || default_type == TypeId::ANY
                                             || default_type == TypeId::ERROR
                                             || self
-                                                .assign_relation_outcome(default_type, target_type)
+                                                .destructuring_relation_outcome(
+                                                    default_type,
+                                                    target_type,
+                                                )
                                                 .related;
                                         if default_assignable {
                                             // Default is fine but property type might not be.
@@ -840,7 +843,7 @@ impl<'a> CheckerState<'a> {
             if default_type != TypeId::ANY
                 && default_type != TypeId::ERROR
                 && !self
-                    .assign_relation_outcome(default_type, target_type)
+                    .destructuring_relation_outcome(default_type, target_type)
                     .related
             {
                 if self.try_report_object_default_property_mismatch(
@@ -923,7 +926,10 @@ impl<'a> CheckerState<'a> {
         // Ensure both types are fully resolved before relation checking.
         self.ensure_relation_input_ready(prop_type);
         self.ensure_relation_input_ready(target_type);
-        if self.assign_relation_outcome(prop_type, target_type).related {
+        if self
+            .destructuring_relation_outcome(prop_type, target_type)
+            .related
+        {
             return;
         }
         // Emit TS2322 directly. Format source type from the TypeId rather
@@ -990,7 +996,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if self
-                .assign_relation_outcome(source_type, target_prop_type)
+                .destructuring_relation_outcome(source_type, target_prop_type)
                 .related
             {
                 continue;

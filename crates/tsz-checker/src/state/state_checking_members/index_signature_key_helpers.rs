@@ -17,12 +17,12 @@ impl<'a> CheckerState<'a> {
         ) {
             let members: Vec<TypeId> = self.ctx.types.type_list(list_id).to_vec();
             return members.into_iter().all(|member| {
-                self.assign_relation_outcome(member, index_value_type)
+                self.index_signature_relation_outcome(member, index_value_type)
                     .related
             });
         }
 
-        self.assign_relation_outcome(prop_type, index_value_type)
+        self.index_signature_relation_outcome(prop_type, index_value_type)
             .related
     }
 

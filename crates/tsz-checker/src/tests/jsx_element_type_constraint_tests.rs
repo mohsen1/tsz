@@ -369,9 +369,11 @@ fn uniform_indexed_access_constraint_uses_relation_outcome_boundary() {
         "uniform indexed-access constraint checks must use the shared relation outcome boundary"
     );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("generic_constraint_property_relation_outcome(")
+            .count(),
         4,
-        "property-value constraint checks should route through RelationOutcome"
+        "property-value constraint checks should route through the generic constraint property request helper"
     );
 }
 

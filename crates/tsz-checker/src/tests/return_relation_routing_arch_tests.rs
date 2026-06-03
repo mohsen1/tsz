@@ -8,11 +8,17 @@ fn return_statement_diagnostics_use_return_relation_outcome_boundary() {
         .expect("failed to read core_statement_checks.rs");
     let function_return_source = fs::read_to_string("src/types/function_type_helpers.rs")
         .expect("failed to read function_type_helpers.rs");
+    let return_type_source = fs::read_to_string("src/types/utilities/return_type.rs")
+        .expect("failed to read return_type.rs");
     let compact_return_source: String = return_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
     let compact_function_return_source: String = function_return_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let compact_return_type_source: String = return_type_source
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -72,5 +78,16 @@ fn return_statement_diagnostics_use_return_relation_outcome_boundary() {
         !compact_function_return_source
             .contains("diagnostic_relation_boolean_guard(when_false,expected_return_type)"),
         "expression-bodied conditional false returns should not pre-gate with a raw boolean relation"
+    );
+    assert_eq!(
+        compact_return_type_source
+            .matches("return_relation_outcome(TypeId::UNDEFINED,ctx).related")
+            .count(),
+        2,
+        "contextual empty/fallthrough return inference should use return-shaped relation outcomes"
+    );
+    assert!(
+        !compact_return_type_source.contains("is_assignable_to(TypeId::UNDEFINED,ctx)"),
+        "contextual empty/fallthrough return inference should not use raw boolean assignability"
     );
 }

@@ -506,7 +506,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let related = self
-            .assign_relation_outcome(source_type, import_attributes_type)
+            .import_attributes_relation_outcome(source_type, import_attributes_type)
             .related;
         if !related {
             use crate::diagnostics::format_message;

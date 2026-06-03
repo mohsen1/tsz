@@ -27,8 +27,9 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
         "fn single_jsx_child_is_function_like",
     );
     assert!(
-        single_satisfies.contains("assign_relation_outcome(actual_child_type, children_type)"),
-        "single JSX child compatibility must use the relation outcome boundary"
+        single_satisfies
+            .contains("jsx_children_relation_outcome(actual_child_type, children_type)"),
+        "single JSX child compatibility must use the JSX children relation outcome boundary"
     );
 
     let text_acceptance = helper_source(
@@ -37,8 +38,8 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
         "fn check_jsx_multiple_children_assignable",
     );
     assert!(
-        text_acceptance.contains("assign_relation_outcome(TypeId::STRING, children_type)"),
-        "JSX text-child compatibility must use the relation outcome boundary"
+        text_acceptance.contains("jsx_children_relation_outcome(TypeId::STRING, children_type)"),
+        "JSX text-child compatibility must use the JSX children relation outcome boundary"
     );
 
     let multiple_assignability = helper_source(
@@ -48,8 +49,8 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
     );
     assert!(
         multiple_assignability
-            .contains("assign_relation_outcome(actual_children_type, children_type)"),
-        "JSX multiple-children aggregate compatibility must use the relation outcome boundary"
+            .contains("jsx_children_relation_outcome(actual_children_type, children_type)"),
+        "JSX multiple-children aggregate compatibility must use the JSX children relation outcome boundary"
     );
 
     let single_assignability = helper_source(
@@ -58,8 +59,9 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
         "fn rewrite_recent_jsx_element_source_display",
     );
     assert!(
-        single_assignability.contains("assign_relation_outcome(actual_child_type, children_type)"),
-        "JSX single-child diagnostics must use the relation outcome boundary"
+        single_assignability
+            .contains("jsx_children_relation_outcome(actual_child_type, children_type)"),
+        "JSX single-child diagnostics must use the JSX children relation outcome boundary"
     );
 
     let individual_assignability = helper_source(
@@ -69,10 +71,11 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
     );
     assert!(
         individual_assignability
-            .contains("assign_relation_outcome(actual_child_type, expected_child_type)")
-            && individual_assignability
-                .contains("assign_relation_outcome(actual_child_type, original_children_type)"),
-        "JSX per-child diagnostics must use the relation outcome boundary"
+            .contains("jsx_children_relation_outcome(actual_child_type, expected_child_type)")
+            && individual_assignability.contains(
+                "jsx_children_relation_outcome(actual_child_type, original_children_type)"
+            ),
+        "JSX per-child diagnostics must use the JSX children relation outcome boundary"
     );
 
     let class_compatibility = helper_source(
@@ -81,10 +84,11 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
         "fn get_precise_jsx_children_body_type",
     );
     assert!(
-        class_compatibility.contains("assign_relation_outcome(resolved_instance, resolved_target)")
+        class_compatibility
+            .contains("jsx_children_relation_outcome(resolved_instance, resolved_target)")
             && class_compatibility
-                .contains("assign_relation_outcome(resolved_target, resolved_instance)"),
-        "JSX child class compatibility must use relation outcome boundary probes"
+                .contains("jsx_children_relation_outcome(resolved_target, resolved_instance)"),
+        "JSX child class compatibility must use JSX children relation outcome boundary probes"
     );
 
     let multiple_allowed = helper_source(
@@ -93,9 +97,19 @@ fn jsx_children_assignability_helpers_use_relation_outcome_boundary() {
         "pub(super) fn type_requires_multiple_children",
     );
     assert!(
-        multiple_allowed.contains("assign_relation_outcome(array_of_children, type_id)")
+        multiple_allowed.contains("jsx_children_relation_outcome(array_of_children, type_id)")
             && multiple_allowed.contains(".related"),
-        "JSX multiple-children fallback compatibility must use the relation outcome boundary"
+        "JSX multiple-children fallback compatibility must use the JSX children relation outcome boundary"
+    );
+
+    let relation_helper_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assignability/relation_outcome_helpers.rs");
+    let relation_helper =
+        fs::read_to_string(relation_helper_path).expect("read relation outcome helper source");
+    assert!(
+        relation_helper.contains("fn jsx_children_relation_outcome")
+            && relation_helper.contains("RelationRequest::jsx_children(source, target)"),
+        "JSX children diagnostics should have a request-shaped RelationKind::JsxChildren helper"
     );
 
     assert!(

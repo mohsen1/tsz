@@ -253,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             !self
-                .assign_relation_outcome(*attr_type, expected_type)
+                .jsx_props_relation_outcome(*attr_type, expected_type)
                 .related
         });
         // A spread whose source carries a deferred conditional over a type
@@ -284,7 +284,9 @@ impl<'a> CheckerState<'a> {
                     attrs_type,
                 );
             if !source_retains_explicit_object
-                && self.assign_relation_outcome(attrs_type, props_type).related
+                && self
+                    .jsx_props_relation_outcome(attrs_type, props_type)
+                    .related
             {
                 return;
             }
@@ -1068,10 +1070,10 @@ impl<'a> CheckerState<'a> {
             let alias_evaluated = self.evaluate_type_with_env(alias_hint);
             if alias_evaluated != TypeId::ERROR
                 && self
-                    .assign_relation_outcome(alias_evaluated, normalized)
+                    .jsx_props_relation_outcome(alias_evaluated, normalized)
                     .related
                 && self
-                    .assign_relation_outcome(normalized, alias_evaluated)
+                    .jsx_props_relation_outcome(normalized, alias_evaluated)
                     .related
             {
                 self.ctx.types.store_display_alias(normalized, alias_hint);
@@ -1786,7 +1788,7 @@ impl<'a> CheckerState<'a> {
             // Build target: IntrinsicAttributes & spread_type
             let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
-            if !self.assign_relation_outcome(spread_type, target).related {
+            if !self.jsx_props_relation_outcome(spread_type, target).related {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
                 let message = format_message(
@@ -1923,10 +1925,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(alias_hint) = alias_hint {
                     let alias_evaluated = self.evaluate_type_with_env(alias_hint);
                     if self
-                        .assign_relation_outcome(alias_evaluated, evaluated)
+                        .jsx_props_relation_outcome(alias_evaluated, evaluated)
                         .related
                         && self
-                            .assign_relation_outcome(evaluated, alias_evaluated)
+                            .jsx_props_relation_outcome(evaluated, alias_evaluated)
                             .related
                     {
                         self.ctx.types.store_display_alias(evaluated, alias_hint);
@@ -1955,7 +1957,7 @@ impl<'a> CheckerState<'a> {
         if !initializer_is_bare_string_literal
             || original_property_type == expected_type
             || self
-                .assign_relation_outcome(actual_type, expected_type)
+                .jsx_props_relation_outcome(actual_type, expected_type)
                 .related
         {
             return None;

@@ -68,7 +68,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self.state.assign_relation_outcome(source, target).related {
+        if self
+            .state
+            .call_adapter_compatibility_relation_outcome(source, target)
+            .related
+        {
             return true;
         }
         if self
@@ -90,7 +94,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        self.state.is_assignable_to_strict(source, target)
+        self.state.strict_relation_outcome(source, target).related
     }
 
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -104,7 +108,9 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        self.state.is_assignable_to_bivariant(source, target)
+        self.state
+            .bivariant_callbacks_relation_outcome(source, target)
+            .related
     }
 
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
@@ -157,11 +163,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.ensure_relation_input_ready(a_resolved);
         self.state.ensure_relation_input_ready(b_resolved);
         self.state
-            .assign_relation_outcome(a_resolved, b_resolved)
+            .call_adapter_identity_relation_outcome(a_resolved, b_resolved)
             .related
             && self
                 .state
-                .assign_relation_outcome(b_resolved, a_resolved)
+                .call_adapter_identity_relation_outcome(b_resolved, a_resolved)
                 .related
     }
 

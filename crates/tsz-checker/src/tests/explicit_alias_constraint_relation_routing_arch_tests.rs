@@ -7,16 +7,19 @@ fn explicit_alias_constraint_uses_relation_outcome_boundary() {
             .expect("failed to read explicit_alias_constraint_helpers.rs");
 
     assert_eq!(
-        source.matches("assign_relation_outcome").count(),
+        source
+            .matches("explicit_alias_constraint_relation_outcome")
+            .count(),
         1,
-        "explicit alias constraint compatibility should route through assign_relation_outcome"
+        "explicit alias constraint compatibility should route through its dedicated request"
     );
     assert!(
         source.contains(".related"),
         "explicit alias constraint compatibility should use the relation outcome decision"
     );
     assert!(
-        !source.contains("diagnostic_relation_boolean_guard"),
-        "explicit alias constraint compatibility should not regress to the raw boolean relation guard"
+        !source.contains("assign_relation_outcome")
+            && !source.contains("diagnostic_relation_boolean_guard"),
+        "explicit alias constraint compatibility should not regress to generic or raw relation guards"
     );
 }

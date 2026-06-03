@@ -461,13 +461,15 @@ impl<'a> CheckerState<'a> {
             .collect();
         let cases_union = query::union_types(self.ctx.types, normalized_cases);
         let env = self.ctx.type_environment.borrow();
-        query::is_assignable_with_env(
+        query::flow_assignability_outcome(
             self.ctx.types,
-            &env,
+            Some(&env),
+            None,
             normalized_switch,
             cases_union,
             self.ctx.strict_null_checks(),
         )
+        .related
     }
 
     // =========================================================================

@@ -2,7 +2,10 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
-use super::{assignability::RelationFlags, relation_policy};
+use super::{
+    assignability::{RelationFlags, RelationOutcome},
+    relation_policy,
+};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -304,11 +307,7 @@ fn assignment_source_assignable_to_member(
     source: TypeId,
     member: TypeId,
 ) -> bool {
-    if let Some(environment) = env {
-        is_assignable_with_env(db, environment, source, member, true)
-    } else {
-        is_assignable_strict_null(db, source, member)
-    }
+    flow_relation_outcome(db, env, source, member, true).related
 }
 
 fn non_nullish_constraint_reduction_for_assignment(
@@ -347,19 +346,40 @@ fn non_nullish_constraint_reduction_for_assignment(
     }
     let assigned_matches_non_nullish_initial = if let Some(environment) = env {
         non_nullish_initial != initial_type
-            && is_assignable_with_env(db, environment, assigned_type, non_nullish_initial, true)
-            && is_assignable_with_env(db, environment, non_nullish_initial, assigned_type, true)
+            && flow_relation_outcome(
+                db,
+                Some(environment),
+                assigned_type,
+                non_nullish_initial,
+                true,
+            )
+            .related
+            && flow_relation_outcome(
+                db,
+                Some(environment),
+                non_nullish_initial,
+                assigned_type,
+                true,
+            )
+            .related
     } else {
         non_nullish_initial != initial_type
-            && is_assignable_strict_null(db, assigned_type, non_nullish_initial)
-            && is_assignable_strict_null(db, non_nullish_initial, assigned_type)
+            && flow_relation_outcome(db, None, assigned_type, non_nullish_initial, true).related
+            && flow_relation_outcome(db, None, non_nullish_initial, assigned_type, true).related
     };
     let assigned_has_reduced_constraint_surface = if let Some(environment) = env {
-        is_assignable_with_env(db, environment, assigned_type, initial_type, true)
-            && is_assignable_with_env(db, environment, assigned_type, reduced_constraint, true)
+        flow_relation_outcome(db, Some(environment), assigned_type, initial_type, true).related
+            && flow_relation_outcome(
+                db,
+                Some(environment),
+                assigned_type,
+                reduced_constraint,
+                true,
+            )
+            .related
     } else {
-        is_assignable_strict_null(db, assigned_type, initial_type)
-            && is_assignable_strict_null(db, assigned_type, reduced_constraint)
+        flow_relation_outcome(db, None, assigned_type, initial_type, true).related
+            && flow_relation_outcome(db, None, assigned_type, reduced_constraint, true).related
     };
     if !(assigned_matches_non_nullish_initial || assigned_has_reduced_constraint_surface) {
         return None;
@@ -460,7 +480,7 @@ pub(crate) fn narrow_assignment(
 
     if enum_member_domain(db, resolved_initial) != resolved_initial {
         let assigned_resolved = resolve_assignment_reduction_type(db, env, assigned_type);
-        if !is_assignable(db, assigned_resolved, resolved_initial) {
+        if !flow_relation_outcome(db, None, assigned_resolved, resolved_initial, false).related {
             return initial_type;
         }
         return narrow_enum_assignment_target(
@@ -540,6 +560,63 @@ pub(crate) fn is_assignable_strict_null(
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
+}
+
+fn flow_relation_outcome(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    source: TypeId,
+    target: TypeId,
+    strict_null_checks: bool,
+) -> RelationOutcome {
+    let related = if let Some(env) = env {
+        is_assignable_with_env(db, env, source, target, strict_null_checks)
+    } else if strict_null_checks {
+        is_assignable_strict_null(db, source, target)
+    } else {
+        is_assignable(db, source, target)
+    };
+
+    RelationOutcome {
+        related,
+        depth_exceeded: false,
+        iteration_exceeded: false,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
+}
+
+pub(crate) fn flow_assignability_outcome(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    concrete_this_type: Option<TypeId>,
+    source: TypeId,
+    target: TypeId,
+    strict_null_checks: bool,
+) -> RelationOutcome {
+    let source = substitute_flow_this_type(db, concrete_this_type, source);
+    let target = substitute_flow_this_type(db, concrete_this_type, target);
+    flow_relation_outcome(
+        db.as_type_database(),
+        env,
+        source,
+        target,
+        strict_null_checks,
+    )
+}
+
+fn substitute_flow_this_type(
+    db: &dyn QueryDatabase,
+    concrete_this_type: Option<TypeId>,
+    type_id: TypeId,
+) -> TypeId {
+    if let Some(this_type) = concrete_this_type
+        && super::common::contains_this_type(db.as_type_database(), type_id)
+    {
+        return super::common::substitute_this_type(db, type_id, this_type);
+    }
+    type_id
 }
 
 pub(crate) fn fallback_compound_assignment_result(

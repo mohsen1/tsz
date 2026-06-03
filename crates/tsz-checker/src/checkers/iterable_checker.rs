@@ -1782,7 +1782,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the sent type is assignable to the iterator's next type.
-        if self.assign_relation_outcome(sent_type, next_type).related {
+        if self.call_arg_relation_outcome(sent_type, next_type).related {
             return true;
         }
 

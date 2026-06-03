@@ -1105,7 +1105,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_overlap_for_diagnostic_display(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.assign_relation_outcome(left, right).related
-            || self.assign_relation_outcome(right, left).related
+        self.call_display_overlap_relation_outcome(left, right)
+            .related
+            || self
+                .call_display_overlap_relation_outcome(right, left)
+                .related
     }
 }

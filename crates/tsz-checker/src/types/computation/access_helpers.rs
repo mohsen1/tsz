@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
         }
 
         !self
-            .assign_relation_outcome(index_type, string_index.key_type)
+            .indexed_access_key_space_relation_outcome(index_type, string_index.key_type)
             .related
     }
 
@@ -953,7 +953,7 @@ impl<'a> CheckerState<'a> {
 
         let object_key_space = self.ctx.types.evaluate_keyof(object_constraint);
         let source_key_space = self.ctx.types.evaluate_keyof(key_source);
-        self.assign_relation_outcome(source_key_space, object_key_space)
+        self.indexed_access_key_space_relation_outcome(source_key_space, object_key_space)
             .related
     }
 
@@ -974,7 +974,7 @@ impl<'a> CheckerState<'a> {
         members.iter().any(|&member| {
             let member_keyof = self.ctx.types.evaluate_keyof(member);
             !self
-                .assign_relation_outcome(index_type, member_keyof)
+                .indexed_access_key_space_relation_outcome(index_type, member_keyof)
                 .related
         })
     }

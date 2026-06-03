@@ -456,7 +456,9 @@ impl<'a> CheckerState<'a> {
             // is not assignable to type parameters like `P`, so we can't just assume
             // empty attrs match when the shape can't be resolved.
             let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
-            return self.assign_relation_outcome(attrs_type, props_type).related;
+            return self
+                .jsx_props_relation_outcome(attrs_type, props_type)
+                .related;
         };
 
         let has_string_index = shape.string_index.is_some();
@@ -535,7 +537,9 @@ impl<'a> CheckerState<'a> {
             // and explicit-excess checks have already passed, defer to the
             // canonical assignability gate before rejecting the overload.
             let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
-            return self.assign_relation_outcome(attrs_type, props_type).related;
+            return self
+                .jsx_props_relation_outcome(attrs_type, props_type)
+                .related;
         }
 
         true
@@ -646,7 +650,7 @@ impl<'a> CheckerState<'a> {
     /// keeps overload matching aligned with the canonical generic-constraint
     /// path without naming any particular helper alias.
     fn jsx_attr_assignable_to_expected(&mut self, attr_type: TypeId, expected: TypeId) -> bool {
-        self.assign_relation_outcome(attr_type, expected).related
+        self.jsx_props_relation_outcome(attr_type, expected).related
             || self.jsx_attr_assignable_after_referenced_constraints(attr_type, expected)
     }
 
@@ -692,9 +696,11 @@ impl<'a> CheckerState<'a> {
         }
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, expected)
+        self.jsx_props_relation_outcome(restricted_evaluated, expected)
             .related
-            || self.assign_relation_outcome(restricted, expected).related
+            || self
+                .jsx_props_relation_outcome(restricted, expected)
+                .related
     }
 
     /// Build an object type from collected JSX attribute info.
