@@ -18,8 +18,12 @@ fn class_namespace_static_side_diagnostic_uses_relation_outcome_boundary() {
     let branch = namespace_static_side_block(&source);
 
     assert!(
-        branch.contains("assign_relation_outcome(derived_ctor_type, base_ctor_type)"),
-        "namespace-merged class static-side TS2417 check should route through relation outcome boundary"
+        branch.contains("class_static_side_relation_outcome(derived_ctor_type, base_ctor_type)"),
+        "namespace-merged class static-side TS2417 check should route through the class static-side request"
+    );
+    assert!(
+        !branch.contains("assign_relation_outcome(derived_ctor_type, base_ctor_type)"),
+        "namespace-merged class static-side TS2417 check should not use generic assignment relation outcomes"
     );
     assert!(
         !branch.contains("!self.is_assignable_to(derived_ctor_type, base_ctor_type)"),

@@ -647,7 +647,9 @@ impl<'a> CheckerState<'a> {
         for sig in &sigs {
             if let Some(expected_this) = sig.this_type
                 && expected_this != TypeId::VOID
-                && !self.assign_relation_outcome(type_id, expected_this).related
+                && !self
+                    .call_arg_relation_outcome(type_id, expected_this)
+                    .related
             {
                 rejected_this_type.get_or_insert(expected_this);
                 continue;

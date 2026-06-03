@@ -133,7 +133,7 @@ impl<'a> CheckerState<'a> {
         // Mark the node as flow-narrowed so the second narrowing pass in
         // `get_type_of_node` doesn't re-apply the invalid narrowing.
         //
-        // IMPORTANT: Use `is_assignable_to_no_weak_checks` here to match
+        // IMPORTANT: Use `no_weak_relation_outcome` here to match
         // tsc's `isTypeAssignableTo` behavior. tsc does NOT include the weak
         // type check (TS2559) in this guard — the weak type check is only
         // applied at specific diagnostic sites (variable declarations,
@@ -147,7 +147,9 @@ impl<'a> CheckerState<'a> {
             && declared_type != TypeId::ANY
             && declared_type != TypeId::UNKNOWN
             && !generic_narrowing_shape
-            && !self.is_assignable_to_no_weak_checks(narrowed_type, declared_type)
+            && !self
+                .no_weak_relation_outcome(narrowed_type, declared_type)
+                .related
         {
             trace!("Flow narrowed to incompatible type, keeping declared type");
             self.ctx.flow_narrowed_nodes.insert(idx.0);

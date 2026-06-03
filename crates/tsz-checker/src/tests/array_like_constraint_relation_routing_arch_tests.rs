@@ -20,9 +20,13 @@ fn array_like_constraint_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "array-like element relation decisions must use the shared relation outcome boundary"
     );
-    assert_eq!(
-        function.matches("assign_relation_outcome").count(),
-        1,
-        "the direct source-element to target-element relation should route through RelationOutcome"
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "the direct source-element to target-element relation should route through a named RelationRequest"
+    );
+    assert!(
+        function
+            .contains("array_like_constraint_element_relation_outcome(source_elem, target_elem)"),
+        "array-like element compatibility should use the array-like constraint request helper"
     );
 }

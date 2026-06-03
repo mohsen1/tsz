@@ -736,7 +736,7 @@ impl<'a> CheckerState<'a> {
                     if ctx != TypeId::VOID
                         && ctx != TypeId::ANY
                         && ctx != TypeId::UNKNOWN
-                        && self.is_assignable_to(TypeId::UNDEFINED, ctx)
+                        && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
                     {
                         return TypeId::UNDEFINED;
                     }
@@ -754,7 +754,7 @@ impl<'a> CheckerState<'a> {
                     && ctx != TypeId::VOID
                     && ctx != TypeId::ANY
                     && ctx != TypeId::UNKNOWN
-                    && self.is_assignable_to(TypeId::UNDEFINED, ctx)
+                    && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
                 {
                     TypeId::UNDEFINED
                 } else {

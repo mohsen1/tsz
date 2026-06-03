@@ -67,8 +67,8 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
 /// spread policy directly into the canonical relation request shape.
 #[test]
 fn test_relation_request_builders_encode_epc_policy() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     assert!(
         source.contains("fn with_fresh_source"),
@@ -97,15 +97,153 @@ fn test_relation_request_builders_encode_epc_policy() {
 /// ambient caller-side policy.
 #[test]
 fn test_relation_request_constructors_encode_relation_kind() {
-    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
-        .expect("failed to read query_boundaries/assignability.rs");
+    let source = fs::read_to_string("src/query_boundaries/relation_request.rs")
+        .expect("failed to read query_boundaries/relation_request.rs");
 
     for (ctor, kind) in [
         ("fn assign", "RelationKind::Assign"),
+        ("fn for_in_lhs", "RelationKind::ForInLhs"),
         ("fn call_arg", "RelationKind::CallArg"),
         ("fn return_stmt", "RelationKind::Return"),
+        ("fn jsx_props", "RelationKind::JsxProps"),
+        ("fn jsx_children", "RelationKind::JsxChildren"),
         ("fn satisfies", "RelationKind::Satisfies"),
         ("fn destructuring", "RelationKind::Destructuring"),
+        ("fn rest_parameter", "RelationKind::RestParameter"),
+        ("fn import_attributes", "RelationKind::ImportAttributes"),
+        (
+            "fn computed_enum_member",
+            "RelationKind::ComputedEnumMember",
+        ),
+        (
+            "fn type_parameter_default",
+            "RelationKind::TypeParameterDefault",
+        ),
+        ("fn index_signature", "RelationKind::IndexSignature"),
+        ("fn decorator_callee", "RelationKind::DecoratorCallee"),
+        (
+            "fn jsdoc_type_constraint",
+            "RelationKind::JsdocTypeConstraint",
+        ),
+        ("fn property_index_key", "RelationKind::PropertyIndexKey"),
+        (
+            "fn nullish_error_target",
+            "RelationKind::NullishErrorTarget",
+        ),
+        (
+            "fn duplicate_identifier",
+            "RelationKind::DuplicateIdentifier",
+        ),
+        (
+            "fn variable_initializer",
+            "RelationKind::VariableInitializer",
+        ),
+        (
+            "fn diagnostic_source_narrowing",
+            "RelationKind::DiagnosticSourceNarrowing",
+        ),
+        (
+            "fn class_implements_index_value",
+            "RelationKind::ClassImplementsIndexValue",
+        ),
+        (
+            "fn class_implements_whole_type",
+            "RelationKind::ClassImplementsWholeType",
+        ),
+        (
+            "fn interface_heritage_index_value",
+            "RelationKind::InterfaceHeritageIndexValue",
+        ),
+        (
+            "fn interface_heritage_generic_method",
+            "RelationKind::InterfaceHeritageGenericMethod",
+        ),
+        (
+            "fn interface_heritage_property_index",
+            "RelationKind::InterfaceHeritagePropertyIndex",
+        ),
+        (
+            "fn jsdoc_heritage_constraint",
+            "RelationKind::JsdocHeritageConstraint",
+        ),
+        (
+            "fn missing_property_read",
+            "RelationKind::MissingPropertyRead",
+        ),
+        (
+            "fn missing_property_write",
+            "RelationKind::MissingPropertyWrite",
+        ),
+        (
+            "fn exact_optional_source_filter",
+            "RelationKind::ExactOptionalSourceFilter",
+        ),
+        (
+            "fn jsx_render_fallback",
+            "RelationKind::JsxRenderFallback",
+        ),
+        (
+            "fn object_literal_computed_key",
+            "RelationKind::ObjectLiteralComputedKey",
+        ),
+        (
+            "fn contextual_symbol_index_value",
+            "RelationKind::ContextualSymbolIndexValue",
+        ),
+        ("fn in_operator_key", "RelationKind::InOperatorKey"),
+        (
+            "fn in_operator_primitive_constraint",
+            "RelationKind::InOperatorPrimitiveConstraint",
+        ),
+        ("fn compound_assignment", "RelationKind::CompoundAssignment"),
+        (
+            "fn generic_element_write",
+            "RelationKind::GenericElementWrite",
+        ),
+        (
+            "fn property_receiver_element_display",
+            "RelationKind::PropertyReceiverElementDisplay",
+        ),
+        (
+            "fn property_receiver_index_value_display",
+            "RelationKind::PropertyReceiverIndexValueDisplay",
+        ),
+        (
+            "fn element_access_number_index",
+            "RelationKind::ElementAccessNumberIndex",
+        ),
+        (
+            "fn element_access_method_suggestion",
+            "RelationKind::ElementAccessMethodSuggestion",
+        ),
+        (
+            "fn call_elaboration_mutual",
+            "RelationKind::CallElaborationMutual",
+        ),
+        (
+            "fn call_display_overlap",
+            "RelationKind::CallDisplayOverlap",
+        ),
+        (
+            "fn call_generator_yield",
+            "RelationKind::CallGeneratorYield",
+        ),
+        (
+            "fn call_adapter_compatibility",
+            "RelationKind::CallAdapterCompatibility",
+        ),
+        (
+            "fn call_adapter_identity",
+            "RelationKind::CallAdapterIdentity",
+        ),
+        (
+            "fn overload_implementation_parameter",
+            "RelationKind::OverloadImplementationParameter",
+        ),
+        (
+            "fn binary_arithmetic_number",
+            "RelationKind::BinaryArithmeticNumber",
+        ),
     ] {
         assert!(
             source.contains(ctor) && source.contains(kind),

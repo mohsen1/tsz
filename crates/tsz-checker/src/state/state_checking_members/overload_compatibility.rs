@@ -901,8 +901,12 @@ impl<'a> CheckerState<'a> {
                 // or the overload returns void
                 let return_compatible = constructors_only
                     || overload_ret == tsz_solver::TypeId::VOID
-                    || self.diagnostic_relation_boolean_guard_bivariant(overload_ret, impl_ret)
-                    || self.diagnostic_relation_boolean_guard_bivariant(impl_ret, overload_ret);
+                    || self
+                        .bivariant_callbacks_relation_outcome(overload_ret, impl_ret)
+                        .related
+                    || self
+                        .bivariant_callbacks_relation_outcome(impl_ret, overload_ret)
+                        .related;
 
                 if !return_compatible {
                     return false;
@@ -919,12 +923,16 @@ impl<'a> CheckerState<'a> {
                     self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
                     self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
-                self.assign_relation_outcome(impl_with_any_ret, overload_with_any_ret)
-                    .related
+                self.overload_implementation_parameter_relation_outcome(
+                    impl_with_any_ret,
+                    overload_with_any_ret,
+                )
+                .related
             }
             _ => {
                 // If we can't get return types, fall back to bivariant assignability
-                self.diagnostic_relation_boolean_guard_bivariant(impl_type, overload_type)
+                self.bivariant_callbacks_relation_outcome(impl_type, overload_type)
+                    .related
             }
         }
     }

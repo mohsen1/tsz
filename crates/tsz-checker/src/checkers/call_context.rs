@@ -477,7 +477,7 @@ impl<'a> CheckerState<'a> {
                 });
                 // Parameter types conflict if the actual is NOT assignable to expected.
                 !self
-                    .assign_relation_outcome(actual_param_type, expected_param_type)
+                    .call_arg_relation_outcome(actual_param_type, expected_param_type)
                     .related
             })
     }

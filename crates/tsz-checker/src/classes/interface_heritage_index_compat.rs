@@ -156,7 +156,8 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        self.diagnostic_relation_boolean_guard(derived, base)
+        self.interface_heritage_generic_method_relation_outcome(derived, base)
+            .related
     }
 
     /// True when a derived interface member that mentions the polymorphic `this`
@@ -221,7 +222,7 @@ impl<'a> CheckerState<'a> {
         let derived_value = self.evaluate_type_with_env(derived_value);
         let base_value = self.evaluate_type_with_env(base_value);
         if self
-            .assign_relation_outcome(derived_value, base_value)
+            .interface_heritage_index_value_relation_outcome(derived_value, base_value)
             .related
         {
             return true;
@@ -247,7 +248,7 @@ impl<'a> CheckerState<'a> {
         derived_value: TypeId,
         base_value: TypeId,
     ) -> bool {
-        self.assign_relation_outcome(derived_value, base_value)
+        self.interface_heritage_index_value_relation_outcome(derived_value, base_value)
             .related
             || self.type_heritage_includes_base(derived_value, base_value)
     }

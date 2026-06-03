@@ -6,14 +6,16 @@ fn syntax_instantiated_constraint_uses_relation_outcome_boundary() {
         fs::read_to_string("src/checkers/generic_checker/constraint_syntax_instantiation.rs")
             .expect("failed to read constraint_syntax_instantiation.rs");
 
-    assert_eq!(
-        source.matches("assign_relation_outcome").count(),
-        2,
-        "syntax-instantiated constraint checks should route primary relations through assign_relation_outcome"
-    );
     assert!(
-        source.contains(".related"),
-        "syntax-instantiated constraint checks should use the relation outcome decision"
+        !source.contains("assign_relation_outcome"),
+        "syntax-instantiated constraint checks should route relation probes through named RelationRequests"
+    );
+    assert_eq!(
+        source
+            .matches("syntax_instantiated_constraint_relation_outcome(")
+            .count(),
+        2,
+        "callable and non-callable syntax-instantiated checks should use the syntax request helper"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard"),
@@ -38,12 +40,22 @@ fn mapped_key_constraint_checks_use_relation_outcome_boundary() {
     let invalid_block = &source[invalid_start..next_section];
 
     assert!(
-        deferred_block.contains("assign_relation_outcome(") && deferred_block.contains(".related"),
-        "deferred mapped key constraint checks should route through RelationOutcome"
+        deferred_block.contains("mapped_key_constraint_relation_outcome(")
+            && deferred_block.contains(".related"),
+        "deferred mapped key constraint checks should route through the mapped-key RelationRequest"
     );
     assert!(
-        invalid_block.contains("assign_relation_outcome(") && invalid_block.contains(".related"),
-        "pre-evaluation mapped key constraint checks should route through RelationOutcome"
+        invalid_block.contains("mapped_key_constraint_relation_outcome(")
+            && invalid_block.contains(".related"),
+        "pre-evaluation mapped key constraint checks should route through the mapped-key RelationRequest"
+    );
+    assert!(
+        !deferred_block.contains("assign_relation_outcome("),
+        "deferred mapped key constraint checks should not use the generic assignment request"
+    );
+    assert!(
+        !invalid_block.contains("assign_relation_outcome("),
+        "pre-evaluation mapped key constraint checks should not use the generic assignment request"
     );
     assert!(
         !deferred_block.contains("diagnostic_relation_boolean_guard"),

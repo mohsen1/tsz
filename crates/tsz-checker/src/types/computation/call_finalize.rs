@@ -263,10 +263,10 @@ impl<'a> CheckerState<'a> {
                         if aggregate_rest_mismatch {
                             let evaluated_param = self.evaluate_type_with_env(param.type_id);
                             let aggregate_assignable = self
-                                .assign_relation_outcome_with_env(actual, expected)
+                                .call_arg_relation_outcome_with_env(actual, expected)
                                 .related
                                 || self
-                                    .assign_relation_outcome_with_env(actual, evaluated_param)
+                                    .call_arg_relation_outcome_with_env(actual, evaluated_param)
                                     .related;
                             if aggregate_assignable {
                                 recovered_argument_mismatch = true;
@@ -364,7 +364,7 @@ impl<'a> CheckerState<'a> {
                                 })
                                 .unwrap_or(TypeId::UNKNOWN);
                             let fresh_assignable = self
-                                .assign_relation_outcome_with_env(arg_type, expected_param)
+                                .call_arg_relation_outcome_with_env(arg_type, expected_param)
                                 .related
                                 || self.is_assignable_via_contextual_signatures(
                                     arg_type,

@@ -13,9 +13,13 @@ fn union_index_signature_value_checks_use_relation_outcome_boundary() {
     let helper = &source[function_start..];
 
     assert!(
-        helper.matches(".assign_relation_outcome(").count() >= 3
+        helper.matches(".index_signature_relation_outcome(").count() >= 3
             && helper.matches(".related").count() >= 3,
-        "union index-signature value diagnostics should route relation truth through relation outcomes"
+        "union index-signature value diagnostics should route relation truth through index-signature relation outcomes"
+    );
+    assert!(
+        !helper.contains(".assign_relation_outcome("),
+        "union index-signature value diagnostics should not use generic assignment request routing"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard("),

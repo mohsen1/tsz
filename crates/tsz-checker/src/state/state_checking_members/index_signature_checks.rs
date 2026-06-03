@@ -439,11 +439,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let key_assignable = self
-                    .assign_relation_outcome(key_type, previous_key_type)
+                    .index_signature_relation_outcome(key_type, previous_key_type)
                     .related
                     || self.template_pattern_key_is_subset(key_type, previous_key_type);
                 let value_assignable = self
-                    .assign_relation_outcome(value_type, previous_value_type)
+                    .index_signature_relation_outcome(value_type, previous_value_type)
                     .related;
                 if key_assignable && !value_assignable {
                     let key_type_str = self.format_type(key_type);
@@ -597,7 +597,7 @@ impl<'a> CheckerState<'a> {
             // Only emit when we have own number index nodes to anchor the error,
             // OR when both signatures are inherited (anchor on container).
             let is_assignable = self
-                .assign_relation_outcome(number_idx.value_type, string_idx.value_type)
+                .index_signature_relation_outcome(number_idx.value_type, string_idx.value_type)
                 .related;
             if !is_assignable {
                 let num_value_str = self.format_type(number_idx.value_type);
@@ -652,7 +652,7 @@ impl<'a> CheckerState<'a> {
             (static_number_value_type, static_string_value_type)
         {
             let is_assignable = self
-                .assign_relation_outcome(static_num_type, static_str_type)
+                .index_signature_relation_outcome(static_num_type, static_str_type)
                 .related;
             if !is_assignable {
                 let num_value_str = self.format_type(static_num_type);

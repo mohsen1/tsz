@@ -693,7 +693,10 @@ impl<'a> CheckerState<'a> {
                     evaluated_full_members_with_prop
                         .iter()
                         .find(|(idx, _)| *idx == i)
-                        .is_none_or(|(_, target_ty)| self.is_subtype_of(prop_type, *target_ty))
+                        .is_none_or(|(_, target_ty)| {
+                            self.diagnostic_subtype_outcome(prop_type, *target_ty)
+                                .related
+                        })
                 })
                 .collect();
 
@@ -1009,7 +1012,10 @@ impl<'a> CheckerState<'a> {
                     fully_discriminated = false;
                     break;
                 }
-                if self.is_subtype_of(prop_type, prop.type_id) {
+                if self
+                    .diagnostic_subtype_outcome(prop_type, prop.type_id)
+                    .related
+                {
                     matching_members.push(member);
                 }
             }

@@ -562,7 +562,6 @@ impl<'a> CheckerState<'a> {
                                     has_callable && has_non_callable
                                 })
                         });
-
                     if let Some(extracted) = direct {
                         if let Some(from_expected) = expected_contextual_type {
                             let direct_is_placeholderish = extracted == TypeId::ANY
@@ -581,7 +580,11 @@ impl<'a> CheckerState<'a> {
                                         self.evaluate_type_with_env(constraint);
                                     evaluated_constraint == from_expected
                                         || self
-                                            .is_assignable_to(from_expected, evaluated_constraint)
+                                            .function_type_compatibility_relation_outcome(
+                                                from_expected,
+                                                evaluated_constraint,
+                                            )
+                                            .related
                                 });
                             let direct_is_rest_tuple_container = !param.dot_dot_dot_token
                                 && extracted != from_expected
@@ -607,12 +610,16 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     extracted,
                                 );
-                            let direct_is_strict_subtype = extracted != from_expected
-                                && self.is_subtype_of(extracted, from_expected)
-                                && !self.is_subtype_of(from_expected, extracted);
-                            let expected_is_strict_subtype = extracted != from_expected
-                                && self.is_subtype_of(from_expected, extracted)
-                                && !self.is_subtype_of(extracted, from_expected);
+                            let direct_subtype = self
+                                .diagnostic_subtype_outcome(extracted, from_expected)
+                                .related;
+                            let expected_subtype = self
+                                .diagnostic_subtype_outcome(from_expected, extracted)
+                                .related;
+                            let direct_is_strict_subtype =
+                                extracted != from_expected && direct_subtype && !expected_subtype;
+                            let expected_is_strict_subtype =
+                                extracted != from_expected && expected_subtype && !direct_subtype;
                             if preserve_mixed_context_direct {
                                 Some(extracted)
                             } else if direct_is_rest_tuple_container
@@ -1280,11 +1287,9 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.deferred_implicit_any_closures.push(idx);
         }
-
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in regular functions
         self.check_parameter_properties(&parameters.nodes);
-
         // Get return type from annotation or infer
         let has_type_annotation = type_annotation.is_some();
         let (mut return_type, mut type_predicate) = if has_type_annotation {
@@ -1299,7 +1304,6 @@ impl<'a> CheckerState<'a> {
             // This ensures return statements are checked even without annotation
             (TypeId::UNKNOWN, None)
         };
-
         // Check JSDoc @returns for type predicates (e.g., @returns {x is string})
         // This covers JS files where return types are specified via JSDoc instead of syntax.
         if type_predicate.is_none()
@@ -1313,7 +1317,6 @@ impl<'a> CheckerState<'a> {
             };
             type_predicate = Some(predicate);
         }
-
         // Check JSDoc @type {CallbackType} for type predicates (e.g., @callback with @return {x is number}).
         if type_predicate.is_none()
             && let Some(ref jsdoc) = func_jsdoc
@@ -1579,7 +1582,6 @@ impl<'a> CheckerState<'a> {
                     self.infer_return_type_from_body(idx, body, inference_return_context);
                 self.ctx.in_const_assertion = prev_const_assertion;
                 return_type = jsdoc_return_context.unwrap_or(inferred);
-
                 // TS 5.5+ inferred type predicates: when a function expression
                 // or arrow has no explicit predicate, no return-type annotation,
                 // and an inferred boolean-like return type, see whether its body
@@ -1600,13 +1602,11 @@ impl<'a> CheckerState<'a> {
                         type_predicate = Some(pred);
                     }
                 }
-
                 if let Some(instance_type) = js_constructor_instance_type
                     && (return_type == TypeId::UNDEFINED || return_type == TypeId::VOID)
                 {
                     return_type = instance_type;
                 }
-
                 if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
                         crate::query_boundaries::common::union_members(self.ctx.types, return_type)
@@ -1614,24 +1614,25 @@ impl<'a> CheckerState<'a> {
                     && union_members.contains(&TypeId::UNDEFINED)
                     && union_members.iter().copied().any(|member| {
                         member != TypeId::UNDEFINED
-                            && self.is_assignable_to(member, instance_type)
-                            && self.is_assignable_to(instance_type, member)
+                            && self
+                                .function_type_compatibility_relation_outcome(member, instance_type)
+                                .related
+                            && self
+                                .function_type_compatibility_relation_outcome(instance_type, member)
+                                .related
                     })
                 {
                     return_type = instance_type;
                 }
             }
-
             // TS7010/TS7011 (implicit any return) is emitted for functions without
             // return type annotations when noImplicitAny is enabled and the return
             // type cannot be inferred (e.g., is 'any' or only returns undefined)
             // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // maybe_report_implicit_any_return handles the noImplicitAny check internally
             //
-            // CRITICAL FIX: Skip TS7010 check if there's a contextual return type
-            // When a function is used as a callback (e.g., array.map(x => ...)), the
-            // contextual type provides the expected return type. TypeScript doesn't
-            // emit TS7010 in these cases because the contextual type guides inference.
+            // Skip TS7010 if a callback has a contextual return type; TypeScript
+            // treats that context as inference guidance rather than implicit any.
             //
             // JSDoc type annotations also suppress TS7010/TS7011 in JS files.
             // When a function has any JSDoc type info (@param, @returns, @template),

@@ -15,15 +15,41 @@ fn type_param_defaults_use_relation_outcome_boundary() {
         .find("self.error_at_node_msg(")
         .expect("find default constraint diagnostic emission");
     let branch = &source[function_start..function_start + diagnostic_start];
+    let compact_branch: String = branch.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        branch.contains(".assign_relation_outcome(default_type, constraint_type)")
-            && branch.contains(".assign_relation_outcome(evaluated_default, evaluated_constraint)")
-            && branch.contains(".assign_relation_outcome(evaluated_default, constraint_type)"),
-        "type-parameter default relation decisions should use relation outcomes"
+        compact_branch
+            .contains(".type_parameter_default_relation_outcome(default_type,constraint_type")
+            && compact_branch.contains(
+                ".type_parameter_default_relation_outcome(evaluated_default,evaluated_constraint"
+            )
+            && compact_branch.contains(
+                ".type_parameter_default_relation_outcome(evaluated_default,constraint_type"
+            ),
+        "type-parameter default relation decisions should use role-specific relation outcomes"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard"),
         "type-parameter default validation should not fall back to raw boolean relation guards"
+    );
+    assert!(
+        !compact_branch.contains(".assign_relation_outcome(default_type,constraint_type)")
+            && !compact_branch
+                .contains(".assign_relation_outcome(evaluated_default,evaluated_constraint")
+            && !compact_branch
+                .contains(".assign_relation_outcome(evaluated_default,constraint_type"),
+        "type-parameter default validation should not use generic assign relation outcomes"
+    );
+}
+
+#[test]
+fn type_parameter_default_relation_outcome_uses_default_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn type_parameter_default_relation_outcome(")
+            && source.contains("RelationRequest::type_parameter_default("),
+        "type-parameter default diagnostics should have a request-shaped RelationKind::TypeParameterDefault helper"
     );
 }

@@ -10,18 +10,34 @@ fn call_display_overlap_uses_relation_outcome_boundary() {
         .expect("missing display overlap helper");
     let helper = &source[start..];
 
-    assert_eq!(
-        helper.matches("assign_relation_outcome(").count(),
-        2,
-        "display overlap helper should route both relation directions through assign_relation_outcome"
+    assert!(
+        helper.contains("call_display_overlap_relation_outcome(left, right)")
+            && helper.contains("call_display_overlap_relation_outcome(right, left)"),
+        "display overlap helper should route both relation directions through dedicated relation outcomes"
     );
     assert!(
         helper.matches(".related").count() >= 2,
         "display overlap helper should use relation outcome decisions"
     );
     assert!(
+        !helper.contains("assign_relation_outcome("),
+        "display overlap helper should not use generic assign relation outcomes"
+    );
+    assert!(
         !helper.contains("diagnostic_relation_boolean_guard("),
         "display overlap helper should not regress to raw boolean relation guards"
+    );
+}
+
+#[test]
+fn call_display_overlap_relation_outcome_uses_dedicated_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn call_display_overlap_relation_outcome(")
+            && source.contains("RelationRequest::call_display_overlap("),
+        "call display overlap probes should have a dedicated RelationRequest helper"
     );
 }
 
@@ -39,9 +55,11 @@ fn generator_never_yield_display_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         2,
-        "generator never-yield display fallback should route env-aware relation probes through RelationOutcome"
+        "generator never-yield display fallback should route env-aware relation probes through call_arg_relation_outcome_with_env"
     );
     assert!(
         helper.matches(".related").count() >= 2,
@@ -50,6 +68,10 @@ fn generator_never_yield_display_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "generator never-yield display fallback should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "generator never-yield display fallback should not use the generic assignment request"
     );
 }
 
@@ -67,9 +89,11 @@ fn contextual_signature_display_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         1,
-        "contextual signature display fallback should route env-aware relation probes through RelationOutcome"
+        "contextual signature display fallback should route env-aware relation probes through call_arg_relation_outcome_with_env"
     );
     assert!(
         helper.contains(".related"),
@@ -78,6 +102,10 @@ fn contextual_signature_display_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "contextual signature display fallback should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "contextual signature display fallback should not use the generic assignment request"
     );
 }
 
@@ -96,9 +124,11 @@ fn variadic_tuple_display_uses_env_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         1,
-        "variadic tuple display should route env-aware relation probes through RelationOutcome"
+        "variadic tuple display should route env-aware relation probes through call_arg_relation_outcome_with_env"
     );
     assert!(
         helper.contains(".related"),
@@ -107,5 +137,9 @@ fn variadic_tuple_display_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "variadic tuple display should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "variadic tuple display should not use the generic assignment request"
     );
 }

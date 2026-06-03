@@ -200,7 +200,7 @@ impl<'a> CheckerState<'a> {
                 let mismatches_expected = expected_type != TypeId::ERROR
                     && expected_type != TypeId::UNKNOWN
                     && !self
-                        .assign_relation_outcome(arg_type, expected_type)
+                        .call_arg_relation_outcome(arg_type, expected_type)
                         .related;
 
                 if matches_actual {
@@ -305,7 +305,7 @@ impl<'a> CheckerState<'a> {
             }
             saw_expected = true;
             if self
-                .assign_relation_outcome(first_arg_type, expected_type)
+                .call_arg_relation_outcome(first_arg_type, expected_type)
                 .related
             {
                 return false;
@@ -394,7 +394,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self
-                .assign_relation_outcome(source_prop_type, target_prop_type)
+                .call_arg_relation_outcome(source_prop_type, target_prop_type)
                 .related
             {
                 return self
@@ -469,7 +469,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self
-                .assign_relation_outcome(elem_type, target_element_type)
+                .call_arg_relation_outcome(elem_type, target_element_type)
                 .related
             {
                 return Some(elem_idx);

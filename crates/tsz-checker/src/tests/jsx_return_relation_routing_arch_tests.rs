@@ -28,8 +28,8 @@ fn jsx_component_return_checks_use_relation_outcome_boundary() {
     );
     assert!(
         element_type_callable_return
-            .contains("assign_relation_outcome(*source_return, *target_return)"),
-        "`JSX.ElementType` callable return matching must use the relation outcome boundary"
+            .contains("return_relation_outcome(*source_return, *target_return)"),
+        "`JSX.ElementType` callable return matching must use the return relation outcome boundary"
     );
     assert!(
         !element_type_callable_return.contains("diagnostic_relation_boolean_guard"),
@@ -42,9 +42,9 @@ fn jsx_component_return_checks_use_relation_outcome_boundary() {
         "pub(super) fn check_jsx_component_return_type",
     );
     assert!(
-        construct_render.contains("assign_relation_outcome(source_render, target_render)")
-            && construct_render.contains("assign_relation_outcome(source_return, target_return)"),
-        "`JSX.ElementClass.render` compatibility must use the relation outcome boundary"
+        construct_render.contains("return_relation_outcome(source_render, target_render)")
+            && construct_render.contains("return_relation_outcome(source_return, target_return)"),
+        "`JSX.ElementClass.render` compatibility must use the return relation outcome boundary"
     );
     assert!(
         !construct_render.contains("diagnostic_relation_boolean_guard"),
@@ -57,9 +57,9 @@ fn jsx_component_return_checks_use_relation_outcome_boundary() {
         "pub(super) fn check_jsx_sfc_return_type",
     );
     assert!(
-        component_return.contains("assign_relation_outcome(non_null_return, element_type)")
-            && component_return.contains("assign_relation_outcome(check_ret, t).related"),
-        "JSX component return diagnostics must use the relation outcome boundary"
+        component_return.contains("return_relation_outcome(non_null_return, element_type)")
+            && component_return.contains("return_relation_outcome(check_ret, t).related"),
+        "JSX component return diagnostics must use the return relation outcome boundary"
     );
     assert!(
         !component_return.contains("diagnostic_relation_boolean_guard"),
@@ -72,8 +72,8 @@ fn jsx_component_return_checks_use_relation_outcome_boundary() {
         "fn report_invalid_jsx_component_return_type",
     );
     assert!(
-        sfc_return.contains("assign_relation_outcome(non_null_return, jsx_element_type)"),
-        "JSX SFC return diagnostics must use the relation outcome boundary"
+        sfc_return.contains("return_relation_outcome(non_null_return, jsx_element_type)"),
+        "JSX SFC return diagnostics must use the return relation outcome boundary"
     );
     assert!(
         !sfc_return.contains("diagnostic_relation_boolean_guard"),
