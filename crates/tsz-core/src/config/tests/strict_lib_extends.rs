@@ -1156,3 +1156,47 @@ fn ts6046_silent_for_valid_watch_file_value() {
         "valid watchFile value must not emit TS6046, got {diags:?}"
     );
 }
+
+// TS5107 and TS5101 must produce the same combined message as tsc's
+// `flattenDiagnosticMessageText` ("\n  " separator before the TS5111 URL)
+// so `try-tsz` project comparisons match tsc output on (code, message) tuples.
+
+#[test]
+fn ts5107_message_equals_flattened_tsc_output() {
+    let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5107)
+        .expect("expected TS5107 for alwaysStrict=false");
+    let expected = concat!(
+        "Option 'alwaysStrict=false' is deprecated and will stop functioning in TypeScript 7.0.",
+        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+        "\n  Visit https://aka.ms/ts6 for migration information.",
+    );
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5107 message must exactly match tsc flattenDiagnosticMessageText output"
+    );
+}
+
+#[test]
+fn ts5101_message_equals_flattened_tsc_output() {
+    let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5101)
+        .expect("expected TS5101 for baseUrl");
+    let expected = concat!(
+        "Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0.",
+        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+        "\n  Visit https://aka.ms/ts6 for migration information.",
+    );
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5101 message must exactly match tsc flattenDiagnosticMessageText output"
+    );
+}

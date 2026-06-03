@@ -9,7 +9,7 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
 use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
-
+mod deprecation_helpers;
 mod extends;
 mod lib_resolution;
 
@@ -1621,10 +1621,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 {
                     let start = find_value_offset_in_source(&stripped, key);
                     let value_len = estimate_json_value_len(value);
-                    let msg = format_message(
+                    let msg = deprecation_helpers::with_migration_url(format_message(
                         diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
                         &[key, display_value, "7.0", "6.0"],
-                    );
+                    ));
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -1651,10 +1651,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         .map(|p| (compiler_opts_pos + p) as u32)
                         .unwrap_or(0);
                     let key_len = key.len() as u32 + 2; // include quotes
-                    let msg = format_message(
+                    let msg = deprecation_helpers::with_migration_url(format_message(
                         diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
                         &[key, "7.0", "6.0"],
-                    );
+                    ));
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
