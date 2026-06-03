@@ -42,6 +42,8 @@ mod legacy_decorator_computed_tests;
 #[cfg(test)]
 mod legacy_decorator_static_block_self_alias_tests;
 #[cfg(test)]
+mod namespace_class_use_define_es5_tests;
+#[cfg(test)]
 mod private_field_helper_order_tests;
 #[cfg(test)]
 mod private_tagged_template_tests;

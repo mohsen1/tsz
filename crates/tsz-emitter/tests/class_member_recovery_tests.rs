@@ -331,6 +331,54 @@ fn es5_define_computed_field_temp_hoists_before_user_vars() {
     );
 }
 
+#[test]
+fn es5_define_no_init_computed_field_hoists_temp_and_preserves_comment() {
+    let output = print_with_printer_options(
+        "var x = \"p\";\nclass A {\n    [x]: string; // ok\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    let temp_decl = output
+        .find("var _a;")
+        .unwrap_or_else(|| panic!("Missing computed field temp declaration.\nOutput:\n{output}"));
+    let user_var = output
+        .find("var x = \"p\";")
+        .unwrap_or_else(|| panic!("Missing user variable declaration.\nOutput:\n{output}"));
+    let class_decl = output
+        .find("var A =")
+        .unwrap_or_else(|| panic!("Missing lowered class declaration.\nOutput:\n{output}"));
+    let temp_init = output
+        .find("_a = x;")
+        .unwrap_or_else(|| panic!("Missing computed field temp initializer.\nOutput:\n{output}"));
+    let define = output
+        .find("Object.defineProperty(this, _a, {")
+        .unwrap_or_else(|| panic!("Missing computed field define.\nOutput:\n{output}"));
+    let trailing_comment = output.find("        }); // ok").unwrap_or_else(|| {
+        panic!("Field trailing comment should stay on the lowered define.\nOutput:\n{output}")
+    });
+
+    assert!(
+        temp_decl < user_var && user_var < class_decl,
+        "Computed field temp should be hoisted before top-level user vars.\nOutput:\n{output}"
+    );
+    assert!(
+        class_decl < define && define < temp_init,
+        "No-init computed field define should use the temp before the temp initializer statement.\nOutput:\n{output}"
+    );
+    assert!(
+        trailing_comment < temp_init,
+        "Field trailing comment should remain on the define, not the hoisted temp initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: void 0"),
+        "No-init define field should materialize `value: void 0`.\nOutput:\n{output}"
+    );
+}
+
 /// Without `useDefineForClassFields`, a typed-only field has no runtime
 /// effect and must not produce any assignment. This guards against the
 /// fix above accidentally widening to all targets.

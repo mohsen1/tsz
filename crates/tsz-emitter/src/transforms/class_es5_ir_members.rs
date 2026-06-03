@@ -1341,7 +1341,8 @@ impl<'a> ES5ClassTransformer<'a> {
                                     enumerable: true,
                                     configurable: true,
                                     writable: true,
-                                    trailing_comment: None,
+                                    trailing_comment: self
+                                        .extract_trailing_comment_for_class_field(member_node),
                                 },
                                 leading_comment: self.extract_leading_comment(member_node),
                             });
