@@ -1350,14 +1350,23 @@ impl<'a> FlowAnalyzer<'a> {
             current = effective_target;
         }
 
-        // Reverse the path to get correct order (["payload", "kind"] not ["kind", "payload"])
-        path.reverse();
-
-        if path.is_empty() {
+        // Discriminant narrowing only applies to a *direct* property of the
+        // narrowed reference. `tsc` narrows a union by `x.kind === "a"` (a
+        // discriminant property accessed directly on `x`), but it does NOT
+        // narrow the outer union through a nested access such as
+        // `x.meta.kind === "a"` — there the only references narrowed are
+        // `x.meta` and `x.meta.kind`, never `x`. Requiring a single-segment
+        // path keeps every consumer (truthiness, switch, assertion predicate)
+        // aligned with that rule; nested references are narrowed when they are
+        // themselves the target via the relative-path producers.
+        //
+        // A single collected segment needs no reversal, so reject multi-segment
+        // paths before paying for `Vec::reverse`.
+        if path.len() != 1 {
             return None;
         }
 
-        // current is now the base (e.g., "action" in action.payload.kind)
+        // current is now the base (e.g., "action" in action.kind)
         Some((path, is_optional, current))
     }
 
@@ -1374,16 +1383,18 @@ impl<'a> FlowAnalyzer<'a> {
         // (discriminant_property_info returns the full path from the root, which is wrong when
         //  target is not the root — e.g., returns path=["test","type"] base=this for `this.test.type`
         //  when we need path=["type"] base=this.test relative to target=this.test)
+        // Single-segment relative path only (see `discriminant_property_info`):
+        // a nested access narrows the inner reference, never the outer `target`.
         if let Some(literal) = self.discriminant_literal_candidate(right)
             && let Some((rel_path, is_optional)) = self.relative_discriminant_path(left, target)
-            && !rel_path.is_empty()
+            && rel_path.len() == 1
         {
             return Some((rel_path, literal, is_optional, target));
         }
 
         if let Some(literal) = self.discriminant_literal_candidate(left)
             && let Some((rel_path, is_optional)) = self.relative_discriminant_path(right, target)
-            && !rel_path.is_empty()
+            && rel_path.len() == 1
         {
             return Some((rel_path, literal, is_optional, target));
         }
@@ -1482,8 +1493,10 @@ impl<'a> FlowAnalyzer<'a> {
                 || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
                 // Walk from `init_expr` towards the root, collecting segments until we hit `target`.
+                // Single-segment path only: `const k = s.meta.kind` does not narrow `s` in `tsc`.
                 if let Some((rel_path, is_optional)) =
                     self.relative_discriminant_path(init_expr, target)
+                    && rel_path.len() == 1
                 {
                     return Some((rel_path, literal, is_optional, target));
                 }
@@ -1594,10 +1607,12 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Vec<Atom>, bool, &str)> {
+        // Single-segment path only (see `discriminant_property_info`):
+        // `typeof s.meta.x === "string"` narrows `s.meta`, never the outer union `s`.
         // Try left = typeof expr, right = string literal
         if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(left))
             && let Some((path, is_optional)) = self.relative_discriminant_path(operand, target)
-            && !path.is_empty()
+            && path.len() == 1
             && let Some(lit) = self.literal_string_from_node(right)
         {
             return Some((path, is_optional, lit));
@@ -1605,7 +1620,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Try right = typeof expr, left = string literal
         if let Some(operand) = self.get_typeof_operand(self.skip_parenthesized(right))
             && let Some((path, is_optional)) = self.relative_discriminant_path(operand, target)
-            && !path.is_empty()
+            && path.len() == 1
             && let Some(lit) = self.literal_string_from_node(left)
         {
             return Some((path, is_optional, lit));
