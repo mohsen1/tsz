@@ -406,6 +406,13 @@ fn widen_type_cached(
         // Objects: recursively widen properties (critical for mutable variables)
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
+            // In inference contexts (widen_object_union_members = true), only widen fresh
+            // object literals. Non-fresh objects (from type annotations or explicit type
+            // constructions) are returned as-is, matching tsc's getWidenedType which only
+            // widens types carrying the ContainsWideningType flag (FRESH_LITERAL in tsz).
+            if widen_object_union_members && !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                return type_id;
+            }
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;
             let strip_fresh_display =
