@@ -530,7 +530,25 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard_bivariant(source, target) {
+
+        // Strict relation first: keep the base method's method-local generics
+        // universally quantified (`NO_ERASE_GENERICS`) so a concrete override
+        // cannot silently satisfy a generic base signature. This mirrors the
+        // `implements` member-override path (`should_report_own_member_type_mismatch`),
+        // which uses `is_assignable_to_no_erase_generics`, while preserving the
+        // bivariant parameter behavior that class method overrides require.
+        if self.is_assignable_to_bivariant_no_erase_generics(source, target) {
+            return false;
+        }
+
+        // Safe erasure fallback: tsc only canonicalizes (erases) the target's
+        // method-local type parameters when the *source* signature carries its
+        // own (or the target has none). In those cases the generic-erasing
+        // bivariant relation is the correct authority — e.g. `any`-propagation
+        // shapes and generic-to-generic overrides where both sides quantify.
+        if crate::query_boundaries::class::generic_erasure_fallback_is_safe(self, source, target)
+            && self.diagnostic_relation_boolean_guard_bivariant(source, target)
+        {
             return false;
         }
 
