@@ -755,7 +755,25 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_node_type_or_names(&[expr.expression])
                     .map(|type_id| self.print_type_id(type_id))
             })?;
-        Self::instantiate_type_text_with_single_type_arg(&base_text, type_arg)
+        let source_text = Self::instantiate_type_text_with_single_type_arg(&base_text, type_arg)?;
+        if Self::instantiated_source_type_needs_semantic_surface(&source_text)
+            && let Some(type_id) = self.get_node_type_or_names(&[expr_idx]).filter(|type_id| {
+                *type_id != tsz_solver::types::TypeId::ANY
+                    && *type_id != tsz_solver::types::TypeId::ERROR
+            })
+        {
+            let printed = self.print_type_id_for_inferred_declaration(type_id);
+            if !printed.is_empty() && printed != "any" {
+                return Some(printed);
+            }
+        }
+        Some(source_text)
+    }
+
+    pub(in crate::declaration_emitter) fn instantiated_source_type_needs_semantic_surface(
+        type_text: &str,
+    ) -> bool {
+        type_text.contains("import(\".") || type_text.contains("import('./")
     }
 
     fn instantiate_type_text_with_single_type_arg(
