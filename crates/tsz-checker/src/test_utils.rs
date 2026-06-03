@@ -14,6 +14,8 @@ use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_common::position::LineMap;
 use tsz_parser::parser::ParserState;
+#[cfg(test)]
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 /// Parse, bind, and type-check a TypeScript source string, returning all diagnostics.
 ///
@@ -41,6 +43,59 @@ pub fn check_source_recovery_sites(
         snapshot.sort_by_key(|(idx, _)| *idx);
         snapshot
     })
+}
+
+/// Parse, bind, and type-check a source string, then return type-node
+/// resolution entry counts for type literals that contain computed members.
+#[cfg(test)]
+pub fn check_computed_type_argument_resolution_counts(source: &str) -> Vec<u32> {
+    with_checked_source(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        None,
+        |checker| {
+            checker
+                .ctx
+                .arena
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(raw_idx, node)| {
+                    if node.kind == syntax_kind_ext::TYPE_LITERAL
+                        && type_literal_has_computed_member(checker, node)
+                    {
+                        let idx = NodeIndex(raw_idx as u32);
+                        Some(checker.ctx.type_node_resolution_count_for_test(idx))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    )
+}
+
+#[cfg(test)]
+fn type_literal_has_computed_member(
+    checker: &CheckerState<'_>,
+    node: &tsz_parser::parser::node::Node,
+) -> bool {
+    checker
+        .ctx
+        .arena
+        .get_type_literal(node)
+        .is_some_and(|literal| {
+            literal.members.nodes.iter().any(|&member_idx| {
+                checker
+                    .ctx
+                    .arena
+                    .get(member_idx)
+                    .and_then(|member| checker.ctx.arena.get_signature(member))
+                    .and_then(|signature| checker.ctx.arena.get(signature.name))
+                    .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            })
+        })
 }
 
 /// Parse, bind, and type-check a source string with no lib contexts, source
@@ -85,6 +140,8 @@ fn with_checked_source<R>(
     checker.enable_source_file_test_pragmas();
     checker.ctx.set_lib_contexts(Vec::new());
     checker.ctx.file_is_esm = file_is_esm;
+    #[cfg(test)]
+    checker.ctx.reset_type_node_resolution_counts_for_test();
     checker.check_source_file(source_file);
     extract(&checker)
 }

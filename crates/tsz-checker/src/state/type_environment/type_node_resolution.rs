@@ -63,6 +63,9 @@ impl<'a> CheckerState<'a> {
     /// let c: { x: number };    // → Object type with property x: number
     /// ```
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
+        #[cfg(test)]
+        self.ctx.record_type_node_resolution_for_test(idx);
+
         // Delegate to TypeNodeChecker for type node handling.
         // TypeNodeChecker handles caching, type parameter scope, and recursion protection.
         //

@@ -4,6 +4,8 @@
 //! the module entry point focused on type/struct definitions.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -35,6 +37,12 @@ pub(crate) fn order_independent_resolution_disabled() -> bool {
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false)
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    static TYPE_NODE_RESOLUTION_COUNTS: RefCell<FxHashMap<NodeIndex, u32>> =
+        RefCell::new(FxHashMap::default());
 }
 
 impl TypeCache {
@@ -122,6 +130,26 @@ impl TypeCache {
 }
 
 impl<'a> CheckerContext<'a> {
+    /// Clear test-observable type-node resolution counts for a fresh check.
+    #[cfg(test)]
+    pub(crate) fn reset_type_node_resolution_counts_for_test(&self) {
+        TYPE_NODE_RESOLUTION_COUNTS.with(|counts| counts.borrow_mut().clear());
+    }
+
+    /// Record a test-observable entry into type-node resolution.
+    #[cfg(test)]
+    pub(crate) fn record_type_node_resolution_for_test(&self, idx: NodeIndex) {
+        TYPE_NODE_RESOLUTION_COUNTS.with(|counts| {
+            *counts.borrow_mut().entry(idx).or_insert(0) += 1;
+        });
+    }
+
+    /// Return how often `idx` entered type-node resolution in this checker.
+    #[cfg(test)]
+    pub(crate) fn type_node_resolution_count_for_test(&self, idx: NodeIndex) -> u32 {
+        TYPE_NODE_RESOLUTION_COUNTS.with(|counts| counts.borrow().get(&idx).copied().unwrap_or(0))
+    }
+
     /// Resolve a `SymbolId` to its owning file index.
     ///
     /// Checks the layered `cross_file_symbol_targets` overlay first, then falls
