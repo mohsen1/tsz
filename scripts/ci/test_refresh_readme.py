@@ -118,6 +118,56 @@ Declaration: [████████████████████] 98.5
         self.assertIn("preserving README emit metrics", stderr.getvalue())
         self.assertIn("scripts/emit/emit-detail.json", stderr.getvalue())
 
+    def test_existing_readme_conformance_block_is_not_downgraded_by_old_snapshot(self):
+        readme_summary = refresh_readme.conformance_summary_from_readme(
+            """<!-- CONFORMANCE_START -->
+```
+Progress: [████████████████████] 100.0% (12,581/12,585 tests)
+```
+<!-- CONFORMANCE_END -->""",
+        )
+        snapshot_summary = {
+            "passed": 12582,
+            "total": 12582,
+        }
+
+        selected = refresh_readme.prefer_readme_suite_summary(snapshot_summary, readme_summary)
+
+        self.assertEqual(selected["passed"], 12581)
+        self.assertEqual(selected["total"], 12585)
+
+    def test_conformance_fallback_warns_when_preserving_readme_summary(self):
+        with TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            snapshot_path = root / "scripts" / "conformance" / "conformance-snapshot.json"
+            snapshot_path.parent.mkdir(parents=True)
+            snapshot_path.write_text(json.dumps({
+                "summary": {
+                    "passed": 12582,
+                    "total_tests": 12582,
+                },
+            }))
+            args = types.SimpleNamespace(conformance_metrics_json=None)
+            readme_text = """<!-- CONFORMANCE_START -->
+```
+Progress: [████████████████████] 100.0% (12,581/12,585 tests)
+```
+<!-- CONFORMANCE_END -->"""
+
+            old_root = refresh_readme.ROOT
+            stderr = io.StringIO()
+            try:
+                refresh_readme.ROOT = root
+                with redirect_stderr(stderr):
+                    passed, total = refresh_readme.load_conformance(args, readme_text)
+            finally:
+                refresh_readme.ROOT = old_root
+
+        self.assertEqual(passed, 12581)
+        self.assertEqual(total, 12585)
+        self.assertIn("preserving README conformance metrics", stderr.getvalue())
+        self.assertIn("scripts/conformance/conformance-snapshot.json", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
