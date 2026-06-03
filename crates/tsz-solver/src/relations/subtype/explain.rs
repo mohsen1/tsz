@@ -954,25 +954,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     continue;
                 }
                 // Elaborate the first failing member beneath the union-to-target
-                // line, mirroring tsc which always drills into that member. Two
-                // shapes are surfaced:
+                // line, mirroring tsc which always drills into that member. Each
+                // arm below is a member-failure reason whose render composes
+                // under the union line:
+                //   * leaf relations and property summaries
+                //     (`MissingProperty`/`MissingProperties`), the readonly /
+                //     optional property modifiers, and the array-element reason
+                //     self-head — their rendered line already names the member
+                //     (`Property 'a' is missing in type '{ b: 2; }' …`,
+                //     `Type 'number[]' is not assignable to type 'string[]' …`).
+                //   * the tuple/property element-type mismatches are header-led;
+                //     the union-source renderer supplies the
+                //     `Type 'M' is not assignable to type 'T'.` member header
+                //     before drilling (`Type at position 0 …` / `Types of
+                //     property 'p' …`).
+                // Without this the chain collapses to the bare union-to-target
+                // line and hides which member fails.
                 //
-                // * *Self-heading* reasons — leaf relations
-                //   (`undefined`/literal/intrinsic mismatch) and the property
-                //   reasons (`MissingProperty`/`MissingProperties`), whose
-                //   rendered message already names the member type
-                //   (`Property 'a' is missing in type '{ b: 2; }' …` /
-                //   `Type '{ c: 3; }' is missing the following properties …`).
-                //   They need no extra `Type 'M' is not assignable …` header.
-                //
-                // * *Header-led* structural reasons — tuple element type
-                //   mismatches and object property-type mismatches. tsc leads
-                //   their elaboration with an explicit
-                //   `Type 'M' is not assignable to type 'T'.` member header and
-                //   then drills (`Type at position 0 …` / `Types of property
-                //   'p' …`). The union-source renderer emits that header so the
-                //   chain stays correctly indented instead of collapsing to the
-                //   bare union line.
+                // Two families are deliberately excluded because their leaf
+                // render does not yet compose here:
+                //   * `TupleElementMismatch` (fixed-arity count mismatch) — its
+                //     nested `TS2618`/`TS2619` (`Source has N element(s) but
+                //     target requires/allows only M`) leaf render is owned
+                //     separately; surfacing it before that lands emits a non-tsc
+                //     line.
+                //   * `ReturnTypeMismatch`/`ParameterTypeMismatch` — the function
+                //     renderers self-head with the signature relation, so they
+                //     would double-state the member signature here.
                 let nested = self.explain_failure_guarded(member, target);
                 if let Some(nested) = nested
                     && matches!(
@@ -984,6 +992,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::MissingProperties { .. }
                             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
+                            | SubtypeFailureReason::ArrayElementMismatch { .. }
+                            | SubtypeFailureReason::ReadonlyToMutableAssignment { .. }
+                            | SubtypeFailureReason::OptionalPropertyRequired { .. }
+                            | SubtypeFailureReason::ReadonlyPropertyMismatch { .. }
                     )
                 {
                     return Some(SubtypeFailureReason::UnionSourceMismatch {

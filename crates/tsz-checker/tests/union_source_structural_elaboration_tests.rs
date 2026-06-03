@@ -241,3 +241,107 @@ const v: Target = u;
          with no extra member header; got {chain:?}"
     );
 }
+
+/// Array-element union member: a `number[]` member assigned where `string[]` is
+/// required self-heads with its own `Type 'number[]' is not assignable to type
+/// 'string[]'.` line (which doubles as the member header) and then drills into
+/// the element relation one indent deeper — matching tsc. Before the fix the
+/// chain stopped at the bare top-level union line.
+#[test]
+fn union_member_array_element_mismatch_emits_header_and_drill() {
+    let diags = diagnostics(
+        r#"
+declare const s: string[] | number[];
+const t: string[] = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("'number[]'")
+            && m.contains("'string[]'")
+            && m.contains("is not assignable")),
+        "expected the array member header at depth 0; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("'number'")
+            && m.contains("'string'")
+            && m.contains("is not assignable")),
+        "expected the element leaf relation at depth 1 (directly beneath the \
+         member header, not over-indented); got {chain:?}"
+    );
+}
+
+/// Array-of-object union member drills member header -> element header ->
+/// `Types of property` -> leaf, each exactly one indent deeper. This pins the
+/// depth composition (the element drill must sit beneath the member line, not a
+/// level too deep).
+#[test]
+fn union_member_array_of_object_drills_each_level_one_indent() {
+    let diags = diagnostics(
+        r#"
+declare const s: { a: string }[] | { a: number }[];
+const t: { a: string }[] = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("is not assignable")
+            && m.contains("[]")),
+        "expected the array member header at depth 0; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 2, |m| m.contains("property 'a'")
+            && m.contains("incompatible")),
+        "expected `Types of property 'a' are incompatible.` at depth 2; \
+         got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 3, |m| m.contains("'number'")
+            && m.contains("'string'")),
+        "expected the leaf property relation at depth 3; got {chain:?}"
+    );
+}
+
+/// Readonly-tuple union member self-heads with the readonly elaboration (no
+/// extra member header), matching tsc.
+#[test]
+fn union_member_readonly_tuple_self_heads() {
+    let diags = diagnostics(
+        r#"
+declare const s: readonly [number] | [string];
+const t: [string] = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("'readonly'")
+            && m.contains("cannot be assigned to the mutable type")),
+        "expected the readonly-to-mutable self-heading line at depth 0; \
+         got {chain:?}"
+    );
+}
+
+/// Renamed binders: the array-element rule must hold regardless of the alias
+/// spelling, so a name-keyed fix would not satisfy this.
+#[test]
+fn union_member_array_element_mismatch_renamed() {
+    let diags = diagnostics(
+        r#"
+type Elems = boolean[] | string[];
+declare const xs: Elems;
+const ys: boolean[] = xs;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("'string[]'")
+            && m.contains("'boolean[]'")),
+        "renamed array union should still emit the member header; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("'string'")
+            && m.contains("'boolean'")),
+        "renamed array union should still drill the element leaf at depth 1; \
+         got {chain:?}"
+    );
+}
