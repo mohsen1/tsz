@@ -1,4 +1,5 @@
 use super::super::Printer;
+use super::top_level_using_decorated::strip_decorate_export_prefix;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter, emit_utils};
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
@@ -1677,8 +1678,7 @@ impl<'a> Printer<'a> {
         let export_suffix = self.top_level_using_export_binding_suffix();
 
         if is_legacy_decorator_class && self.ctx.target_es5 && self.in_top_level_using_scope {
-            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-            emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
+            emitted = strip_decorate_export_prefix(&emitted, &export_prefix, binding_name);
         }
 
         if is_legacy_decorator_class
@@ -1784,8 +1784,7 @@ impl<'a> Printer<'a> {
         let export_prefix = self.top_level_using_export_binding_prefix(export_name);
         let export_suffix = self.top_level_using_export_binding_suffix();
         if self.in_top_level_using_scope && self.ctx.target_es5 {
-            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-            emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
+            emitted = strip_decorate_export_prefix(&emitted, &export_prefix, binding_name);
             let trimmed = emitted.trim_end();
             let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed);
             return format!("{export_prefix}{trimmed}{export_suffix}");

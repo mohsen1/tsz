@@ -172,20 +172,12 @@ impl<'a> CheckerState<'a> {
         if let Some(target_file_idx) = self
             .ctx
             .resolve_import_target_from_file(source_file_idx, module_specifier)
+            && let Some((target_sym_id, actual_file_idx)) =
+                self.resolve_reexport_chain_to_declaration(target_file_idx, import_name)
         {
-            let mut visited = rustc_hash::FxHashSet::default();
-            if let Some((target_sym_id, actual_file_idx)) =
-                self.resolve_export_in_file(target_file_idx, import_name, &mut visited)
-                && self
-                    .ctx
-                    .get_binder_for_file(actual_file_idx)
-                    .and_then(|binder| binder.get_symbol(target_sym_id))
-                    .is_none_or(|symbol| symbol.import_module.is_none())
-            {
-                self.ctx
-                    .register_symbol_file_target(target_sym_id, actual_file_idx);
-                return Some((target_sym_id, Some(actual_file_idx)));
-            }
+            self.ctx
+                .register_symbol_file_target(target_sym_id, actual_file_idx);
+            return Some((target_sym_id, Some(actual_file_idx)));
         }
 
         let target_sym_id = self.resolve_cross_file_export_from_file(

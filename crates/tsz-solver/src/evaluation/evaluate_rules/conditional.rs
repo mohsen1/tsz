@@ -1375,6 +1375,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Specialize a `typeof f<Args>` / `typeof Class<Args>` instantiation
+    /// expression whose base is a `TypeQuery` that resolved (via a `DefId`) to
+    /// a `Callable`.
+    ///
+    /// The resolved callable's call/construct signatures DECLARE the applied
+    /// type params, so they must be CONSUMED by per-signature instantiation
+    /// ([`Self::try_instantiate_callable_type_params`]). Routing such a base
+    /// through the alias-style known-params path in `evaluate_application_body`
+    /// instead would `instantiate_generic` the callable body and
+    /// `enter_shadowing_scope(&sig.type_params)`, treating those names as bound
+    /// and cancelling the substitution — freezing the instantiation expression
+    /// (e.g. `ReturnType<typeof f<U>>` in a generic method never specializes
+    /// and degrades to `unknown`, see #10933). Hoisting this ahead of that
+    /// branch matters because a generic *function* value reports `Some([T])`
+    /// from the resolver, so it would otherwise take the shadowing path.
+    ///
+    /// Returns `Some(evaluated)` only when a signature actually consumes the
+    /// arguments. `None` (non-`TypeQuery` base, empty args, non-`Callable`
+    /// body, or arity mismatch) leaves the caller's existing param-based /
+    /// opaque handling unchanged, preserving the opaque-on-invalid
+    /// TS2635/TS2344 parity.
+    pub(in crate::evaluation) fn try_specialize_typeof_instantiation_expression(
+        &mut self,
+        ctx: &crate::evaluation::evaluate::application_types::ApplicationEvalContext,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        if !ctx.base_is_type_query || args.is_empty() {
+            return None;
+        }
+        let resolved = ctx.resolved?;
+        if !matches!(
+            self.interner().lookup(resolved),
+            Some(TypeData::Callable(_))
+        ) {
+            return None;
+        }
+        let specialized = self.try_instantiate_callable_type_params(resolved, args)?;
+        Some(self.evaluate(specialized))
+    }
+
     /// Check if this is a primitive type vs Function/callable target.
     ///
     /// Primitive types (string, number, boolean, bigint, symbol) are never

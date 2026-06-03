@@ -1520,6 +1520,45 @@ const l = <div<number>/>;
 }
 
 #[test]
+fn test_jsx_intrinsic_type_arg_errors_skip_react_required_props_noise() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let source = r#"
+import * as React from "react";
+type Record<K extends keyof any, T> = { [P in K]: T };
+
+const a = <div<>></div>;
+const b = <div<number,>></div>;
+const c = <div<Missing>></div>;
+const d = <div<Missing<AlsoMissing>>></div>;
+const e = <div<Record<object, object>>></div>;
+const f = <div<number>></div>;
+const g = <div<>/>;
+const h = <div<number,>/>;
+const i = <div<Missing>/>;
+const j = <div<Missing<AlsoMissing>>/>;
+const k = <div<Record<object, object>>/>;
+const l = <div<number>/>;
+"#;
+    let diags = cross_file_jsx_diagnostics_with_mode(&react_types, source, JsxMode::React);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT
+        ),
+        "intrinsic JSX elements should still reject explicit type arguments, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        ),
+        "invalid intrinsic JSX type arguments should not also compare empty attrs against React intrinsic props, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_jsx_explicit_type_args_constraint_violation_emits_ts2344() {
     // <MyComp2<Prop> /> where MyComp2<P extends {a: string}> and Prop = {a: number}
     let source = format!(

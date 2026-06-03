@@ -48,3 +48,44 @@ a.foo;
         "Expected TS2339 on `a.foo` even when `new C1` had bad args: {codes:?}"
     );
 }
+
+/// TS17012 for `new.targ` (misspelled `new.target`) is emitted by the parser,
+/// not the checker. This test documents that the checker does NOT add a second
+/// TS17012 — it returns `any` for the unknown meta-property to avoid cascading
+/// false positives. The full-pipeline TS17012 is exercised by the parser test
+/// `test_new_dot_targ_meta_property_ts17012` in `tsz-parser`.
+#[test]
+fn new_dot_targ_misspelling_checker_emits_no_ts17012() {
+    // check_source_diagnostics returns only checker-layer diagnostics, not parse diagnostics.
+    // TS17012 originates in the parser; the checker should not double-emit it.
+    let source = "function f() { return new.targ; }";
+    let diagnostics = check_source_diagnostics(source);
+    let ts17012_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN
+        })
+        .count();
+    assert_eq!(
+        ts17012_count, 0,
+        "Checker must not double-emit TS17012 for new.targ; parser owns this diagnostic. \
+         All checker diagnostics: {diagnostics:?}",
+    );
+}
+
+/// `new.target` (correct spelling) must not produce any TS17012 at any layer.
+#[test]
+fn new_dot_target_correct_spelling_no_ts17012() {
+    let source = "function f() { return new.target; }";
+    let diagnostics = check_source_diagnostics(source);
+    let ts17012_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN
+        })
+        .count();
+    assert_eq!(
+        ts17012_count, 0,
+        "No TS17012 for correctly-spelled new.target: {diagnostics:?}",
+    );
+}

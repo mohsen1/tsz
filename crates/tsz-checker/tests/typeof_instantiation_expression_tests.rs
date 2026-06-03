@@ -524,3 +524,122 @@ type Bad = typeof multi<string, number, boolean>;
         messages[0]
     );
 }
+
+// ── generic-method instantiation-expression return types (#10933) ──────────────
+//
+// When a generic call signature's return type contains an instantiation
+// expression `typeof f<U>` over that signature's own type parameter, the
+// instantiation must consume the signature-level type params per-signature
+// rather than route through the alias-style (shadowing) substitution path,
+// which would freeze the application and degrade `ReturnType<…>` to `unknown`.
+
+#[test]
+fn generic_method_returns_instantiation_expression_specializes() {
+    // The instantiation expression is the bare method return type.
+    let diags = check_source_diagnostics(
+        r#"
+declare function build<TValue>(value: TValue): { unwrap(): TValue };
+interface Pipeline {
+    step<TStep>(make: () => TStep): typeof build<TStep>;
+}
+declare const pipeline: Pipeline;
+
+const made = pipeline.step<{ label: string }>(() => ({ label: "x" }));
+const produced = made({ label: "y" });
+const ok: { label: string } = produced.unwrap();
+const bad: number = produced.unwrap();
+"#,
+    );
+    assert_no_false_typeof_instantiation_diagnostics(&diags);
+    // The only expected error is the deliberate `bad: number` mismatch.
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        1,
+        "expected exactly the deliberate `bad: number` TS2322, got {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_method_return_type_wraps_instantiation_expression() {
+    // The instantiation expression is nested inside `ReturnType<…>`, the
+    // exact shape from the #10933 witness. Binder names differ from the
+    // sibling test above so the fix is provably structural, not name-keyed.
+    let diags = check_source_diagnostics(
+        r#"
+type ReturnOf<F extends (...args: any[]) => any> =
+    F extends (...args: any[]) => infer R ? R : never;
+
+declare function factory<TItem>(seed: TItem): { collect(): TItem };
+interface Chain {
+    map<TMapped>(project: (value: number) => TMapped): ReturnOf<typeof factory<TMapped>>;
+}
+declare const chain: Chain;
+
+const mapped = chain.map<{ tag: string }>(() => ({ tag: "t" }));
+const ok: { tag: string } = mapped.collect();
+const bad: string = mapped.collect();
+"#,
+    );
+    assert_no_false_typeof_instantiation_diagnostics(&diags);
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        1,
+        "expected exactly the deliberate `bad: string` TS2322, got {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_method_instantiation_expression_via_object_type_alias() {
+    // Same rule reached through a generic object-type alias whose member is a
+    // generic method: the alias param and the method param both flow into the
+    // instantiation expression.
+    let diags = check_source_diagnostics(
+        r#"
+type ReturnOf<F extends (...args: any[]) => any> =
+    F extends (...args: any[]) => infer R ? R : never;
+
+declare function wrap<TWrapped>(value: TWrapped): { done(): TWrapped };
+type Builder<TState> = {
+    refine<TNext>(next: (state: TState) => TNext): ReturnOf<typeof wrap<TNext>>;
+};
+declare const builder: Builder<{ a: number }>;
+
+const refined = builder.refine<{ label: string }>((state) => ({ label: "x" }));
+const ok: { label: string } = refined.done();
+const bad: string = refined.done();
+"#,
+    );
+    assert_no_false_typeof_instantiation_diagnostics(&diags);
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        1,
+        "expected exactly the deliberate `bad` TS2322, got {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_method_instantiation_expression_does_not_overfire_for_standalone_function() {
+    // Guard the adjacent positive path: a standalone generic function whose
+    // return type is the same instantiation expression must keep working
+    // (it already did via the `Callable`-base path) so the hoisted
+    // `TypeQuery`-base handling does not change it.
+    let diags = check_source_diagnostics(
+        r#"
+type ReturnOf<F extends (...args: any[]) => any> =
+    F extends (...args: any[]) => infer R ? R : never;
+
+declare function source<TSeed>(seed: TSeed): { read(): TSeed };
+declare function lift<TLift>(produce: () => TLift): ReturnOf<typeof source<TLift>>;
+
+const lifted = lift<{ id: number }>(() => ({ id: 1 }));
+const ok: { id: number } = lifted.read();
+const bad: string = lifted.read();
+"#,
+    );
+    assert_no_false_typeof_instantiation_diagnostics(&diags);
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        1,
+        "expected exactly the deliberate `bad: string` TS2322, got {diags:#?}"
+    );
+}

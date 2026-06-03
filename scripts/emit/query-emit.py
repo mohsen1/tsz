@@ -13,6 +13,9 @@ Usage:
   # Failure-family dashboard
   python3 scripts/emit/query-emit.py --families
 
+  # Include historical family rows even when emit-detail.json is stale
+  python3 scripts/emit/query-emit.py --families --include-stale-detail
+
   # Filter by substring in test name
   python3 scripts/emit/query-emit.py --filter class
 
@@ -336,6 +339,31 @@ def failure_family_surface_heading(surface, title, detail_total, detail_summary,
     )
 
 
+def print_stale_failure_family_guard(detail_summary, public_summary):
+    print(emit_freshness_status_line_from_status(
+        emit_freshness_status(detail_summary, public_summary)
+    ))
+    print(
+        "Failure-family rows are suppressed because scripts/emit/emit-detail.json "
+        "does not match the README/public aggregate."
+    )
+    print()
+    for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
+        public_remaining = emit_remaining_failures(public_summary, surface)
+        detail_remaining = emit_remaining_failures(detail_summary, surface)
+        if public_remaining is None or detail_remaining is None:
+            continue
+        print(
+            f"{title}: public aggregate remaining {public_remaining:,}; "
+            f"checked-detail remaining {detail_remaining:,}"
+        )
+    print()
+    print(
+        "Refresh with `./scripts/emit/run.sh --json-out`, or pass "
+        "`--include-stale-detail` to view historical checked-detail triage."
+    )
+
+
 def print_emit_freshness_status(data):
     print(emit_freshness_status_line(data))
 
@@ -520,12 +548,17 @@ def collect_failures_by_family(data, surface):
     return families
 
 
-def show_failure_families(data, top=20):
+def show_failure_families(data, top=20, include_stale_detail=False):
     print("Emit failure families")
     print()
-    print_emit_freshness_note(data)
     detail_summary = emit_summary(data)
     public_summary = emit_summary_from_readme()
+    freshness_status = emit_freshness_status(detail_summary, public_summary)
+    if freshness_status["state"] == "stale" and not include_stale_detail:
+        print_stale_failure_family_guard(detail_summary, public_summary)
+        return
+
+    print_emit_freshness_note(data)
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(
@@ -601,6 +634,11 @@ def main():
     parser.add_argument("--dts-failures", action="store_true", help="Show DTS failures")
     parser.add_argument("--top-errors", action="store_true", help="Show top error messages")
     parser.add_argument("--families", action="store_true", help="Show JS/DTS failure family counts")
+    parser.add_argument(
+        "--include-stale-detail",
+        action="store_true",
+        help="With --families, print historical family rows even when emit-detail.json is stale",
+    )
     parser.add_argument("--close", action="store_true", help="Show close-to-passing tests")
     parser.add_argument("--filter", type=str, help="Filter by substring in test name")
     parser.add_argument("--status", type=str, help="Filter by status (pass/fail/skip/timeout)")
@@ -638,7 +676,7 @@ def main():
     elif args.top_errors:
         show_top_errors(filtered_data, args.top)
     elif args.families:
-        show_failure_families(filtered_data, args.top)
+        show_failure_families(filtered_data, args.top, args.include_stale_detail)
     elif args.close:
         show_close(filtered_data, args.top)
     elif args.status:

@@ -24,11 +24,10 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # #12260. JSX/import.meta subset tracked in #12261 — re-verified against the
 # pinned TS 6.0.3 corpus, replacing the earlier vague "oscillates" notes with the
 # actual per-fixture fingerprints so each entry stays owner-visible:
-#   - jsxIntrinsicElementsTypeArgumentErrors.tsx: passes in an isolated harness
-#     run (3/3) but REGRESSES in the sharded ready-review aggregate, so the
-#     diagnostics on JSX type-argument recovery (TS1009/TS1099/TS2304/TS2344/
-#     TS2558) are resolution-order/shard sensitive. Kept allowlisted; the
-#     order-sensitivity is the bug to chase. Tracked in #12261.
+#   - jsxIntrinsicElementsTypeArgumentErrors.tsx: fixed by the intrinsic JSX
+#     type-argument cascade guard. Invalid or unsupported intrinsic type args
+#     still report TS1009/TS1099/TS2304/TS2344/TS2558, but no longer cascade into
+#     false React intrinsic-props TS2739 diagnostics.
 #   - importMeta.ts: diagnostic CODES already match [TS2339, TS2364, TS17012].
 #     The only remaining drift is one extra false TS2339 "Property 'appendChild'
 #     does not exist on type 'HTMLElement'" on `document.body.appendChild(...)`,
@@ -42,8 +41,11 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     component's own signature in that case, so the early-return suppressed the
 #     legitimate TS2741 (and TS2322/excess). Removing it restores parity; the
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
-# intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
+# intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
+# jsxIntrinsicUnions.tsx and jsxJsxsCjsTransformNestedSelfClosingChild.tsx:
+# accepted after REGRESSED on PR #12368 exact head 9ee797b6 / run 26906037226.
+# Tracked in #12376.
 # intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
@@ -51,6 +53,6 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # different code path. Tracked in #12260.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
-TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
+TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
+TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx

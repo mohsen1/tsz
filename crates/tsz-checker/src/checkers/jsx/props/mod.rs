@@ -5,6 +5,7 @@
 
 mod attr_check_pipeline;
 mod attr_value;
+mod attribute_expressions;
 mod declaration_heritage;
 mod generic_spread;
 pub(crate) mod resolution;

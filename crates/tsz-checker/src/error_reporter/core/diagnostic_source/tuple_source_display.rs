@@ -69,6 +69,35 @@ impl<'a> CheckerState<'a> {
             }
 
             let element_type = self.get_type_of_node(element_idx);
+
+            // Nested array-literal element against a tuple-typed (or
+            // union-of-tuples) target slot: recurse so the inner literal renders
+            // with its contextually-typed tuple shape (e.g. `[1]`) instead of
+            // collapsing to the non-contextual widened array form (`number[]`).
+            // tsc keeps the structural tuple spelling at these positions, so the
+            // source type shown in the assignability message must too. When the
+            // inner target slot is not tuple-like, the recursive call returns
+            // `None` and we fall through to the widened-array fallback below.
+            if element_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                let nested_target = self
+                    .target_tuple_element_for_literal_position(
+                        &target_elements,
+                        element_position,
+                        target_rest_layout,
+                    )
+                    .map(|element| element.type_id);
+                if let Some(nested_target) = nested_target
+                    && let Some(nested_display) = self.array_literal_tuple_source_type_display(
+                        element_idx,
+                        element_type,
+                        nested_target,
+                    )
+                {
+                    parts.push(nested_display);
+                    continue;
+                }
+            }
+
             let display_type = self.widen_type_for_display(element_type);
             parts.push(self.format_type_for_assignability_message(display_type));
         }
