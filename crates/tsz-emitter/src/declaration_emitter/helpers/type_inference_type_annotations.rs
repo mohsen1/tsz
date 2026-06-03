@@ -365,11 +365,14 @@ impl<'a> DeclarationEmitter<'a> {
             .or(self.current_source_file_idx);
         scratch.source_file_text = source_file.map(|source_file| source_file.text.clone());
         scratch.current_file_path = self
-            .arena_to_path
-            .get(&(source_arena as *const NodeArena as usize))
-            .cloned()
-            .or_else(|| source_file.map(|source_file| source_file.file_name.clone()))
-            .or_else(|| self.current_file_path.clone());
+            .current_file_path
+            .clone()
+            .or_else(|| {
+                self.arena_to_path
+                    .get(&(source_arena as *const NodeArena as usize))
+                    .cloned()
+            })
+            .or_else(|| source_file.map(|source_file| source_file.file_name.clone()));
         scratch.current_arena = self.current_arena.clone();
         scratch.arena_to_path = self.arena_to_path.clone();
         scratch.emit_type(type_idx);
@@ -455,54 +458,47 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        let binder = self.binder?;
+        self.binder?;
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
         }
 
         let access = self.arena.get_access_expr(expr_node)?;
+        if self
+            .arena
+            .get(access.expression)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            return None;
+        }
         let member_name = self.get_identifier_text(access.name_or_argument)?;
         let base_sym_id = self.value_reference_symbol(access.expression)?;
 
         self.with_symbol_declarations(base_sym_id, |source_arena, decl_idx| {
+            let current_path = self.current_file_path.as_deref()?;
+            let source_file = self.source_file_for_node_from_arena(source_arena, decl_idx)?;
+            let source_file_name = source_file.file_name.to_ascii_lowercase();
+            if source_file.is_declaration_file
+                || source_file_name.ends_with(".d.ts")
+                || source_file_name.ends_with(".d.mts")
+                || source_file_name.ends_with(".d.cts")
+            {
+                return None;
+            }
+            if !self.paths_refer_to_same_source_file(current_path, &source_file.file_name) {
+                return None;
+            }
             let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
                 .unwrap_or(decl_idx);
             let decl_node = source_arena.get(decl_idx)?;
-            let declared_type = source_arena
-                .get_variable_declaration(decl_node)
-                .and_then(|decl| {
-                    if decl.type_annotation.is_some() {
-                        Some(decl.type_annotation)
-                    } else if decl.initializer.is_some() {
-                        Self::explicit_asserted_type_node_from_arena(source_arena, decl.initializer)
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    source_arena.get_parameter(decl_node).and_then(|param| {
-                        if param.type_annotation.is_some() {
-                            Some(param.type_annotation)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .or_else(|| {
-                    source_arena.get_property_decl(decl_node).and_then(|decl| {
-                        if decl.type_annotation.is_some() {
-                            Some(decl.type_annotation)
-                        } else if decl.initializer.is_some() {
-                            Self::explicit_asserted_type_node_from_arena(
-                                source_arena,
-                                decl.initializer,
-                            )
-                        } else {
-                            None
-                        }
-                    })
-                })?;
+            let declared_type = source_arena.get_parameter(decl_node).and_then(|param| {
+                if param.type_annotation.is_some() {
+                    Some(param.type_annotation)
+                } else {
+                    None
+                }
+            })?;
 
             if let Some(type_text) = self.type_literal_member_declared_type_annotation_text(
                 source_arena,
@@ -512,14 +508,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(type_text);
             }
 
-            let declared_type_sym_id =
-                self.declaration_type_symbol_from_type_node(source_arena, declared_type)?;
-            let declared_type_sym_id = self
-                .resolve_portability_import_alias(declared_type_sym_id, binder)
-                .unwrap_or(declared_type_sym_id);
-            let declared_type_sym_id =
-                self.resolve_portability_declaration_symbol(declared_type_sym_id, binder);
-            self.type_member_declared_type_annotation_text(declared_type_sym_id, &member_name)
+            None
         })
     }
 
