@@ -4496,6 +4496,9 @@ PASS TypeScript/tests/cases/compiler/newOperator.ts
 PASS TypeScript/tests/cases/compiler/noAsConstNameLookup.ts
 PASS TypeScript/tests/cases/compiler/noBundledEmitFromNodeModules.ts
 PASS TypeScript/tests/cases/compiler/noCatchBlock.ts
+PASS TypeScript/tests/cases/compiler/noCheckDoesNotReportError.ts
+PASS TypeScript/tests/cases/compiler/noCheckNoEmit.ts
+PASS TypeScript/tests/cases/compiler/noCheckRequiresEmitDeclarationOnly.ts
 PASS TypeScript/tests/cases/compiler/noCircularDefinitionOnExportOfPrivateInMergedNamespace.ts
 PASS TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter1.ts
 PASS TypeScript/tests/cases/compiler/noCircularitySelfReferentialGetter2.ts
