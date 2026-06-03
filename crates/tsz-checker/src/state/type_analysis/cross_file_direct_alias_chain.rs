@@ -1031,9 +1031,6 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                if resolved.file_idx.is_some() && resolved.file_idx != proof.current_file_idx {
-                    return true;
-                }
                 if !Self::source_file_alias_proof_seen_push(seen, key) {
                     return false;
                 }

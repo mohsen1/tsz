@@ -937,6 +937,29 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
     );
 }
 
+#[test]
+fn test_jsx_intrinsic_union_react16_fixture_accepts_shared_attributes() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(source) =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx")
+    else {
+        return;
+    };
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "intrinsic JSX tag union should accept shared React HTML attributes, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // JSX class-component target display (issue #8696)
 // =============================================================================
@@ -1747,4 +1770,3 @@ const Test = () => (
         "Union narrowing on explicit children attr should avoid TS2322 here, got: {diags:?}"
     );
 }
-

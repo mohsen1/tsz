@@ -1097,18 +1097,21 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
-        get_property_type(self.resolve_property_access_with_env(props_type, attr_name))
-            .or_else(|| {
-                if attr_name == "key" {
-                    self.get_intrinsic_attributes_type().and_then(|ia_type| {
-                        let ia_type = self.normalize_jsx_required_props_target(ia_type);
-                        get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
-                    })
-                } else {
-                    None
-                }
+        let intrinsic_key_type = if attr_name == "key" {
+            self.get_intrinsic_attributes_type().and_then(|ia_type| {
+                let ia_type = self.normalize_jsx_required_props_target(ia_type);
+                get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
             })
-            .or_else(|| {
+        } else {
+            None
+        };
+
+        if attr_name == "key" {
+            return intrinsic_key_type;
+        }
+
+        get_property_type(self.resolve_property_access_with_env(props_type, attr_name)).or_else(
+            || {
                 if attr_name == "ref" {
                     special_attr_component_type.and_then(|component_type| {
                         self.get_intrinsic_class_attributes_type_for_component(component_type)
@@ -1131,7 +1134,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 }
-            })
+            },
+        )
     }
 
     fn get_jsx_class_ref_fallback_type(

@@ -630,6 +630,10 @@ impl<'a> CheckerState<'a> {
                         &mut Vec::new(),
                     )
                     .is_some()
+                || self.get_jsx_children_prop_type(ctx.props_type).is_some()
+                || self
+                    .get_jsx_children_prop_type(ctx.raw_props_type)
+                    .is_some()
                 || self.jsx_declared_interface_heritage_has_property(
                     ctx.props_type,
                     &children_prop_name,
@@ -656,6 +660,7 @@ impl<'a> CheckerState<'a> {
                     || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.raw_props_type)
                     || jsx_queries::type_has_displayable_name(self.ctx.types, ctx.props_type));
             if has_intrinsic_key_or_ref
+                && opts.component_type.is_some()
                 && !props_has_children
                 && !intrinsic_has_children
                 && !spread_named_props_target
