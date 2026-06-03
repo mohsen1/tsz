@@ -139,7 +139,6 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::{BinderState, SymbolTable};
     use tsz_parser::ParserState;
-    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn package_root_imported_indexed_access_expands_member_annotation() {
@@ -174,7 +173,7 @@ export interface StyledOtherComponentList {
 
         let mut current_parser = ParserState::new("/project/index.ts".to_string(), String::new());
         let _ = current_parser.parse_source_file();
-        let interner = TypeInterner::new();
+        let interner = tsz_solver::construction::TypeInterner::new();
         let mut emitter = DeclarationEmitter::with_type_info(
             &current_parser.arena,
             TypeCacheView::default(),
