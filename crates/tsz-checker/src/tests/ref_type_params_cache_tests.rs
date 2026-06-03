@@ -21,6 +21,114 @@ fn alias_body_explicit_type_refs_use_validator_only_path() {
 }
 
 #[test]
+fn type_parameter_predicate_skips_intrinsic_cache_lookup() {
+    let checker_source =
+        std::fs::read_to_string("src/types/queries/core.rs").expect("read type queries");
+    assert!(
+        checker_source.contains("if type_id.is_intrinsic()")
+            && checker_source.contains("return false;"),
+        "intrinsic types cannot contain type parameters and should bypass the \
+         hot predicate cache map"
+    );
+}
+
+#[test]
+fn property_only_type_literal_alias_body_missing_names_covered_by_validation() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("syntax_kind_ext::TYPE_LITERAL")
+            && checker_source.contains("get_property_decl")
+            && checker_source.contains("prop.type_annotation.is_none()"),
+        "property-only type literal alias bodies should be covered by the \
+         validation walk without broadening to signatures or unannotated members"
+    );
+}
+
+#[test]
+fn tuple_alias_body_missing_names_covered_by_validation() {
+    let checker_source =
+        std::fs::read_to_string("src/types/type_checking/type_alias_missing_name_coverage.rs")
+            .expect("read type alias missing-name coverage");
+    assert!(
+        checker_source.contains("syntax_kind_ext::TUPLE_TYPE")
+            && checker_source.contains("get_tuple_type")
+            && checker_source.contains("syntax_kind_ext::NAMED_TUPLE_MEMBER")
+            && checker_source.contains("get_named_tuple_member"),
+        "tuple and named-tuple alias bodies should be covered by the validation \
+         walk without falling back to a second missing-name traversal"
+    );
+}
+
+#[test]
+fn renamed_tuple_dispatch_alias_still_validates_annotations() {
+    let diags = check_source_diagnostics(
+        r#"
+type Boxed<Item> = { value: Item };
+type Walk<Thing, Cursor> = [
+    current: Boxed<Thing>,
+    next: Walk<Thing, Cursor>
+];
+"#,
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2304 | 2314 | 2315 | 2344 | 2558))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Renamed tuple dispatch aliases should validate without name-sensitive \
+         behavior; got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn renamed_property_only_dispatch_alias_still_validates_annotations() {
+    let diags = check_source_diagnostics(
+        r#"
+type Boxed<Item> = { value: Item };
+type Walk<Thing, Cursor> = {
+    zero: Boxed<Thing>;
+    one: Walk<Thing, Cursor>;
+};
+"#,
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2304 | 2314 | 2315 | 2344 | 2558))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Renamed property-only dispatch aliases should validate without \
+         name-sensitive behavior; got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn signature_type_literal_alias_keeps_missing_name_path() {
+    let diags = check_source_diagnostics(
+        r#"
+type Callable<T> = {
+    <U>(input: MissingInput<T>): MissingOutput<U>;
+};
+"#,
+    );
+
+    let missing_names: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        missing_names.len(),
+        2,
+        "Type literals with signatures must keep the existing missing-name \
+         validation path; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn type_reference_body_reuses_resolved_type_arguments() {
     let counts = check_computed_type_argument_resolution_counts(
         r#"

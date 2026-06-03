@@ -55,10 +55,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_explicit_type_reference_for_alias_body_validation(
         &mut self,
         ref_idx: NodeIndex,
-        nested_in_type_literal: bool,
     ) -> bool {
-        if nested_in_type_literal
-            || self.is_inside_type_parameter_declaration(ref_idx)
+        if self.is_inside_type_parameter_declaration(ref_idx)
             || !self.type_reference_is_in_type_alias_body(ref_idx)
             || is_builtin_lib_declaration_arena(self.ctx.arena)
         {

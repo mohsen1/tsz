@@ -180,9 +180,11 @@ fn direct_source_file_type_alias_rejects_recursive_mapped_projection_guard() {
                 .expect("_DeepReadonlyObject symbol");
             let target_arena = state.ctx.get_arena_for_file(1);
             let global_type_is_lowerable = |_: &BinderState, _: &str| true;
+            let global_value_is_lowerable = |_: &BinderState, _: &str| true;
             let proof = SourceFileAliasProofContext {
                 current_file_idx: Some(1),
                 global_type_is_lowerable: &global_type_is_lowerable,
+                global_value_is_lowerable: &global_value_is_lowerable,
                 import_alias_target: None,
             };
 
@@ -242,6 +244,45 @@ fn direct_source_file_type_alias_lowers_renamed_template_suffix_infer_recursion(
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert_eq!(params.len(), 1, "StripExtension should expose Path");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_named_tuple_member_keyof_local_alias_chain() {
+    with_two_file_state(
+        "type Ledger = { one: [slot: number, next: keyof Ledger]; two: [slot: number, next: 'one'] };\nexport type Cursor = [value: number, next: keyof Ledger];",
+        "import { Cursor } from './target';",
+        |state, target_binder| {
+            let cursor_sym = target_binder.file_locals.get("Cursor").expect("Cursor");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(cursor_sym, Some(1), true)
+                .expect("named tuple members should recurse through their type nodes");
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Cursor should stay non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_generic_named_tuple_members() {
+    with_two_file_state(
+        "export type PairSlots<Item, Rest> = [front: Item, back?: Rest];",
+        "import { PairSlots } from './target';",
+        |state, target_binder| {
+            let pair_sym = target_binder
+                .file_locals
+                .get("PairSlots")
+                .expect("PairSlots");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(pair_sym, Some(1), true)
+                .expect("generic named tuple members should be transparent to direct lowering");
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "PairSlots should expose Item and Rest");
         },
     );
 }
