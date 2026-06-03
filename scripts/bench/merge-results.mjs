@@ -129,7 +129,7 @@ function validateRunnerEnvironmentConsistency(environments) {
     const mismatchedFields = Object.keys(baseline).filter((key) => {
       if (baseline[key] === current[key]) return false;
       if (
-        key === "cpu_model"
+        (key === "cpu_model" || key === "total_memory_bytes")
         && baseline.cloud_build_machine_type
         && baseline.cloud_build_machine_type === current.cloud_build_machine_type
       ) {
