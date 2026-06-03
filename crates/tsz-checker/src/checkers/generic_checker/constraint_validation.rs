@@ -108,6 +108,9 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
+                    if constraint_resolved == TypeId::ANY {
+                        continue;
+                    }
                     if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
                         type_arg,
                         constraint_resolved,
