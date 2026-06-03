@@ -3691,10 +3691,6 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    // =========================================================================
-    // Control flow statement processing for async state machine
-    // =========================================================================
-
     /// Process an if statement inside an async function body.
     ///
     /// When neither branch contains await, falls through to raw IR emission.
