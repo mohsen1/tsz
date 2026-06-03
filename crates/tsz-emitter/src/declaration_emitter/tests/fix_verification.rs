@@ -1718,6 +1718,49 @@ const unrelated = f("hello", { other: "world" });
 }
 
 #[test]
+fn fix_generic_call_quoted_key_conflict_widens_to_constraint() {
+    // A quoted property key `{ "type"?: T }` is the same property as `type?: T`
+    // for inference purposes.  Conflicting literals across the two sites must
+    // still widen to the constraint.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function f<T extends Kind>(options: { "type"?: T }, fallback: T): T;
+
+const result = f({ "type": "two" }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "quoted-key annotation with conflicting literals must widen to constraint: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "two";"#)
+            && !output.contains(r#"declare const result: "three";"#),
+        "quoted-key conflict must not narrow to either literal: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_quoted_key_same_literal_no_conflict() {
+    // Same literal on both the direct `a: T` site and the quoted-key property
+    // site — no conflict, literal is preserved.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { "type"?: T }): T;
+
+const same = f("hello", { "type": "hello" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const same = "hello";"#),
+        "same-literal quoted-key property must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"

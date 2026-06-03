@@ -1030,14 +1030,13 @@ fn object_arg_has_property_with_different_literal(
         let Some(prop) = source_arena.get_property_assignment(elem_node) else {
             return false;
         };
-        let Some(prop_name_text) = source_arena
-            .get(prop.name)
-            .and_then(|n| source_arena.get_identifier(n))
-            .map(|ident| ident.escaped_text.as_str())
-        else {
+        let Some(prop_name_text) = arena_property_name_text(source_arena, prop.name) else {
             return false;
         };
-        if !t_prop_names.iter().any(|n| n.as_str() == prop_name_text) {
+        if !t_prop_names
+            .iter()
+            .any(|n| n.as_str() == prop_name_text.as_str())
+        {
             return false;
         }
         // This property carries T.  Check if its value differs from the candidate.
@@ -1098,11 +1097,7 @@ fn collect_property_names_for_type_param(
                     type_param_name,
                     depth + 1,
                 ) {
-                    if let Some(name) = source_arena
-                        .get(sig.name)
-                        .and_then(|n| source_arena.get_identifier(n))
-                        .map(|ident| ident.escaped_text.clone())
-                    {
+                    if let Some(name) = arena_property_name_text(source_arena, sig.name) {
                         names.push(name);
                     }
                 }
@@ -1138,5 +1133,24 @@ fn collect_property_names_for_type_param(
             );
         }
         _ => {}
+    }
+}
+
+/// Returns the text of a property name node, handling both identifier and
+/// quoted string/numeric literal forms.
+///
+/// In TypeScript `{ type: T }` and `{ "type": T }` declare the same property;
+/// this helper unifies them so quoted-key annotation properties and quoted-key
+/// object-literal arguments are matched correctly.
+fn arena_property_name_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = source_arena.get(idx)?;
+    match node.kind {
+        k if k == SyntaxKind::Identifier as u16 => source_arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone()),
+        k if k == SyntaxKind::StringLiteral as u16 || k == SyntaxKind::NumericLiteral as u16 => {
+            source_arena.get_literal(node).map(|lit| lit.text.clone())
+        }
+        _ => None,
     }
 }
