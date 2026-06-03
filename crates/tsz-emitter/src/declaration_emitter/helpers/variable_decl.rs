@@ -1370,6 +1370,15 @@ impl<'a> DeclarationEmitter<'a> {
             if binder.lib_symbol_ids.contains(&sym_id) {
                 return true;
             }
+            // A value import is already a public, nameable heritage surface.
+            // Even when package `export *` metadata fails to resolve the target
+            // class, tsc keeps `extends ImportedName` instead of synthesizing
+            // `Derived_base`.
+            if binder.symbols.get(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
+            }) {
+                return true;
+            }
 
             // The heritage reference may be an import alias (e.g.
             // `import { EventEmitter } from "events"`) or a re-export alias
@@ -1405,9 +1414,17 @@ impl<'a> DeclarationEmitter<'a> {
         };
         symbol.flags & symbol_flags::CLASS != 0
             || symbol.declarations.iter().copied().any(|decl_idx| {
-                self.arena.get(decl_idx).is_some_and(|decl_node| {
-                    decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                let decl_node = self
+                    .arena
+                    .get(decl_idx)
+                    .or_else(|| binder.symbol_arenas.get(&sym_id)?.get(decl_idx))
+                    .or_else(|| self.global_symbol_arenas.get(&sym_id)?.get(decl_idx));
+                decl_node.is_some_and(|decl_node| {
+                    matches!(
+                        decl_node.kind,
+                        k if k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::CLASS_EXPRESSION
+                    )
                 })
             })
     }

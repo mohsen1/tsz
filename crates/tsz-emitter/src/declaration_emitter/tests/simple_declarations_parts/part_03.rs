@@ -1441,6 +1441,33 @@ declare var Error: ErrorConstructor;
 }
 
 #[test]
+fn test_js_class_extending_imported_class_keeps_nameable_heritage() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+declare module "lit" {
+    export class LitElement {}
+}
+import { LitElement, LitElement as LitElement2 } from "lit";
+export class ElementB extends LitElement {}
+export class ElementC extends LitElement2 {}
+"#,
+    );
+
+    assert!(
+        output.contains("export class ElementB extends LitElement {"),
+        "Expected imported class heritage to stay nameable: {output}"
+    );
+    assert!(
+        output.contains("export class ElementC extends LitElement {"),
+        "Expected renamed imported class heritage to use the imported name: {output}"
+    );
+    assert!(
+        !output.contains("ElementB_base") && !output.contains("ElementC_base"),
+        "Did not expect synthetic base aliases for imported class heritage: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
     let output = emit_js_dts(
         r#"
@@ -1792,4 +1819,3 @@ point./*3*/x = 30;
         "Did not expect a synthetic anonymous object member in call initializer output: {output}"
     );
 }
-
