@@ -3,7 +3,6 @@ use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
 use crate::query_boundaries::flow_analysis::{tuple_elements_for_type, union_members_for_type};
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
-use crate::query_boundaries::state::type_environment::{contains_this_type, substitute_this_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -804,43 +803,17 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    fn substitute_this_type_if_available(&self, type_id: TypeId) -> TypeId {
-        if let Some(concrete_this_type) = self.concrete_this_type
-            && contains_this_type(self.interner, type_id)
-        {
-            return substitute_this_type(self.interner, type_id, concrete_this_type);
-        }
-        type_id
-    }
-
-    pub(crate) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
-        let source = self.substitute_this_type_if_available(source);
-        let target = self.substitute_this_type_if_available(target);
-        if let Some(env) = &self.type_environment {
-            return query::is_assignable_with_env(
-                self.interner,
-                &env.borrow(),
-                source,
-                target,
-                false,
-            );
-        }
-        query::is_assignable(self.interner, source, target)
-    }
-
-    pub(crate) fn is_assignable_to_strict_null(&self, source: TypeId, target: TypeId) -> bool {
-        let source = self.substitute_this_type_if_available(source);
-        let target = self.substitute_this_type_if_available(target);
-        if let Some(env) = &self.type_environment {
-            return query::is_assignable_with_env(
-                self.interner,
-                &env.borrow(),
-                source,
-                target,
-                true,
-            );
-        }
-        query::is_assignable_strict_null(self.interner, source, target)
+    fn flow_assignability_related(&self, source: TypeId, target: TypeId) -> bool {
+        let env = self.type_environment.map(std::cell::RefCell::borrow);
+        query::flow_assignability_outcome(
+            self.interner,
+            env.as_deref(),
+            self.concrete_this_type,
+            source,
+            target,
+            false,
+        )
+        .related
     }
 
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
@@ -1151,7 +1124,9 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn types_overlap(&self, left: TypeId, right: TypeId) -> bool {
-        left == right || self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+        left == right
+            || self.flow_assignability_related(left, right)
+            || self.flow_assignability_related(right, left)
     }
 
     fn intersect_types(&self, left: TypeId, right: TypeId) -> Option<TypeId> {
@@ -1863,7 +1838,9 @@ impl<'a> FlowAnalyzer<'a> {
                                                 || callable_read_preserves_declared_type(widened);
                                         if preserves_declared_callable_read_type {
                                             initial_type
-                                        } else if self.is_assignable_to(widened, initial_type) {
+                                        } else if self
+                                            .flow_assignability_related(widened, initial_type)
+                                        {
                                             widened
                                         } else {
                                             initial_type
@@ -1910,7 +1887,10 @@ impl<'a> FlowAnalyzer<'a> {
                                             narrowing_base,
                                         )
                                         .is_some()
-                                        && self.is_assignable_to(assigned_type, narrowing_base)
+                                        && self.flow_assignability_related(
+                                            assigned_type,
+                                            narrowing_base,
+                                        )
                                     {
                                         return self.narrow_enum_assignment_target(
                                             narrowing_base,

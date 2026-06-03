@@ -213,10 +213,10 @@ impl<'a> CheckerState<'a> {
             // (the import resolves to a const with a literal value).
             if eval_result.is_none()
                 && (self
-                    .assign_relation_outcome(init_type, TypeId::NUMBER)
+                    .computed_enum_member_relation_outcome(init_type, TypeId::NUMBER)
                     .related
                     || self
-                        .assign_relation_outcome(init_type, TypeId::STRING)
+                        .computed_enum_member_relation_outcome(init_type, TypeId::STRING)
                         .related)
             {
                 continue;
@@ -225,7 +225,7 @@ impl<'a> CheckerState<'a> {
             // Evaluation would fail (or unknown with non-number/string type).
             // Emit TS18033 if the type is not assignable to number.
             if !self
-                .assign_relation_outcome(init_type, TypeId::NUMBER)
+                .computed_enum_member_relation_outcome(init_type, TypeId::NUMBER)
                 .related
             {
                 // tsc displays widened types in TS18033: 'string' not '"bar"'

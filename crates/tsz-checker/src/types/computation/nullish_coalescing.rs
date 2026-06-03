@@ -73,14 +73,19 @@ impl<'a> CheckerState<'a> {
         let right_is_fresh_object =
             crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, right_type);
         let right_is_empty_object_literal = self.is_empty_object_literal_expression(right_idx);
+        let right_subtype = self
+            .diagnostic_subtype_outcome(right_type, non_nullish)
+            .related;
 
         if non_nullish == right_type
-            || ((!right_is_fresh_object || right_is_empty_object_literal)
-                && self.is_subtype_of(right_type, non_nullish))
+            || ((!right_is_fresh_object || right_is_empty_object_literal) && right_subtype)
         {
             return non_nullish;
         }
-        if self.is_subtype_of(non_nullish, right_type) {
+        if self
+            .diagnostic_subtype_outcome(non_nullish, right_type)
+            .related
+        {
             return right_type;
         }
 

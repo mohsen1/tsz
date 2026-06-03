@@ -102,8 +102,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.assign_relation_outcome(left, right).related
-            && self.assign_relation_outcome(right, left).related
+        self.call_elaboration_mutual_relation_outcome(left, right)
+            .related
+            && self
+                .call_elaboration_mutual_relation_outcome(right, left)
+                .related
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
@@ -612,7 +615,7 @@ impl<'a> CheckerState<'a> {
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(branch_type, target_type)
+                        .return_relation_outcome(branch_type, target_type)
                         .related
                 {
                     continue;
@@ -755,7 +758,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if self
-                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .call_arg_relation_outcome(source_prop_type, target_prop_type)
                     .related
                     && self.emit_polymorphic_this_property_assignment_error(
                         source_prop_type,
@@ -995,7 +998,7 @@ impl<'a> CheckerState<'a> {
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(body_type, expected_return_type)
+                        .return_relation_outcome(body_type, expected_return_type)
                         .related
                 {
                     return false;
@@ -1073,7 +1076,7 @@ impl<'a> CheckerState<'a> {
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
                     || self
-                        .assign_relation_outcome(body_type, expected_return_type)
+                        .return_relation_outcome(body_type, expected_return_type)
                         .related
                 {
                     return false;

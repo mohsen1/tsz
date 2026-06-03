@@ -3,8 +3,7 @@ use tsz_solver::{TypeId, construction::TypeDatabase};
 
 pub(crate) use super::common::{
     PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
-    collect_referenced_types, contains_free_type_parameters, contains_type_parameter_named,
-    contains_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
+    contains_free_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
     intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
     is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type,
     object_shape_for_type, string_literal_value, type_has_displayable_name,

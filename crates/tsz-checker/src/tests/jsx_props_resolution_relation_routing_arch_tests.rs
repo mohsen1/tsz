@@ -8,9 +8,9 @@ fn jsx_props_resolution_uses_relation_outcome_boundary() {
     let source = fs::read_to_string(source_path).expect("read JSX props resolution source");
 
     assert_eq!(
-        source.matches("assign_relation_outcome(").count(),
-        8,
-        "JSX props resolution relation probes should route through relation outcomes"
+        source.matches("jsx_props_relation_outcome(").count(),
+        4,
+        "JSX props resolution relation probes should route through JSX props relation outcomes"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),

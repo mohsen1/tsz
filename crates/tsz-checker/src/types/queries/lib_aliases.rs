@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
                         .wildcard_reexports_for_file(target_binder, file_name)
                     {
                         let source_modules = source_modules.clone();
-                        for source_module in &source_modules {
+                        for (source_module, _is_type_only) in &source_modules {
                             if let Some(wc_target_idx) = self
                                 .ctx
                                 .resolve_import_target_from_file(target_idx, source_module)

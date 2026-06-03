@@ -891,20 +891,14 @@ let __: B = new B();"#
             .wildcard_reexports
             .get("./c")
             .expect("expected wildcard re-exports for ./c");
-        assert_eq!(c_wildcards, &vec!["./b".to_string()]);
+        assert!(c_wildcards.iter().any(|(m, _)| m == "./b"));
 
         let b_wildcards = binder
             .wildcard_reexports
             .get("./b")
             .expect("expected wildcard re-exports for ./b");
-        assert_eq!(b_wildcards, &vec!["./a".to_string()]);
-
-        let b_type_only = binder
-            .wildcard_reexports_type_only
-            .get("./b")
-            .expect("expected type-only metadata for ./b");
         assert!(
-            b_type_only
+            b_wildcards
                 .iter()
                 .any(|(source, is_type_only)| source == "./a" && *is_type_only)
         );

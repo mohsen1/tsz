@@ -75,7 +75,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             !self
-                .assign_relation_outcome(*actual_type, expected_type)
+                .jsx_props_relation_outcome(*actual_type, expected_type)
                 .related
         });
 
@@ -105,7 +105,9 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && self.assign_relation_outcome(attrs_type, props_type).related
+            && self
+                .jsx_props_relation_outcome(attrs_type, props_type)
+                .related
         {
             return false;
         }

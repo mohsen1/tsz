@@ -57,3 +57,54 @@ type Callable = {
         "expected TS2344 for constrained type argument in call signature, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn type_literal_property_alias_reports_nested_type_argument_constraint_error() {
+    let diagnostics = codes(
+        r#"
+type Holder<Value extends string> = Value;
+type Bag = {
+    field: Holder<number>;
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&2344),
+        "expected TS2344 for constrained property type argument, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_literal_property_alias_reports_nested_non_generic_type_arguments() {
+    let diagnostics = codes(
+        r#"
+type Plain = string;
+type Bag = {
+    field: Plain<number>;
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&2315),
+        "expected TS2315 for non-generic property type reference, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_literal_property_alias_accepts_renamed_valid_type_arguments() {
+    let diagnostics = codes(
+        r#"
+type Wrapper<Element extends string> = Element;
+type Container = {
+    value: Wrapper<'ok'>;
+};
+"#,
+    );
+
+    assert!(
+        !diagnostics.contains(&2315) && !diagnostics.contains(&2344),
+        "expected no TS2315/TS2344 for valid property type reference, got {diagnostics:?}"
+    );
+}

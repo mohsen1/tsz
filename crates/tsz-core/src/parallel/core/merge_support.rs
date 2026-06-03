@@ -388,8 +388,6 @@ pub struct MergedProgram {
     /// cheap atomic increment instead of a deep clone of the merged
     /// `FxHashMap`. Mutations during binding go through `Arc::make_mut`.
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
-    /// Wildcard re-export type-only provenance per entry.
-    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
     pub lib_binders: Arc<Vec<Arc<BinderState>>>,
@@ -828,7 +826,6 @@ fn release_consumed_bind_result(result: &mut BindResult) {
     result.augmentation_target_modules = Arc::new(FxHashMap::default());
     result.reexports = Arc::new(Reexports::default());
     result.wildcard_reexports = Arc::new(WildcardReexportsMap::default());
-    result.wildcard_reexports_type_only = Arc::new(WildcardReexportsTypeOnlyMap::default());
     result.lib_binders = Arc::new(Vec::new());
     result.lib_arenas.clear();
     result.lib_symbol_ids = Arc::new(FxHashSet::default());

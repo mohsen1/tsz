@@ -164,6 +164,11 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                arena.get_named_tuple_member(node).is_some_and(|member| {
+                    Self::source_file_type_node_is_scope_independent(arena, member.type_node)
+                })
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE
                 || k == syntax_kind_ext::OPTIONAL_TYPE
                 || k == syntax_kind_ext::REST_TYPE =>
@@ -295,6 +300,16 @@ impl<'a> CheckerState<'a> {
                             seen_type_names,
                         )
                     })
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                arena.get_named_tuple_member(node).is_some_and(|member| {
+                    Self::source_file_type_node_is_option_bag_lowerable(
+                        arena,
+                        delegate_binder,
+                        member.type_node,
+                        seen_type_names,
+                    )
                 })
             }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE
@@ -514,6 +529,15 @@ impl<'a> CheckerState<'a> {
                             type_param_names,
                         )
                     })
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                arena.get_named_tuple_member(node).is_some_and(|member| {
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        member.type_node,
+                        type_param_names,
+                    )
                 })
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {

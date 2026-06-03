@@ -14,8 +14,12 @@ fn iterable_next_diagnostic_uses_relation_outcome_boundary() {
         .expect("missing end of iterator next relation diagnostic branch");
 
     assert!(
-        branch.contains("self.assign_relation_outcome(sent_type, next_type).related"),
-        "iterator next diagnostic should use the shared relation outcome boundary"
+        branch.contains("self.call_arg_relation_outcome(sent_type, next_type).related"),
+        "iterator next diagnostic should use the call-argument relation outcome boundary"
+    );
+    assert!(
+        !branch.contains("self.assign_relation_outcome(sent_type, next_type).related"),
+        "iterator next diagnostic should not use the generic assignment request"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard(sent_type, next_type)"),

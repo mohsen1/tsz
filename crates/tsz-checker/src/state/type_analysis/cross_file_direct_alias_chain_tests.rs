@@ -8,7 +8,7 @@ use tsz_binder::{BinderState, SymbolTable, symbol_flags};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeId;
 
-fn parse_bound_source(
+pub(super) fn parse_bound_source(
     source: &str,
 ) -> (
     Arc<tsz_parser::parser::node::NodeArena>,
@@ -70,7 +70,7 @@ where
     test(&mut state, &target_binder)
 }
 
-fn with_program_state_with_libs<F, R>(
+pub(super) fn with_program_state_with_libs<F, R>(
     files: &[(&str, &str)],
     requester_file: &str,
     target_file: &str,
@@ -133,7 +133,7 @@ where
     test(&mut state, &all_binders[target_idx], target_idx)
 }
 
-fn with_two_file_state_with_libs<F, R>(
+pub(super) fn with_two_file_state_with_libs<F, R>(
     target_source: &str,
     requester_source: &str,
     libs: &[&str],
@@ -201,6 +201,43 @@ fn direct_source_file_type_alias_lowers_imported_conditional_alias_argument_chai
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert_eq!(params.len(), 2, "FlowDiff should expose T and U");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_caches_cross_file_symbol_result() {
+    with_program_state_with_libs(
+        &[
+            (
+                "helpers.ts",
+                "export type Keep<Source, Target> = Source extends Target ? Source : never;",
+            ),
+            (
+                "target.ts",
+                "import { Keep } from './helpers';\nexport type PickString<Value> = Keep<Value, string>;",
+            ),
+            ("requester.ts", "import { PickString } from './target';"),
+        ],
+        "requester.ts",
+        "target.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            state.ctx.share_owner_symbol_type_results = true;
+            let pick_string_sym = target_binder
+                .file_locals
+                .get("PickString")
+                .expect("PickString");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(pick_string_sym, Some(target_idx), true)
+                .expect("direct source-file aliases should lower");
+            let (cached_ty, cached_params) = state
+                .ctx
+                .cached_cross_file_symbol_type(pick_string_sym, target_idx as u32)
+                .expect("successful direct source-file lowering should seed cross-file cache");
+
+            assert_eq!(cached_ty, ty);
+            assert_eq!(cached_params.len(), params.len());
         },
     );
 }
@@ -366,6 +403,144 @@ fn direct_source_file_type_alias_lowers_imported_mapped_options_alias_chain() {
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert_eq!(params.len(), 2, "Result should expose T and Override");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_keyset_range_leaf() {
+    with_program_state_with_libs(
+        &[
+            ("list.ts", "export type List = readonly unknown[];"),
+            (
+                "union-of.ts",
+                "import { List } from './list';\nexport type UnionOf<L extends List> = L[number];",
+            ),
+            ("internal.ts", "export type Way = '->' | '<-';"),
+            (
+                "range.ts",
+                "import { Way } from './internal';\nexport const Range = null as never;\ntype Step<From extends number, To extends number, Mode extends Way> = Step<From, To, Mode> | From | To | Mode;\nexport type Range<From extends number, To extends number, Mode extends Way = '->'> = From extends unknown ? To extends unknown ? Step<From, To, Mode>[] : never : never;",
+            ),
+            (
+                "key-set.ts",
+                "import { Range } from './range';\nimport { UnionOf } from './union-of';\nexport type KeySet<From extends number, To extends number> = UnionOf<Range<From, To, '->'>>;",
+            ),
+            ("requester.ts", "import { KeySet } from './key-set';"),
+        ],
+        "requester.ts",
+        "key-set.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let keyset_sym = target_binder.file_locals.get("KeySet").expect("KeySet");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keyset_sym, Some(target_idx), true)
+                .expect("imported range alias applications can remain lazy leaves");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "KeySet should expose From and To");
+        },
+    );
+}
+
+#[test]
+fn imported_alias_shortcut_caches_direct_source_target_for_second_alias() {
+    with_program_state_with_libs(
+        &[
+            (
+                "target.ts",
+                "type Pad0 = unknown;\ntype Pad1 = unknown;\nexport type Shared<T> = { readonly value: T };",
+            ),
+            (
+                "requester.ts",
+                "import { Shared as FirstShared } from './target';\nimport { Shared as SecondShared } from './target';",
+            ),
+        ],
+        "requester.ts",
+        "target.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            state.ctx.share_owner_symbol_type_results = true;
+            let requester_idx = state.ctx.current_file_idx;
+            let first_alias = state
+                .ctx
+                .binder
+                .file_locals
+                .get("FirstShared")
+                .expect("first import alias");
+            let second_alias = state
+                .ctx
+                .binder
+                .file_locals
+                .get("SecondShared")
+                .expect("second import alias");
+            let target_sym = target_binder
+                .file_locals
+                .get("Shared")
+                .expect("target alias");
+            state
+                .ctx
+                .register_symbol_file_target(first_alias, requester_idx);
+            state
+                .ctx
+                .register_symbol_file_target(second_alias, requester_idx);
+            assert_eq!(
+                state
+                    .ctx
+                    .resolve_import_target_from_file(requester_idx, "./target"),
+                Some(target_idx),
+                "fixture module resolution should find target.ts",
+            );
+            assert_eq!(
+                state.resolve_cross_file_export_from_file(
+                    "./target",
+                    "Shared",
+                    Some(requester_idx)
+                ),
+                Some(target_sym),
+                "fixture export lookup should find Shared",
+            );
+
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(target_sym, target_idx as u32),
+                None,
+                "target cache should start empty",
+            );
+
+            let (first_ty, first_params) = state
+                .try_resolve_cross_arena_named_alias_without_child(first_alias)
+                .expect("first import alias should resolve through the shortcut");
+            assert_ne!(first_ty, TypeId::UNKNOWN);
+            assert_ne!(first_ty, TypeId::ERROR);
+
+            let (cached_target_ty, cached_target_params) = state
+                .ctx
+                .cached_cross_file_symbol_type(target_sym, target_idx as u32)
+                .expect("direct-source target result should be cached for sibling import aliases");
+            assert_eq!(cached_target_ty, first_ty);
+            assert_eq!(cached_target_params.len(), first_params.len());
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(second_alias, requester_idx as u32),
+                None,
+                "second alias should not be cached before it is resolved",
+            );
+
+            let (second_ty, second_params) = state
+                .try_resolve_cross_arena_named_alias_without_child(second_alias)
+                .expect("second import alias should resolve through the shortcut");
+            assert_eq!(second_ty, cached_target_ty);
+            assert_eq!(second_params.len(), cached_target_params.len());
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(second_alias, requester_idx as u32)
+                    .map(|(ty, params)| (ty, params.len())),
+                Some((cached_target_ty, cached_target_params.len())),
+                "second alias should cache its own alias entry after reusing the target",
+            );
         },
     );
 }
@@ -1323,6 +1498,40 @@ fn direct_source_file_type_alias_lowers_guarded_generic_self_array_alias() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_guarded_generic_self_function_alias() {
+    with_two_file_state(
+        "export type Step<Input> = (value: Input) => Step<Input>;",
+        "import { Step } from './target';",
+        |state, target_binder| {
+            let step_sym = target_binder.file_locals.get("Step").expect("Step");
+            let (step_ty, step_params) = state
+                .direct_source_file_type_alias_result(step_sym, Some(1), true)
+                .expect("function returns structurally guard generic self aliases");
+            assert_ne!(step_ty, TypeId::UNKNOWN);
+            assert_ne!(step_ty, TypeId::ERROR);
+            assert_eq!(step_params.len(), 1, "Step should expose Input");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_guarded_function_helper_cycle() {
+    with_two_file_state(
+        "type Params<Callback extends (...args: any[]) => any> = Callback extends (...args: infer Values) => any ? Values : never;\ntype ResultOf<Callback extends (...args: any[]) => any> = Callback extends (...args: any[]) => infer Output ? Output : never;\ntype Fill<Values extends any[]> = Values;\nexport type Invoke<Callback extends (...args: any[]) => any> = <Provided extends Fill<Params<Callback>>>(...args: Provided) => Invoke<(...args: Provided) => ResultOf<Callback>>;",
+        "import { Invoke } from './target';",
+        |state, target_binder| {
+            let invoke_sym = target_binder.file_locals.get("Invoke").expect("Invoke");
+            let (invoke_ty, invoke_params) = state
+                .direct_source_file_type_alias_result(invoke_sym, Some(1), true)
+                .expect("function-local type params structurally guard helper cycles");
+            assert_ne!(invoke_ty, TypeId::UNKNOWN);
+            assert_ne!(invoke_ty, TypeId::ERROR);
+            assert_eq!(invoke_params.len(), 1, "Invoke should expose Callback");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_guarded_generic_mapped_helper_cycle() {
     with_two_file_state(
         "type DeepObject<Input> = { [Field in keyof Input]: Deep<Input[Field]> };\nexport type Deep<Subject> = Subject extends object ? DeepObject<Subject> : Subject;",
@@ -1636,221 +1845,6 @@ fn direct_source_file_type_alias_rejects_chain_containing_typeof() {
                     .is_none(),
                 "chain with typeof in a referenced alias must stay on the child-checker path",
             );
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_unshadowed_global_function_reference() {
-    with_two_file_state_with_libs(
-        "export type FunctionKeys<T> = { [K in keyof T]-?: T[K] extends Function ? K : never }[keyof T];",
-        "import { FunctionKeys } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let function_keys_sym = target_binder
-                .file_locals
-                .get("FunctionKeys")
-                .expect("FunctionKeys");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(function_keys_sym, Some(1), true)
-                .expect("unshadowed global Function references should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 1, "FunctionKeys should expose T");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_unshadowed_global_generic_reference() {
-    with_two_file_state_with_libs(
-        "export type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
-        "import { Keep } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
-                .expect("unshadowed global generic type references should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_delegate_visible_global_generic_reference() {
-    let (target_arena, mut target_binder, types) =
-        parse_bound_source("export type Keep<Obj> = Required<Obj>;");
-    {
-        let target_binder = Arc::get_mut(&mut target_binder).expect("unique target binder");
-        let required_sym = target_binder
-            .symbols
-            .alloc(symbol_flags::TYPE_ALIAS, "Required".to_string());
-        target_binder
-            .file_locals
-            .set("Required".to_string(), required_sym);
-    }
-    let (requester_arena, requester_binder, _) =
-        parse_bound_source("import { Keep } from './target';");
-    let ctx = CheckerContext::new(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    state.ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
-    ]));
-    state.ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
-    ]));
-
-    let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
-    let (ty, params) = state
-        .direct_source_file_type_alias_result(keep_sym, Some(1), true)
-        .expect("delegate-visible global generic type references should lower directly");
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(params.len(), 1, "Keep should expose Obj");
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_global_generic_reference_with_namespace_shadow() {
-    with_two_file_state_with_libs(
-        "namespace Pick {}\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
-        "import { Keep } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
-                .expect("namespace-only locals should not shadow global type aliases");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_global_generic_reference_with_value_shadow() {
-    with_two_file_state_with_libs(
-        "const Pick = 1;\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
-        "import { Keep } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
-                .expect("value-only locals should not shadow global type aliases");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_pick_by_value_shape_with_namespace_shadow() {
-    with_two_file_state_with_libs(
-        "import { Primitive } from './aliases-and-guards';\nnamespace Pick {}\nexport type PickByValue<T, ValueType> = Pick<T, { [Key in keyof T]-?: T[Key] extends ValueType ? Key : never }[keyof T]>;",
-        "import { PickByValue } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let pick_by_value_sym = target_binder
-                .file_locals
-                .get("PickByValue")
-                .expect("PickByValue");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(pick_by_value_sym, Some(1), true)
-                .expect("utility-style PickByValue aliases should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "PickByValue should expose T and ValueType");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_rejects_local_type_alias_namespace_merge_shadow() {
-    with_two_file_state_with_libs(
-        "namespace Pick {}\ntype Pick<T, K> = T;\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
-        "import { Keep } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
-            assert!(
-                state
-                    .direct_source_file_type_alias_result(keep_sym, Some(1), true)
-                    .is_none(),
-                "local type declarations merged with namespaces must not fall through to globals",
-            );
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_local_conditional_alias_argument_chain() {
-    with_two_file_state_with_libs(
-        "type SetDifference<A, B> = A extends B ? never : A;\ntype SetComplement<A, A1 extends A> = SetDifference<A, A1>;\nexport type FlowDiff<T extends U, U extends object> = Pick<T, SetComplement<keyof T, keyof U>>;",
-        "import { FlowDiff } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let flow_diff_sym = target_binder.file_locals.get("FlowDiff").expect("FlowDiff");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(flow_diff_sym, Some(1), true)
-                .expect("local conditional alias argument chains should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "FlowDiff should expose T and U");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_intersection_of_local_and_global_applications() {
-    with_two_file_state_with_libs(
-        "type SetDifference<A, B> = A extends B ? never : A;\ntype Omit<T, K extends keyof any> = Pick<T, SetDifference<keyof T, K>>;\nexport type AugmentedRequired<T extends object, K extends keyof T = keyof T> = Omit<T, K> & Required<Pick<T, K>>;",
-        "import { AugmentedRequired } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let augmented_required_sym = target_binder
-                .file_locals
-                .get("AugmentedRequired")
-                .expect("AugmentedRequired");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(augmented_required_sym, Some(1), true)
-                .expect("intersections of lowerable local and global generic applications should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "AugmentedRequired should expose T and K");
-        },
-    );
-}
-
-#[test]
-fn direct_source_file_type_alias_lowers_utility_augmented_required_context() {
-    with_two_file_state_with_libs(
-        "import { Primitive } from './aliases-and-guards';\ntype SetDifference<A, B> = A extends B ? never : A;\nexport type Omit<T, K extends keyof any> = Pick<T, SetDifference<keyof T, K>>;\nexport type AugmentedRequired<T extends object, K extends keyof T = keyof T> = Omit<T, K> & Required<Pick<T, K>>;",
-        "import { AugmentedRequired } from './target';",
-        &["es5.d.ts"],
-        |state, target_binder| {
-            let augmented_required_sym = target_binder
-                .file_locals
-                .get("AugmentedRequired")
-                .expect("AugmentedRequired");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(augmented_required_sym, Some(1), true)
-                .expect("utility mapped-type context should lower directly");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert_eq!(params.len(), 2, "AugmentedRequired should expose T and K");
         },
     );
 }

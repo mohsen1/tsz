@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
 
             let constraint = common::instantiate_type(self.ctx.types, raw_constraint, &constrained);
             if !self
-                .assign_relation_outcome_with_env(candidate, constraint)
+                .type_arg_constraint_relation_outcome_with_env(candidate, constraint)
                 .related
             {
                 constrained.insert(tp.name, constraint);
@@ -279,10 +279,16 @@ impl<'a> CheckerState<'a> {
                 );
                 let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
                 if !self
-                    .assign_relation_outcome(widened_current, evaluated_constraint)
+                    .round2_contextual_substitution_relation_outcome(
+                        widened_current,
+                        evaluated_constraint,
+                    )
                     .related
                     && self
-                        .assign_relation_outcome(current, evaluated_constraint)
+                        .round2_contextual_substitution_relation_outcome(
+                            current,
+                            evaluated_constraint,
+                        )
                         .related
                 {
                     current
@@ -1405,10 +1411,16 @@ impl<'a> CheckerState<'a> {
                 // (alias unfoldings, interner aliasing, etc.). Treat as equal
                 // when each side is mutually assignable to the other.
                 let mutually_assignable = self
-                    .assign_relation_outcome_with_env(probed, params[i].type_id)
+                    .round2_contextual_substitution_relation_outcome_with_env(
+                        probed,
+                        params[i].type_id,
+                    )
                     .related
                     && self
-                        .assign_relation_outcome_with_env(params[i].type_id, probed)
+                        .round2_contextual_substitution_relation_outcome_with_env(
+                            params[i].type_id,
+                            probed,
+                        )
                         .related;
                 if !mutually_assignable {
                     all_match = false;
@@ -1459,7 +1471,7 @@ impl<'a> CheckerState<'a> {
             // fresh subtype of the solver's. This rejects any widening the
             // filtered substitution might still introduce.
             if self
-                .assign_relation_outcome_with_env(new_type, params[i].type_id)
+                .call_arg_relation_outcome_with_env(new_type, params[i].type_id)
                 .related
             {
                 params[i].type_id = new_type;
@@ -1500,7 +1512,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self
-                .assign_relation_outcome_with_env(literal_type, current)
+                .call_arg_relation_outcome_with_env(literal_type, current)
                 .related
             {
                 params[i].type_id = literal_type;

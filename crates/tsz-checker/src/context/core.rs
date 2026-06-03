@@ -568,8 +568,6 @@ impl<'a> CheckerContext<'a> {
         self.cross_file_type_params_cache = parent.cross_file_type_params_cache.clone();
         self.program_reexports = parent.program_reexports.clone();
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
-        self.program_wildcard_reexports_type_only =
-            parent.program_wildcard_reexports_type_only.clone();
         self.program_module_exports = parent.program_module_exports.clone();
         self.program_cross_file_node_symbols = parent.program_cross_file_node_symbols.clone();
         self.program_alias_partners = parent.program_alias_partners.clone();
@@ -1164,27 +1162,18 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// See [`reexports_for_file`]: wildcard `export * from`.
+    ///
+    /// Each entry is `(source_module, is_type_only)`. `is_type_only` is `true`
+    /// for `export type * from "X"` chains.
     pub fn wildcard_reexports_for_file<'b>(
         &'b self,
         binder: &'b tsz_binder::BinderState,
         file_name: &str,
-    ) -> Option<&'b Vec<String>> {
+    ) -> Option<&'b Vec<(String, bool)>> {
         if let Some(ref idx) = self.program_wildcard_reexports {
-            return Self::lookup_any_file_key(file_name, idx);
+            return Self::lookup_any_file_key(file_name, idx.as_ref());
         }
         Self::lookup_any_file_key(file_name, &binder.wildcard_reexports)
-    }
-
-    /// See [`reexports_for_file`]: type-only wildcard flags.
-    pub fn wildcard_reexports_type_only_for_file<'b>(
-        &'b self,
-        binder: &'b tsz_binder::BinderState,
-        file_name: &str,
-    ) -> Option<&'b Vec<(String, bool)>> {
-        if let Some(ref idx) = self.program_wildcard_reexports_type_only {
-            return Self::lookup_any_file_key(file_name, idx);
-        }
-        Self::lookup_any_file_key(file_name, &binder.wildcard_reexports_type_only)
     }
 
     /// Look up the module-exports table for a given module/file key.

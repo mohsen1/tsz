@@ -589,10 +589,16 @@ impl<'a> CheckerState<'a> {
                             .zip(self.get_generator_yield_type_argument(expected_return))
                             .is_some_and(|(actual_yield, expected_yield)| {
                                 !self
-                                    .assign_relation_outcome(actual_yield, expected_yield)
+                                    .call_generator_yield_relation_outcome(
+                                        actual_yield,
+                                        expected_yield,
+                                    )
                                     .related
                                     && !self
-                                        .assign_relation_outcome(expected_yield, actual_yield)
+                                        .call_generator_yield_relation_outcome(
+                                            expected_yield,
+                                            actual_yield,
+                                        )
                                         .related
                             })
                             || self
@@ -600,13 +606,13 @@ impl<'a> CheckerState<'a> {
                                 .zip(self.get_generator_return_type_argument(expected_return))
                                 .is_some_and(|(actual_gen_return, expected_gen_return)| {
                                     !self
-                                        .assign_relation_outcome(
+                                        .return_relation_outcome(
                                             actual_gen_return,
                                             expected_gen_return,
                                         )
                                         .related
                                         && !self
-                                            .assign_relation_outcome(
+                                            .return_relation_outcome(
                                                 expected_gen_return,
                                                 actual_gen_return,
                                             )
@@ -617,7 +623,7 @@ impl<'a> CheckerState<'a> {
                                 .zip(self.get_generator_next_type_argument(expected_return))
                                 .is_some_and(|(actual_next, expected_next)| {
                                     !self
-                                        .assign_relation_outcome(expected_next, actual_next)
+                                        .call_arg_relation_outcome(expected_next, actual_next)
                                         .related
                                 });
 
@@ -636,7 +642,7 @@ impl<'a> CheckerState<'a> {
                         // solver then checks TNext covariantly (`unknown </: number`)
                         // instead of contravariantly, causing a spurious mismatch.
                         // The component check already handles TNext contravariantly
-                        // (line: `is_assignable_to(expected_next, actual_next)`),
+                        // (line: `call_arg_relation_outcome(expected_next, actual_next)`),
                         // so it is the more accurate signal for generators.
                         // When the expected return type contains unresolved
                         // type parameters (e.g., `U` from a generic overload
@@ -659,7 +665,7 @@ impl<'a> CheckerState<'a> {
                                 generator_component_mismatch
                                     || (expected_return != TypeId::VOID
                                         && !self
-                                            .assign_relation_outcome(actual_return, expected_return)
+                                            .return_relation_outcome(actual_return, expected_return)
                                             .related)
                             };
                         (return_type_mismatch, generator_component_mismatch)

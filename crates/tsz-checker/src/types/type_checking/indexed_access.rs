@@ -347,7 +347,7 @@ impl<'a> CheckerState<'a> {
             // DistributedKeyOf<ObjT> which evaluates to keyof ObjT
             let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
             if self
-                .assign_relation_outcome(constraint_eval, keyof_object)
+                .indexed_access_key_space_relation_outcome(constraint_eval, keyof_object)
                 .related
             {
                 return true;
@@ -688,7 +688,7 @@ impl<'a> CheckerState<'a> {
             let check_index = index_constraint.unwrap_or(index_type);
             let check_index_eval = self.evaluate_type_with_env(check_index);
             if self
-                .assign_relation_outcome(check_index_eval, keyof_type)
+                .indexed_access_key_space_relation_outcome(check_index_eval, keyof_type)
                 .related
             {
                 return;
@@ -934,7 +934,7 @@ impl<'a> CheckerState<'a> {
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
         if self
-            .assign_relation_outcome(index_type_for_check, keyof_object)
+            .indexed_access_key_space_relation_outcome(index_type_for_check, keyof_object)
             .related
         {
             return;
@@ -952,7 +952,7 @@ impl<'a> CheckerState<'a> {
         if let Some(constraint) = index_constraint {
             let constraint_eval = self.evaluate_type_with_env(constraint);
             if self
-                .assign_relation_outcome(constraint_eval, keyof_object)
+                .indexed_access_key_space_relation_outcome(constraint_eval, keyof_object)
                 .related
             {
                 return;
@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
             let Some(next_constraint) = next else { break };
             let next_evaluated = self.evaluate_type_with_env(next_constraint);
             if self
-                .assign_relation_outcome(next_evaluated, keyof_object)
+                .indexed_access_key_space_relation_outcome(next_evaluated, keyof_object)
                 .related
             {
                 return;
@@ -1047,7 +1047,7 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
                 if self
-                    .assign_relation_outcome(evaluated, keyof_object)
+                    .indexed_access_key_space_relation_outcome(evaluated, keyof_object)
                     .related
                 {
                     return;
@@ -1061,7 +1061,7 @@ impl<'a> CheckerState<'a> {
             }
         }
         if !self
-            .assign_relation_outcome(index_type_for_check, keyof_object)
+            .indexed_access_key_space_relation_outcome(index_type_for_check, keyof_object)
             .related
         {
             if let Some((wants_string, wants_number)) =
@@ -1133,11 +1133,17 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|constraint| {
                         let constraint = self.evaluate_type_with_env(constraint);
-                        self.assign_relation_outcome(constraint, constrained_base_keyof)
-                            .related
+                        self.indexed_access_key_space_relation_outcome(
+                            constraint,
+                            constrained_base_keyof,
+                        )
+                        .related
                     });
                 let nested_index_matches_constrained_base = self
-                    .assign_relation_outcome(nested_index_for_check, constrained_base_keyof)
+                    .indexed_access_key_space_relation_outcome(
+                        nested_index_for_check,
+                        constrained_base_keyof,
+                    )
                     .related
                     || nested_index_constraint_matches
                     || self.is_keyof_for_current_object(
@@ -1269,7 +1275,10 @@ impl<'a> CheckerState<'a> {
                         let constrained_keyof =
                             self.ctx.types.evaluate_keyof(constrained_object_type);
                         if self
-                            .assign_relation_outcome(index_type_for_check, constrained_keyof)
+                            .indexed_access_key_space_relation_outcome(
+                                index_type_for_check,
+                                constrained_keyof,
+                            )
                             .related
                         {
                             return;
@@ -1604,7 +1613,10 @@ impl<'a> CheckerState<'a> {
                         // Check if the index is a valid key of the values union
                         let keyof_values = self.ctx.types.evaluate_keyof(values_union);
                         if self
-                            .assign_relation_outcome(index_type_for_check, keyof_values)
+                            .indexed_access_key_space_relation_outcome(
+                                index_type_for_check,
+                                keyof_values,
+                            )
                             .related
                         {
                             return;

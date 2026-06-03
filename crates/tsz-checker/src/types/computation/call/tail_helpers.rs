@@ -111,10 +111,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             substituted_expected,
         );
-        self.assign_relation_outcome_with_env(actual, substituted_expected)
+        self.call_arg_relation_outcome_with_env(actual, substituted_expected)
             .related
             || self
-                .assign_relation_outcome_with_env(actual, substituted_rest_element)
+                .call_arg_relation_outcome_with_env(actual, substituted_rest_element)
                 .related
     }
 

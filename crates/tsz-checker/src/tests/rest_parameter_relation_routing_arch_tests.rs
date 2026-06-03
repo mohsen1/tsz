@@ -22,20 +22,41 @@ fn rest_parameter_array_diagnostics_use_relation_outcome_boundary() {
 
     assert!(
         compact_helper
-            .contains("assign_relation_outcome(declared_type,readonly_any_array).related"),
+            .contains("rest_parameter_relation_outcome(declared_type,readonly_any_array).related"),
         "rest parameter declared type should route array compatibility through relation outcome"
     );
     assert!(
-        compact_helper
-            .contains("assign_relation_outcome(array_check_type,readonly_any_array).related"),
+        compact_helper.contains(
+            "rest_parameter_relation_outcome(array_check_type,readonly_any_array).related"
+        ),
         "rest parameter resolved type should route array compatibility through relation outcome"
     );
     assert!(
-        compact_helper.contains("assign_relation_outcome(init_type,readonly_any_array).related"),
+        compact_helper
+            .contains("rest_parameter_relation_outcome(init_type,readonly_any_array).related"),
         "rest parameter initializer type should route array compatibility through relation outcome"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),
         "TS2370 rest parameter array diagnostics should not use raw boolean relation guards"
+    );
+    assert!(
+        !compact_helper.contains("assign_relation_outcome(declared_type,readonly_any_array)")
+            && !compact_helper
+                .contains("assign_relation_outcome(array_check_type,readonly_any_array)")
+            && !compact_helper.contains("assign_relation_outcome(init_type,readonly_any_array)"),
+        "TS2370 rest parameter array diagnostics should use the role-specific relation outcome"
+    );
+}
+
+#[test]
+fn rest_parameter_relation_outcome_uses_rest_parameter_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn rest_parameter_relation_outcome(")
+            && source.contains("RelationRequest::rest_parameter("),
+        "rest parameter array diagnostics should have a request-shaped RelationKind::RestParameter helper"
     );
 }

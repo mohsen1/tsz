@@ -10,13 +10,21 @@ fn dynamic_import_diagnostics_use_relation_outcome_boundary() {
     let compact_source: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        compact_source.contains("assign_relation_outcome(arg_type,TypeId::STRING).related"),
-        "dynamic import specifier diagnostics must use relation outcome"
+        compact_source.contains("call_arg_relation_outcome(arg_type,TypeId::STRING).related"),
+        "dynamic import specifier diagnostics must use the call-argument relation outcome"
     );
     assert!(
         compact_source
-            .contains("assign_relation_outcome(options_type,import_call_options_type).related"),
-        "dynamic import options diagnostics must use relation outcome"
+            .contains("call_arg_relation_outcome(options_type,import_call_options_type).related"),
+        "dynamic import options diagnostics must use the call-argument relation outcome"
+    );
+    assert!(
+        !compact_source.contains("assign_relation_outcome(arg_type,TypeId::STRING)"),
+        "dynamic import specifier diagnostics must not use generic assign relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("assign_relation_outcome(options_type,import_call_options_type)"),
+        "dynamic import options diagnostics must not use generic assign relation outcomes"
     );
     assert!(
         !compact_source.contains("diagnostic_relation_boolean_guard(arg_type,TypeId::STRING)"),

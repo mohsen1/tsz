@@ -14,13 +14,17 @@ fn strict_callback_inner_parameter_mismatch_uses_relation_outcome_boundary() {
     let helper = &source[start..end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome").count(),
+        helper.matches("call_arg_relation_outcome").count(),
         1,
-        "strict callback inner parameter mismatch should route through assign_relation_outcome"
+        "strict callback inner parameter mismatch should route through call_arg_relation_outcome"
     );
     assert!(
         helper.contains(".related"),
         "strict callback inner parameter mismatch should use the relation outcome decision"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome"),
+        "strict callback inner parameter mismatch should not use the generic assignment request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),

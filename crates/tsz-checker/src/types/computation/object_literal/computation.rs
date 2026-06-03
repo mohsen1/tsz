@@ -640,7 +640,12 @@ impl<'a> CheckerState<'a> {
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
                         // Check initializer assignability against @type (TS2322)
                         if prop.initializer != prop.name
-                            && !self.is_assignable_to(value_type, declared_type)
+                            && !self
+                                .object_literal_jsdoc_declared_property_relation_outcome(
+                                    value_type,
+                                    declared_type,
+                                )
+                                .related
                         {
                             let declared_check_type =
                                 crate::query_boundaries::common::remove_undefined(

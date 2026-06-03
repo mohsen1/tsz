@@ -189,12 +189,6 @@ pub type ResolvedModuleRequestErrorMap = FxHashMap<
 /// `.ts` mapping.
 pub type ResolvedModuleTsExtensionMap = FxHashMap<(usize, String), bool>;
 
-/// Program-wide type-only wildcard re-exports map: module specifier → entries of
-/// (re-exported module specifier, is-type-only flag). Mirrors
-/// `tsz_binder::Binder::wildcard_reexports_type_only` but wrapped in `Arc` so
-/// cross-file lookup binders can share one allocation.
-pub type ProgramWildcardReexportsTypeOnly = Arc<FxHashMap<String, Vec<(String, bool)>>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

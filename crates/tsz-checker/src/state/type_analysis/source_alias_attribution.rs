@@ -447,7 +447,7 @@ fn resolve_import_with_reexports_for_attribution_no_cache(
     }
 
     if let Some(source_modules) = binder.wildcard_reexports.get(module_specifier) {
-        for source_module in source_modules {
+        for (source_module, _is_type_only) in source_modules {
             if let Some(sym_id) = resolve_import_with_reexports_for_attribution_no_cache(
                 binder,
                 source_module,

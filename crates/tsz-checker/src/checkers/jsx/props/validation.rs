@@ -18,15 +18,11 @@ use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{ObjectShape, TypeId};
 
 impl<'a> CheckerState<'a> {
-    /// Whether a JSX relation operand (a spread source or an attribute value
-    /// type) carries a conditional that is still deferred over a type
-    /// parameter, so a structural assignability answer is unreliable. See
-    /// `query_boundaries::checkers::jsx::jsx_relation_operand_is_deferred_conditional`.
+    /// Whether a JSX relation operand still defers a conditional over a type
+    /// parameter, making a structural assignability answer unreliable.
     ///
-    /// The operand is frequently a not-yet-expanded alias application
-    /// (`SingleProps<W>`); evaluating it surfaces the underlying conditional
-    /// intersection (`Omit<...> & ...`) so detection does not depend on whether
-    /// the type happened to be expanded at the call site.
+    /// Evaluating not-yet-expanded aliases surfaces the underlying conditional
+    /// intersection, so detection does not depend on call-site expansion.
     pub(in crate::checkers_domain::jsx) fn jsx_relation_operand_defers(
         &mut self,
         type_id: TypeId,
@@ -48,20 +44,13 @@ impl<'a> CheckerState<'a> {
             )
     }
 
-    /// Walk every `{...expr}` spread attribute on a JSX element and emit
-    /// TS2698 ("Spread types may only be created from object types") for
-    /// each one whose type is not a valid spread source.
+    /// Emit TS2698 for each JSX spread attribute with an invalid source type.
     ///
-    /// This mirrors tsc's behaviour: `isValidSpreadType` is checked
-    /// independently of overload resolution and props-type narrowing, so the
-    /// diagnostic must fire even when the overload path takes its own
-    /// speculative-rollback shortcut and never visits
-    /// `check_jsx_attributes_against_props` (which has its own inline check).
+    /// This mirrors tsc's independent `isValidSpreadType` check, so overload
+    /// rollback shortcuts must not skip this diagnostic.
     ///
     /// `any` and `error` types are always valid spread sources. Everything
-    /// else is delegated to the solver via `is_valid_spread_type`, which in
-    /// turn handles the `T extends any → unknown` normalization that tsc
-    /// applies to type-parameter constraints.
+    /// else is delegated to the solver via `is_valid_spread_type`.
     pub(crate) fn check_jsx_spread_attrs_for_ts2698(&mut self, attributes_idx: NodeIndex) {
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -253,7 +242,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             !self
-                .assign_relation_outcome(*attr_type, expected_type)
+                .jsx_props_relation_outcome(*attr_type, expected_type)
                 .related
         });
         // A spread whose source carries a deferred conditional over a type
@@ -284,7 +273,9 @@ impl<'a> CheckerState<'a> {
                     attrs_type,
                 );
             if !source_retains_explicit_object
-                && self.assign_relation_outcome(attrs_type, props_type).related
+                && self
+                    .jsx_props_relation_outcome(attrs_type, props_type)
+                    .related
             {
                 return;
             }
@@ -1068,10 +1059,10 @@ impl<'a> CheckerState<'a> {
             let alias_evaluated = self.evaluate_type_with_env(alias_hint);
             if alias_evaluated != TypeId::ERROR
                 && self
-                    .assign_relation_outcome(alias_evaluated, normalized)
+                    .jsx_props_relation_outcome(alias_evaluated, normalized)
                     .related
                 && self
-                    .assign_relation_outcome(normalized, alias_evaluated)
+                    .jsx_props_relation_outcome(normalized, alias_evaluated)
                     .related
             {
                 self.ctx.types.store_display_alias(normalized, alias_hint);
@@ -1096,19 +1087,23 @@ impl<'a> CheckerState<'a> {
             } => Some(type_id),
             _ => None,
         };
-
-        get_property_type(self.resolve_property_access_with_env(props_type, attr_name))
-            .or_else(|| {
-                if attr_name == "key" {
-                    self.get_intrinsic_attributes_type().and_then(|ia_type| {
-                        let ia_type = self.normalize_jsx_required_props_target(ia_type);
-                        get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
-                    })
-                } else {
-                    None
-                }
+        let intrinsic_key_type = if attr_name == "key" {
+            self.get_intrinsic_attributes_type().and_then(|ia_type| {
+                let ia_type = self.normalize_jsx_required_props_target(ia_type);
+                let inherited =
+                    self.jsx_declared_interface_heritage_has_property(ia_type, attr_name);
+                get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
+                    .or_else(|| inherited.then_some(TypeId::ANY))
             })
-            .or_else(|| {
+        } else {
+            None
+        };
+        if attr_name == "key" {
+            return intrinsic_key_type;
+        }
+
+        get_property_type(self.resolve_property_access_with_env(props_type, attr_name)).or_else(
+            || {
                 if attr_name == "ref" {
                     special_attr_component_type.and_then(|component_type| {
                         self.get_intrinsic_class_attributes_type_for_component(component_type)
@@ -1131,7 +1126,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 }
-            })
+            },
+        )
     }
 
     fn get_jsx_class_ref_fallback_type(
@@ -1786,7 +1782,7 @@ impl<'a> CheckerState<'a> {
             // Build target: IntrinsicAttributes & spread_type
             let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
-            if !self.assign_relation_outcome(spread_type, target).related {
+            if !self.jsx_props_relation_outcome(spread_type, target).related {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
                 let message = format_message(
@@ -1852,12 +1848,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// True when `attr_name` resolves to an OPTIONAL property declared on an
-    /// ANONYMOUS object type (no symbol/alias on the source). tsc's TS2322
-    /// target-display rule preserves `| undefined` for optional props from
-    /// anonymous inline `IntrinsicElements` types but strips it for named
-    /// interfaces / aliases. Used to widen the displayed property type for
-    /// bare string-literal JSX attribute initializers (`<x n='true' />`).
+    /// True when `attr_name` resolves to an optional property declared on an
+    /// anonymous object type. tsc preserves `| undefined` for optional props
+    /// from anonymous inline `IntrinsicElements` types but strips it for named
+    /// interfaces/aliases.
     pub(crate) fn jsx_attr_prop_is_optional_in_anonymous_source(
         &self,
         direct_prop_access: &crate::query_boundaries::common::PropertyAccessResult,
@@ -1923,10 +1917,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(alias_hint) = alias_hint {
                     let alias_evaluated = self.evaluate_type_with_env(alias_hint);
                     if self
-                        .assign_relation_outcome(alias_evaluated, evaluated)
+                        .jsx_props_relation_outcome(alias_evaluated, evaluated)
                         .related
                         && self
-                            .assign_relation_outcome(evaluated, alias_evaluated)
+                            .jsx_props_relation_outcome(evaluated, alias_evaluated)
                             .related
                     {
                         self.ctx.types.store_display_alias(evaluated, alias_hint);
@@ -1939,11 +1933,8 @@ impl<'a> CheckerState<'a> {
         display_type
     }
 
-    /// JSX bare-string-literal attribute write to an optional anonymous prop:
-    /// emits TS2322 with `T | undefined` as the displayed target. tsc's
-    /// general assignability display strips `| undefined`, so this path
-    /// bypasses it. Returns `Some(false)` if it emitted (caller should treat
-    /// as not-assignable), or `None` if the special path didn't apply.
+    /// Emit JSX bare-string writes to optional anonymous props with
+    /// `T | undefined` as the displayed TS2322 target.
     pub(crate) fn try_emit_jsx_bare_string_attr_undefined_target(
         &mut self,
         actual_type: TypeId,
@@ -1955,7 +1946,7 @@ impl<'a> CheckerState<'a> {
         if !initializer_is_bare_string_literal
             || original_property_type == expected_type
             || self
-                .assign_relation_outcome(actual_type, expected_type)
+                .jsx_props_relation_outcome(actual_type, expected_type)
                 .related
         {
             return None;

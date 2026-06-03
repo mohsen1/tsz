@@ -10,20 +10,26 @@ fn index_signature_checks_use_relation_outcome_boundary() {
     .expect("read index signature checking source");
 
     assert!(
-        source.contains("assign_relation_outcome(key_type, previous_key_type)"),
-        "template pattern index key compatibility should route through RelationOutcome"
+        source.contains("index_signature_relation_outcome(key_type, previous_key_type)"),
+        "template pattern index key compatibility should route through index-signature RelationOutcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(value_type, previous_value_type)"),
-        "template pattern index value compatibility should route through RelationOutcome"
+        source.contains("index_signature_relation_outcome(value_type, previous_value_type)"),
+        "template pattern index value compatibility should route through index-signature RelationOutcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(number_idx.value_type, string_idx.value_type)"),
-        "instance number-to-string index compatibility should route through RelationOutcome"
+        source.contains(
+            "index_signature_relation_outcome(number_idx.value_type, string_idx.value_type)"
+        ),
+        "instance number-to-string index compatibility should route through index-signature RelationOutcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(static_num_type, static_str_type)"),
-        "static number-to-string index compatibility should route through RelationOutcome"
+        source.contains("index_signature_relation_outcome(static_num_type, static_str_type)"),
+        "static number-to-string index compatibility should route through index-signature RelationOutcome"
+    );
+    assert!(
+        !source.contains(".assign_relation_outcome("),
+        "index signature checking should not use generic assignment request routing"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard"),

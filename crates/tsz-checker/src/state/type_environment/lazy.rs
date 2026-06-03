@@ -14,74 +14,23 @@ use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
-// Thread-local depth counter for `ensure_application_symbols_resolved` nesting.
-//
-// This must be thread-local rather than per-context because cross-arena symbol
-// delegation (`delegate_cross_arena_symbol_resolution`) creates child CheckerContexts.
-// A per-context counter would reset to 0 in the child, defeating the depth guard.
+pub(crate) use super::lazy_fuel::{
+    global_resolution_fuel_exhausted, global_resolution_fuel_value,
+    increment_global_resolution_fuel, reset_global_resolution_fuel, restore_global_resolution_fuel,
+};
+
+// Thread-local counters survive cross-arena child `CheckerContext`s, where
+// per-context counters would reset and defeat these recursion/fuel guards.
 thread_local! {
     static APP_SYMBOL_RESOLUTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Global fuel counter for total DefId resolutions within `ensure_application_symbols_resolved`.
-    // Limits total work across all nesting levels and context boundaries. Resets when
-    // the outermost `ensure_application_symbols_resolved` call completes.
+    // Total `DefId` resolutions within `ensure_application_symbols_resolved`.
     static APP_SYMBOL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Fuel counter for total DefId resolutions across recursive `ensure_refs_resolved`
-    // invocations. The cascade ensure_refs_resolved → resolve_and_insert_def_type →
-    // get_type_of_symbol → evaluate_type_with_env → ensure_relation_input_ready →
-    // ensure_refs_resolved can cause explosive work on React/JSX type graphs.
-    // This fuel counter limits total resolution work rather than depth, allowing
-    // deep-but-narrow chains while cutting off wide-and-deep type explosions.
+    // Total `DefId` resolutions across recursive `ensure_refs_resolved` cascades.
     static REFS_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     // Tracks whether we're inside a top-level `ensure_refs_resolved` call tree.
     static REFS_RESOLUTION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    // Depth counter for recursive evaluate_type_with_env_impl calls.
-    // The cycle evaluate_type_with_env_impl → ensure_relation_input_ready →
-    // resolve_and_insert_def_type → get_type_of_symbol → evaluate_type_with_env_impl
-    // can cause unbounded stack growth. Must be thread-local because cross-arena
-    // delegation creates child CheckerContexts that reset per-context counters.
+    // Depth counter for recursive `evaluate_type_with_env_impl` calls.
     static EVAL_ENV_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Global accumulating fuel counter that does NOT reset between top-level
-    // ensure_relation_input_ready calls. Prevents OOM when many top-level calls
-    // each reset per-call fuel but together create unbounded type data
-    // (e.g., DOM types + module augmentation in reactTransitiveImportHasValidDeclaration).
-    static GLOBAL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-// Maximum global resolution fuel across all top-level calls per thread.
-// This must be high enough to process large files with many expressions
-// (e.g., unionSubtypeReductionErrors.ts has 6000+ lines requiring ~15K+
-// resolution ops). DOM-heavy React code with module augmentations can
-// explode to hundreds of thousands; this limit prevents that while
-// allowing legitimate large files.
-const MAX_GLOBAL_RESOLUTION_FUEL: u32 = 50_000;
-
-/// Check if global resolution fuel is exhausted.
-pub(crate) fn global_resolution_fuel_exhausted() -> bool {
-    GLOBAL_RESOLUTION_FUEL.get() >= MAX_GLOBAL_RESOLUTION_FUEL
-}
-
-/// Increment the global resolution fuel counter.
-pub(crate) fn increment_global_resolution_fuel() {
-    GLOBAL_RESOLUTION_FUEL.set(GLOBAL_RESOLUTION_FUEL.get() + 1);
-}
-
-/// Reset global resolution fuel (call at the start of each file's type-checking).
-pub(crate) fn reset_global_resolution_fuel() {
-    GLOBAL_RESOLUTION_FUEL.set(0);
-}
-
-/// Read the current global resolution fuel counter (for snapshot/restore).
-pub(crate) fn global_resolution_fuel_value() -> u32 {
-    GLOBAL_RESOLUTION_FUEL.get()
-}
-
-/// Restore the global resolution fuel counter to a previously captured value.
-///
-/// Used by speculative sites (return-type inference) that should not bill
-/// their work against the global fuel budget when the speculation is rolled
-/// back — the work will be redone in the non-speculative pass.
-pub(crate) fn restore_global_resolution_fuel(value: u32) {
-    GLOBAL_RESOLUTION_FUEL.set(value);
 }
 
 /// Reset ALL thread-local state in the lazy resolution module.
@@ -92,26 +41,18 @@ pub(crate) fn reset_all_thread_local_state() {
     REFS_RESOLUTION_FUEL.set(0);
     REFS_RESOLUTION_ACTIVE.set(false);
     EVAL_ENV_DEPTH.set(0);
-    GLOBAL_RESOLUTION_FUEL.set(0);
+    reset_global_resolution_fuel();
 }
 
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
-// Prevents explosive recursion when resolving lazy DefIds triggers type evaluation
-// (compute_type_of_symbol → evaluate_application_type → evaluate_type_with_env)
-// that calls back into ensure_application_symbols_resolved with new types.
 const MAX_APP_SYMBOL_RESOLUTION_DEPTH: u32 = 1;
 
-// Maximum total DefId resolutions across all nesting levels of
-// `ensure_application_symbols_resolved`. This acts as a global work budget:
-// once exhausted, all nested `ensure_application_symbols_resolved` calls bail out.
-// Prevents exponential work on deeply-nested generic type graphs (e.g., react16.d.ts
-// with InferProps<V>, RequiredKeys<V>, Validator<T> chains).
+// Maximum total `DefId` resolutions across all nesting levels of
+// `ensure_application_symbols_resolved`.
 const MAX_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
 
-// Maximum total DefId resolutions allowed across all recursive `ensure_refs_resolved`
-// invocations within one top-level call. React/JSX type graphs (react16.d.ts) have
-// hundreds of interconnected generic types that cascade through resolve_and_insert_def_type.
-// This budget allows normal code (typically <100 resolutions) while cutting off explosions.
+// Maximum total `DefId` resolutions across recursive `ensure_refs_resolved`
+// invocations within one top-level call.
 const MAX_REFS_RESOLUTION_FUEL: u32 = 2000;
 
 /// Check if refs resolution fuel is exhausted.
@@ -242,6 +183,9 @@ impl<'a> CheckerState<'a> {
                 // or sibling reads would observe under-resolved results. Writes
                 // are reserved for the authoritative full-resolver second pass.
                 None,
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    seed_persist,
+                ),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -312,7 +256,12 @@ impl<'a> CheckerState<'a> {
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
-            let seed_iter = if seed_persist && !first_pass_unresolved_application {
+            // Recompute the speed-only seed/persist gate after the first pass:
+            // persisting first-pass intermediates can push the cache over the
+            // structural cap, so the second pass must not reuse a stale `true`
+            // decision and then drain entries that will be discarded.
+            let second_pass_seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
+            let seed_iter = if second_pass_seed_persist && !first_pass_unresolved_application {
                 self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
@@ -333,12 +282,15 @@ impl<'a> CheckerState<'a> {
                 // resolver, so its application expansions are safe to memoize in
                 // the per-file application-eval cache.
                 Some(self.ctx.types),
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    second_pass_seed_persist,
+                ),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            if seed_persist {
+            if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             if eval_result.result == type_id {
@@ -619,8 +571,8 @@ impl<'a> CheckerState<'a> {
 
                 let seen = discriminants.entry(prop.name).or_default();
                 if seen.iter().any(|&other| {
-                    !self.is_subtype_of(prop.type_id, other)
-                        && !self.is_subtype_of(other, prop.type_id)
+                    !self.diagnostic_subtype_outcome(prop.type_id, other).related
+                        && !self.diagnostic_subtype_outcome(other, prop.type_id).related
                 }) {
                     return true;
                 }
@@ -670,8 +622,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if units.iter().any(|&other| {
-                !self.is_subtype_of(evaluated_member, other)
-                    && !self.is_subtype_of(other, evaluated_member)
+                !self
+                    .diagnostic_subtype_outcome(evaluated_member, other)
+                    .related
+                    && !self
+                        .diagnostic_subtype_outcome(other, evaluated_member)
+                        .related
             }) {
                 return true;
             }

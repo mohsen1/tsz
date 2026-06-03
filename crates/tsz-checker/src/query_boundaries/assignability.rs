@@ -15,6 +15,7 @@ use tsz_solver::relations::relation_queries::{
 };
 
 use super::relation_policy;
+pub(crate) use super::relation_request::{RelationKind, RelationRequest};
 
 pub(crate) use super::common::{contains_type_parameters, is_callable_type, object_shape_for_type};
 
@@ -45,6 +46,21 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     right: TypeId,
 ) -> bool {
     tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
+}
+
+pub(crate) fn intersection_source_contains_target_member<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let Some(members) = super::common::intersection_members(db, source) else {
+        return false;
+    };
+
+    members.iter().any(|&member| {
+        member == target || are_types_structurally_identical(db, resolver, member, target)
+    })
 }
 
 /// Check structural identity with an outer type-parameter scope visible to
@@ -80,8 +96,12 @@ pub(crate) fn recursive_heritage_property_types_conflict(
     ) {
         return false;
     }
-    if checker.is_assignable_to(member_type, constraint_type)
-        || checker.is_assignable_to(constraint_type, member_type)
+    if checker
+        .recursive_heritage_property_relation_outcome(member_type, constraint_type)
+        .related
+        || checker
+            .recursive_heritage_property_relation_outcome(constraint_type, member_type)
+            .related
     {
         return false;
     }
@@ -122,6 +142,55 @@ pub(crate) fn optional_mapped_type_adds_implicit_undefined<R: TypeResolver>(
         return false;
     }
     tsz_solver::type_queries::optional_mapped_type_adds_implicit_undefined(type_db, type_id)
+}
+
+/// Classify target surfaces where checker diagnostics should preserve the
+/// outer assignment instead of elaborating through an unresolved projection.
+pub(crate) fn target_prefers_outer_assignment_diagnostic<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidates: &[TypeId],
+) -> bool {
+    let type_db = db.as_type_database();
+    let expanded = alias_application_surface_candidates(db, resolver, candidates);
+
+    expanded.into_iter().any(|candidate| {
+        candidate != TypeId::ERROR
+            && candidate != TypeId::ANY
+            && (super::common::contains_generic_indexed_access_surface(type_db, candidate)
+                || super::common::is_generic_mapped_type(type_db, candidate)
+                || super::common::is_generic_mapped_application(db, resolver, candidate)
+                || (super::common::contains_conditional_type(type_db, candidate)
+                    && super::common::contains_type_parameters(type_db, candidate))
+                || super::common::is_generic_application_with_type_params(type_db, candidate))
+    })
+}
+
+/// Expand checker-facing type surfaces through display aliases and instantiated
+/// alias applications while keeping type-shape details behind this boundary.
+pub(crate) fn alias_application_surface_candidates<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidates: &[TypeId],
+) -> Vec<TypeId> {
+    let type_db = db.as_type_database();
+    let mut expanded = candidates.to_vec();
+
+    for candidate in candidates.iter().copied() {
+        if let Some(alias) = type_db.get_display_alias(candidate) {
+            expanded.push(alias);
+        }
+    }
+
+    let alias_candidates = expanded.clone();
+    for candidate in alias_candidates {
+        if let Some(instantiated) = instantiate_alias_candidate(db, resolver, candidate) {
+            expanded.push(instantiated);
+            expanded.push(evaluate_type(type_db, instantiated));
+        }
+    }
+
+    expanded
 }
 
 /// Return an instantiated homomorphic mapped target that projects over `source`.
@@ -574,162 +643,6 @@ fn mapped_templates_structurally_assignable(
         || mapped_template_structurally_assignable(db, source, target_eval)
         || mapped_template_structurally_assignable(db, source_eval, target_eval)
 }
-
-// ---------------------------------------------------------------------------
-// RelationRequest: unified policy descriptor for relation queries
-// ---------------------------------------------------------------------------
-
-/// The kind of relation being checked. Different kinds imply different
-/// default policies for freshness, excess properties, and diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelationKind {
-    /// Variable/parameter assignment: `const x: T = expr`
-    Assign,
-    /// Function call argument: `fn(expr)` where param expects T
-    CallArg,
-    /// Return statement: `return expr` where function returns T
-    Return,
-    /// JSX props: `<Comp prop={expr} />`
-    JsxProps,
-    /// Destructuring: `const { a, b } = expr`
-    Destructuring,
-    /// Satisfies expression: `expr satisfies T`
-    Satisfies,
-    /// Bivariant callback assignment: method-override or bivariant-callback
-    /// scenarios where function parameter types are checked bivariantly.
-    BivariantCallbacks,
-}
-
-/// How excess properties (properties in source not in target) are handled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExcessPropertyMode {
-    /// Skip excess property checking entirely (default for non-fresh sources).
-    Skip,
-    /// Check and report excess properties (for fresh object literals).
-    Check,
-    /// Check only explicitly-written properties (for spread expressions).
-    CheckExplicitOnly,
-}
-
-/// How missing properties (properties in target not in source) are classified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MissingPropertyMode {
-    /// Report missing required properties (default).
-    Report,
-    /// Suppress missing property errors (e.g., for Partial<T> patterns).
-    Suppress,
-}
-
-/// A structured request for a type relation check.
-///
-/// Encodes all the policy dimensions that affect how the checker interprets
-/// a relation result. The checker builds a request, invokes the boundary,
-/// and uses the result + failure info for diagnostics.
-///
-/// Current field ownership:
-/// - `source` and `target` are semantic solver inputs and diagnostic inputs.
-/// - `kind` is diagnostic/tracing context today; it does not alter solver flags.
-/// - `allow_erased_generic_signature_retry` is translated to a solver relation flag.
-/// - `source_is_fresh`, `excess_property_mode`, and `missing_property_mode` are
-///   request-level policy descriptors. They are preserved for callers and tests,
-///   but `execute_relation` does not yet branch on them; EPC and missing-property
-///   diagnostics still have caller-side checks.
-#[derive(Debug, Clone)]
-pub(crate) struct RelationRequest {
-    /// Prepared source type for the relation. This feeds the solver query,
-    /// failure analysis, weak-union detection, and property classification.
-    pub source: TypeId,
-    /// Prepared target type for the relation. This feeds the same semantic and
-    /// diagnostic paths as `source`.
-    pub target: TypeId,
-    /// Relation context for diagnostics and tracing. Currently advisory only.
-    pub kind: RelationKind,
-    /// Requested excess-property policy. Currently advisory; object-literal EPC
-    /// emission still happens in caller-side diagnostic paths.
-    pub excess_property_mode: ExcessPropertyMode,
-    /// Requested missing-property policy. Currently advisory; failure rendering
-    /// still decides how to present missing-property diagnostics.
-    pub missing_property_mode: MissingPropertyMode,
-    /// Whether the source is a fresh object literal. Currently advisory.
-    pub source_is_fresh: bool,
-    /// Whether failed contextual generic-signature inference may retry with
-    /// erased signatures. This is a targeted interface property compatibility
-    /// mode, not the default assignment relation.
-    pub allow_erased_generic_signature_retry: bool,
-}
-
-impl RelationRequest {
-    const fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self {
-        Self {
-            source,
-            target,
-            kind,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-            allow_erased_generic_signature_retry: false,
-        }
-    }
-
-    pub(crate) const fn assign(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::Assign)
-    }
-
-    pub(crate) const fn call_arg(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::CallArg)
-    }
-
-    pub(crate) const fn return_stmt(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::Return)
-    }
-
-    pub(crate) const fn satisfies(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::Satisfies)
-    }
-
-    pub(crate) const fn destructuring(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::Destructuring)
-    }
-
-    pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
-        Self::new(source, target, RelationKind::BivariantCallbacks)
-    }
-
-    /// Mark the source as a fresh object literal, enabling EPC.
-    pub(crate) const fn with_fresh_source(mut self) -> Self {
-        self.source_is_fresh = true;
-        self.excess_property_mode = ExcessPropertyMode::Check;
-        self
-    }
-
-    /// Mark the source as a spread expression, enabling explicit-only EPC.
-    pub(crate) const fn with_spread_source(mut self) -> Self {
-        self.excess_property_mode = ExcessPropertyMode::CheckExplicitOnly;
-        self
-    }
-
-    /// Override excess property mode.
-    pub(crate) const fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self {
-        self.excess_property_mode = mode;
-        self
-    }
-
-    /// Override missing property mode.
-    pub(crate) const fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self {
-        self.missing_property_mode = mode;
-        self
-    }
-
-    /// Allow a failed generic-signature inference to retry with erased signatures.
-    pub(crate) const fn with_erased_generic_signature_retry(mut self) -> Self {
-        self.allow_erased_generic_signature_retry = true;
-        self
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Existing boundary helpers
-// ---------------------------------------------------------------------------
 
 /// Boundary-safe flag constants for relation policy.
 ///

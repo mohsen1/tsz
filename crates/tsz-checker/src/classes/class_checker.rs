@@ -1345,7 +1345,7 @@ impl<'a> CheckerState<'a> {
                         && base_ctor_type != TypeId::UNKNOWN
                         && base_ctor_type != TypeId::ERROR
                         && !self
-                            .assign_relation_outcome(derived_ctor_type, base_ctor_type)
+                            .class_static_side_relation_outcome(derived_ctor_type, base_ctor_type)
                             .related
                     {
                         self.error_at_node(

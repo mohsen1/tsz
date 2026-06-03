@@ -1086,6 +1086,22 @@ impl<'a> DeclarationEmitter<'a> {
                         let _ = self.emit_non_portable_function_return_diagnostics(
                             &type_text, func_body, func_name,
                         );
+                    } else if func
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|type_params| !type_params.nodes.is_empty())
+                        && let Some(type_text) = func_body
+                            .is_some()
+                            .then(|| {
+                                self.returned_object_literal_local_function_type_text(func_body)
+                            })
+                            .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                        let _ = self.emit_non_portable_function_return_diagnostics(
+                            &type_text, func_body, func_name,
+                        );
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| self.returned_late_bound_function_typeof_text(func_body))

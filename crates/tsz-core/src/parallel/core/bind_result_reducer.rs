@@ -32,7 +32,6 @@ struct BindResultReducer {
     semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
     reexports: Reexports,
     wildcard_reexports: WildcardReexportsMap,
-    wildcard_reexports_type_only: WildcardReexportsTypeOnlyMap,
 
     // Pre-merge metrics
     pre_merge_bind_total_bytes: usize,
@@ -105,7 +104,6 @@ impl BindResultReducer {
             FxHashMap::default();
         let reexports: Reexports = FxHashMap::default();
         let wildcard_reexports: WildcardReexportsMap = FxHashMap::default();
-        let wildcard_reexports_type_only: WildcardReexportsTypeOnlyMap = FxHashMap::default();
         let global_lib_symbol_ids: FxHashSet<SymbolId> = FxHashSet::default();
 
         // Use interned atoms to avoid repeated String hashing/cloning on hot merge paths.
@@ -139,7 +137,6 @@ impl BindResultReducer {
             semantic_defs,
             reexports,
             wildcard_reexports,
-            wildcard_reexports_type_only,
             pre_merge_bind_total_bytes,
         }
     }
@@ -561,53 +558,39 @@ impl BindResultReducer {
                     }
                 }
 
-                // Merge wildcard reexports from this file
-                for (file_name, source_modules) in result.wildcard_reexports.iter() {
+                // Merge wildcard reexports from this file.
+                // Each entry is (source_module, is_type_only). Value re-export
+                // (is_type_only=false) takes priority over type-only re-export.
+                for (file_name, source_entries) in result.wildcard_reexports.iter() {
                     let entry = self
                         .wildcard_reexports
                         .entry(file_name.clone())
                         .or_default();
-                    let type_only_entry = self
-                        .wildcard_reexports_type_only
-                        .entry(file_name.clone())
-                        .or_default();
-                    let source_type_only = result.wildcard_reexports_type_only.get(file_name);
 
-                    if entry.len() + source_modules.len() <= 16 {
-                        for (i, source_module) in source_modules.iter().enumerate() {
-                            // Use index-based access to get the correct type-only flag
-                            let source_is_type_only = source_type_only
-                                .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
-                                .unwrap_or(false);
-
-                            if let Some(pos) = entry.iter().position(|m| m == source_module) {
+                    if entry.len() + source_entries.len() <= 16 {
+                        for (source_module, source_is_type_only) in source_entries {
+                            if let Some(pos) = entry.iter().position(|(m, _)| m == source_module) {
                                 // Already have this source — if this path is non-type-only,
                                 // override the existing flag (value re-export takes priority).
-                                if !source_is_type_only {
-                                    type_only_entry[pos].1 = false;
+                                if !*source_is_type_only {
+                                    entry[pos].1 = false;
                                 }
                             } else {
-                                entry.push(source_module.clone());
-                                type_only_entry.push((source_module.clone(), source_is_type_only));
+                                entry.push((source_module.clone(), *source_is_type_only));
                             }
                         }
                     } else {
                         let mut seen: FxHashMap<String, usize> =
-                            entry.iter().cloned().zip(0..).collect();
-                        for (i, source_module) in source_modules.iter().enumerate() {
-                            let source_is_type_only = source_type_only
-                                .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
-                                .unwrap_or(false);
-
+                            entry.iter().map(|(m, _)| m.clone()).zip(0..).collect();
+                        for (source_module, source_is_type_only) in source_entries {
                             if let Some(&pos) = seen.get(source_module) {
-                                if !source_is_type_only {
-                                    type_only_entry[pos].1 = false;
+                                if !*source_is_type_only {
+                                    entry[pos].1 = false;
                                 }
                             } else {
                                 let pos = entry.len();
                                 seen.insert(source_module.clone(), pos);
-                                entry.push(source_module.clone());
-                                type_only_entry.push((source_module.clone(), source_is_type_only));
+                                entry.push((source_module.clone(), *source_is_type_only));
                             }
                         }
                     }
@@ -1487,7 +1470,6 @@ impl BindResultReducer {
             module_exports: Arc::new(self.module_exports),
             reexports: Arc::new(self.reexports),
             wildcard_reexports: Arc::new(self.wildcard_reexports),
-            wildcard_reexports_type_only: Arc::new(self.wildcard_reexports_type_only),
             lib_binders: Arc::new(self.lib_binders),
             lib_symbol_ids: Arc::new(self.global_lib_symbol_ids),
             type_interner,

@@ -10,15 +10,32 @@ fn computed_enum_member_ts18033_uses_relation_outcome_boundary() {
     .expect("failed to read statement_helpers.rs");
 
     assert!(
-        source.contains("assign_relation_outcome(init_type, TypeId::NUMBER)"),
-        "computed enum-member TS18033 diagnostics should route the final relation through assign_relation_outcome"
+        source.contains("computed_enum_member_relation_outcome(init_type, TypeId::NUMBER)"),
+        "computed enum-member TS18033 diagnostics should route the final relation through the role-specific outcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(init_type, TypeId::STRING)"),
-        "computed enum-member import fallback should route string assignability through assign_relation_outcome"
+        source.contains("computed_enum_member_relation_outcome(init_type, TypeId::STRING)"),
+        "computed enum-member import fallback should route string assignability through the role-specific outcome"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard"),
         "computed enum-member diagnostics should not regress to raw boolean relation guards"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(init_type, TypeId::NUMBER)")
+            && !source.contains("assign_relation_outcome(init_type, TypeId::STRING)"),
+        "computed enum-member diagnostics should not use generic assign relation outcomes"
+    );
+}
+
+#[test]
+fn computed_enum_member_relation_outcome_uses_computed_enum_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn computed_enum_member_relation_outcome(")
+            && source.contains("RelationRequest::computed_enum_member("),
+        "computed enum-member diagnostics should have a request-shaped RelationKind::ComputedEnumMember helper"
     );
 }

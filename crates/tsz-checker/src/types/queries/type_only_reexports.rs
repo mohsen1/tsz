@@ -84,19 +84,12 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(source_modules) = self
+        if let Some(entries) = self
             .ctx
             .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
-            let source_type_only_flags = self
-                .ctx
-                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
-
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let source_is_type_only = source_type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-                if source_is_type_only
+            for (source_module, source_is_type_only) in entries {
+                if *source_is_type_only
                     && self.name_exists_in_module_exports(
                         target_file_idx,
                         source_module,
@@ -160,11 +153,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(source_modules) = self
+        if let Some(entries) = self
             .ctx
             .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
-            for source_module in source_modules.iter() {
+            for (source_module, _) in entries {
                 if self.name_exists_in_module_exports(
                     target_file_idx,
                     source_module,

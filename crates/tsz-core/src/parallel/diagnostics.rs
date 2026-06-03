@@ -72,7 +72,7 @@ fn resolve_export_in_program_file(
     }
 
     if let Some(source_modules) = program.wildcard_reexports.get(file_name) {
-        for source_module in source_modules {
+        for (source_module, _) in source_modules {
             if let Some(&source_idx) = resolved_module_paths.get(&(file_idx, source_module.clone()))
                 && let Some(result) = resolve_export_in_program_file(
                     program,

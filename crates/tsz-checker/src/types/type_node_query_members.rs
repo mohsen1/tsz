@@ -43,6 +43,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 false,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
                 Some(self.ctx.types),
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip,
             )
             .result;
         let base_type = if evaluated_base != TypeId::ERROR {
