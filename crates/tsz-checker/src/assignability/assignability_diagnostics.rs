@@ -638,6 +638,14 @@ impl<'a> CheckerState<'a> {
         // overflows regardless of whether it was depth or iteration that fired.
         // TS2321 ("Excessive stack depth") fires from a separate mechanism.
         if !assignable && self.ctx.relation_overflow.get().has_overflow() {
+            if crate::query_boundaries::assignability::intersection_source_contains_target_member(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            ) {
+                return true;
+            }
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(

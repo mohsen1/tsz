@@ -48,6 +48,21 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
+pub(crate) fn intersection_source_contains_target_member<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let Some(members) = super::common::intersection_members(db, source) else {
+        return false;
+    };
+
+    members.iter().any(|&member| {
+        member == target || are_types_structurally_identical(db, resolver, member, target)
+    })
+}
+
 /// Check structural identity with an outer type-parameter scope visible to
 /// both sides. Used by declaration-merge compatibility to compare type-param
 /// constraints across declarations whose own `T`s resolve to distinct
