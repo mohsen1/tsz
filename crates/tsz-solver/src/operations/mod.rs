@@ -49,6 +49,7 @@ pub mod iterators;
 pub mod property;
 mod property_readonly;
 mod property_visitor;
+pub(crate) mod sequence_property;
 pub mod widening;
 
 // Re-exports from core implementation

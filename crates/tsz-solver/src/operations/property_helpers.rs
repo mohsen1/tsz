@@ -1380,8 +1380,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         if let Some(TypeData::Tuple(elements_id)) = inner_data
-            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
-            && let Ok(index) = index_text.parse::<usize>()
+            && let Some(index) =
+                crate::operations::sequence_property::parse_numeric_index(prop_name)
         {
             let elements = self.interner().tuple_list(elements_id);
             if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
@@ -1440,8 +1440,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         if let Some(TypeData::Tuple(elements_id)) = self.interner().lookup(array_type)
-            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
-            && let Ok(index) = index_text.parse::<usize>()
+            && let Some(index) =
+                crate::operations::sequence_property::parse_numeric_index(prop_name)
         {
             let elements = self.interner().tuple_list(elements_id);
             if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
@@ -1651,125 +1651,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     fn tuple_fixed_element_type(&self, elements: &[TupleElement], index: usize) -> Option<TypeId> {
-        self.tuple_fixed_element_type_inner(elements, index, 0)
-    }
-
-    fn tuple_fixed_element_type_inner(
-        &self,
-        elements: &[TupleElement],
-        index: usize,
-        depth: usize,
-    ) -> Option<TypeId> {
-        const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
-
-        if depth > MAX_TUPLE_SPREAD_DEPTH {
-            return None;
-        }
-
-        let mut position = 0usize;
-        for elem in elements {
-            if elem.rest {
-                let rest_id = elem.type_id;
-                if rest_id.is_intrinsic() {
-                    return None;
-                }
-                let inner_list_id = match self.interner().lookup(rest_id) {
-                    Some(TypeData::Tuple(id)) => id,
-                    _ => return None,
-                };
-                let inner = self.interner().tuple_list(inner_list_id);
-                let rest_index = index.checked_sub(position)?;
-                if let Some(ty) = self.tuple_fixed_element_type_inner(&inner, rest_index, depth + 1)
-                {
-                    return Some(ty);
-                }
-                let inner_len = self.compute_tuple_fixed_length(rest_id)?;
-                position = position.checked_add(inner_len)?;
-            } else {
-                if position == index {
-                    let ty = if elem.optional {
-                        self.element_type_with_undefined(elem.type_id)
-                    } else {
-                        elem.type_id
-                    };
-                    return Some(ty);
-                }
-                position = position.checked_add(1)?;
-            }
-
-            if position > index {
-                return None;
-            }
-        }
-
-        None
+        crate::operations::sequence_property::tuple_fixed_element_type(
+            self.interner(),
+            elements,
+            index,
+        )
     }
 
     fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {
-        self.interner().union2(element_type, TypeId::UNDEFINED)
-    }
-
-    /// Compute the fixed length of a tuple type, if it has one.
-    /// Returns `None` for arrays, variable-length tuples, or non-tuple types.
-    fn compute_tuple_fixed_length(&self, type_id: TypeId) -> Option<usize> {
-        const MAX_FIXED_LENGTH: usize = 1000;
-
-        if type_id.is_intrinsic() {
-            return None;
-        }
-        let list_id = match self.interner().lookup(type_id) {
-            Some(TypeData::Tuple(id)) => id,
-            _ => return None,
-        };
-
-        let elements = self.interner().tuple_list(list_id);
-        let mut total = 0usize;
-        let mut rest_type: Option<TypeId> = None;
-        let mut rest_count = 0;
-
-        for elem in elements.iter() {
-            if elem.rest {
-                rest_count += 1;
-                if rest_count > 1 {
-                    return None;
-                }
-                rest_type = Some(elem.type_id);
-            } else {
-                total += 1;
-                if total > MAX_FIXED_LENGTH {
-                    return None;
-                }
-            }
-        }
-
-        // Iteratively descend into single-rest chains (e.g., [T, ...Acc])
-        while let Some(rest_id) = rest_type.take() {
-            if rest_id.is_intrinsic() {
-                return None;
-            }
-            let inner_list_id = match self.interner().lookup(rest_id) {
-                Some(TypeData::Tuple(id)) => id,
-                _ => return None, // Rest spreads a non-tuple → variable length
-            };
-            let inner_elements = self.interner().tuple_list(inner_list_id);
-            let mut inner_rest_count = 0;
-            for elem in inner_elements.iter() {
-                if elem.rest {
-                    inner_rest_count += 1;
-                    if inner_rest_count > 1 {
-                        return None;
-                    }
-                    rest_type = Some(elem.type_id);
-                } else {
-                    total += 1;
-                    if total > MAX_FIXED_LENGTH {
-                        return None;
-                    }
-                }
-            }
-        }
-
-        Some(total)
+        crate::operations::sequence_property::element_type_with_undefined(
+            self.interner(),
+            element_type,
+        )
     }
 
     fn compute_tuple_length_type(&self, type_id: TypeId) -> Option<TypeId> {
