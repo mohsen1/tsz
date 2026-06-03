@@ -88,7 +88,7 @@ export function assertNodeProperty<
     );
 }
 
-/// Variant: WideMap is a TYPE ALIAS (not interface), mirroring the real lib.dom.d.ts
+/// Variant: `WideMap` is a TYPE ALIAS (not interface), mirroring the real lib.dom.d.ts
 /// where `type ElementTagNameMap = HTMLElementTagNameMap & Pick<SVGElementTagNameMap, ...>`.
 /// When the wider map is a type alias intersection, TS2536 must still be emitted.
 #[test]
@@ -269,7 +269,7 @@ export function assertNodeTagName<
 }
 
 /// Minimal isolation test: just assertNodeTagName alone with real lib.
-/// Verifies TS2677 is NOT emitted for `node is U` where U extends ElementTagNameMap[T].
+/// Verifies TS2677 is NOT emitted for `node is U` where U extends `ElementTagNameMap[T]`.
 #[test]
 fn test_no_ts2677_for_node_predicate_with_element_tag_name_map() {
     if !lib_files_available() {
