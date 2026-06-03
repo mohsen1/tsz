@@ -1360,10 +1360,13 @@ impl<'a> CheckerState<'a> {
                 .as_bytes()
                 .first()
                 .is_some_and(|ch| ch.is_ascii_lowercase())
-        }) && jsx_queries::missing_props_are_iterator_protocol_noise(
+        }) && (jsx_queries::missing_props_are_iterator_protocol_noise(
             self.ctx.types,
             &missing_props,
-        ) {
+        ) || jsx_queries::missing_props_are_intrinsic_collection_protocol_noise(
+            self.ctx.types,
+            &missing_props,
+        )) {
             return;
         }
         let mut missing_names: Vec<_> = missing_props.into_iter().map(|prop| prop.name).collect();
@@ -1543,43 +1546,6 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, member)
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()))
         })
-    }
-
-    pub(in crate::checkers_domain::jsx) fn jsx_tag_is_logical_component_alias(
-        &self,
-        tag_name_idx: NodeIndex,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
-            return false;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        let Some(&decl_idx) = symbol.declarations.first() else {
-            return false;
-        };
-        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-            return false;
-        };
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
-            return false;
-        };
-        if var_decl.initializer.is_none() {
-            return false;
-        }
-        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
-            return false;
-        };
-        let Some(binary) = self.ctx.arena.get_binary_expr(init_node) else {
-            return false;
-        };
-
-        matches!(
-            binary.operator_token,
-            x if x == SyntaxKind::BarBarToken as u16 || x == SyntaxKind::QuestionQuestionToken as u16
-        )
     }
 
     fn get_normalized_jsx_required_props_shape(
