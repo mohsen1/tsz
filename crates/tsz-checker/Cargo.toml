@@ -499,6 +499,10 @@ name = "tuple_arity_elaboration_tests"
 path = "tests/tuple_arity_elaboration_tests.rs"
 
 [[test]]
+name = "conditional_alias_source_display_tests"
+path = "tests/conditional_alias_source_display_tests.rs"
+
+[[test]]
 name = "readonly_tuple_to_array_constraint_tests"
 path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 
