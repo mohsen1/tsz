@@ -345,4 +345,78 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Returns the declared type of the named instance member from the directly
+    /// enclosing class body. Used during `this`-receiver property access recovery
+    /// when the enclosing class type is not yet fully resolved.
+    pub(super) fn direct_this_class_member_declared_type(
+        &mut self,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let member_nodes = self.ctx.enclosing_class.as_ref()?.member_nodes.clone();
+        let factory = self.ctx.types.factory();
+
+        for member_idx in member_nodes {
+            if self.get_member_name(member_idx).as_deref() != Some(property_name) {
+                continue;
+            }
+
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
+                    let signature = self.call_signature_from_method(method, member_idx);
+                    let method_type = factory.callable(tsz_solver::CallableShape {
+                        call_signatures: vec![signature],
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                    return Some(if method.question_token {
+                        factory.union2(method_type, TypeId::UNDEFINED)
+                    } else {
+                        method_type
+                    });
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    if let Some(type_id) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        return Some(type_id);
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
+                    let accessor_type = self.get_type_of_node(member_idx);
+                    if accessor_type != TypeId::ERROR {
+                        return Some(accessor_type);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
 }
