@@ -307,6 +307,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.try_get_keyof_keys_depth(resolved, depth + 1);
         }
 
+        if let Some(TypeData::UnresolvedTypeName(name)) = self.interner.lookup(operand) {
+            let name = self.interner.resolve_atom_ref(name);
+            let def_id = self.resolver.resolve_unresolved_type_name(&name)?;
+            let resolved = self
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .map(|resolved| self.bind_polymorphic_this(operand, resolved))?;
+            if resolved == operand {
+                return None;
+            }
+            return self.try_get_keyof_keys_depth(resolved, depth + 1);
+        }
+
         // When the operand is a TypeParameter with a constraint, resolve through
         // the constraint. E.g., for `keyof T` where `T extends { content: C }`,
         // the keys are determined by the constraint `{ content: C }`.

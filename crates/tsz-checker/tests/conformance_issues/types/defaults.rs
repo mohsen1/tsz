@@ -714,7 +714,7 @@ type Renamed<Step extends Iteration = IterationOf<0>> = Step;
 
 #[test]
 fn test_imported_conditional_application_default_satisfies_tuple_constraint() {
-    let diagnostics = compile_named_files_get_diagnostics_with_options(
+    let diagnostics = compile_named_project_get_diagnostics_with_options(
         &[
             (
                 "Iteration/Iteration.ts",
@@ -753,7 +753,6 @@ type IncludesDeep<I extends Iteration = IterationOf<0>> = I;
                 "#,
             ),
         ],
-        "Community/IncludesDeep.ts",
         CheckerOptions::default(),
     );
 

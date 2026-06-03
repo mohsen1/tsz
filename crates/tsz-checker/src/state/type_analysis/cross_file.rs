@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
     }
 
-    pub(super) fn try_resolve_cross_arena_named_alias_without_child(
+    pub(crate) fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
