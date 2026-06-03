@@ -10,6 +10,12 @@ use super::*;
 /// this ceiling only fires for malformed or pathological input.
 const MAX_LAZY_CHAIN_DEPTH: usize = 32;
 
+/// Per-property `(optional, readonly)` modifier map keyed by property-name atom,
+/// or `None` for members that contribute no object properties. Used by
+/// intersection simplification to AND-merge modifiers when deciding whether a
+/// structurally subsumed member can be dropped.
+type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(super) fn cached_generic_instantiation(
@@ -729,6 +735,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
             .collect();
 
+        // Pre-compute per-member property modifier maps once for the intersection
+        // direction, mirroring the `prop_names` precompute above. The modifier
+        // guard below then reduces to O(1) cached lookups instead of re-walking
+        // shapes on every candidate pair. Union simplification never consults
+        // these, so skip the work entirely in that direction.
+        let prop_mods: Vec<MemberModifierMap> =
+            if matches!(direction, SubtypeDirection::OtherSubsumedBySource) {
+                members
+                    .iter()
+                    .map(|&id| {
+                        let mut mods = FxHashMap::default();
+                        Self::collect_property_modifiers(self.interner, id, &mut mods);
+                        if mods.is_empty() { None } else { Some(mods) }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
         // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
         let len = members.len();
@@ -791,6 +816,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         !Self::is_opaque_under_bypass_eval(self.interner, members[i])
                             && checker.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
+                            // Modifier-preservation guard: in an intersection a shared
+                            // property is readonly/optional only when ALL contributors
+                            // agree (AND semantics). Dropping member[i] because the
+                            // structural subtype member[j] subsumes it would keep only
+                            // member[j]'s modifiers — silently turning a writable
+                            // (or required) property readonly (or optional) when the
+                            // dropped member relaxed it. `{ readonly a: number }` is a
+                            // subtype of `{ a?: number }`, but their intersection is a
+                            // writable, required `a` — not readonly. Keep both members
+                            // so `try_merge_objects_in_intersection` can AND-merge them.
+                            && !Self::intersection_drop_changes_modifiers(
+                                &prop_mods[i],
+                                &prop_mods[j],
+                            )
                             // Index-signature guard: when member[i] carries an index
                             // signature that member[j] lacks, member[i] is NOT redundant
                             // even though its declared property set is structurally
@@ -1009,6 +1048,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => {}
         }
+    }
+
+    /// Collect per-property `(optional, readonly)` modifiers for an object-like
+    /// member, merging nested intersection members with tsc's AND semantics
+    /// (a property is optional/readonly only when ALL contributors agree).
+    fn collect_property_modifiers(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+        mods: &mut FxHashMap<u32, (bool, bool)>,
+    ) {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                for prop in &shape.properties {
+                    let entry = mods
+                        .entry(prop.name.0)
+                        .or_insert((prop.optional, prop.readonly));
+                    entry.0 = entry.0 && prop.optional;
+                    entry.1 = entry.1 && prop.readonly;
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                for &sub in db.type_list(list_id).iter() {
+                    Self::collect_property_modifiers(db, sub, mods);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Returns true when dropping the `dropped` member from an intersection
+    /// while keeping `kept` would change a shared property's readonly/optional
+    /// modifier relative to tsc's AND-merge semantics. Both arguments are the
+    /// precomputed `(optional, readonly)` modifier maps for the two members.
+    ///
+    /// In an intersection a property is readonly (optional) only when ALL
+    /// contributors are readonly (optional). When `kept` structurally subsumes
+    /// `dropped`, `kept` can still be the *more restrictive* member on a shared
+    /// property: readonly does not affect assignability, so `{ readonly a: T }`
+    /// is a subtype of `{ a?: T }` even though the intersection of the two is a
+    /// writable, required `a`. Keeping only `kept` would lose `dropped`'s
+    /// relaxing contribution, so such drops must be skipped.
+    fn intersection_drop_changes_modifiers(
+        dropped: &MemberModifierMap,
+        kept: &MemberModifierMap,
+    ) -> bool {
+        let (Some(dropped), Some(kept)) = (dropped, kept) else {
+            return false;
+        };
+        kept.iter().any(
+            |(name, &(kept_optional, kept_readonly))| match dropped.get(name) {
+                Some(&(dropped_optional, dropped_readonly)) => {
+                    (kept_readonly && !dropped_readonly) || (kept_optional && !dropped_optional)
+                }
+                None => false,
+            },
+        )
     }
 
     // =========================================================================
