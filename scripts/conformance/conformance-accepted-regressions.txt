@@ -37,14 +37,16 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 #     does not exist on type 'HTMLElement'" on `document.body.appendChild(...)`,
 #     a lib-interface heritage cycle-drop bug tracked in #12299 (not genuine
 #     oscillation).
-#   - jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx: tsz emits
-#     [TS2875] but misses TS2741. Under react-jsx the custom
-#     JSX.ElementChildrenAttribute ("offspring") is ignored, so body children map
-#     to `children` and the required `offspring` prop must be reported missing.
-#     Tracked in #12261.
+#   - jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx: FIXED in
+#     #12261 and removed from the list below. PR #12238 had added a blanket
+#     early-return in check_jsx_attributes_against_props that skipped ALL
+#     component prop checks whenever a JSX runtime import-source error (TS2875)
+#     was deferred. tsc still checks function/class component props against the
+#     component's own signature in that case, so the early-return suppressed the
+#     legitimate TS2741 (and TS2322/excess). Removing it restores parity; the
+#     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
-TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
