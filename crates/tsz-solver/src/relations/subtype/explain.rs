@@ -79,6 +79,58 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         props
     }
 
+    /// Append the deduplicated property-name keys of `shape_id` to `names`.
+    fn push_object_shape_property_names(
+        &self,
+        shape_id: crate::types::ObjectShapeId,
+        names: &mut Vec<tsz_common::interner::Atom>,
+    ) {
+        for prop in self.interner.object_shape(shape_id).properties.iter() {
+            if !names.contains(&prop.name) {
+                names.push(prop.name);
+            }
+        }
+    }
+
+    /// Resolve `type_id` to its apparent structural form, resolving lazy
+    /// aliases and expanding a generic application one level.
+    fn apparent_type_for_keys(&mut self, type_id: TypeId) -> TypeId {
+        let mut resolved = self.resolve_lazy_type(type_id);
+        if let Some(app_id) = application_id(self.interner, resolved)
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved = self.resolve_lazy_type(expanded);
+        }
+        resolved
+    }
+
+    /// Collect the property-name keys of an object-like type, resolving lazy
+    /// aliases / expanding generic applications and folding intersection
+    /// members. Used to score union-member overlap the way tsc's
+    /// `findMostOverlappyType` intersects `keyof source` with `keyof member`.
+    fn object_like_property_names(&mut self, type_id: TypeId) -> Vec<tsz_common::interner::Atom> {
+        use crate::type_queries::data::get_intersection_members;
+
+        let resolved = self.apparent_type_for_keys(type_id);
+        let mut names: Vec<tsz_common::interner::Atom> = Vec::new();
+        if let Some(sid) = object_shape_id(self.interner, resolved)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved))
+        {
+            self.push_object_shape_property_names(sid, &mut names);
+        }
+        if let Some(members) = get_intersection_members(self.interner, resolved) {
+            for member in members {
+                let resolved_member = self.apparent_type_for_keys(member);
+                if let Some(sid) = object_shape_id(self.interner, resolved_member)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_member))
+                {
+                    self.push_object_shape_property_names(sid, &mut names);
+                }
+            }
+        }
+        names
+    }
+
     fn is_late_bound_symbol_property_name(&self, name: tsz_common::interner::Atom) -> bool {
         let name = self.interner.resolve_atom_ref(name);
         name.starts_with("[Symbol.") || name.starts_with("__@")
@@ -717,46 +769,120 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.explain_tuple_failure(&s_elems, &t_elems);
         }
 
-        if let Some(members) = union_list_id(self.interner, resolved_target) {
-            let members = self.interner.type_list(members);
+        if union_list_id(self.interner, resolved_target).is_some() {
+            // Prefer the original target's union members so member display keeps
+            // user-facing aliases (e.g. an identity mapped type `Mapped<B>` that
+            // structurally simplifies to `B` in `resolved_target` must still
+            // render as `Mapped<B>` in the elaboration, matching tsc). Fall back
+            // to the resolved union when the target is itself a lazy alias.
+            let members_id = union_list_id(self.interner, target)
+                .or_else(|| union_list_id(self.interner, resolved_target))
+                .expect("resolved_target is a union");
+            let members = self.interner.type_list(members_id);
             let application_shaped_comparison = application_id(self.interner, source).is_some()
                 || application_id(self.interner, target).is_some();
             let source_members = union_list_id(self.interner, resolved_source)
                 .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
                 .unwrap_or_else(|| vec![resolved_source]);
-            for &member in members.iter() {
-                if self.check_subtype(resolved_source, member).is_true() {
-                    continue;
-                }
-                for &source_member in &source_members {
-                    if self.check_subtype(source_member, member).is_true() {
+
+            // Application-shaped comparison (e.g. assigning to `Foo<X>` that
+            // resolves to a union): tsc collapses the elaboration to a direct
+            // missing-property line against the application target rather than
+            // the structural union members, so keep that first-failing-member
+            // behavior here.
+            if application_shaped_comparison {
+                for &member in members.iter() {
+                    if self.check_subtype(resolved_source, member).is_true() {
                         continue;
                     }
-                    let member_reason = self.explain_failure_guarded(source_member, member);
-                    let missing_property = match member_reason {
-                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
-                            Some(property_name)
+                    for &source_member in &source_members {
+                        if self.check_subtype(source_member, member).is_true() {
+                            continue;
                         }
-                        Some(SubtypeFailureReason::MissingProperties {
-                            property_names, ..
-                        }) => property_names.first().copied(),
-                        _ => None,
-                    };
-                    if let Some(property_name) = missing_property {
-                        if application_shaped_comparison {
+                        let member_reason = self.explain_failure_guarded(source_member, member);
+                        let missing_property = match member_reason {
+                            Some(SubtypeFailureReason::MissingProperty {
+                                property_name, ..
+                            }) => Some(property_name),
+                            Some(SubtypeFailureReason::MissingProperties {
+                                property_names,
+                                ..
+                            }) => property_names.first().copied(),
+                            _ => None,
+                        };
+                        if let Some(property_name) = missing_property {
                             return Some(SubtypeFailureReason::MissingProperty {
                                 property_name,
                                 source_type: source,
                                 target_type: target,
                             });
                         }
-                        break;
+                    }
+                }
+                return Some(SubtypeFailureReason::NoUnionMemberMatches {
+                    source_type: source,
+                    target_union_members: members.to_vec(),
+                });
+            }
+
+            // Structural union target: select the best-matching member the way
+            // tsc's `getBestMatchingType` -> `findMostOverlappyType` does — the
+            // member sharing the most property-name keys with the source, ties
+            // broken by the *last* such member (tsc compares overlap with `>=`).
+            // Any case where a discriminant would prefer a different member than
+            // overlap necessarily carries an excess property, which surfaces as
+            // the separate TS2353 elaboration, so overlap selection is faithful
+            // for the missing-property path handled here.
+            let source_names = self.object_like_property_names(resolved_source);
+            let mut best_member: Option<TypeId> = None;
+            let mut best_overlap = 0usize;
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                let overlap = if source_names.is_empty() {
+                    0
+                } else {
+                    let member_names = self.object_like_property_names(member);
+                    source_names
+                        .iter()
+                        .filter(|name| member_names.contains(name))
+                        .count()
+                };
+                if best_member.is_none() || overlap >= best_overlap {
+                    best_overlap = overlap;
+                    best_member = Some(member);
+                }
+            }
+
+            // Elaborate against the best member, but only when its failure is a
+            // missing required property. Property-type mismatches and excess
+            // properties on object literals are reported by the checker's
+            // object-literal elaboration at the offending property's location;
+            // surfacing the bare union line keeps parity for those.
+            if let Some(member) = best_member {
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    if let Some(
+                        reason @ (SubtypeFailureReason::MissingProperty { .. }
+                        | SubtypeFailureReason::MissingProperties { .. }),
+                    ) = self.explain_failure_guarded(source_member, member)
+                    {
+                        return Some(SubtypeFailureReason::UnionTargetMismatch {
+                            source_type: source,
+                            target_type: target,
+                            member_type: member,
+                            nested_reason: Box::new(reason),
+                        });
                     }
                 }
             }
+
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
-                target_union_members: members.as_ref().to_vec(),
+                target_union_members: members.to_vec(),
             });
         }
 

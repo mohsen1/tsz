@@ -755,6 +755,27 @@ impl<'a> CheckerState<'a> {
             | SubtypeFailureReason::ConditionalBranchMismatch { .. } => {
                 vec![self.union_member_related_line(Some(reason), start, length, 0)?]
             }
+            SubtypeFailureReason::UnionTargetMismatch { .. } => {
+                // A source assigned to a union target fails through the
+                // best-matching member's missing required property. The nested
+                // line is a `Property 'x' is missing … but required in type
+                // '<member>'.` elaboration, not a plain `not assignable` member
+                // line, so reuse the TS2322 elaboration (`render_failure_reason`)
+                // as the single source of truth and re-anchor its child lines
+                // onto the call's TS2345 surface (category + start/length).
+                let container_diag =
+                    self.render_failure_reason(reason, source, target, anchor_idx, 0);
+                container_diag
+                    .related_information
+                    .into_iter()
+                    .map(|mut rel| {
+                        rel.category = DiagnosticCategory::Message;
+                        rel.start = start;
+                        rel.length = length;
+                        rel
+                    })
+                    .collect()
+            }
             _ => return None,
         };
 
