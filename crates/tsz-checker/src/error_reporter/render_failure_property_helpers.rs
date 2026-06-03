@@ -34,6 +34,26 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.resolve_atom_ref(property_name).to_string()
     }
 
+    /// Format a missing-property name list for the TS2739/TS2740 "missing the
+    /// following properties" message. tsc lists up to 5 names inline; for 6+ it
+    /// lists the first 4 then "and N more". Returns the joined list and the
+    /// "and N more" count (present only when truncated).
+    pub(super) fn truncated_missing_property_list(
+        &mut self,
+        ordered: &[tsz_common::interner::Atom],
+    ) -> (String, Option<usize>) {
+        let is_truncated = ordered.len() > 5;
+        let display_count = if is_truncated { 4 } else { 5 };
+        let joined = ordered
+            .iter()
+            .take(display_count)
+            .map(|name| self.missing_property_list_name_for_display(*name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = is_truncated.then(|| ordered.len() - display_count);
+        (joined, more)
+    }
+
     pub(super) fn enum_mapped_property_name_for_display(
         &mut self,
         property_name: tsz_common::interner::Atom,
@@ -765,11 +785,73 @@ impl<'a> CheckerState<'a> {
         &mut self,
         target_type: TypeId,
         target: TypeId,
+        anchor_idx: NodeIndex,
     ) -> Option<TypeId> {
+        self.resolve_intersection_target_for_display_kind(target_type, target, anchor_idx)
+            .map(|(intersection, _recovered)| intersection)
+    }
+
+    /// Like [`Self::resolve_intersection_target_for_display`] but also reports
+    /// whether the intersection was a genuine `Intersection` type (`false`) or
+    /// was recovered from a merged object's display alias (`true`). The
+    /// recovered case must render its top-level target from the written
+    /// annotation, since the merged object's display alias does not preserve the
+    /// user's alias name (`PlainWrap`) or the inline-vs-named form tsc echoes.
+    pub(super) fn resolve_intersection_target_for_display_kind(
+        &mut self,
+        target_type: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<(TypeId, bool)> {
         let evaluated = self.evaluate_type_with_env(target);
-        [evaluated, target, target_type]
+        if let Some(direct) = [evaluated, target, target_type]
             .into_iter()
             .find(|&t| crate::query_boundaries::common::is_intersection_type(self.ctx.types, t))
+        {
+            return Some((direct, false));
+        }
+        // tsz eagerly merges concrete object-intersections (`{ a } & { b }`) into
+        // a single object (`{ a; b }`) and records a display alias back to the
+        // original `{ a } & { b }` intersection so the formatter can still print
+        // the `&` form. Recover that intersection here so a missing-property
+        // mismatch reports member-by-member like tsc ("required in type 'B'")
+        // instead of collapsing to the merged object and reporting a flat
+        // TS2741/TS2739 against `{ a; b }`.
+        //
+        // The merged object interns identically to a plain object literal of the
+        // same shape, so its `TypeId` (and display alias) alone cannot tell the
+        // two apart. Gate the recovery on the target *annotation* actually being
+        // written as an intersection, which is the only reliable signal.
+        if !self.target_annotation_denotes_intersection(anchor_idx) {
+            return None;
+        }
+        [evaluated, target, target_type].into_iter().find_map(|t| {
+            let alias = self.ctx.types.get_display_alias(t)?;
+            crate::query_boundaries::common::is_intersection_type(self.ctx.types, alias)
+                .then_some((alias, true))
+        })
+    }
+
+    /// Top-level target string for a *recovered* (merged-object) intersection
+    /// target, shared by the single- and multi-missing render paths.
+    ///
+    /// The merged object's display alias does not preserve the user's alias name
+    /// or the inline-vs-named form tsc echoes, so render from the written
+    /// annotation: an inline `A & B` literal keeps the structural `&` form (the
+    /// recovered intersection), while a type-alias reference keeps the alias
+    /// name. (Genuine, non-recovered intersections are rendered by the caller.)
+    pub(super) fn recovered_intersection_top_level_display(
+        &mut self,
+        intersection: TypeId,
+        target: TypeId,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> String {
+        if self.target_annotation_is_intersection_literal(anchor_idx) {
+            self.format_type_diagnostic(intersection)
+        } else {
+            self.format_assignability_type_for_message(target, source)
+        }
     }
 
     /// Return `true` when `target` or its evaluated form is an intersection type.

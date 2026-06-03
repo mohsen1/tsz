@@ -41,6 +41,21 @@ fn has_missing_member_elaboration(diags: &[Diagnostic], prop: &str) -> bool {
     })
 }
 
+/// True when some TS2322 carries a nested grouped "Type 'S' is missing the
+/// following properties from type '<member>': ..." elaboration listing every
+/// property in `props` (the form tsc uses when one intersection member is
+/// missing several required properties).
+fn has_grouped_member_elaboration(diags: &[Diagnostic], props: &[&str]) -> bool {
+    diags.iter().any(|d| {
+        d.code == 2322
+            && d.related_information.iter().any(|info| {
+                info.message_text
+                    .contains("is missing the following properties from type")
+                    && props.iter().all(|p| info.message_text.contains(p))
+            })
+    })
+}
+
 /// Reported repro: a mapped member of the intersection requires the missing
 /// property. The top-level stays TS2322; the nested line must name `b`.
 #[test]
@@ -169,10 +184,12 @@ const v: Target = { a: 123, b: 1 };
 
 // ── Multiple-missing-property (MissingProperties) cases ──────────────────────
 
-/// When two properties are missing and both live in the same mapped intersection
-/// member, each missing property gets its own elaboration line.
+/// When several properties are missing and all live in the *same* intersection
+/// member, tsc groups them into one `... is missing the following properties
+/// from type '<member>': a, b, c` line under the top-level TS2322 (rather than
+/// one line per property).
 #[test]
-fn multiple_missing_in_mapped_member_elaborates_each() {
+fn multiple_missing_in_mapped_member_groups_properties() {
     let diags = diagnostics(
         r#"
 type Map1<T> = { [K in keyof T]: T[K] };
@@ -181,23 +198,18 @@ const v: Target = { d: "x" };
 "#,
     );
     assert!(
-        has_missing_member_elaboration(&diags, "a"),
-        "expected elaboration for missing `a`; got {diags:?}"
-    );
-    assert!(
-        has_missing_member_elaboration(&diags, "b"),
-        "expected elaboration for missing `b`; got {diags:?}"
-    );
-    assert!(
-        has_missing_member_elaboration(&diags, "c"),
-        "expected elaboration for missing `c`; got {diags:?}"
+        has_grouped_member_elaboration(&diags, &["a", "b", "c"]),
+        "expected a single grouped `... missing the following properties ... a, b, c` \
+         elaboration on the mapped member; got {diags:?}"
     );
 }
 
-/// Properties missing from *different* intersection members each get an
-/// elaboration line pointing to their respective requiring member.
+/// tsc checks intersection members left-to-right and elaborates only the FIRST
+/// member the source fails against. With `x` missing from the mapped member and
+/// `y` missing from a later member, only the `x`/mapped-member elaboration is
+/// reported.
 #[test]
-fn multiple_missing_across_different_members_elaborates_each() {
+fn multiple_missing_across_members_reports_first_member_only() {
     let diags = diagnostics(
         r#"
 type Map1<T> = { [K in keyof T]: T[K] };
@@ -207,18 +219,20 @@ const v: Target = {};
     );
     assert!(
         has_missing_member_elaboration(&diags, "x"),
-        "expected elaboration for missing `x` in mapped member; got {diags:?}"
+        "expected elaboration for missing `x` in the first (mapped) member; got {diags:?}"
     );
     assert!(
-        has_missing_member_elaboration(&diags, "y"),
-        "expected elaboration for missing `y` in plain member; got {diags:?}"
+        !has_missing_member_elaboration(&diags, "y")
+            && !has_grouped_member_elaboration(&diags, &["y"]),
+        "only the first failing member should be elaborated; `y` (from a later member) \
+         must not appear; got {diags:?}"
     );
 }
 
 /// Anti-hardcoding: different iteration-variable / property / alias spellings
-/// must not affect whether elaboration fires for the multi-property case.
+/// must not affect the grouped multi-property elaboration.
 #[test]
-fn multiple_missing_renamed_vars_elaborates() {
+fn multiple_missing_renamed_vars_groups_properties() {
     let diags = diagnostics(
         r#"
 type Wrap<U> = { [Q in keyof U]: U[Q] };
@@ -227,22 +241,18 @@ const w: Combined = { gamma: true };
 "#,
     );
     assert!(
-        has_missing_member_elaboration(&diags, "alpha"),
-        "expected elaboration for missing `alpha`; got {diags:?}"
-    );
-    assert!(
-        has_missing_member_elaboration(&diags, "beta"),
-        "expected elaboration for missing `beta`; got {diags:?}"
+        has_grouped_member_elaboration(&diags, &["alpha", "beta"]),
+        "expected the grouped elaboration regardless of mapped-variable / property / \
+         alias spelling; got {diags:?}"
     );
 }
 
 /// A plain (non-mapped) intersection alias is normalised to an object type by
-/// the solver before it reaches the error reporter, so multiple missing
-/// properties produce TS2739 (the standard missing-properties message) rather
-/// than the intersection-member elaboration.  This verifies we don't regress
-/// the TS2739 path while the mapped-intersection elaboration is active.
+/// the solver, but the written annotation is still an intersection, so tsc keeps
+/// the top-level TS2322 and elaborates the first member member-by-member — not a
+/// flat top-level TS2739 against the merged object.
 #[test]
-fn plain_intersection_alias_multiple_missing_gives_ts2739() {
+fn plain_intersection_alias_multiple_missing_elaborates_member() {
     let diags = diagnostics(
         r#"
 type Target = { a: string; b: number } & { c: boolean };
@@ -250,8 +260,14 @@ const v: Target = {};
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2739),
-        "plain intersection with multiple missing properties must emit TS2739; got {diags:?}"
+        diags.iter().any(|d| d.code == 2322) && !diags.iter().any(|d| d.code == 2739),
+        "a plain intersection annotation must report TS2322 with a member elaboration, \
+         not a flat top-level TS2739; got {diags:?}"
+    );
+    assert!(
+        has_grouped_member_elaboration(&diags, &["a", "b"]),
+        "expected the first member `{{ a: string; b: number; }}` to be elaborated with \
+         its missing properties `a, b`; got {diags:?}"
     );
 }
 
@@ -269,5 +285,101 @@ const v: Target = { a: "s", b: 1, c: true };
     assert!(
         !diags.iter().any(|d| d.code == 2322 || d.code == 2741),
         "a complete source must not produce any assignability error; got {diags:?}"
+    );
+}
+
+// ── Assignment-expression target & plain-object anti-leak negative ────────────
+
+/// The member elaboration also fires for an assignment *expression*
+/// (`target = { ... }`) whose left-hand side was declared with an intersection
+/// annotation — not only declaration initializers. This exercises the
+/// `BINARY_EXPRESSION` branch of the annotation walk in `target_annotation_node`.
+/// Renamed alias/property spellings guard against a name-keyed fix.
+#[test]
+fn assignment_expression_to_intersection_target_elaborates_member() {
+    let diags = diagnostics(
+        r#"
+type Lhs1 = { alpha: number };
+type Lhs2 = { beta: string };
+let target: Lhs1 & Lhs2;
+target = { alpha: 1 };
+"#,
+    );
+    let matched = diags.iter().any(|d| {
+        d.code == 2322
+            && d.related_information.iter().any(|info| {
+                info.message_text.contains("Property 'beta' is missing")
+                    && info.message_text.contains("required in type 'Lhs2'")
+            })
+    });
+    assert!(
+        matched,
+        "expected TS2322 + `... required in type 'Lhs2'` for an assignment-expression \
+         target declared as an intersection; got {diags:?}"
+    );
+}
+
+/// Anti-leak negative: a PLAIN object-literal target that is structurally
+/// identical to a named intersection elsewhere in the program must still report
+/// a flat TS2741 with no member elaboration. The merged intersection and the
+/// plain object intern to the same `TypeId` (sharing the display alias), so the
+/// member-elaboration recovery — which is gated on the *written annotation*
+/// being an intersection — must NOT fire here. Renamed spellings guard against a
+/// fix keyed to particular names.
+#[test]
+fn plain_object_target_does_not_leak_intersection_elaboration() {
+    let diags = diagnostics(
+        r#"
+type Leaf1 = { qq: number };
+type Leaf2 = { rr: string };
+type Merged = Leaf1 & Leaf2;
+declare const forcesMerged: Merged;
+const plain: { qq: number; rr: string } = { qq: 1 };
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 2741 && d.message_text.contains("Property 'rr' is missing")),
+        "expected a flat TS2741 for the missing `rr` on the plain object target; got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "a plain object-literal target must not receive the intersection-member \
+         elaboration (TS2322) even when an identically-shaped named intersection \
+         exists in the program; got {diags:?}"
+    );
+    assert!(
+        !has_missing_member_elaboration(&diags, "rr"),
+        "no `required in type '<member>'` elaboration may leak onto a plain object \
+         target; got {diags:?}"
+    );
+}
+
+/// Regression for `excessPropertyCheckIntersectionWithIndexSignature`: when the
+/// intersection target is an index-signature *value* type and the failing
+/// source is a nested, contextually-literal object (`{ a: 0 }` checked against
+/// `{ a: 0 } & { b: 0 }`), the source must render with its literal preserved
+/// (`{ a: 0; }`), not widened to `{ a: number; }`. The genuine-intersection path
+/// must not apply the assignment-anchor literal widening that the merged
+/// (recovered) path uses for top-level assigned literals.
+#[test]
+fn nested_index_signature_intersection_keeps_literal_source() {
+    let diags = diagnostics(
+        r#"
+let x: { [k: string]: { a: 0 } } & { [k: string]: { b: 0 } };
+x = { y: { a: 0 } };
+"#,
+    );
+    let matched = diags.iter().any(|d| {
+        d.code == 2322
+            && d.message_text
+                .contains("Type '{ a: 0; }' is not assignable")
+            && d.message_text.contains("'{ a: 0; } & { b: 0; }'")
+    });
+    assert!(
+        matched,
+        "the nested index-signature intersection source must keep its literal type \
+         (`{{ a: 0; }}`, not the widened `{{ a: number; }}`); got {diags:?}"
     );
 }

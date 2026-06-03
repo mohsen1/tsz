@@ -118,7 +118,10 @@ impl<'a> CheckerState<'a> {
         self.keyof_type_alias_annotation_display(&annotation)
     }
 
-    fn declared_assignment_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::error_reporter) fn declared_assignment_type_annotation_node(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
