@@ -419,6 +419,9 @@ const pkg = {
   bin: {
     "try-tsz": "bin/try-tsz.js",
   },
+  dependencies: {
+    typescript: "^6.0.3",
+  },
   optionalDependencies,
   files: ["bin/", "LICENSE.txt"],
 };
@@ -480,9 +483,20 @@ try {
   process.exit(1);
 }
 
+let typescriptPackageJson;
+try {
+  typescriptPackageJson = require.resolve("typescript/package.json");
+} catch {
+  console.error("Missing try-tsz TypeScript oracle dependency");
+  process.exit(1);
+}
+
 const result = spawnSync(binary, process.argv.slice(2), {
   cwd: process.cwd(),
-  env: process.env,
+  env: {
+    ...process.env,
+    TRY_TSZ_TYPESCRIPT_PACKAGE_JSON: typescriptPackageJson,
+  },
   stdio: "inherit",
 });
 

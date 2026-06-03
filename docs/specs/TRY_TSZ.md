@@ -9,10 +9,10 @@ The user runs:
 npx try-tsz
 ```
 
-The tool finds the relevant `tsconfig.json`, runs the project's own `tsc` and
-the latest published `tsz` in a no-emit check, compares the complete diagnostic
-result, reports speed, and guides the user through an interactive, local-only
-bug-report flow when `tsz` differs.
+The tool finds the relevant `tsconfig.json`, runs a TypeScript `tsc` oracle at
+version `6.0.3` or newer and the latest published `tsz` in a no-emit check,
+compares the complete diagnostic result, reports speed, and guides the user
+through an interactive, local-only bug-report flow when `tsz` differs.
 
 This is not switch/migration messaging. The user-facing promise is:
 
@@ -23,7 +23,8 @@ This is not switch/migration messaging. The user-facing promise is:
 
 - Audience: any project that uses `tsc` for type checking or emit.
 - MVP scope: type-check parity only, always run both compilers with `--noEmit`.
-- Compatibility bar: `tsz` matches `tsc` exactly for exit status and diagnostics.
+- Compatibility bar: `tsz` matches TypeScript `tsc` `6.0.3` or newer exactly
+  for exit status and diagnostics.
 - Diagnostic comparison: compare file, line, column/span when available, code,
   message text, and order.
 - Correctness wins the headline. If `tsz` is faster but wrong, report mismatch
@@ -131,8 +132,9 @@ Repository layout:
 
 Compiler invocation:
 
-- Locate local TypeScript through `node_modules/.bin/tsc`; if missing, fail with
-  a setup message because the product assumes the project already has `tsc`.
+- Use a TypeScript `6.0.3` or newer oracle. The npm `try-tsz` package provides
+  that oracle dependency; if a non-npm/local build cannot find it, a project
+  TypeScript install at `6.0.3` or newer may be used.
 - Invoke `tsc --pretty false --noEmit -p <config>`.
 - Invoke the packaged latest `tsz` binary as `tsz --pretty false --noEmit -p
   <config>`.
@@ -146,10 +148,10 @@ Structured diagnostics:
 
 - Prefer adding a stable machine-readable diagnostic output mode to `tsz` for
   `try-tsz` rather than parsing `tsz` text forever.
-- For `tsc`, use a small Node helper with the project's installed `typescript`
-  package to parse the config and collect pre-emit diagnostics as structured
-  JSON. This avoids brittle text parsing and ensures the oracle is the user's
-  actual TypeScript version.
+- For `tsc`, use a small Node helper with TypeScript `6.0.3` or newer to parse
+  the config and collect pre-emit diagnostics as structured JSON. This avoids
+  brittle text parsing and keeps the oracle aligned with the `tsz` compatibility
+  target.
 - Compare the structured `tsc` diagnostics to structured `tsz` diagnostics.
 - Include the raw command output in `.try-tsz/raw/` only when the user chooses
   to generate a report.

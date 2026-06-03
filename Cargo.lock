@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-binder"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-checker"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "dashmap",
  "globset",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-cli"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-common"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-emitter"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lowering"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lsp"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "globset",
  "json5",
@@ -1628,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-parser"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1641,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-scanner"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "serde",
  "tsz-common",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-solver"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "bitflags 2.11.0",
  "dashmap",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-wasm"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -1690,7 +1690,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-website"
-version = "0.1.9"
+version = "0.1.10"
 
 [[package]]
 name = "typenum"
