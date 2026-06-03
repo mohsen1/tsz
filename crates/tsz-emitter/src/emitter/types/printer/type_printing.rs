@@ -1343,8 +1343,9 @@ impl<'a> TypePrinter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use tsz_solver::DefId;
     use tsz_solver::construction::TypeInterner;
-    use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
+    use tsz_solver::types::{IntrinsicKind, TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;
 
@@ -1408,6 +1409,24 @@ mod tests {
         let printer = TypePrinter::new(&interner).with_outer_type_params(vec![t_atom]);
         let intersection_swapped = interner.intersection2(empty, t);
         assert_eq!(printer.print_type(intersection_swapped), "NonNullable<T>");
+    }
+
+    #[test]
+    fn boxed_object_intersection_prints_primitive_surface() {
+        let interner = TypeInterner::new();
+        let object_def = DefId(1);
+        let object_type = interner.lazy(object_def);
+        interner.set_boxed_type(IntrinsicKind::Object, object_type);
+        interner.register_boxed_def_id(IntrinsicKind::Object, object_def);
+
+        let text = TypePrinter::new(&interner)
+            .print_type(interner.intersection(vec![object_type, TypeId::STRING]));
+        assert_eq!(text, "string");
+
+        let literal = interner.literal_string("def");
+        let text = TypePrinter::new(&interner)
+            .print_type(interner.intersection(vec![object_type, literal]));
+        assert_eq!(text, "\"def\"");
     }
 
     #[test]
