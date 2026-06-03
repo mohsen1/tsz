@@ -345,3 +345,241 @@ const ys: boolean[] = xs;
          got {chain:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Function-signature and index-signature union members.
+//
+// `tsc` elaborates a failing union member that is a function or an
+// index-signatured object exactly like the non-union case, beneath the member
+// header. Before this slice, tsz dropped these member shapes entirely (the
+// solver's union-source walk only surfaced tuple/property/array members), so a
+// function-return, function-parameter, or index-signature member collapsed the
+// chain to the bare top-level union line and hid which member — and which
+// position/signature — was responsible.
+//
+// Ground truth (`tsc` 6.0.2):
+//
+// ```text
+// Type 'Source' is not assignable to type 'Target'.
+//   Type '(x: string) => string' is not assignable to type 'Target'.
+//     Type 'string' is not assignable to type 'number'.
+// ```
+// ```text
+// Type 'Source' is not assignable to type 'Target'.
+//   Type '(x: number) => void' is not assignable to type 'Target'.
+//     Types of parameters 'x' and 'x' are incompatible.
+//       Type 'string' is not assignable to type 'number'.
+// ```
+// ```text
+// Type 'Source' is not assignable to type 'Target'.
+//   Type '{ [k: string]: string; }' is not assignable to type 'Target'.
+//     'string' index signatures are incompatible.
+//       Type 'string' is not assignable to type 'number'.
+// ```
+// ---------------------------------------------------------------------------
+
+/// Function-return union member: the member header (the function type) sits one
+/// indent beneath the union line and the return relation drills directly
+/// beneath it — `tsc` emits no intermediate `Return type …` frame for a direct
+/// function-to-function return mismatch.
+#[test]
+fn union_member_function_return_mismatch_emits_header_and_drill() {
+    let diags = diagnostics(
+        r#"
+type Target = (x: string) => number;
+type Source = ((x: string) => string) | ((x: string) => boolean);
+declare const s: Source;
+const t: Target = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("=> string")
+            && m.contains("is not assignable to type")),
+        "expected the function member header (the `=> string` member) at depth 0; \
+         got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("'string'")
+            && m.contains("'number'")
+            && m.contains("is not assignable")),
+        "expected the return relation leaf at depth 1, directly beneath the member \
+         header (no `Return type …` frame); got {chain:?}"
+    );
+    assert!(
+        !chain.iter().any(|(_, _, m)| m.starts_with("Return type ")),
+        "tsc relates the return types directly; no `Return type …` frame should \
+         appear; got {chain:?}"
+    );
+}
+
+/// Member selection for function-return unions follows `tsc`'s first-failing
+/// member rule: reversing the union order changes which member (and which
+/// return type) heads the drill, but the chain stays internally consistent.
+#[test]
+fn union_member_function_return_selection_matches_tsc_order() {
+    let reversed = ts2322_chain(&diagnostics(
+        r#"
+type Target = (x: string) => number;
+type Source = ((x: string) => boolean) | ((x: string) => string);
+declare const s: Source;
+const t: Target = s;
+"#,
+    ));
+    // reversed: first failing member is the `=> boolean` function.
+    assert!(
+        chain_has(&reversed, 0, |m| m.contains("=> boolean")),
+        "reversed function union should head with the `=> boolean` member; \
+         got {reversed:?}"
+    );
+    assert!(
+        chain_has(&reversed, 1, |m| m.contains("'boolean'")
+            && m.contains("'number'")),
+        "reversed function union should drill `boolean` -> `number` at depth 1; \
+         got {reversed:?}"
+    );
+}
+
+/// Function-parameter union member self-heads with the signature relation (its
+/// own first line doubles as the member header), then drills the
+/// contravariant `Types of parameters 'a' and 'b' are incompatible.` frame and
+/// the parameter leaf — each one indent deeper.
+#[test]
+fn union_member_function_parameter_mismatch_emits_header_and_drill() {
+    let diags = diagnostics(
+        r#"
+type Target = (x: string) => void;
+type Source = ((x: number) => void) | ((x: boolean) => void);
+declare const s: Source;
+const t: Target = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("(x: number) => void")
+            && m.contains("is not assignable to type")),
+        "expected the function member header at depth 0; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("parameters 'x' and 'x'")
+            && m.contains("incompatible")),
+        "expected the `Types of parameters 'x' and 'x' are incompatible.` frame at \
+         depth 1; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 2, |m| m.contains("'string'")
+            && m.contains("'number'")),
+        "expected the contravariant parameter leaf at depth 2; got {chain:?}"
+    );
+}
+
+/// Renamed binders: the function-parameter rule must hold regardless of alias
+/// or parameter-name spelling, so a name-keyed fix would not satisfy this.
+#[test]
+fn union_member_function_parameter_mismatch_renamed() {
+    let diags = diagnostics(
+        r#"
+type Handler = (value: string) => void;
+type Either = ((value: number) => void) | ((value: boolean) => void);
+declare const e: Either;
+const h: Handler = e;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("=> void")
+            && m.contains("is not assignable")),
+        "renamed function union should still emit the member header; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("parameters 'value' and 'value'")
+            && m.contains("incompatible")),
+        "renamed function union should still emit the parameters frame; got {chain:?}"
+    );
+}
+
+/// Index-signature union member: the member header sits beneath the union line,
+/// then `'string' index signatures are incompatible.` and the value-type leaf
+/// drill one indent deeper each.
+#[test]
+fn union_member_index_signature_mismatch_emits_header_and_drill() {
+    let diags = diagnostics(
+        r#"
+type Target = { [k: string]: number };
+type Source = { [k: string]: string } | { [k: string]: boolean };
+declare const s: Source;
+const t: Target = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 0, |m| m.contains("[k: string]")
+            && m.contains("is not assignable to type")),
+        "expected the index-signature member header at depth 0; got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("'string' index signatures")
+            && m.contains("incompatible")),
+        "expected the `'string' index signatures are incompatible.` line at depth 1; \
+         got {chain:?}"
+    );
+    assert!(
+        chain_has(&chain, 2, |m| m.contains("'string'")
+            && m.contains("'number'")),
+        "expected the value-type leaf at depth 2; got {chain:?}"
+    );
+}
+
+/// Number-keyed index signatures elaborate the same way, with the `'number'`
+/// index-kind reflected in the incompatibility line.
+#[test]
+fn union_member_number_index_signature_mismatch() {
+    let diags = diagnostics(
+        r#"
+type Target = { [k: number]: number };
+type Source = { [k: number]: string } | { [k: number]: boolean };
+declare const s: Source;
+const t: Target = s;
+"#,
+    );
+    let chain = ts2322_chain(&diags);
+    assert!(
+        chain_has(&chain, 1, |m| m.contains("'number' index signatures")
+            && m.contains("incompatible")),
+        "expected the `'number' index signatures are incompatible.` line at depth 1; \
+         got {chain:?}"
+    );
+}
+
+/// Determinism for the new member shapes: the same function/index union checked
+/// twice must produce a byte-identical chain (the anti-"contradictory"
+/// guarantee — the failing member/position/leaf must not alternate across runs).
+#[test]
+fn union_member_function_and_index_elaboration_is_deterministic() {
+    for source in [
+        r#"
+type Target = (x: string) => number;
+type Source = ((x: string) => string) | ((x: string) => boolean);
+declare const s: Source;
+const t: Target = s;
+"#,
+        r#"
+type Target = { [k: string]: number };
+type Source = { [k: string]: string } | { [k: string]: boolean };
+declare const s: Source;
+const t: Target = s;
+"#,
+    ] {
+        let first = ts2322_chain(&diagnostics(source));
+        let second = ts2322_chain(&diagnostics(source));
+        assert!(
+            !first.is_empty(),
+            "expected an elaboration chain; got {first:?}"
+        );
+        assert_eq!(
+            first, second,
+            "the same union must elaborate an identical chain across runs; \
+             first={first:?} second={second:?}"
+        );
+    }
+}

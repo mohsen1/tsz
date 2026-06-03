@@ -963,11 +963,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //     (`Property 'a' is missing in type '{ b: 2; }' …`,
                 //     `Type 'number[]' is not assignable to type 'string[]' …`,
                 //     `The type 'readonly [number]' is 'readonly' …`).
-                //   * the tuple/property element-type mismatches are header-led;
-                //     the union-source renderer supplies the
-                //     `Type 'M' is not assignable to type 'T'.` member header
-                //     before drilling (`Type at position 0 …` / `Types of
-                //     property 'p' …`).
+                //   * the tuple/property element-type, index-signature, and
+                //     function-return mismatches are header-led; the union-source
+                //     renderer supplies the `Type 'M' is not assignable to type
+                //     'T'.` member header before drilling (`Type at position 0 …`
+                //     / `Types of property 'p' …` / `'string' index signatures are
+                //     incompatible.` / the bare return-relation leaf).
+                //   * `ParameterTypeMismatch` self-heads with the signature
+                //     relation line at depth >= 1, so the renderer routes it
+                //     through the self-heading path (its own first line doubles as
+                //     the member header), then drills `Types of parameters 'a' and
+                //     'b' are incompatible.` + the contravariant leaf.
                 // Without this the chain collapses to the bare union-to-target
                 // line and hides which member fails.
                 //
@@ -978,9 +984,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //     target requires/allows only M`) leaf render is owned
                 //     separately; surfacing it before that lands emits a non-tsc
                 //     line.
-                //   * `ReturnTypeMismatch`/`ParameterTypeMismatch` — the function
-                //     renderers self-head with the signature relation, so they
-                //     would double-state the member signature here.
                 //   * `OptionalPropertyRequired`/`ReadonlyPropertyMismatch` — `tsc`
                 //     leads these with the member header (and they only arise in
                 //     narrow `exactOptionalPropertyTypes` / readonly-index shapes),
@@ -997,6 +1000,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
                             | SubtypeFailureReason::ArrayElementMismatch { .. }
+                            | SubtypeFailureReason::IndexSignatureMismatch { .. }
+                            | SubtypeFailureReason::ReturnTypeMismatch { .. }
+                            | SubtypeFailureReason::ParameterTypeMismatch { .. }
                             | SubtypeFailureReason::ReadonlyToMutableAssignment { .. }
                     )
                 {
