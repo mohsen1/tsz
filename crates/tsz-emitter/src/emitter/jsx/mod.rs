@@ -3,6 +3,7 @@ mod recovery;
 mod transform;
 
 use std::borrow::Cow;
+use tsz_common::text_scan::{JSX_PRAGMA_SCAN_BYTES, leading_window};
 use tsz_parser::parser::NodeIndex;
 
 // =============================================================================
@@ -101,8 +102,7 @@ pub(super) fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
 /// `@jsxImportSourcex preact` that would otherwise be misparsed as a real
 /// pragma with package `x`.
 pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
-    let scan_limit = source.len().min(4096);
-    let text = &source[..scan_limit];
+    let text = leading_window(source, JSX_PRAGMA_SCAN_BYTES);
     let bytes = text.as_bytes();
     let mut pos = 0;
     while pos < bytes.len() {

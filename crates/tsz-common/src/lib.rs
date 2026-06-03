@@ -54,5 +54,8 @@ pub mod perf_counters;
 // Centralized file-extension constants and helpers.
 pub mod file_extensions;
 
+// Char-boundary-safe text windowing helpers (leading-prefix scan caps).
+pub mod text_scan;
+
 // Centralized TypeScript lib symbol capability metadata.
 pub mod lib_capabilities;
