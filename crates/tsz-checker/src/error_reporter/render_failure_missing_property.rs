@@ -265,93 +265,18 @@ impl<'a> CheckerState<'a> {
             return diag;
         }
 
-        // TSC emits TS2322 instead of TS2741 when the *source* type is an intersection.
-        // This covers type aliases like `LinkedList<T> = T & { next: ... }` that may have
-        // been evaluated to an intersection by the time we reach diagnostic rendering.
-        // Check both the type data and the source's declaration annotation, since
-        // intersections may be flattened into Object types by the solver.
-        let source_evaluated_for_intersection = self.evaluate_type_with_env(source);
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, source)
-            || crate::query_boundaries::common::is_intersection_type(
-                self.ctx.types,
-                source_evaluated_for_intersection,
-            )
-            || (depth == 0 && self.anchor_source_has_intersection_annotation(idx))
-        {
-            let src_str = if depth == 0 {
-                self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target,
-                        anchor_idx: idx,
-                    },
-                )
-            } else {
-                self.format_type_diagnostic(source_type)
-            };
-            let tgt_str = if depth == 0 {
-                self.format_assignability_type_for_message(target, source)
-            } else {
-                self.format_type_diagnostic(target_type)
-            };
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&src_str, &tgt_str],
-            );
-            return Diagnostic::error(
-                file_name,
-                start,
-                length,
-                message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-        }
-
-        // TSC emits TS2322 instead of TS2741 when the source is a type application
-        // (generic type alias) whose base type resolves to an intersection. For example,
-        // `LinkedList<Entity>` where `type LinkedList<T> = T & { next: LinkedList<T> }`.
-        // Named type aliases expanding to intersections are reported as general
-        // assignability failures, not property-level "missing" errors.
-        if let Some((base, _args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source)
-        {
-            let base_eval = self.evaluate_type_with_env(base);
-            let base_is_intersection =
-                crate::query_boundaries::common::is_intersection_type(self.ctx.types, base)
-                    || crate::query_boundaries::common::is_intersection_type(
-                        self.ctx.types,
-                        base_eval,
-                    );
-            if base_is_intersection {
-                let src_str = if depth == 0 {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
-                } else {
-                    self.format_type_diagnostic(source_type)
-                };
-                let tgt_str = if depth == 0 {
-                    self.format_assignability_type_for_message(target, source)
-                } else {
-                    self.format_type_diagnostic(target_type)
-                };
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&src_str, &tgt_str],
-                );
-                return Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                );
-            }
-        }
+        // An intersection *source* (written directly, via an alias such as
+        // `Branded<T> = T & { __brand }`, or via a generic application whose base
+        // resolves to an intersection like `LinkedList<T> = T & { next }`) does NOT
+        // downgrade a genuine missing required named property to a generic TS2322.
+        // tsc reports the property-level miss (TS2741/TS2739) and displays the source
+        // as-written — e.g. `Property 'b' is missing in type 'LinkedList<{ a: number; }>'
+        // but required in type '{ a: number; b: string; }'`. The intersection-specific
+        // TS2322 elaboration applies to intersection *targets* (handled above), where
+        // tsc explains which member requires the property; it is not a source concern.
+        // Flattened plain-object intersections already reach the TS2741 path here, and
+        // the plural `render_missing_properties` path likewise never downgrades for
+        // intersection sources, so both singular and plural paths stay consistent.
 
         // Private brand properties handling
         let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
