@@ -602,6 +602,23 @@ impl<'a> DeclarationEmitter<'a> {
                                 .call_expression_uses_partial_required_mapped_inference(expr_idx)
                             && !self.call_expression_uses_no_infer_return_block(expr_idx)
                         {
+                            if self
+                                .source_return_rest_parameter_type_parameter_name(
+                                    source_arena,
+                                    func,
+                                )
+                                .as_deref()
+                                == Some(type_text.trim())
+                                && let Some(substituted) = self
+                                    .substitute_source_call_type_parameters(
+                                        source_arena,
+                                        func,
+                                        call,
+                                        type_text.clone(),
+                                    )
+                            {
+                                return Some(substituted);
+                            }
                             let literal_direct_substitution = self
                                 .literal_direct_type_parameter_argument_substitution(
                                     source_arena,

@@ -1075,6 +1075,31 @@ export const result = tup(["x"], [1, true]);
 }
 
 #[test]
+fn declared_call_return_uses_rest_identity_source_summary_before_canonical_widening() {
+    let source = r#"
+declare function wide<T extends unknown[]>(...args: T): T;
+declare function constrained<T extends (string | number | boolean)[]>(...args: T): T;
+export const empty = wide();
+export const tuple = wide(1, "x", true);
+export const literalTuple = constrained(1, "x", true);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const empty: [];"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const tuple: [number, string, boolean];"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const literalTuple: [1, \"x\", true];"),
+        "{output}"
+    );
+}
+
+#[test]
 fn declared_call_return_infers_remaining_variadic_function_parameters() {
     let source = r#"
 export function curry<T extends unknown[], U extends unknown[], R>(f: (...args: [...T, ...U]) => R, ...a: T): (...b: U) => R {
@@ -1087,6 +1112,31 @@ export const curried = curry(fn, 1);
 
     assert!(
         output.contains("export declare const curried: (b: string, c: boolean) => number;"),
+        "{output}"
+    );
+}
+
+#[test]
+fn bind_call_collapses_exhausted_local_bind_rest_tail() {
+    let source = r#"
+declare function bind<T, U extends unknown[], V>(f: (x: T, ...rest: U) => V, x: T): (...rest: U) => V;
+declare const f20: (x: number, y: string, z: boolean) => string[];
+export const f21 = bind(f20, 1);
+export const f22 = bind(f21, "x");
+export const f23 = bind(f22, true);
+"#;
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("export declare const f21: (y: string, z: boolean) => string[];"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const f22: (z: boolean) => string[];"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare const f23: () => string[];"),
         "{output}"
     );
 }

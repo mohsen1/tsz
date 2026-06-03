@@ -30,8 +30,8 @@ impl<'a> DeclarationEmitter<'a> {
                         self.explicit_type_argument_indexed_member_return_type_text(expr_idx)
                     })
                     .or_else(|| self.generic_variadic_tuple_call_return_type_text(expr_idx))
-                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
+                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             })
             .map(|type_text| {
@@ -845,12 +845,23 @@ impl<'a> DeclarationEmitter<'a> {
         if args.nodes.len() < 2 {
             return None;
         }
-        let source_function = self.function_type_parts_for_expression(*args.nodes.first()?)?;
+        let source_function_arg = *args.nodes.first()?;
+        let source_function = self.function_type_parts_for_expression(source_function_arg)?;
         let bound_count = args.nodes.len().saturating_sub(1);
-        let remaining = source_function
+        let mut remaining_params = source_function
             .parameters
             .iter()
             .skip(bound_count)
+            .collect::<Vec<_>>();
+        if remaining_params.len() == 1
+            && remaining_params[0].rest
+            && remaining_params[0].type_text.trim() == "unknown[]"
+            && self.expression_is_local_bind_call_result(source_function_arg)
+        {
+            remaining_params.clear();
+        }
+        let remaining = remaining_params
+            .into_iter()
             .map(|param| {
                 let type_text = param.type_text.trim();
                 let name = param.name.as_deref().unwrap_or("arg");
@@ -873,6 +884,57 @@ impl<'a> DeclarationEmitter<'a> {
             remaining.join(", "),
             source_function.return_type
         ))
+    }
+
+    fn expression_is_local_bind_call_result(&self, expr_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.value_reference_symbol(expr_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        if let Some(symbol) = binder.symbols.get(sym_id)
+            && symbol.all_declarations().iter().copied().any(|decl_idx| {
+                self.variable_declaration_initializer_is_bind_call(self.arena, decl_idx)
+            })
+        {
+            return true;
+        }
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            self.variable_declaration_initializer_is_bind_call(source_arena, decl_idx)
+                .then_some(())
+        })
+        .is_some()
+    }
+
+    fn variable_declaration_initializer_is_bind_call(
+        &self,
+        source_arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = source_arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(decl) = source_arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = source_arena.get(decl.initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = source_arena.get_call_expr(init_node) else {
+            return false;
+        };
+        let callee = source_arena.skip_parenthesized_and_assertions_and_comma(call.expression);
+        source_arena
+            .get(callee)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            && identifier_text(source_arena, callee).as_deref() == Some("bind")
     }
 
     fn normalize_constructor_arrow_return_object_text(type_text: String) -> String {
