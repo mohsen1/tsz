@@ -864,6 +864,21 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
+    /// Whether a failing union member's nested reason leads its elaboration
+    /// with a specialized line (`Type at position 0 …`, `Types of property
+    /// 'p' …`) instead of self-heading with `Type 'M' is not assignable to
+    /// type 'T'.`. Such reasons need an explicit member-type header emitted
+    /// before the structural drill; self-heading reasons (the property
+    /// `MissingProperty`/`MissingProperties` summaries) and plain leaf
+    /// relations already carry the member line themselves.
+    const fn union_member_nested_needs_header(reason: &tsz_solver::SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
+        )
+    }
+
     /// Render a union-source mismatch: a union type that is not assignable to
     /// the target because one of its members fails.
     ///
@@ -875,8 +890,22 @@ impl<'a> CheckerState<'a> {
     ///   Type 'B' is not assignable to type 'T'.
     /// ```
     ///
-    /// The failing-member relation sits one indent level beneath the union
-    /// line, mirroring [`Self::render_type_argument_mismatch`].
+    /// When the member fails for a *structural* reason (a tuple element type
+    /// mismatch or an object property-type mismatch) tsc emits the member-type
+    /// header explicitly and then drills into the structural detail:
+    ///
+    /// ```text
+    /// Type 'A | B' is not assignable to type 'T'.
+    ///   Type 'B' is not assignable to type 'T'.
+    ///     Type at position 0 in source is not compatible with type at position 0 in target.
+    ///       Type 'number' is not assignable to type 'string'.
+    /// ```
+    ///
+    /// The structural renderers omit that header at depth >= 1 (they lead with
+    /// `Type at position N …` / `Types of property 'p' …`), so this path emits
+    /// it before recursing. Self-heading members (leaf relations, missing
+    /// property summaries) carry the member line themselves and are delegated
+    /// to [`Self::render_parent_with_child_relation`].
     pub(super) fn render_union_source_mismatch(
         &mut self,
         ctx: &RenderContext,
@@ -885,14 +914,82 @@ impl<'a> CheckerState<'a> {
         member_type: TypeId,
         nested_reason: &tsz_solver::SubtypeFailureReason,
     ) -> Diagnostic {
-        self.render_parent_with_child_relation(
-            ctx,
-            source_type,
-            target_type,
+        if !Self::union_member_nested_needs_header(nested_reason) {
+            return self.render_parent_with_child_relation(
+                ctx,
+                source_type,
+                target_type,
+                member_type,
+                target_type,
+                nested_reason,
+            );
+        }
+
+        let depth = ctx.depth;
+        // The member keeps its own alias (`C` stays `C`); the target keeps the
+        // diagnostic alias the rest of the chain uses (`A`), matching tsc for
+        // object/interface targets. (tsc additionally expands a *tuple* target
+        // alias to its structural form here, but tsz's shared formatter follows
+        // the tuple's lazy display alias; the chain shape, positions, and leaf
+        // relation are otherwise identical.) Format the target once; it heads
+        // both the (deep) outer union line and the member header below.
+        let target_str = self.format_type_diagnostic(target_type);
+
+        // Outer union line. At depth 0 it is the primary diagnostic, which
+        // reuses `render_type_mismatch` so the full union/alias surface is
+        // preserved; deeper, format the union/target pair structurally.
+        let mut diag = if depth == 0 {
+            self.render_type_mismatch(ctx)
+        } else {
+            let source_str = self.format_type_diagnostic(source_type);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            Diagnostic::error(
+                ctx.file_name.clone(),
+                ctx.start,
+                ctx.length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        };
+
+        if depth >= 5 {
+            return diag;
+        }
+
+        // The member header sits one indent beneath the union line; the
+        // structural drill sits one level beneath the header. At depth 0 the
+        // union line is the (un-indented) primary, so its first child is at
+        // related-depth 0.
+        let header_depth = if depth == 0 { 0 } else { depth + 1 };
+        let drill_depth = header_depth + 1;
+
+        let member_str = self.format_type_diagnostic(member_type);
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: diag.file.clone(),
+            start: ctx.start,
+            length: ctx.length,
+            message_text: format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&member_str, &target_str],
+            ),
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth: header_depth.min(u8::MAX as u32) as u8,
+        });
+
+        let nested_diag = self.render_failure_reason(
+            nested_reason,
             member_type,
             target_type,
-            nested_reason,
-        )
+            ctx.idx,
+            drill_depth,
+        );
+        Self::push_nested_chain(&mut diag, nested_diag, drill_depth);
+
+        diag
     }
 
     /// Render an outer `Type 'S' is not assignable to type 'T'.` line and
