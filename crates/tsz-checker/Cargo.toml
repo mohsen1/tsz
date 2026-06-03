@@ -2076,3 +2076,11 @@ path = "tests/distributive_callable_branch_tests.rs"
 [[test]]
 name = "ts2315_imported_generic_tests"
 path = "tests/ts2315_imported_generic_tests.rs"
+
+[[test]]
+name = "type_guard_mutable_field_probe_tests"
+path = "tests/type_guard_mutable_field_probe_tests.rs"
+
+[[test]]
+name = "index_signature_type_check_probe_tests"
+path = "tests/index_signature_type_check_probe_tests.rs"
