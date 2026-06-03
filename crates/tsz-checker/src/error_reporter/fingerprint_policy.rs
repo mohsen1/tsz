@@ -706,18 +706,7 @@ impl<'a> CheckerState<'a> {
                 // the right `code`, `message_text`, `depth`, and `file`, so only
                 // the category and the call-site anchor (`start`/`length`) need
                 // rewriting for the TS2345 surface.
-                let container_diag =
-                    self.render_failure_reason(reason, source, target, anchor_idx, 0);
-                container_diag
-                    .related_information
-                    .into_iter()
-                    .map(|mut rel| {
-                        rel.category = DiagnosticCategory::Message;
-                        rel.start = start;
-                        rel.length = length;
-                        rel
-                    })
-                    .collect()
+                self.reanchored_container_related(reason, source, target, anchor_idx, start, length)
             }
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {
                 vec![DiagnosticRelatedInformation {
@@ -763,18 +752,27 @@ impl<'a> CheckerState<'a> {
                 // line, so reuse the TS2322 elaboration (`render_failure_reason`)
                 // as the single source of truth and re-anchor its child lines
                 // onto the call's TS2345 surface (category + start/length).
-                let container_diag =
-                    self.render_failure_reason(reason, source, target, anchor_idx, 0);
-                container_diag
-                    .related_information
-                    .into_iter()
-                    .map(|mut rel| {
-                        rel.category = DiagnosticCategory::Message;
-                        rel.start = start;
-                        rel.length = length;
-                        rel
-                    })
-                    .collect()
+                self.reanchored_container_related(reason, source, target, anchor_idx, start, length)
+            }
+            SubtypeFailureReason::ParameterTypeMismatch { .. } => {
+                // A function/callback argument that fails because one of its
+                // parameters is contravariantly incompatible. tsc explains the
+                // signature line (already supplied by the TS2345 head) with a
+                // `Types of parameters 'a' and 'b' are incompatible.` frame, the
+                // contravariant leaf, and any nested chain — exactly the
+                // elaboration the direct-assignment (TS2322) path renders via
+                // `render_failure_reason` -> `push_parameter_mismatch_elaboration`.
+                // When the offending parameter is itself callable that helper
+                // intentionally emits no frame, leaving an empty list; preserve
+                // the conservative signature-line-only rendering by returning
+                // `None` (rather than an empty related list) in that case.
+                let related = self.reanchored_container_related(
+                    reason, source, target, anchor_idx, start, length,
+                );
+                if related.is_empty() {
+                    return None;
+                }
+                related
             }
             _ => return None,
         };
@@ -784,6 +782,35 @@ impl<'a> CheckerState<'a> {
         // policy. Skipping the intermediate pass keeps the depth-aware sort
         // running exactly once on the final list.
         Some(related)
+    }
+
+    /// Re-anchor the child elaboration lines of [`Self::render_failure_reason`]
+    /// (the `TS2322` single source of truth) onto the call-argument (`TS2345`)
+    /// surface. The call already supplies the signature/container headline, so
+    /// only the reason's `related_information` is carried over — with its
+    /// category reset to `Message` and its anchor rewritten to the call site
+    /// (`start`/`length`). Reason variants whose `TS2322` elaboration is reused
+    /// verbatim (array element, type-argument, union-target, function parameter)
+    /// share this transform.
+    fn reanchored_container_related(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+        start: u32,
+        length: u32,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        self.render_failure_reason(reason, source, target, anchor_idx, 0)
+            .related_information
+            .into_iter()
+            .map(|mut rel| {
+                rel.category = DiagnosticCategory::Message;
+                rel.start = start;
+                rel.length = length;
+                rel
+            })
+            .collect()
     }
 
     /// Build the child-relation elaboration line (`Type 'C' is not assignable
