@@ -336,7 +336,7 @@ fn run_config(cwd: &Path, config: &Path) -> ConfigReport {
 }
 
 fn run_tsc(cwd: &Path, config: &Path) -> Result<CompilerRun> {
-    ensure_local_typescript(cwd, config)?;
+    ensure_typescript_oracle(cwd, config)?;
 
     let command = format!("node <try-tsz tsc helper> {}", config.display());
     println!("Running tsc --noEmit -p {} ...", relative_path(cwd, config));
@@ -347,7 +347,7 @@ fn run_tsc(cwd: &Path, config: &Path) -> Result<CompilerRun> {
         .arg(config)
         .current_dir(cwd)
         .output()
-        .context("failed to run node for the local TypeScript oracle")?;
+        .context("failed to run node for the TypeScript 6 oracle")?;
     let elapsed_ms = start.elapsed().as_millis();
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -599,12 +599,14 @@ fn should_visit_entry(entry: &DirEntry) -> bool {
     )
 }
 
-fn ensure_local_typescript(cwd: &Path, config: &Path) -> Result<()> {
-    if find_local_tsc(cwd, config).is_some() {
+fn ensure_typescript_oracle(cwd: &Path, config: &Path) -> Result<()> {
+    if std::env::var_os("TRY_TSZ_TYPESCRIPT_PACKAGE_JSON").is_some()
+        || find_local_tsc(cwd, config).is_some()
+    {
         Ok(())
     } else {
         bail!(
-            "try-tsz needs this project to have TypeScript installed locally; searched from {} and {} for {}",
+            "try-tsz needs TypeScript 6.0.3 or newer for the tsc oracle; the npm package provides it, or install TypeScript locally. Searched from {} and {} for {}",
             cwd.display(),
             config.parent().unwrap_or(cwd).display(),
             local_tsc_relative_path().display()
@@ -1438,29 +1440,29 @@ mod tests {
     }
 
     #[test]
-    fn local_typescript_preflight_accepts_hoisted_workspace_tsc() {
+    fn typescript_oracle_preflight_accepts_hoisted_workspace_tsc() {
         let temp = TempDir::new();
         let package_dir = temp.path.join("packages/foo");
         let config = package_dir.join("tsconfig.json");
         write_file(&config, "{}");
         write_file(&temp.path.join(local_tsc_relative_path()), "");
 
-        ensure_local_typescript(&package_dir, &config)
+        ensure_typescript_oracle(&package_dir, &config)
             .expect("hoisted workspace TypeScript should satisfy preflight");
     }
 
     #[test]
-    fn local_typescript_preflight_rejects_missing_tsc() {
+    fn typescript_oracle_preflight_rejects_missing_tsc() {
         let temp = TempDir::new();
         let package_dir = temp.path.join("packages/foo");
         let config = package_dir.join("tsconfig.json");
         write_file(&config, "{}");
 
-        let error = ensure_local_typescript(&package_dir, &config)
+        let error = ensure_typescript_oracle(&package_dir, &config)
             .expect_err("missing local TypeScript should be rejected")
             .to_string();
 
-        assert!(error.contains("TypeScript installed locally"));
+        assert!(error.contains("TypeScript 6.0.3 or newer"));
         assert!(error.contains("node_modules/.bin/tsc"));
     }
 
