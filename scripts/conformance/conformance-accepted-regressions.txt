@@ -43,9 +43,13 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
 # intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
-# jsxIntrinsicUnions.tsx and jsxJsxsCjsTransformNestedSelfClosingChild.tsx:
-# accepted after REGRESSED on PR #12368 exact head 9ee797b6 / run 26906037226.
-# Tracked in #12376.
+# jsxIntrinsicUnions.tsx: accepted after REGRESSED on PR #12368 exact head
+# 9ee797b6 / run 26906037226. Tracked in #12376.
+# jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
+# aggregate run on exact head 2dd802cf / run 26908103845, then reappeared on
+# PR #11890 ready-review heads below; tracked in #8432 while accepted here.
+# jsxImportForSideEffectsNonExtantNoError.tsx: accepted after REGRESSED in
+# the same PR #12367 aggregate run. Tracked in #12376.
 # inferentialTypingWithFunctionTypeZip.ts then reappeared on PR #11890 exact
 # head 5266d5c0 after rebasing onto origin/main 9142cd6a95 (CI run
 # 26902607247): all six conformance shards passed, aggregate strictness was
@@ -73,6 +77,7 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # different code path. Tracked in #12260.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
 TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx
