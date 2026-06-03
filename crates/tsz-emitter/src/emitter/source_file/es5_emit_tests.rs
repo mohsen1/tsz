@@ -2096,6 +2096,91 @@ fn reserved_enum_name_emits_anonymous_enum_and_reserved_statement() {
 }
 
 #[test]
+fn reserved_variable_name_emits_empty_decl_keyword_and_initializer_statements() {
+    for (source, expected_tail) in [
+        ("var typeof = 10;", "var ;\ntypeof ;\n10;"),
+        ("var void = value;", "var ;\nvoid ;\nvalue;"),
+        ("var delete = target;", "var ;\ndelete ;\ntarget;"),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: reserved variable-name recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn reserved_function_name_emits_anonymous_function_and_keyword_arrow_tail() {
+    for (source, expected_tail) in [
+        ("function throw() {}", "function () { }\nthrow () => { };"),
+        (
+            "function return(value) {}",
+            "function (value) { }\nreturn () => { };",
+        ),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: reserved function-name recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn reserved_namespace_name_emits_keyword_and_recovered_body_statement() {
+    for (source, expected_tail) in [
+        ("namespace void {}", "namespace;\nvoid {};"),
+        ("namespace typeof {}", "namespace;\ntypeof {};"),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: reserved namespace-name recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn unmatched_decorator_type_assertion_emits_empty_statement() {
     let source = "@<[[import(obju2c77,\n";
 

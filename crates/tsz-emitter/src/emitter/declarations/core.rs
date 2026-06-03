@@ -42,6 +42,9 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
             return;
         }
+        if self.emit_recovered_reserved_function_declaration_name(node, func) {
+            return;
+        }
 
         let emit_invalid_namespace_static =
             self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);

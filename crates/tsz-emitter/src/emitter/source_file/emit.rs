@@ -1824,6 +1824,10 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if self.emit_recovered_reserved_namespace_declaration_name(stmt_node) {
+                        last_erased_was_shorthand_module = false;
+                        continue;
+                    }
                     let scan_end = next_stmt_node
                         .map_or_else(|| self.source_text_end_or(stmt_node.end), |n| n.pos);
                     self.emit_recovered_template_module_declaration(stmt_node, scan_end);
