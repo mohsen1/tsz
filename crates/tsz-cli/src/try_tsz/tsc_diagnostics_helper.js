@@ -116,6 +116,12 @@ function toComparableDiagnostic(diagnostic) {
   };
 }
 
+function hasConfigDeprecationDiagnostic(diagnostics) {
+  return diagnostics.some(
+    (diagnostic) => diagnostic.code === 5101 || diagnostic.code === 5107,
+  );
+}
+
 const config = ts.readConfigFile(configPath, ts.sys.readFile);
 let diagnostics = [];
 if (config.error) {
@@ -135,7 +141,12 @@ if (config.error) {
       options: { ...parsed.options, noEmit: true },
       projectReferences: parsed.projectReferences,
     });
-    diagnostics.push(...ts.getPreEmitDiagnostics(program));
+    const optionsDiagnostics = program.getOptionsDiagnostics();
+    if (hasConfigDeprecationDiagnostic(optionsDiagnostics)) {
+      diagnostics.push(...optionsDiagnostics);
+    } else {
+      diagnostics.push(...ts.getPreEmitDiagnostics(program));
+    }
   }
 }
 

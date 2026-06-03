@@ -24,6 +24,7 @@ const TSZ_PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_TSCONFIG_REPORT_FILES: usize = 12;
 const MAX_TSCONFIG_REPORT_BYTES: usize = 32 * 1024;
 const MAX_TSCONFIG_REPORT_TOTAL_BYTES: usize = 48 * 1024;
+const TRY_TSZ_WORKER_CONFIG_DEPRECATION_ENV_KEY: &str = "TSZ_TRY_TSZ_WORKER";
 const TSC_HELPER: &str = include_str!("tsc_diagnostics_helper.js");
 
 #[derive(Parser, Debug)]
@@ -394,6 +395,7 @@ fn run_tsz(cwd: &Path, config: &Path) -> Result<TszRunOutcome> {
     let mut child = Command::new(worker_exe)
         .arg("--try-tsz-worker")
         .arg(config)
+        .env(TRY_TSZ_WORKER_CONFIG_DEPRECATION_ENV_KEY, "1")
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
