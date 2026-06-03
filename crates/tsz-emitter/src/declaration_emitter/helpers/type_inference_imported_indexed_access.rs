@@ -39,12 +39,6 @@ impl<'a> DeclarationEmitter<'a> {
         let after_import = type_text.strip_prefix("import(\"")?;
         let module_end = after_import.find("\")")?;
         let module_specifier = &after_import[..module_end];
-        if !module_specifier.starts_with('.')
-            && !module_specifier.starts_with('/')
-            && Self::bare_package_specifier(module_specifier) == module_specifier
-        {
-            return None;
-        }
         let after_module = &after_import[module_end + "\")".len()..];
         let after_dot = after_module.strip_prefix('.')?;
         let export_len = after_dot
@@ -135,5 +129,72 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         matches.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
         matches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::type_cache_view::TypeCacheView;
+    use std::sync::Arc;
+    use tsz_binder::{BinderState, SymbolTable};
+    use tsz_parser::ParserState;
+    use tsz_solver::construction::TypeInterner;
+
+    #[test]
+    fn package_root_imported_indexed_access_expands_member_annotation() {
+        let mut package_parser = ParserState::new(
+            "/project/node_modules/create-emotion-styled/index.d.ts".to_string(),
+            r#"
+export interface StyledOtherComponentList {
+    "div": import("react").DetailedHTMLProps<import("react").HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
+}
+"#
+            .to_string(),
+        );
+        let package_root = package_parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&package_parser.arena, package_root);
+        let list_sym = binder
+            .symbols
+            .iter()
+            .find(|symbol| symbol.escaped_name == "StyledOtherComponentList")
+            .map(|symbol| symbol.id)
+            .expect("missing list symbol");
+        let package_arena = Arc::new(package_parser.arena.clone());
+        let mut symbol_arenas = rustc_hash::FxHashMap::default();
+        symbol_arenas.insert(list_sym, Arc::clone(&package_arena));
+        binder.symbol_arenas = Arc::new(symbol_arenas);
+        let mut exports = SymbolTable::new();
+        exports.set("StyledOtherComponentList".to_string(), list_sym);
+        let package_path = "/project/node_modules/create-emotion-styled/index.d.ts".to_string();
+        let mut module_exports = rustc_hash::FxHashMap::default();
+        module_exports.insert(package_path.clone(), exports);
+        binder.module_exports = Arc::new(module_exports);
+
+        let mut current_parser = ParserState::new("/project/index.ts".to_string(), String::new());
+        let _ = current_parser.parse_source_file();
+        let interner = TypeInterner::new();
+        let mut emitter = DeclarationEmitter::with_type_info(
+            &current_parser.arena,
+            TypeCacheView::default(),
+            &interner,
+            &binder,
+        );
+        emitter.current_file_path = Some("/project/index.ts".to_string());
+        let mut arena_to_path = rustc_hash::FxHashMap::default();
+        arena_to_path.insert(Arc::as_ptr(&package_arena) as usize, package_path);
+        emitter.set_arena_to_path(arena_to_path);
+
+        let expanded = emitter
+            .expand_imported_indexed_access_type_text(
+                r#"import("create-emotion-styled").StyledOtherComponentList["div"]"#,
+            )
+            .expect("expected package-root indexed access expansion");
+
+        assert_eq!(
+            expanded,
+            r#"import("react").DetailedHTMLProps<import("react").HTMLAttributes<HTMLDivElement>, HTMLDivElement>"#
+        );
     }
 }
