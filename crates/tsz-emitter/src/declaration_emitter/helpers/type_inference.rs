@@ -1783,8 +1783,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return None;
             }
-            for (protected_name, param_name) in protected_type_param_names {
-                type_text = type_text.replace(&protected_name, &param_name);
+            if !protected_type_param_names.is_empty() {
+                type_text =
+                    Self::replace_whole_words_in_text(&type_text, &protected_type_param_names);
             }
             type_text = Self::flatten_tuple_spread_substitutions_text(&type_text);
             if let Some(surface_text) = self.call_expression_declared_return_surface_text(
