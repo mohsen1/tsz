@@ -1621,11 +1621,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             match self.resolve_function_call(&func, arg_types) {
                 CallResult::Success(ret) => return CallResult::Success(ret),
-                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
-                    // Constraint violation is a "near match" - return the type
-                    // for overload resolution (treat as success with error)
-                    return CallResult::Success(return_type);
-                }
                 CallResult::ArgumentTypeMismatch {
                     index,
                     expected,

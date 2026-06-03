@@ -564,6 +564,9 @@ mod call_error_anchor_relation_routing_arch_tests;
 #[path = "tests/call_error_elaboration_relation_routing_arch_tests.rs"]
 mod call_error_elaboration_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/call_result_constraint_violation_gateway_arch_tests.rs"]
+mod call_result_constraint_violation_gateway_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_result_relation_routing_arch_tests.rs"]
 mod call_result_relation_routing_arch_tests;
 #[cfg(test)]

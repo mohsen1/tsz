@@ -9,6 +9,7 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::text_scan::{JSX_PRAGMA_SCAN_BYTES, leading_window};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -1085,8 +1086,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn extract_jsx_import_source_pragma_from_text(text: &str) -> Option<String> {
-        let scan_limit = text.len().min(4096);
-        let scan_text = &text[..scan_limit];
+        let scan_text = leading_window(text, JSX_PRAGMA_SCAN_BYTES);
         let bytes = scan_text.as_bytes();
         let mut pos = 0;
         while pos < bytes.len() {
