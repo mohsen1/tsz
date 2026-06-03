@@ -3166,6 +3166,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 continue;
             }
+            // If the argument is a TypeParameter whose constraint equals the
+            // instantiated parameter constraint, T extends C trivially satisfies C.
+            // Handles fn<T extends C>(x: T) called with arg typed as T_outer extends C.
+            if let Some(TypeData::TypeParameter(arg_tp)) = self.interner.lookup(arg_type)
+                && let Some(arg_constraint) = arg_tp.constraint
+                && arg_constraint == constraint
+            {
+                continue;
+            }
             if !self.arg_satisfies_type_parameter_constraint(arg_type, constraint)
                 && !self.is_function_union_compat(arg_type, constraint)
                 && !self.callable_satisfies_top_rest_any_constraint(arg_type, constraint)
