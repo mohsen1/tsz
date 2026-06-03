@@ -285,6 +285,18 @@ export function directoryFingerprint(dirs) {
   return fingerprint;
 }
 
+// Stat the tsconfig and return its `{ size, mtimeNs }` invalidation key, or
+// null when it cannot be stat'd. Mirrors `statFileEntry` for the file list's
+// own config key, keeping the stat-to-key shape in one place.
+function tsconfigStatKey(tsconfigAbsolutePath) {
+  try {
+    const stat = fs.statSync(tsconfigAbsolutePath);
+    return { size: stat.size, mtimeNs: mtimeNsKey(stat) };
+  } catch {
+    return null;
+  }
+}
+
 // True when the cached file list is still valid: the tsconfig's own
 // `(mtimeNs, size)` is unchanged (catches `include`/`exclude`/config edits) and
 // every recorded directory `mtime` is unchanged (catches file additions,
@@ -294,15 +306,11 @@ export function fileListCacheValid(cache, tsconfigAbsolutePath) {
   if (!fileList || !fileList.tsconfig || !fileList.dirs || !Array.isArray(fileList.files)) {
     return false;
   }
-  let tsconfigStat;
-  try {
-    tsconfigStat = fs.statSync(tsconfigAbsolutePath);
-  } catch {
-    return false;
-  }
+  const tsconfigStat = tsconfigStatKey(tsconfigAbsolutePath);
   if (
+    tsconfigStat === null ||
     fileList.tsconfig.size !== tsconfigStat.size ||
-    fileList.tsconfig.mtimeNs !== mtimeNsKey(tsconfigStat)
+    fileList.tsconfig.mtimeNs !== tsconfigStat.mtimeNs
   ) {
     return false;
   }
@@ -333,13 +341,9 @@ export function resolveTsconfigFilesCached(tsconfigAbsolutePath, { cache, resolv
   if (cache) {
     const rootDir = path.dirname(path.resolve(tsconfigAbsolutePath));
     const dirFingerprint = directoryFingerprint(contributingDirectories(files, rootDir));
-    let tsconfigStat = null;
-    try {
-      const stat = fs.statSync(tsconfigAbsolutePath);
-      tsconfigStat = { size: stat.size, mtimeNs: mtimeNsKey(stat) };
-    } catch {
-      // Leave null; without a tsconfig stat the list cannot be cached safely.
-    }
+    // Null when the tsconfig vanished mid-resolve; without it the list cannot
+    // be cached safely, so fall through to `delete cache.fileList`.
+    const tsconfigStat = tsconfigStatKey(tsconfigAbsolutePath);
     if (dirFingerprint && tsconfigStat) {
       cache.fileList = { tsconfig: tsconfigStat, dirs: dirFingerprint, files: files.slice() };
     } else {
