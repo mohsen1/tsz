@@ -154,3 +154,28 @@ const t: { x: "lit" } = s;
         "split accessor read covariance must still be enforced, got: {diags:?}"
     );
 }
+
+#[test]
+fn divergent_accessor_intersection_preserves_setter_type() {
+    // Genuine divergent accessors merged via intersection must keep their
+    // combined setter type so the contravariant write check still applies.
+    // `A & B` setter for `x` is `(string | undefined) & (string | null)` =
+    // `string`, so writing `undefined` must be rejected while `"ok"` is fine.
+    // This guards against over-collapsing write==read (regressed
+    // `divergentAccessorsTypes8` when the merge forced write to equal read).
+    let source = r#"
+interface A { get x(): string; set x(v: string | undefined); }
+interface B { get x(): string; set x(v: string | null); }
+type C = A & B;
+declare let c: C;
+const ok: string = c.x;
+c.x = undefined;
+c.x = "ok";
+"#;
+    let diags = diagnostics(source);
+    let ts2322 = ts2322_count(&diags);
+    assert_eq!(
+        ts2322, 1,
+        "only the `c.x = undefined` write must be rejected, got: {diags:?}"
+    );
+}
