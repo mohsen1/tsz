@@ -603,11 +603,12 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|&arg| {
                 let arg_is_application = query::application_info(self.ctx.types, arg).is_some();
+                let arg_has_type_params = self.contains_type_parameters_cached(arg);
                 match arg_preservation {
                     _ if body_is_distributive_conditional => arg,
-                    _ if body_is_conditional && self.contains_type_parameters_cached(arg) => arg,
+                    _ if body_is_conditional && arg_has_type_params => arg,
                     query::BodyArgPreservation::ConditionalInfer
-                        if self.contains_type_parameters_cached(arg) || arg_is_application =>
+                        if arg_has_type_params || arg_is_application =>
                     {
                         arg
                     }

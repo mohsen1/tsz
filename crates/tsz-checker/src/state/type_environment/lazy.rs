@@ -242,6 +242,11 @@ impl<'a> CheckerState<'a> {
                 // or sibling reads would observe under-resolved results. Writes
                 // are reserved for the authoritative full-resolver second pass.
                 None,
+                if seed_persist {
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Collect
+                } else {
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip
+                },
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -304,7 +309,12 @@ impl<'a> CheckerState<'a> {
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
-            let seed_iter = if seed_persist {
+            // Recompute the speed-only seed/persist gate after the first pass:
+            // persisting first-pass intermediates can push the cache over the
+            // structural cap, so the second pass must not reuse a stale `true`
+            // decision and then drain entries that will be discarded.
+            let second_pass_seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
+            let seed_iter = if second_pass_seed_persist {
                 self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
@@ -321,12 +331,17 @@ impl<'a> CheckerState<'a> {
                 // resolver, so its application expansions are safe to memoize in
                 // the per-file application-eval cache.
                 Some(self.ctx.types),
+                if second_pass_seed_persist {
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Collect
+                } else {
+                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip
+                },
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            if seed_persist {
+            if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
             if eval_result.result == type_id {

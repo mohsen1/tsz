@@ -206,6 +206,43 @@ fn direct_source_file_type_alias_lowers_imported_conditional_alias_argument_chai
 }
 
 #[test]
+fn direct_source_file_type_alias_caches_cross_file_symbol_result() {
+    with_program_state_with_libs(
+        &[
+            (
+                "helpers.ts",
+                "export type Keep<Source, Target> = Source extends Target ? Source : never;",
+            ),
+            (
+                "target.ts",
+                "import { Keep } from './helpers';\nexport type PickString<Value> = Keep<Value, string>;",
+            ),
+            ("requester.ts", "import { PickString } from './target';"),
+        ],
+        "requester.ts",
+        "target.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            state.ctx.share_owner_symbol_type_results = true;
+            let pick_string_sym = target_binder
+                .file_locals
+                .get("PickString")
+                .expect("PickString");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(pick_string_sym, Some(target_idx), true)
+                .expect("direct source-file aliases should lower");
+            let (cached_ty, cached_params) = state
+                .ctx
+                .cached_cross_file_symbol_type(pick_string_sym, target_idx as u32)
+                .expect("successful direct source-file lowering should seed cross-file cache");
+
+            assert_eq!(cached_ty, ty);
+            assert_eq!(cached_params.len(), params.len());
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_renamed_imported_alias_argument_chain() {
     with_program_state_with_libs(
         &[
@@ -1456,6 +1493,40 @@ fn direct_source_file_type_alias_lowers_guarded_generic_self_array_alias() {
             assert_ne!(nested_ty, TypeId::UNKNOWN);
             assert_ne!(nested_ty, TypeId::ERROR);
             assert_eq!(nested_params.len(), 1, "Nested should expose Element");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_guarded_generic_self_function_alias() {
+    with_two_file_state(
+        "export type Step<Input> = (value: Input) => Step<Input>;",
+        "import { Step } from './target';",
+        |state, target_binder| {
+            let step_sym = target_binder.file_locals.get("Step").expect("Step");
+            let (step_ty, step_params) = state
+                .direct_source_file_type_alias_result(step_sym, Some(1), true)
+                .expect("function returns structurally guard generic self aliases");
+            assert_ne!(step_ty, TypeId::UNKNOWN);
+            assert_ne!(step_ty, TypeId::ERROR);
+            assert_eq!(step_params.len(), 1, "Step should expose Input");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_guarded_function_helper_cycle() {
+    with_two_file_state(
+        "type Params<Callback extends (...args: any[]) => any> = Callback extends (...args: infer Values) => any ? Values : never;\ntype ResultOf<Callback extends (...args: any[]) => any> = Callback extends (...args: any[]) => infer Output ? Output : never;\ntype Fill<Values extends any[]> = Values;\nexport type Invoke<Callback extends (...args: any[]) => any> = <Provided extends Fill<Params<Callback>>>(...args: Provided) => Invoke<(...args: Provided) => ResultOf<Callback>>;",
+        "import { Invoke } from './target';",
+        |state, target_binder| {
+            let invoke_sym = target_binder.file_locals.get("Invoke").expect("Invoke");
+            let (invoke_ty, invoke_params) = state
+                .direct_source_file_type_alias_result(invoke_sym, Some(1), true)
+                .expect("function-local type params structurally guard helper cycles");
+            assert_ne!(invoke_ty, TypeId::UNKNOWN);
+            assert_ne!(invoke_ty, TypeId::ERROR);
+            assert_eq!(invoke_params.len(), 1, "Invoke should expose Callback");
         },
     );
 }

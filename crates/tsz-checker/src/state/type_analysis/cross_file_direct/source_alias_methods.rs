@@ -263,6 +263,12 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(alias_type, def_id);
+        self.ctx.cache_cross_file_symbol_type(
+            sym_id,
+            target_file_idx as u32,
+            alias_type,
+            params.clone(),
+        );
 
         record(DirectSourceFileTypeAliasLoweringOutcome::Success);
         Some((alias_type, params))

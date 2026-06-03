@@ -1317,6 +1317,10 @@ impl<'a> CheckerState<'a> {
     /// Returns whether a type references type parameters.
     /// Cached because this query is hot on optional-chain/property access paths.
     pub(crate) fn contains_type_parameters_cached(&mut self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+
         if let Some(&cached) = self
             .ctx
             .narrowing_cache

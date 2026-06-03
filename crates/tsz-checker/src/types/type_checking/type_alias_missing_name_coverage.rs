@@ -45,6 +45,18 @@ impl<'a> CheckerState<'a> {
                     };
                     stack.push(array.element_type);
                 }
+                k if k == syntax_kind_ext::TUPLE_TYPE => {
+                    let Some(tuple) = self.ctx.arena.get_tuple_type(node) else {
+                        return false;
+                    };
+                    stack.extend(tuple.elements.nodes.iter().copied());
+                }
+                k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                    let Some(member) = self.ctx.arena.get_named_tuple_member(node) else {
+                        return false;
+                    };
+                    stack.push(member.type_node);
+                }
                 k if k == syntax_kind_ext::OPTIONAL_TYPE
                     || k == syntax_kind_ext::REST_TYPE
                     || k == syntax_kind_ext::PARENTHESIZED_TYPE =>

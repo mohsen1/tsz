@@ -401,8 +401,18 @@ pub(crate) struct EvalWithCacheResult {
     /// retry — the structural type-tree walk would hit the same protection
     /// limit at the same shape.
     pub silent_depth_bailed: bool,
-    /// Cache entries produced by the evaluator (key → evaluated value).
+    /// Cache entries produced by the evaluator (key -> evaluated value).
+    ///
+    /// Empty when the caller disables cache-entry collection. The top-level
+    /// `result` and depth flags are still authoritative; these entries are only
+    /// the speed-only intermediate memo used by env-eval seed/persist.
     pub cache_entries: Vec<(TypeId, TypeId)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CacheEntryCollection {
+    Collect,
+    Skip,
 }
 
 /// Evaluate a type with a resolver, optionally seeding the evaluator cache.
@@ -410,6 +420,11 @@ pub(crate) struct EvalWithCacheResult {
 /// Returns the result plus side-effects (depth exceeded, cache drain).
 /// This is the canonical boundary for `TypeEvaluator` construction with cache
 /// management — checker code must not construct `TypeEvaluator` directly.
+///
+/// `cache_entry_collection` controls only whether the evaluator's intermediate
+/// per-run cache is drained into the result. It must not affect evaluation or
+/// top-level result caching; env-eval disables it when the structural seed/
+/// persist cap says those intermediates would be discarded.
 pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
@@ -418,6 +433,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
     has_seed: bool,
     expand_application_display_alias_args: bool,
     query_db: Option<&dyn QueryDatabase>,
+    cache_entry_collection: CacheEntryCollection,
 ) -> EvalWithCacheResult {
     let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     if let Some(query_db) = query_db {
@@ -439,7 +455,11 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
         silent_depth_bailed: evaluator.is_silent_depth_bailed(),
-        cache_entries: evaluator.drain_cache().collect(),
+        cache_entries: if matches!(cache_entry_collection, CacheEntryCollection::Collect) {
+            evaluator.drain_cache().collect()
+        } else {
+            Vec::new()
+        },
     }
 }
 

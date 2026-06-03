@@ -811,7 +811,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                     seen,
                     proof,
-                    recursion_guarded,
+                    true,
                     inferred_guard_names,
                 )
             }
