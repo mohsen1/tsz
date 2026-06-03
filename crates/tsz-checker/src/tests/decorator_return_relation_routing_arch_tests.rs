@@ -18,12 +18,20 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
         .collect();
 
     assert!(
-        source.contains("assign_relation_outcome(return_type, expected_return)"),
-        "method/accessor decorator return diagnostics should route through assign_relation_outcome"
+        source.contains("return_relation_outcome(return_type, expected_return)"),
+        "method/accessor decorator return diagnostics should route through return_relation_outcome"
     );
     assert!(
-        source.contains("assign_relation_outcome(return_type, TypeId::VOID)"),
-        "void-or-any decorator return diagnostics should route through assign_relation_outcome"
+        source.contains("return_relation_outcome(return_type, TypeId::VOID)"),
+        "void-or-any decorator return diagnostics should route through return_relation_outcome"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(return_type, expected_return)"),
+        "method/accessor decorator return diagnostics should not use generic assignment request routing"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(return_type, TypeId::VOID)"),
+        "void-or-any decorator return diagnostics should not use generic assignment request routing"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard(return_type, expected_return)"),
@@ -54,8 +62,12 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
     let callee_probe = &source[callee_probe_start..callee_probe_end];
 
     assert!(
-        callee_probe.contains("assign_relation_outcome(decorator_type, function_type)"),
-        "decorator Function fallback should route relation probing through assign_relation_outcome"
+        callee_probe.contains("decorator_callee_relation_outcome(decorator_type, function_type)"),
+        "decorator Function fallback should route relation probing through decorator_callee_relation_outcome"
+    );
+    assert!(
+        !callee_probe.contains("assign_relation_outcome(decorator_type, function_type)"),
+        "decorator Function fallback should not use generic assignment request routing"
     );
     assert!(
         !callee_probe.contains("diagnostic_relation_boolean_guard(decorator_type, function_type)"),

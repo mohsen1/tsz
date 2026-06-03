@@ -552,7 +552,10 @@ impl<'a> CheckerState<'a> {
                                 self.initializer_reaches_object_literal_through_wrappers(
                                     facts.initializer,
                                 ) && !self
-                                    .assign_relation_outcome(checked_init_type, declared_type)
+                                    .variable_initializer_relation_outcome(
+                                        checked_init_type,
+                                        declared_type,
+                                    )
                                     .related
                                     && self.try_elaborate_object_literal_properties_for_var_init(
                                         facts.initializer,
@@ -612,7 +615,10 @@ impl<'a> CheckerState<'a> {
                                     )))
                                 && !(initializer_is_function
                                     && !self
-                                        .assign_relation_outcome(checked_init_type, declared_type)
+                                        .variable_initializer_relation_outcome(
+                                            checked_init_type,
+                                            declared_type,
+                                        )
                                         .related
                                     && self.try_elaborate_assignment_source_error(
                                         facts.initializer,
@@ -673,7 +679,10 @@ impl<'a> CheckerState<'a> {
                                     if !(self.initializer_reaches_object_literal_through_wrappers(
                                         facts.initializer,
                                     ) && !self
-                                        .assign_relation_outcome(checked_init_type, declared_type)
+                                        .variable_initializer_relation_outcome(
+                                            checked_init_type,
+                                            declared_type,
+                                        )
                                         .related
                                         && self
                                             .try_elaborate_object_literal_properties_for_var_init(
@@ -691,7 +700,7 @@ impl<'a> CheckerState<'a> {
                                         //   vs (cb: (...args: never) => void) => void)
                                         if jsdoc_new_expression_relation
                                             && !self
-                                                .assign_relation_outcome(
+                                                .variable_initializer_relation_outcome(
                                                     checked_init_type,
                                                     declared_type,
                                                 )

@@ -27,9 +27,11 @@ fn jsx_single_child_precise_type_uses_relation_outcome_boundary() {
         "single JSX child precise-type fallback must use the shared relation outcome boundary"
     );
     assert_eq!(
-        precise_branch.matches("assign_relation_outcome").count(),
+        precise_branch
+            .matches("jsx_children_relation_outcome")
+            .count(),
         1,
-        "the synthesized-child to precise-children relation should route through RelationOutcome"
+        "the synthesized-child to precise-children relation should route through the JSX children relation outcome"
     );
 }
 
@@ -47,8 +49,8 @@ fn jsx_single_child_zero_param_callback_recheck_uses_relation_outcome_boundary()
     let branch = &source[branch_start..branch_start + branch_end];
 
     assert!(
-        branch.contains("assign_relation_outcome(raw_zero_param_child_type, children_type)"),
-        "zero-param JSX child callback recheck must use the shared relation outcome boundary"
+        branch.contains("jsx_children_relation_outcome(raw_zero_param_child_type, children_type)"),
+        "zero-param JSX child callback recheck must use the JSX children relation outcome boundary"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard"),

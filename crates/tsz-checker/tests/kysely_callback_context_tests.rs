@@ -199,6 +199,204 @@ db.selectFrom("user").select((eb) => [
 }
 
 #[test]
+fn imported_conditional_builder_alias_materializes_callback_context() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "expression-builder.ts",
+            r#"
+export interface ExpressionBuilder<Row> {
+  ref<K extends keyof Row & string>(key: K): Row[K];
+  call<T>(value: T): T;
+}
+"#,
+        ),
+        (
+            "query-builder.ts",
+            r#"
+import type { ExpressionBuilder } from "./expression-builder.js";
+
+export type SelectionCallback<Schema, Table extends keyof Schema> = (
+  builder: ExpressionBuilder<Schema[Table]>,
+) => ReadonlyArray<unknown>;
+
+export interface ResultBuilder<Schema, Table extends keyof Schema, Output> {
+  select<Callback extends SelectionCallback<Schema, Table>>(
+    callback: Callback,
+  ): ResultBuilder<Schema, Table, Output>;
+}
+"#,
+        ),
+        (
+            "table-parser.ts",
+            r#"
+export type TableExpressionOrList<Schema, Table extends keyof Schema> =
+  | keyof Schema
+  | `${keyof Schema & string} as ${string}`;
+
+export type ExtractTableAlias<Schema, Expression> =
+  Expression extends `${infer Source} as ${infer Alias}`
+    ? Source extends keyof Schema
+      ? Alias
+      : never
+    : Expression extends keyof Schema
+      ? Expression
+      : never;
+"#,
+        ),
+        (
+            "select-from-parser.ts",
+            r#"
+import type { ResultBuilder } from "./query-builder.js";
+import type { ExtractTableAlias, TableExpressionOrList } from "./table-parser.js";
+
+export type SelectFrom<
+  Schema,
+  Table extends keyof Schema,
+  Expression extends TableExpressionOrList<Schema, Table>,
+> = [Expression] extends [keyof Schema]
+  ? ResultBuilder<Schema, Table | ExtractTableAlias<Schema, Expression>, {}>
+  : [Expression] extends [`${infer Source} as ${infer Alias}`]
+    ? Source extends keyof Schema
+      ? ResultBuilder<Schema & { [K in Alias & string]: Schema[Source] }, Table | Alias, {}>
+      : never
+    : never;
+"#,
+        ),
+        (
+            "main.ts",
+            r#"
+import type { SelectFrom } from "./select-from-parser.js";
+
+declare const query: SelectFrom<{ account: { id: number } }, never, "account">;
+
+query.select((reader) => [
+  reader.ref("id"),
+  reader.call<number>(1),
+]);
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 2347, 7006]),
+        "imported conditional builder aliases should materialize callback context. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn imported_conditional_builder_alias_uses_declaring_file_for_duplicate_helper_names() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "unrelated-result-builder.ts",
+            r#"
+export interface ResultBuilder<Schema, Table, Output> {
+  poison: Output;
+}
+"#,
+        ),
+        (
+            "expression-builder.ts",
+            r#"
+export interface ExpressionBuilder<Row> {
+  ref<K extends keyof Row & string>(key: K): Row[K];
+  call<T>(value: T): T;
+}
+"#,
+        ),
+        (
+            "query-builder.ts",
+            r#"
+import type { ExpressionBuilder } from "./expression-builder.js";
+
+export type SelectionCallback<Schema, Table extends keyof Schema> = (
+  builder: ExpressionBuilder<Schema[Table]>,
+) => ReadonlyArray<unknown>;
+
+export interface ResultBuilder<Schema, Table extends keyof Schema, Output> {
+  select<Callback extends SelectionCallback<Schema, Table>>(
+    callback: Callback,
+  ): ResultBuilder<Schema, Table, Output>;
+}
+"#,
+        ),
+        (
+            "table-parser.ts",
+            r#"
+export type TableExpressionOrList<Schema, Table extends keyof Schema> =
+  | keyof Schema
+  | `${keyof Schema & string} as ${string}`;
+
+export type ExtractTableAlias<Schema, Expression> =
+  Expression extends `${infer Source} as ${infer Alias}`
+    ? Source extends keyof Schema
+      ? Alias
+      : never
+    : Expression extends keyof Schema
+      ? Expression
+      : never;
+"#,
+        ),
+        (
+            "select-from-parser.ts",
+            r#"
+import type { ResultBuilder } from "./query-builder.js";
+import type { ExtractTableAlias, TableExpressionOrList } from "./table-parser.js";
+
+export type SelectFrom<
+  Schema,
+  Table extends keyof Schema,
+  Expression extends TableExpressionOrList<Schema, Table>,
+> = [Expression] extends [keyof Schema]
+  ? ResultBuilder<Schema, Table | ExtractTableAlias<Schema, Expression>, {}>
+  : never;
+"#,
+        ),
+        (
+            "main.ts",
+            r#"
+import type { SelectFrom } from "./select-from-parser.js";
+
+declare const query: SelectFrom<{ account: { id: number } }, never, "account">;
+
+query.select((reader) => [
+  reader.ref("id"),
+  reader.call<number>(1),
+]);
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+
+    assert!(
+        lacks_any_diagnostic_code(&diagnostics, &[2339, 2347, 7006]),
+        "imported conditional builder aliases should resolve helper names from their declaring file. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn kysely_join_if_chain_preserves_select_callback_context() {
     let source = r#"
 type SelectType<T> = T;

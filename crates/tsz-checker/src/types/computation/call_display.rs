@@ -85,7 +85,7 @@ impl<'a> CheckerState<'a> {
 
         let source_fn = self.ctx.types.factory().function(normalize(source_shape));
         let target_fn = self.ctx.types.factory().function(normalize(target_shape));
-        self.assign_relation_outcome_with_env(source_fn, target_fn)
+        self.call_arg_relation_outcome_with_env(source_fn, target_fn)
             .related
     }
 
@@ -142,7 +142,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if !self
-            .assign_relation_outcome_with_env(source_return, target_return)
+            .call_arg_relation_outcome_with_env(source_return, target_return)
             .related
         {
             return false;
@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
             self.get_generator_next_type_argument(target_return_type),
         ) {
             (Some(source_next), Some(target_next)) => {
-                self.assign_relation_outcome_with_env(target_next, source_next)
+                self.call_arg_relation_outcome_with_env(target_next, source_next)
                     .related
             }
             _ => true,

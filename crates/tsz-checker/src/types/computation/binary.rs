@@ -653,8 +653,12 @@ impl<'a> CheckerState<'a> {
                     && right_type != TypeId::ANY
                     && left_type != TypeId::UNKNOWN
                     && right_type != TypeId::UNKNOWN
-                    && self.is_subtype_of(left_type, TypeId::BIGINT)
-                    && self.is_subtype_of(right_type, TypeId::BIGINT)
+                    && self
+                        .diagnostic_subtype_outcome(left_type, TypeId::BIGINT)
+                        .related
+                    && self
+                        .diagnostic_subtype_outcome(right_type, TypeId::BIGINT)
+                        .related
                 {
                     self.error_at_node_msg(
                         node_idx,
@@ -1384,9 +1388,12 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 let number_or_bigint =
                                     self.ctx.types.union2(TypeId::NUMBER, TypeId::BIGINT);
-                                let left_to_num = self.is_assignable_to(cmp_left, number_or_bigint);
-                                let right_to_num =
-                                    self.is_assignable_to(cmp_right, number_or_bigint);
+                                let left_to_num = self
+                                    .diagnostic_relation_outcome(cmp_left, number_or_bigint)
+                                    .related;
+                                let right_to_num = self
+                                    .diagnostic_relation_outcome(cmp_right, number_or_bigint)
+                                    .related;
 
                                 if left_to_num && right_to_num {
                                     true

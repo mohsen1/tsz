@@ -319,6 +319,47 @@ function test<U extends { a: string }, I extends keyof U>(x: U[I] & { a: string 
     );
 }
 
+#[test]
+fn generic_record_alias_mixed_assignment_preserves_missing_property_reason() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+type AliasRecord<Keys extends keyof any, Value> = {
+    [Key in Keys]: Value;
+};
+
+type OtherRecord<Names extends keyof any, Item> = {
+    [Name in Names]: Item;
+};
+
+function mixedFromAlias<Value>(
+    target: OtherRecord<"a", Value>,
+    source: AliasRecord<string, Value>,
+) {
+    target = source;
+}
+
+function mixedToAlias<Item>(
+    target: AliasRecord<"a", Item>,
+    source: OtherRecord<string, Item>,
+) {
+    target = source;
+}
+"#,
+    );
+    let missing_property_count = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2741 && diag.message_text.contains("'a'"))
+        .count();
+    assert_eq!(
+        missing_property_count, 2,
+        "generic mixed Record-style aliases should report missing 'a' with TS2741; got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2322),
+        "missing generic Record-style alias properties must not collapse to bare TS2322; got: {diagnostics:?}"
+    );
+}
+
 /// Negative control: a valid assignment must still not emit TS2322.
 /// Source `T[K] & { a: string }` trivially satisfies a single-key mapped type
 /// `{ [P in "a"]: string }` because "a" is present in the concrete member.

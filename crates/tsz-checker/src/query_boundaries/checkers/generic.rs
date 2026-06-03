@@ -285,7 +285,7 @@ pub(crate) fn mapped_key_constraint_semantically_filters_current_object_keys(
     let constraint_eval = checker.evaluate_type_with_env(constraint_type);
     let keyof_object_param = checker.ctx.types.factory().keyof(object_type);
     if checker
-        .assign_relation_outcome(constraint_eval, keyof_object_param)
+        .mapped_key_constraint_relation_outcome(constraint_eval, keyof_object_param)
         .related
     {
         return true;
@@ -317,7 +317,7 @@ pub(crate) fn mapped_key_constraint_semantically_filters_current_object_keys(
             return true;
         }
         if checker
-            .assign_relation_outcome(next_eval, keyof_object_param)
+            .mapped_key_constraint_relation_outcome(next_eval, keyof_object_param)
             .related
         {
             return true;
@@ -361,7 +361,7 @@ fn mapped_key_constraint_filters_current_object_keys(
                         object_type,
                         object_type_for_check,
                     ) || checker
-                        .assign_relation_outcome(evaluated, keyof_object)
+                        .mapped_key_constraint_relation_outcome(evaluated, keyof_object)
                         .related
                 });
         }
@@ -853,17 +853,32 @@ mod tests {
     #[test]
     fn mapped_key_constraint_filtering_uses_relation_outcome_boundary() {
         let source = include_str!("generic.rs");
+        let helper_end = source
+            .find("#[cfg(test)]")
+            .expect("missing generic query-boundary test module marker");
+        let helper_source = &source[..helper_end];
         let legacy = concat!("diagnostic_relation", "_boolean_guard(");
 
         assert!(
-            source.contains(".assign_relation_outcome(constraint_eval, keyof_object_param)")
-                && source.contains(".assign_relation_outcome(next_eval, keyof_object_param)")
-                && source.contains(".assign_relation_outcome(evaluated, keyof_object)"),
+            helper_source.contains(
+                ".mapped_key_constraint_relation_outcome(constraint_eval, keyof_object_param)"
+            ) && helper_source
+                .contains(".mapped_key_constraint_relation_outcome(next_eval, keyof_object_param)")
+                && helper_source
+                    .contains(".mapped_key_constraint_relation_outcome(evaluated, keyof_object)"),
             "mapped-key constraint filtering should route relation probes through \
-             the shared relation outcome boundary"
+             the mapped-key constraint relation outcome boundary"
         );
         assert!(
-            !source.contains(legacy),
+            !helper_source
+                .contains(".assign_relation_outcome(constraint_eval, keyof_object_param)")
+                && !helper_source
+                    .contains(".assign_relation_outcome(next_eval, keyof_object_param)")
+                && !helper_source.contains(".assign_relation_outcome(evaluated, keyof_object)"),
+            "mapped-key constraint filtering should not use generic assignment request routing"
+        );
+        assert!(
+            !helper_source.contains(legacy),
             "generic query-boundary helpers should not use raw diagnostic relation \
              boolean guards"
         );

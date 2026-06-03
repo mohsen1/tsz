@@ -177,10 +177,21 @@ impl<'a> FlowAnalyzer<'a> {
 
             let members = flow_query::union_members_for_type(self.interner, type_id)
                 .unwrap_or_else(|| vec![type_id].into());
+            let env = self.type_environment.map(std::cell::RefCell::borrow);
             let excluded_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .copied()
-                .filter(|member| self.is_assignable_to(*member, predicate_type))
+                .filter(|member| {
+                    flow_query::flow_assignability_outcome(
+                        self.interner,
+                        env.as_deref(),
+                        self.concrete_this_type,
+                        *member,
+                        predicate_type,
+                        false,
+                    )
+                    .related
+                })
                 .collect();
             if !excluded_members.is_empty() {
                 let excluded = narrowing.narrow_excluding_types(type_id, &excluded_members);

@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if !self
-                        .assign_relation_outcome(elem_type, target_element)
+                        .call_arg_relation_outcome(elem_type, target_element)
                         .related
                     {
                         if self.array_elaboration_widening_required_for_display(

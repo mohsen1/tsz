@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let param_union = self.ctx.types.factory().union(param_types);
-        if !self.assign_relation_outcome(actual, param_union).related {
+        if !self.call_arg_relation_outcome(actual, param_union).related {
             return None;
         }
 
@@ -264,7 +264,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.assign_relation_outcome(arg_types[2], target).related {
+        if self.call_arg_relation_outcome(arg_types[2], target).related {
             return false;
         }
         self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
@@ -1022,7 +1022,7 @@ impl<'a> CheckerState<'a> {
                         self.rest_argument_element_type_with_env(expected);
                     if normalized_rest_expected != expected
                         && self
-                            .assign_relation_outcome_with_env(actual, normalized_rest_expected)
+                            .call_arg_relation_outcome_with_env(actual, normalized_rest_expected)
                             .related
                     {
                         return if fallback_return != TypeId::ERROR {

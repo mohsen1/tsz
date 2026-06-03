@@ -42,6 +42,7 @@ pub(crate) mod optional_chain;
 pub(crate) mod property_access;
 pub(crate) mod recursive_alias;
 pub(crate) mod relation_policy;
+pub(crate) mod relation_request;
 pub(crate) mod relation_types;
 pub(crate) mod spread;
 pub(crate) mod state;

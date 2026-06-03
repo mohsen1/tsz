@@ -56,7 +56,10 @@ impl<'a> CheckerState<'a> {
                     }
                     applicable_index_value_types.push(string_index.value_type);
                     if self
-                        .assign_relation_outcome(source_prop.type_id, string_index.value_type)
+                        .index_signature_relation_outcome(
+                            source_prop.type_id,
+                            string_index.value_type,
+                        )
                         .related
                     {
                         accepted_by_index = true;
@@ -71,7 +74,10 @@ impl<'a> CheckerState<'a> {
                     }
                     applicable_index_value_types.push(number_index.value_type);
                     if self
-                        .assign_relation_outcome(source_prop.type_id, number_index.value_type)
+                        .index_signature_relation_outcome(
+                            source_prop.type_id,
+                            number_index.value_type,
+                        )
                         .related
                     {
                         accepted_by_index = true;
@@ -100,7 +106,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self
-                .assign_relation_outcome(source_prop.type_id, target_value_type)
+                .index_signature_relation_outcome(source_prop.type_id, target_value_type)
                 .related
             {
                 continue;

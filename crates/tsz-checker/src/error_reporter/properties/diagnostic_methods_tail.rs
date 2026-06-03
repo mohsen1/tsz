@@ -610,7 +610,7 @@ impl<'a> CheckerState<'a> {
         if has_number_index
             && !is_for_in_index
             && !self
-                .assign_relation_outcome(index_type, TypeId::NUMBER)
+                .element_access_number_index_relation_outcome(index_type, TypeId::NUMBER)
                 .related
         {
             // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
@@ -772,7 +772,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.assign_relation_outcome(index_type, first.type_id)
+        self.element_access_method_suggestion_relation_outcome(index_type, first.type_id)
             .related
     }
 

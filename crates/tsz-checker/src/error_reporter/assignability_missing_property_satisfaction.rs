@@ -83,17 +83,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let read_ok = if source_prop.is_method || target_prop.is_method {
-            self.diagnostic_relation_boolean_guard_bivariant(
-                source_prop.type_id,
-                target_prop.type_id,
-            )
+            self.bivariant_callbacks_relation_outcome(source_prop.type_id, target_prop.type_id)
+                .related
         } else {
-            self.assign_relation_outcome(source_prop.type_id, target_prop.type_id)
+            self.missing_property_read_relation_outcome(source_prop.type_id, target_prop.type_id)
                 .related
         };
         let write_ok = target_prop.readonly
             || self
-                .assign_relation_outcome(target_prop.write_type, source_prop.write_type)
+                .missing_property_write_relation_outcome(
+                    target_prop.write_type,
+                    source_prop.write_type,
+                )
                 .related;
 
         read_ok && write_ok

@@ -72,6 +72,106 @@ impl<'a> CheckerContext<'a> {
         self.get_resolution_error(specifier)
     }
 
+    /// Resolve an unresolved application base as if it appeared in
+    /// `declaring_file_idx`'s lexical/module scope.
+    pub(crate) fn resolve_unresolved_type_name_from_file(
+        &self,
+        name: &str,
+        declaring_file_idx: usize,
+    ) -> Option<tsz_solver::def::DefId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let declaring_binder = self.get_binder_for_file(declaring_file_idx)?;
+        let mut current_file_idx = declaring_file_idx;
+        let mut current_sym = declaring_binder.file_locals.get(root_name)?;
+        self.register_symbol_file_target(current_sym, current_file_idx);
+        (current_sym, current_file_idx) = self
+            .resolve_import_alias_from_file_scope(current_sym, current_file_idx)
+            .unwrap_or((current_sym, current_file_idx));
+
+        for segment in segments {
+            let symbol = self.symbol_from_file_scope(current_sym, current_file_idx)?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+            current_file_idx = self
+                .resolve_symbol_file_index_stable(current_sym)
+                .unwrap_or(current_file_idx);
+            self.register_symbol_file_target(current_sym, current_file_idx);
+            (current_sym, current_file_idx) = self
+                .resolve_import_alias_from_file_scope(current_sym, current_file_idx)
+                .unwrap_or((current_sym, current_file_idx));
+        }
+
+        Some(self.get_or_create_def_id(current_sym))
+            .filter(|def_id| def_id.is_valid())
+            .inspect(|_| self.register_symbol_file_target(current_sym, current_file_idx))
+    }
+
+    fn symbol_from_file_scope(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        file_idx: usize,
+    ) -> Option<&tsz_binder::Symbol> {
+        self.get_binder_for_file(file_idx)
+            .and_then(|binder| binder.get_symbol(sym_id))
+            .or_else(|| {
+                self.resolve_symbol_file_index_stable(sym_id)
+                    .and_then(|owner_idx| self.get_binder_for_file(owner_idx))
+                    .and_then(|binder| binder.get_symbol(sym_id))
+            })
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(sym_id))
+            })
+    }
+
+    fn resolve_import_alias_from_file_scope(
+        &self,
+        alias_id: tsz_binder::SymbolId,
+        source_file_idx: usize,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let source_binder = self.get_binder_for_file(source_file_idx)?;
+        let symbol = source_binder.get_symbol(alias_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+
+        if let Some(target_idx) =
+            self.resolve_import_target_from_file(source_file_idx, module_specifier)
+        {
+            let target_binder = self.get_binder_for_file(target_idx)?;
+            let target_arena = self.get_arena_for_file(target_idx as u32);
+            let file_name = &target_arena.source_files.first()?.file_name;
+            let target_sym = target_binder
+                .module_exports
+                .get(file_name)
+                .and_then(|exports| exports.get(import_name))
+                .or_else(|| target_binder.file_locals.get(import_name))?;
+            self.register_symbol_file_target(target_sym, target_idx);
+            return Some((target_sym, target_idx));
+        }
+
+        let &(target_idx, target_sym) = self
+            .global_module_exports_index
+            .as_ref()
+            .and_then(|idx| idx.get(module_specifier))
+            .and_then(|inner| inner.get(import_name))
+            .and_then(|entries| entries.first())?;
+        self.register_symbol_file_target(target_sym, target_idx);
+        Some((target_sym, target_idx))
+    }
+
     /// Resolve an import specifier from a specific file using an explicit
     /// `resolution-mode` override when one was present in the original request.
     pub fn resolve_import_target_from_file_with_mode(
@@ -744,7 +844,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             );
             return Some(body);
         }
-
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
         None
     }
@@ -1117,29 +1216,54 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// from `CheckerState` but lives on `CheckerContext` so the solver-side
     /// type evaluator can call it via the `TypeResolver` trait.
     fn resolve_unresolved_type_name(&self, name: &str) -> Option<tsz_solver::def::DefId> {
+        if let Ok(env) = self.type_env.try_borrow()
+            && let Some(def_id) = TypeResolver::resolve_unresolved_type_name(&*env, name)
+        {
+            return Some(def_id);
+        }
+
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         // Prefer a non-alias entry from `global_file_locals_index` so we
         // walk the actual declaration symbol directly. Fall back to the
         // current binder's local entry (typically an import alias) only
         // when no concrete declaration is reachable cross-file.
-        let global_concrete = self
+        let global_root = self
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(root_name))
             .and_then(|entries| {
-                entries.iter().find(|(file_idx, sym)| {
-                    self.all_binders
-                        .as_ref()
-                        .and_then(|b| b.as_ref().get(*file_idx))
-                        .and_then(|binder| binder.get_symbol(*sym))
-                        .is_some_and(|symbol| {
-                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                        })
-                })
+                entries
+                    .iter()
+                    .find(|(file_idx, sym)| {
+                        self.all_binders
+                            .as_ref()
+                            .and_then(|b| b.as_ref().get(*file_idx))
+                            .and_then(|binder| binder.get_symbol(*sym))
+                            .is_some_and(|symbol| {
+                                !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                            })
+                    })
+                    .or_else(|| entries.iter().max_by_key(|(_, sym)| sym.0))
             })
-            .map(|&(_, sym)| sym);
-        let mut current_sym = global_concrete
+            .copied();
+        if let Some((file_idx, sym_id)) = global_root {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let all_binders_root = self.all_binders.as_ref().and_then(|binders| {
+            binders.iter().enumerate().find_map(|(file_idx, binder)| {
+                let sym_id = binder.file_locals.get(root_name)?;
+                let symbol = binder.get_symbol(sym_id)?;
+                (!symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
+                    .then_some((file_idx, sym_id))
+            })
+        });
+        if let Some((file_idx, sym_id)) = all_binders_root {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let mut current_sym = global_root
+            .map(|(_, sym)| sym)
+            .or_else(|| all_binders_root.map(|(_, sym)| sym))
             .or_else(|| self.binder.file_locals.get(root_name))
             .or_else(|| {
                 self.lib_contexts
@@ -1181,7 +1305,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 })?;
         }
 
-        let def_id = self.get_or_create_def_id(current_sym);
+        let canonical_name = name.rsplit('.').next().unwrap_or(name);
+        let def_id = self.get_or_create_def_id_for_symbol_name(current_sym, canonical_name);
         // Cache the resolution into `type_env` so the next solver-side
         // evaluator pass (which uses `TypeEnvironment` as resolver) can
         // reduce `Application(UnresolvedTypeName(name), args)` without

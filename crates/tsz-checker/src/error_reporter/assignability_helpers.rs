@@ -97,7 +97,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        if self.assign_relation_outcome(source, target).related
+        if self
+            .assignability_reason_relation_outcome(source, target)
+            .related
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || crate::query_boundaries::assignability::optional_mapped_type_adds_implicit_undefined(
@@ -119,7 +121,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        if self.assign_relation_outcome(source, target).related
+        if self
+            .assignability_reason_relation_outcome(source, target)
+            .related
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || crate::query_boundaries::assignability::optional_mapped_type_adds_implicit_undefined(
@@ -631,7 +635,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn missing_required_properties_from_index_signature_source(
+    pub(crate) fn missing_required_properties_from_index_signature_source(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -646,14 +650,26 @@ impl<'a> CheckerState<'a> {
         let source_evaluated = self.evaluate_type_for_assignability(source);
         let target_env_evaluated = self.evaluate_type_with_env(target);
         let target_evaluated = self.evaluate_type_for_assignability(target);
+        let source_resolved = self.resolve_type_for_property_access(source);
+        let source_judged = self.judge_evaluate(source_resolved);
+        let source_candidates =
+            crate::query_boundaries::assignability::alias_application_surface_candidates(
+                self.ctx.types,
+                &self.ctx,
+                &[
+                    source,
+                    source_resolved,
+                    source_judged,
+                    source_env_evaluated,
+                    source_evaluated,
+                ],
+            );
 
         let resolver = IndexSignatureResolver::new(self.ctx.types);
-        let source_has_index = [source, source_env_evaluated, source_evaluated]
-            .into_iter()
-            .any(|candidate| {
-                resolver.has_index_signature(candidate, IndexKind::String)
-                    || resolver.has_index_signature(candidate, IndexKind::Number)
-            });
+        let source_has_index = source_candidates.iter().copied().any(|candidate| {
+            resolver.has_index_signature(candidate, IndexKind::String)
+                || resolver.has_index_signature(candidate, IndexKind::Number)
+        });
         if !source_has_index {
             return None;
         }
@@ -677,18 +693,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let source_shape = {
-            let direct = source;
-            let resolved = self.resolve_type_for_property_access(direct);
-            let judged = self.judge_evaluate(resolved);
-            [
-                direct,
-                resolved,
-                judged,
-                source_env_evaluated,
-                source_evaluated,
-            ]
-            .into_iter()
-            .find_map(|candidate| {
+            source_candidates.iter().copied().find_map(|candidate| {
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
         };
@@ -1087,7 +1092,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
-        if evaluated == resolved || self.assign_relation_outcome(evaluated, target).related {
+        if evaluated == resolved
+            || self
+                .concrete_remapped_mapped_missing_property_relation_outcome(evaluated, target)
+                .related
+        {
             return false;
         }
         let analysis = self.analyze_assignability_failure(evaluated, target);

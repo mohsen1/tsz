@@ -44,9 +44,10 @@ impl<'a> CheckerState<'a> {
             }
             let branch = self.resolve_lazy_type(branch);
             let branch_evaluated = self.evaluate_type_for_assignability(branch);
-            self.assign_relation_outcome(branch, constraint).related
+            self.conditional_constraint_component_relation_outcome(branch, constraint)
+                .related
                 || self
-                    .assign_relation_outcome(branch_evaluated, constraint)
+                    .conditional_constraint_component_relation_outcome(branch_evaluated, constraint)
                     .related
                 || self.indexed_object_map_branch_satisfies_constraint(branch, constraint)
                 || (branch == true_type
@@ -64,10 +65,13 @@ impl<'a> CheckerState<'a> {
         let extends_evaluated = self.evaluate_type_for_assignability(extends_type);
         let constraint = self.resolve_lazy_type(constraint);
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
-        self.assign_relation_outcome(extends_type, constraint)
+        self.conditional_constraint_component_relation_outcome(extends_type, constraint)
             .related
             || self
-                .assign_relation_outcome(extends_evaluated, constraint_evaluated)
+                .conditional_constraint_component_relation_outcome(
+                    extends_evaluated,
+                    constraint_evaluated,
+                )
                 .related
     }
 
@@ -113,9 +117,13 @@ impl<'a> CheckerState<'a> {
             }
             let value = self.resolve_lazy_type(value);
             let value_evaluated = self.evaluate_type_for_assignability(value);
-            self.assign_relation_outcome(value, constraint).related
+            self.conditional_constraint_component_relation_outcome(value, constraint)
+                .related
                 || self
-                    .assign_relation_outcome(value_evaluated, constraint_evaluated)
+                    .conditional_constraint_component_relation_outcome(
+                        value_evaluated,
+                        constraint_evaluated,
+                    )
                     .related
                 || self.conditional_result_branches_satisfy_constraint(value, constraint)
         })
@@ -275,10 +283,16 @@ impl<'a> CheckerState<'a> {
                 let true_evaluated = self.evaluate_type_for_assignability(true_resolved);
                 let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
                 if self
-                    .assign_relation_outcome(true_evaluated, constraint_evaluated)
+                    .conditional_constraint_component_relation_outcome(
+                        true_evaluated,
+                        constraint_evaluated,
+                    )
                     .related
                     || self
-                        .assign_relation_outcome(true_resolved, constraint)
+                        .conditional_constraint_component_relation_outcome(
+                            true_resolved,
+                            constraint,
+                        )
                         .related
                     || self
                         .indexed_object_map_branch_satisfies_constraint(true_resolved, constraint)
@@ -292,10 +306,16 @@ impl<'a> CheckerState<'a> {
                 let extends_resolved = self.resolve_lazy_type(extends_type);
                 let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
                 return self
-                    .assign_relation_outcome(extends_evaluated, constraint_evaluated)
+                    .conditional_constraint_component_relation_outcome(
+                        extends_evaluated,
+                        constraint_evaluated,
+                    )
                     .related
                     || self
-                        .assign_relation_outcome(extends_resolved, constraint)
+                        .conditional_constraint_component_relation_outcome(
+                            extends_resolved,
+                            constraint,
+                        )
                         .related;
             }
 

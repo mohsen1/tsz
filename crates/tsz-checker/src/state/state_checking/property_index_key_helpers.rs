@@ -31,7 +31,8 @@ impl<'a> CheckerState<'a> {
 
         let prop_literal =
             crate::query_boundaries::common::create_string_literal_type(self.ctx.types, prop_name);
-        self.assign_relation_outcome(prop_literal, key_type).related
+        self.property_index_key_relation_outcome(prop_literal, key_type)
+            .related
     }
 
     pub(super) fn index_value_type_is_deferred(&self, type_id: TypeId) -> bool {

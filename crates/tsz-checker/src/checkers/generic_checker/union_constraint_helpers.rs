@@ -22,7 +22,8 @@ impl<'a> CheckerState<'a> {
                 }
                 let member = self.resolve_lazy_type(member);
                 let member = self.evaluate_type_for_assignability(member);
-                self.assign_relation_outcome(member, constraint).related
+                self.union_constraint_member_relation_outcome(member, constraint)
+                    .related
                     || self.satisfies_array_like_constraint(member, constraint)
             })
     }

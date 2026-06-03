@@ -10,12 +10,15 @@ impl<'a> CheckerState<'a> {
         right: TypeId,
         skip_signature_only_assignability: bool,
     ) -> (bool, bool) {
-        let left_to_right =
-            !skip_signature_only_assignability && self.assign_relation_outcome(left, right).related;
+        let left_to_right = !skip_signature_only_assignability
+            && self
+                .diagnostic_overlap_relation_outcome(left, right)
+                .related;
         let right_to_left = if left_to_right || skip_signature_only_assignability {
             false
         } else {
-            self.assign_relation_outcome(right, left).related
+            self.diagnostic_overlap_relation_outcome(right, left)
+                .related
         };
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -83,14 +86,15 @@ impl<'a> CheckerState<'a> {
                     } else {
                         rp.type_id
                     };
-                    left_to_right &= self.assign_relation_outcome(lt, rt).related;
-                    right_to_left &= self.assign_relation_outcome(rt, lt).related;
+                    left_to_right &= self.diagnostic_overlap_relation_outcome(lt, rt).related;
+                    right_to_left &= self.diagnostic_overlap_relation_outcome(rt, lt).related;
                     if !left_to_right && !right_to_left {
                         break;
                     }
                 }
-                if (left_to_right && self.assign_relation_outcome(lret, rret).related)
-                    || (right_to_left && self.assign_relation_outcome(rret, lret).related)
+                if (left_to_right && self.diagnostic_overlap_relation_outcome(lret, rret).related)
+                    || (right_to_left
+                        && self.diagnostic_overlap_relation_outcome(rret, lret).related)
                 {
                     return true;
                 }

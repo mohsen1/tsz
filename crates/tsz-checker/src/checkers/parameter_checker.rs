@@ -1301,10 +1301,10 @@ impl<'a> CheckerState<'a> {
                     let readonly_any_array = factory.readonly_type(any_array);
 
                     if !self
-                        .assign_relation_outcome(declared_type, readonly_any_array)
+                        .rest_parameter_relation_outcome(declared_type, readonly_any_array)
                         .related
                         && !self
-                            .assign_relation_outcome(array_check_type, readonly_any_array)
+                            .rest_parameter_relation_outcome(array_check_type, readonly_any_array)
                             .related
                     {
                         // tsc anchors TS2370 at the parameter (including the
@@ -1337,7 +1337,7 @@ impl<'a> CheckerState<'a> {
                     let any_array = factory.array(TypeId::ANY);
                     let readonly_any_array = factory.readonly_type(any_array);
                     if !self
-                        .assign_relation_outcome(init_type, readonly_any_array)
+                        .rest_parameter_relation_outcome(init_type, readonly_any_array)
                         .related
                     {
                         self.error_at_node(

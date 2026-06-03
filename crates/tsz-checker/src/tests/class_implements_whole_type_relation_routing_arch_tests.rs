@@ -15,17 +15,21 @@ fn class_implements_whole_type_uses_relation_outcome_boundary() {
         .split("let has_already_reported_missing_member")
         .next()
         .expect("slice whole-type relation block");
+    let compact = helper.split_whitespace().collect::<String>();
 
     assert!(
-        helper.contains("assign_relation_outcome(class_instance_type, target_type)"),
-        "class implements whole-type compatibility should route through RelationOutcome"
+        compact.contains(
+            "class_implements_whole_type_relation_outcome(class_instance_type,target_type,)"
+        ),
+        "class implements whole-type compatibility should route through its dedicated RelationOutcome"
     );
     assert!(
         helper.contains(".related"),
         "class implements whole-type compatibility should inspect RelationOutcome.related"
     );
     assert!(
-        !helper.contains("diagnostic_relation_boolean_guard"),
-        "class implements whole-type compatibility should not regress to raw boolean relation guards"
+        !helper.contains("assign_relation_outcome(")
+            && !helper.contains("diagnostic_relation_boolean_guard"),
+        "class implements whole-type compatibility should not regress to generic assign or raw boolean relation guards"
     );
 }

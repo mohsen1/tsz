@@ -1,11 +1,11 @@
 //! Assignability relation execution and relation-specific fast paths.
 
 use crate::query_boundaries::assignability::{
-    AssignabilityQueryInputs, are_types_overlapping_with_env, assignability_cache_key,
-    check_application_variance_assignability, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, intersection_source_has_target_constituent,
-    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
-    object_shape_for_type,
+    AssignabilityQueryInputs, RelationOutcome, RelationRequest, are_types_overlapping_with_env,
+    assignability_cache_key, check_application_variance_assignability, get_allowed_keys,
+    get_keyof_type, get_string_literal_value, get_union_members,
+    intersection_source_has_target_constituent, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, object_shape_for_type,
 };
 use crate::query_boundaries::common::{
     intersection_members, object_shape_id, object_with_index_shape_id, union_members,
@@ -240,15 +240,64 @@ impl<'a> CheckerState<'a> {
         outcome
     }
 
-    /// Execute a diagnostic-bearing assignment relation using the current
-    /// `TypeEnvironment`, preserving the no-cache semantics of
-    /// `is_assignable_to_with_env` while returning a structured outcome.
-    pub(crate) fn assign_relation_outcome_with_env(
+    /// Same-base-application variance fast path on **un-evaluated** inputs,
+    /// mirroring `is_assignable_to`. Returns `Some(related: true)` only when the
+    /// variance fast path definitively accepts (e.g. `Foo<A>` vs `Foo<B>` whose
+    /// measured variance permits the argument relation).
+    ///
+    /// Diagnostic-reason relation-outcome helpers must run this *before*
+    /// `prepare_assignability_inputs`: evaluating up front expands the
+    /// applications to object shapes and loses the variance fast path, which
+    /// then measures recursively-defined types as invariant and emits spurious
+    /// `TS2322`/`TS2345`. Only the definitive-accept case is short-circuited, so
+    /// non-variance diagnostics (excess property, weak union, …) are unaffected.
+    pub(crate) fn variance_accepted_relation_outcome(
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let outcome = |related| crate::query_boundaries::assignability::RelationOutcome {
+    ) -> Option<crate::query_boundaries::assignability::RelationOutcome> {
+        if source == target {
+            return None;
+        }
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
+        let target = self.substitute_this_type_if_needed(target);
+        let source = self.normalize_awaited_application_args_for_variance(source);
+        let target = self.normalize_awaited_application_args_for_variance(target);
+        if self.same_type_alias_application_args_reject(source, target) {
+            return None;
+        }
+        let flags = self.ctx.pack_relation_flags();
+        let inputs = AssignabilityQueryInputs {
+            db: self.ctx.types,
+            resolver: &self.ctx,
+            source,
+            target,
+            flags,
+            inheritance_graph: &self.ctx.inheritance_graph,
+            sound_mode: self.ctx.sound_mode(),
+        };
+        matches!(
+            check_application_variance_assignability(&inputs),
+            Some(true)
+        )
+        .then(|| crate::query_boundaries::assignability::RelationOutcome {
+            related: true,
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        })
+    }
+
+    fn relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        build_request: fn(TypeId, TypeId) -> RelationRequest,
+    ) -> RelationOutcome {
+        let outcome = |related| RelationOutcome {
             related,
             depth_exceeded: false,
             iteration_exceeded: false,
@@ -267,6 +316,10 @@ impl<'a> CheckerState<'a> {
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
+            return outcome(false);
+        }
+
+        if self.same_type_alias_application_args_reject(source, target) {
             return outcome(false);
         }
 
@@ -294,8 +347,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             let flags = self.ctx.pack_relation_flags();
             let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-            let request =
-                crate::query_boundaries::assignability::RelationRequest::assign(source, target);
+            let request = build_request(source, target);
             crate::query_boundaries::assignability::execute_relation(
                 &request,
                 self.ctx.types,
@@ -331,6 +383,55 @@ impl<'a> CheckerState<'a> {
         relation_outcome
     }
 
+    /// Execute a diagnostic-bearing assignment relation using the current
+    /// `TypeEnvironment`, preserving the no-cache semantics of
+    /// `is_assignable_to_with_env` while returning a structured outcome.
+    pub(crate) fn assign_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::assign)
+    }
+
+    /// Execute an env-aware generic type-argument constraint relation while
+    /// preserving the canonical TS2344 request shape.
+    pub(crate) fn type_arg_constraint_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::type_arg_constraint)
+    }
+
+    /// Execute an env-aware generic argument suppression relation while
+    /// preserving the canonical suppression request shape.
+    pub(crate) fn generic_argument_suppression_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(
+            source,
+            target,
+            RelationRequest::generic_argument_suppression,
+        )
+    }
+
+    /// Execute an env-aware constructor-inference constraint relation while
+    /// preserving the canonical constructor-inference request shape.
+    pub(crate) fn constructor_inference_constraint_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(
+            source,
+            target,
+            RelationRequest::constructor_inference_constraint,
+        )
+    }
+
     /// Execute a diagnostic-bearing call-argument relation for raw checker
     /// types, preserving the canonical TS2345 relation path.
     pub(crate) fn call_arg_relation_outcome(
@@ -342,6 +443,43 @@ impl<'a> CheckerState<'a> {
         let request =
             crate::query_boundaries::assignability::RelationRequest::call_arg(source, target);
         self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing call-argument relation using the current
+    /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
+    /// call diagnostics on the canonical TS2345 request shape.
+    pub(crate) fn call_arg_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::call_arg)
+    }
+
+    /// Execute a diagnostic-bearing round-2 contextual substitution relation
+    /// using the current `TypeEnvironment`, preserving env-aware relation
+    /// semantics while keeping call-inference refinement on its named request.
+    pub(crate) fn round2_contextual_substitution_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(
+            source,
+            target,
+            RelationRequest::round2_contextual_substitution,
+        )
+    }
+
+    /// Execute a diagnostic-bearing return relation using the current
+    /// `TypeEnvironment`, preserving env-aware relation semantics while keeping
+    /// return diagnostics on the canonical return request shape.
+    pub(crate) fn return_relation_outcome_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> RelationOutcome {
+        self.relation_outcome_with_env(source, target, RelationRequest::return_stmt)
     }
 
     /// Execute a diagnostic-bearing bivariant-callback relation for raw
@@ -358,6 +496,40 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a no-erasure generic relation probe while returning a
+    /// `RelationOutcome`-shaped result for diagnostic routing.
+    pub(crate) fn no_erase_generics_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_no_erase_generics(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
+    /// Execute a strict-function-types relation probe while returning a
+    /// `RelationOutcome`-shaped result for diagnostic routing.
+    pub(crate) fn strict_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_strict(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
+
     /// Boolean relation guard for diagnostic code paths.
     ///
     /// Keep these calls grep-distinct from diagnostic decisions that need
@@ -369,6 +541,23 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         self.is_assignable_to(source, target)
+    }
+
+    /// Outcome-shaped wrapper for diagnostic probes that intentionally need only
+    /// the legacy boolean relation decision.
+    pub(crate) fn diagnostic_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.diagnostic_relation_boolean_guard(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
     }
 
     /// Environment-aware boolean relation guard for diagnostic code paths.
@@ -405,6 +594,23 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         self.is_assignable_to_no_weak_checks(source, target)
+    }
+
+    /// Execute a no-weak-checks relation probe while returning a
+    /// `RelationOutcome`-shaped result for diagnostic routing.
+    pub(crate) fn no_weak_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        crate::query_boundaries::assignability::RelationOutcome {
+            related: self.is_assignable_to_no_weak_checks(source, target),
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
     }
 
     /// Check if source type is assignable to target type.
@@ -452,6 +658,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.same_type_alias_application_args_reject(source, target) {
+            return false;
+        }
+
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
@@ -482,10 +692,6 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.same_base_application_to_constrained_type_param_target(source, target) {
-            return false;
-        }
-
-        if self.same_type_alias_application_args_reject(source, target) {
             return false;
         }
 
@@ -698,7 +904,10 @@ impl<'a> CheckerState<'a> {
             types,
             predicate_type,
             param_type,
-            |source, target| self.is_assignable_to(source, target),
+            |source, target| {
+                self.type_predicate_parameter_relation_outcome(source, target)
+                    .related
+            },
         )
     }
 
@@ -785,7 +994,11 @@ impl<'a> CheckerState<'a> {
         Some(self.evaluate_type_for_assignability(instantiated))
     }
 
-    fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub(crate) fn same_type_alias_application_args_reject(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         let Some((source_base, source_args)) =
             self.application_info_for_alias_argument_rejection(source)
         else {
@@ -815,7 +1028,13 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return false;
         }
-        if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
+        let alias_body = def.body;
+        let alias_body_is_generic_mapped = alias_body.is_some_and(|body| {
+            crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, body)
+        });
+        if self.type_alias_args_are_unwitnessed(def_id, source_args.len())
+            && !alias_body_is_generic_mapped
+        {
             return false;
         }
         if self.type_alias_projects_static_member(source_base) {
@@ -834,6 +1053,13 @@ impl<'a> CheckerState<'a> {
             |(i, (&source_arg, &target_arg))| {
                 if target_arg.is_any() {
                     return false;
+                }
+                if alias_body_is_generic_mapped
+                    && source_arg != target_arg
+                    && crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
+                        .is_some()
+                {
+                    return true;
                 }
                 let variance = variances.as_ref().and_then(|vs| vs.get(i)).copied();
                 match variance {
@@ -927,6 +1153,62 @@ impl<'a> CheckerState<'a> {
             source,
             target,
         )
+    }
+
+    pub(crate) fn pre_evaluation_index_access_relation_rejects(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source != TypeId::NEVER
+            && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
+        {
+            return true;
+        }
+
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+        {
+            if self.is_assignable_to(s_idx, t_idx)
+                && let Some(t_param) =
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
+                && t_param.constraint.is_some_and(|constraint| {
+                    constraint == s_obj
+                        || (crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            constraint,
+                        )
+                        .is_some()
+                            && crate::query_boundaries::common::type_param_info(
+                                self.ctx.types,
+                                s_obj,
+                            )
+                            .is_some()
+                            && self.type_parameter_identities_match(constraint, s_obj))
+                })
+            {
+                return true;
+            }
+
+            if s_obj == t_obj
+                && crate::query_boundaries::common::type_param_info(self.ctx.types, s_idx).is_some()
+                && crate::query_boundaries::common::type_param_info(self.ctx.types, t_idx).is_some()
+                && !self.type_parameter_identities_match(s_idx, t_idx)
+                && !self.type_param_constraint_chain_reaches(s_idx, t_idx)
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Type assertion overlap uses tsc's comparable relation, not ordinary

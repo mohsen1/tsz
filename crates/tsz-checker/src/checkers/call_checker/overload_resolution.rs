@@ -1487,9 +1487,10 @@ impl<'a> CheckerState<'a> {
                                 Vec::new(),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
-                        ));
+                        failures.push(
+                            PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
+                                .with_optional_span(self.arg_source_span(args, index)),
+                        );
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                                 Self::should_preserve_speculative_call_diagnostic(diag)
@@ -1700,13 +1701,6 @@ impl<'a> CheckerState<'a> {
                                 fallback_return,
                             )
                         {
-                            // Keep the candidate's instantiated recovery return even
-                            // when it still mentions type parameters from the caller's
-                            // generic context. For `Object.assign(a, b)` inside
-                            // `<T, U>(a: T, b: U) => ...`, tsc recovers with
-                            // `{} & U` rather than the final catch-all overload's
-                            // `any`, so the outer call can still report assignment
-                            // errors against `U`.
                             mismatch_recovery_return = Some(fallback_return);
                         }
                         type_mismatch_count += 1;
@@ -1731,9 +1725,10 @@ impl<'a> CheckerState<'a> {
                                 ),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
-                        ));
+                        failures.push(
+                            PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
+                                .with_optional_span(self.arg_source_span(args, index)),
+                        );
                     }
                 }
                 CallResult::ArgumentCountMismatch {
@@ -1907,5 +1902,16 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
+    }
+
+    fn arg_source_span(&self, args: &[NodeIndex], index: usize) -> Option<tsz_solver::SourceSpan> {
+        let &arg_idx = args.get(index)?;
+        self.ctx.arena.get(arg_idx).map(|node| {
+            tsz_solver::SourceSpan::new(
+                self.ctx.file_name.as_str(),
+                node.pos,
+                node.end.saturating_sub(node.pos),
+            )
+        })
     }
 }

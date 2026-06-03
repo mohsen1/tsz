@@ -29,13 +29,14 @@ fn destructuring_default_checks_use_relation_outcome_boundary() {
 
     assert!(
         compact_source
-            .matches("assign_relation_outcome(default_type,target_type).related")
+            .matches("destructuring_relation_outcome(default_type,target_type")
             .count()
             >= 2
-            && compact_source.contains("assign_relation_outcome(prop_type,target_type).related")
             && compact_source
-                .contains("assign_relation_outcome(source_type,target_prop_type).related"),
-        "destructuring default/property relation checks should route through relation outcomes"
+                .contains("destructuring_relation_outcome(prop_type,target_type).related")
+            && compact_source
+                .contains("destructuring_relation_outcome(source_type,target_prop_type).related"),
+        "destructuring default/property relation checks should route through destructuring relation outcomes"
     );
     assert!(
         !compact_source.contains("diagnostic_relation_boolean_guard(default_type,target_type)")
@@ -54,13 +55,25 @@ fn object_rest_destructuring_uses_single_relation_outcome() {
 
     assert!(
         compact_source
-            .contains("letoutcome=self.assign_relation_outcome(source,rest_target_type);")
+            .contains("letoutcome=self.destructuring_relation_outcome(source,rest_target_type);")
             && compact_source.contains("ifoutcome.related{return;}"),
-        "object rest destructuring should use the shared relation outcome for the rest target decision"
+        "object rest destructuring should use the destructuring relation outcome for the rest target decision"
     );
     assert!(
         !compact_source.contains("diagnostic_relation_boolean_guard(source,rest_target_type)"),
         "object rest destructuring must not pre-gate the rest target decision with a raw boolean guard"
+    );
+}
+
+#[test]
+fn destructuring_relation_outcome_uses_destructuring_request() {
+    let source = fs::read_to_string("src/assignability/relation_outcome_helpers.rs")
+        .expect("failed to read relation_outcome_helpers.rs");
+
+    assert!(
+        source.contains("fn destructuring_relation_outcome(")
+            && source.contains("RelationRequest::destructuring(source, target)"),
+        "destructuring assignment diagnostics should have a request-shaped RelationKind::Destructuring helper"
     );
 }
 
@@ -72,10 +85,10 @@ fn binding_pattern_default_inference_uses_relation_outcomes() {
 
     assert_eq!(
         compact_source
-            .matches("assign_relation_outcome(init_type,element_type).related")
+            .matches("destructuring_relation_outcome(init_type,element_type).related")
             .count(),
         2,
-        "object and array binding default inference should route element/default compatibility through relation outcomes"
+        "object and array binding default inference should route element/default compatibility through destructuring relation outcomes"
     );
     assert!(
         !compact_source.contains("is_assignable_to(init_type,element_type)"),
@@ -90,8 +103,8 @@ fn state_destructuring_default_inference_uses_relation_outcome() {
     let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
-        compact_source.contains("assign_relation_outcome(init_type,element_type).related"),
-        "state destructuring default inference should route element/default compatibility through relation outcomes"
+        compact_source.contains("destructuring_relation_outcome(init_type,element_type).related"),
+        "state destructuring default inference should route element/default compatibility through destructuring relation outcomes"
     );
     assert!(
         !compact_source.contains("is_assignable_to(init_type,element_type)"),

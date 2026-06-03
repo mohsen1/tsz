@@ -14,13 +14,17 @@ fn array_elaboration_element_probe_uses_relation_outcome_boundary() {
     let branch = &source[start..end];
 
     assert_eq!(
-        branch.matches("assign_relation_outcome(").count(),
+        branch.matches("call_arg_relation_outcome(").count(),
         1,
-        "array element elaboration should route the element relation through assign_relation_outcome"
+        "array element elaboration should route the element relation through call_arg_relation_outcome"
     );
     assert!(
         branch.contains(".related"),
         "array element elaboration should use the shared relation outcome decision"
+    );
+    assert!(
+        !branch.contains("assign_relation_outcome("),
+        "array element elaboration should not regress to the generic assignment request"
     );
     assert!(
         !branch.contains("diagnostic_relation_boolean_guard("),

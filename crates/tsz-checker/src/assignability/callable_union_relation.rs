@@ -36,7 +36,10 @@ impl<'a> CheckerState<'a> {
                     .any(|(target_params, target_return)| {
                         self.callable_relation_params_compatible(source_params, target_params)
                             && self
-                                .assign_relation_outcome(*source_return, *target_return)
+                                .callable_union_return_relation_outcome(
+                                    *source_return,
+                                    *target_return,
+                                )
                                 .related
                     })
             })
@@ -112,8 +115,11 @@ impl<'a> CheckerState<'a> {
             .iter()
             .zip(target_params.iter())
             .all(|(source_param, target_param)| {
-                self.assign_relation_outcome(target_param.type_id, source_param.type_id)
-                    .related
+                self.callable_union_parameter_relation_outcome(
+                    target_param.type_id,
+                    source_param.type_id,
+                )
+                .related
             })
     }
 }
