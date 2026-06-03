@@ -240,6 +240,73 @@ after
         self.assertIn("public aggregate remaining: 71", heading)
         self.assertIn("detail aggregate remaining: 436", heading)
 
+    def test_stale_failure_families_are_suppressed_by_default(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Failure-family rows are suppressed", text)
+        self.assertIn("JavaScript: public aggregate remaining 71", text)
+        self.assertIn("Declaration: public aggregate remaining 25", text)
+        self.assertIn("--include-stale-detail", text)
+        self.assertNotIn("class/private/accessor/decorator lowering", text)
+        self.assertNotIn("generic/type-display declarations", text)
+
+    def test_stale_failure_families_can_be_included_explicitly(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data, include_stale_detail=True)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("historical checked-detail triage only", text)
+        self.assertIn("class/private/accessor/decorator lowering", text)
+        self.assertIn("generic/type-display declarations", text)
+
     def test_current_failure_family_heading_keeps_plain_count(self):
         summary = {
             "jsPass": 13459,
