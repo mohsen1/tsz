@@ -42,29 +42,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &[TupleElement],
         target: &[TupleElement],
     ) -> Option<SubtypeFailureReason> {
-        let source_required = crate::utils::required_element_count(source);
-        let target_required = crate::utils::required_element_count(target);
-
-        if source_required < target_required {
-            return Some(SubtypeFailureReason::TupleElementMismatch {
-                source_count: source.len(),
-                target_count: target.len(),
-            });
-        }
-
-        // When both source and target are closed tuples (no rest elements) and
-        // source has more elements than target allows, prefer the arity-mismatch
-        // reason over an element-level type mismatch. This matches tsc, which
-        // reports the outer "Source has N element(s) but target allows only M"
-        // diagnostic instead of drilling into a specific element when the
-        // length already disqualifies the relation.
-        let target_has_rest = target.iter().any(|e| e.rest);
+        // tsc gates a tuple-to-tuple relation on an arity check *before* it
+        // compares individual elements (`tupleTypesRelated` in `checker.ts`).
+        //
+        // The historical bug (#10874) is confined to *variadic* tuples: when a
+        // side carries a rest element, the old length comparison counted that
+        // rest slot as a fixed element, over-reporting the source length and
+        // emitting only two of tsc's four arity messages. So the tsc-faithful
+        // classifier runs **only when a rest element is present**; purely closed
+        // tuples keep their established reason and rendering exactly (closed
+        // tuples have `arity == len`, so they were never affected by the bug,
+        // and tsc resolves their optional-element mismatches per-element, not
+        // through this length gate).
         let source_has_rest = source.iter().any(|e| e.rest);
-        if !target_has_rest && !source_has_rest && source.len() > target.len() {
-            return Some(SubtypeFailureReason::TupleElementMismatch {
-                source_count: source.len(),
-                target_count: target.len(),
-            });
+        let target_has_rest = target.iter().any(|e| e.rest);
+
+        if source_has_rest || target_has_rest {
+            if let Some(arity) = crate::utils::classify_tuple_arity(source, target) {
+                return Some(SubtypeFailureReason::TupleArityMismatch(arity));
+            }
+        } else {
+            // Closed-tuple length mismatch: preserve the prior structured
+            // `TupleElementMismatch` reason (and its alias-preserving render
+            // path). A source that cannot supply the target's required elements,
+            // or a source longer than a closed target, is reported here rather
+            // than drilled into element-by-element, matching the established
+            // baseline.
+            let source_required = crate::utils::required_element_count(source);
+            let target_required = crate::utils::required_element_count(target);
+            if source_required < target_required || source.len() > target.len() {
+                return Some(SubtypeFailureReason::TupleElementMismatch {
+                    source_count: source.len(),
+                    target_count: target.len(),
+                });
+            }
         }
 
         for (i, t_elem) in target.iter().enumerate() {

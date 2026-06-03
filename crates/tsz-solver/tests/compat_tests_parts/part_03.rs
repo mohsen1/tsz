@@ -1213,6 +1213,10 @@ fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
 
     assert!(!checker.is_assignable(source, target));
 
+    // Both sides are closed (no rest element), so the arity-family classifier is
+    // intentionally not consulted: the closed-tuple length mismatch keeps its
+    // established `TupleElementMismatch` reason, which still takes priority over
+    // the inner element-type mismatch.
     match checker.explain_failure(source, target) {
         Some(SubtypeFailureReason::TupleElementMismatch {
             source_count,
@@ -1225,6 +1229,89 @@ fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
             "Expected TupleElementMismatch (arity) to take priority over an inner \
              TupleElementTypeMismatch, got: {other:?}"
         ),
+    }
+}
+
+/// A required tuple element plus a variadic tail (`[boolean, ...number[]]`)
+/// assigned to the empty tuple. tsc reports its *required* length (1), not its
+/// slot count (2): "Source has 1 element(s) but target allows only 0."
+/// (`SourceTooMany`). This is the core variadic-tail arity bug from #10874.
+#[test]
+fn test_explain_variadic_source_reports_required_length_not_slot_count() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let number_rest = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_rest,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+    let target = interner.tuple(vec![]);
+
+    assert!(!checker.is_assignable(source, target));
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::TupleArityMismatch(crate::TupleArity::SourceTooMany {
+            source_min,
+            target_arity,
+        })) => {
+            assert_eq!(source_min, 1, "variadic source must report required length");
+            assert_eq!(target_arity, 0);
+        }
+        other => panic!("expected SourceTooMany {{1, 0}}, got: {other:?}"),
+    }
+}
+
+/// A variadic source that may be too short (`[string, ...string[]]`) assigned to
+/// a longer closed tuple reports the target's required length and the
+/// "source may have fewer" wording (`TS2620`, `TargetRequiresMore`).
+#[test]
+fn test_explain_variadic_source_target_requires_more() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let string_rest = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_rest,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+    let req = |type_id| TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    };
+    let target = interner.tuple(vec![
+        req(TypeId::STRING),
+        req(TypeId::STRING),
+        req(TypeId::STRING),
+    ]);
+
+    assert!(!checker.is_assignable(source, target));
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::TupleArityMismatch(crate::TupleArity::TargetRequiresMore {
+            target_min,
+        })) => assert_eq!(target_min, 3),
+        other => panic!("expected TargetRequiresMore {{3}}, got: {other:?}"),
     }
 }
 

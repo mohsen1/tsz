@@ -187,6 +187,29 @@ impl RelationFailure {
                 source_count,
                 target_count,
             },
+            // The pre-classified arity families already carry tsc's exact
+            // numbers; collapse them to the checker-facing `(source, target)`
+            // count pair for classification purposes (the live elaboration is
+            // rendered from the solver reason directly). The `may-have`
+            // single-argument families leave the unknown side at `0`.
+            SubtypeFailureReason::TupleArityMismatch(arity) => {
+                let (source_count, target_count) = match arity {
+                    tsz_solver::TupleArity::SourceTooFew {
+                        source_arity,
+                        target_min,
+                    } => (source_arity, target_min),
+                    tsz_solver::TupleArity::SourceTooMany {
+                        source_min,
+                        target_arity,
+                    } => (source_min, target_arity),
+                    tsz_solver::TupleArity::TargetRequiresMore { target_min } => (0, target_min),
+                    tsz_solver::TupleArity::TargetAllowsFewer { target_arity } => (target_arity, 0),
+                };
+                Self::TupleArityMismatch {
+                    source_count,
+                    target_count,
+                }
+            }
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,

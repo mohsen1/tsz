@@ -784,6 +784,47 @@ impl<'a> CheckerState<'a> {
                     Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
                 }
             }
+            SubtypeFailureReason::TupleArityMismatch(arity) => {
+                // tsc's arity gate (`TS2618`–`TS2621`) resolves the message
+                // family, diagnostic code, and argument count up front in the
+                // solver; the renderer just formats the recorded arguments into
+                // the catalog template the solver selected.
+                let arity_code = arity.diagnostic_code();
+                let arity_args: Vec<String> =
+                    arity.message_args().iter().map(|n| n.to_string()).collect();
+                let arity_arg_refs: Vec<&str> = arity_args.iter().map(String::as_str).collect();
+                let arity_text = format_message(arity.diagnostic_message(), &arity_arg_refs);
+                if depth == 0 {
+                    // Top level: keep the `TS2322` headline and attach the arity
+                    // reason as a nested elaboration line, matching the sibling
+                    // `TupleElementMismatch` rendering above.
+                    let (source_str, target_str) =
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: arity_text,
+                        category: DiagnosticCategory::Message,
+                        code: arity_code,
+                        depth: 0,
+                    });
+                    diag
+                } else {
+                    Diagnostic::error(file_name, start, length, arity_text, arity_code)
+                }
+            }
             SubtypeFailureReason::TupleElementTypeMismatch {
                 index,
                 source_element,
