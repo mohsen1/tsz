@@ -1005,9 +1005,7 @@ impl<'a> Printer<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 return false;
             };
-            if !self.arena.is_static(&prop.modifiers)
-                || !self.es5_class_property_has_runtime_effect(member_node, prop)
-            {
+            if !self.es5_static_computed_key_stays_inside_iife(member_node, prop) {
                 return false;
             }
             let Some(name_node) = self.arena.get(prop.name) else {
@@ -1058,14 +1056,22 @@ impl<'a> Printer<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 continue;
             };
-            if self.arena.is_static(&prop.modifiers)
-                || !self.es5_class_property_has_runtime_effect(member_node, prop)
-            {
+            if !self.es5_class_property_has_runtime_effect(member_node, prop) {
                 continue;
             }
             let Some(name_node) = self.arena.get(prop.name) else {
                 continue;
             };
+            let is_static = self.arena.is_static(&prop.modifiers);
+            if is_static
+                && !self.es5_static_no_init_define_computed_key_uses_external_temp(
+                    member_node,
+                    prop,
+                    name_node,
+                )
+            {
+                continue;
+            }
             if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
                 continue;
             }
@@ -1092,8 +1098,7 @@ impl<'a> Printer<'a> {
             }
 
             if self.es5_computed_name_needs_temp(name_node) {
-                decls.push(es5_temp_name(temp_name_index));
-                temp_name_index += 1;
+                decls.push(next_es5_temp_name(&mut temp_name_index));
             }
         }
 
@@ -1141,6 +1146,37 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn es5_static_computed_key_stays_inside_iife(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        if !self.arena.is_static(&prop.modifiers)
+            || !self.es5_class_property_has_runtime_effect(member_node, prop)
+        {
+            return false;
+        }
+        self.es5_property_initializer_has_equals(member_node, prop)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+    }
+
+    fn es5_static_no_init_define_computed_key_uses_external_temp(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+        name_node: &Node,
+    ) -> bool {
+        self.ctx.options.use_define_for_class_fields
+            && self.arena.is_static(&prop.modifiers)
+            && !self.es5_property_initializer_has_equals(member_node, prop)
+            && !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+            && self.es5_computed_name_needs_temp(name_node)
+    }
+
     fn es5_property_initializer_has_equals(
         &self,
         member_node: &Node,
@@ -1178,10 +1214,21 @@ fn es5_generated_auto_accessor_name(index: u32) -> String {
     }
 }
 
+fn next_es5_temp_name(index: &mut u32) -> String {
+    loop {
+        let current = *index;
+        *index += 1;
+        if current < 26 && (current == 8 || current == 13) {
+            continue;
+        }
+        return es5_temp_name(current);
+    }
+}
+
 fn es5_temp_name(index: u32) -> String {
     if index < 26 {
         format!("_{}", (b'a' + index as u8) as char)
     } else {
-        format!("_{index}")
+        format!("_{}", index - 26)
     }
 }

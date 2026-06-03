@@ -472,14 +472,15 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
-    /// Generate a unique temp variable name (_a, _b, ..., _z, _27, _28, ...)
+    /// Generate a unique temp variable name using TypeScript's ES5 temp sequence.
     fn generate_temp_name(&self) -> String {
-        let idx = self.temp_var_counter.get();
-        self.temp_var_counter.set(idx + 1);
-        if idx < 26 {
-            format!("_{}", (b'a' + idx as u8) as char)
-        } else {
-            format!("_{idx}")
+        loop {
+            let idx = self.temp_var_counter.get();
+            self.temp_var_counter.set(idx + 1);
+            if idx < 26 && (idx == 8 || idx == 13) {
+                continue;
+            }
+            return es5_temp_name(idx);
         }
     }
 
@@ -807,6 +808,59 @@ impl<'a> ES5ClassTransformer<'a> {
             let trimmed = comment_text.trim_start();
             if trimmed.starts_with("//") || trimmed.starts_with("/*") {
                 return Some(comment_text.to_string());
+            }
+        }
+
+        None
+    }
+
+    pub(super) fn extract_trailing_comment_for_class_field(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        if let Some(comment) = self.extract_trailing_comment_for_node(node) {
+            return Some(comment);
+        }
+
+        let source_text = self.source_text?;
+        let start = node.pos as usize;
+        let end = (node.end as usize).min(source_text.len());
+        if start >= end {
+            return None;
+        }
+
+        let line_end = source_text[end..]
+            .find(['\n', '\r'])
+            .map_or(source_text.len(), |offset| end + offset);
+        let mut after_field = end;
+        while after_field < line_end {
+            let ch = source_text[after_field..].chars().next()?;
+            if ch.is_whitespace() {
+                after_field += ch.len_utf8();
+                continue;
+            }
+            if ch == ';' {
+                for comment in
+                    crate::emitter::get_trailing_comment_ranges(source_text, after_field + 1)
+                {
+                    let comment_text = &source_text[comment.pos as usize..comment.end as usize];
+                    let trimmed = comment_text.trim_start();
+                    if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                        return Some(comment_text.to_string());
+                    }
+                }
+            }
+            break;
+        }
+
+        for comment in tsz_common::comments::get_comment_ranges(&source_text[start..end]) {
+            let comment_pos = start + comment.pos as usize;
+            let comment_end = start + comment.end as usize;
+            let line_start = source_text[..comment_pos]
+                .rfind(['\n', '\r'])
+                .map_or(0, |pos| pos + 1);
+            if !source_text[line_start..comment_pos].trim().is_empty() {
+                return Some(source_text[comment_pos..comment_end].to_string());
             }
         }
 
@@ -1679,7 +1733,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // (not the outer `var C` binding), all key temps must be co-located inside
         // the IIFE in declaration-before-use order. Instance-only classes use a
         // closure over an outer `var _a` instead, matching tsc's canonical form.
-        let mut static_computed_value_exists = false;
+        let mut static_computed_iife_value_exists = false;
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1760,8 +1814,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.computed_prop_temp_map
                     .insert(computed.expression, temp.clone());
                 computed_prop_entries.push((Some(temp), computed.expression, member_idx));
-                if self.arena.is_static(&prop.modifiers) {
-                    static_computed_value_exists = true;
+                if self.arena.is_static(&prop.modifiers)
+                    && (self.property_initializer_has_equals(member_node, prop)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword))
+                {
+                    static_computed_iife_value_exists = true;
                 }
             }
         }
@@ -1851,7 +1910,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let (ir_computed_prop_temp_decls, ir_computed_prop_temp_inits) =
             if self.emit_computed_props_outside.get() {
                 (computed_prop_temp_decls, computed_prop_init_entries)
-            } else if static_computed_value_exists {
+            } else if static_computed_iife_value_exists {
                 if !computed_prop_temp_decls.is_empty() {
                     let var_decls: Vec<IRNode> = computed_prop_temp_decls
                         .into_iter()
@@ -2015,6 +2074,14 @@ impl<'a> ES5ClassTransformer<'a> {
             deferred_static_blocks,
             deferred_block_class_alias,
         })
+    }
+}
+
+fn es5_temp_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{}", index - 26)
     }
 }
 

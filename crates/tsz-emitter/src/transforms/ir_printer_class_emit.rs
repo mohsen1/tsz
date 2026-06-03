@@ -412,6 +412,13 @@ impl<'a> IRPrinter<'a> {
         self.decrease_indent();
         self.write_indent();
         self.write("});");
+        if descriptor.value.is_some()
+            && !self.remove_comments
+            && let Some(comment) = descriptor.trailing_comment.as_deref()
+        {
+            self.write(" ");
+            self.write(comment);
+        }
     }
 
     pub(super) fn emit_awaiter_call_node(&mut self, node: &IRNode) {
