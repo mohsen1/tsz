@@ -232,7 +232,7 @@ fn test_evaluate_type_with_cache_call_sites_pass_collection_flag() {
 fn test_evaluate_type_with_cache_can_skip_cache_entry_collection() {
     let types = TypeInterner::new();
     let indexed = types.index_access(types.array(TypeId::STRING), TypeId::NUMBER);
-    let seed = std::iter::empty();
+    let seed = std::iter::empty::<(TypeId, TypeId)>();
     let has_seed = false;
     let expand_application_display_alias_args = false;
     let query_db = None;
