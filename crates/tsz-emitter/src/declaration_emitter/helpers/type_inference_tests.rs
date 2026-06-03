@@ -805,6 +805,30 @@ let y10 = unboxify(x10);
 }
 
 #[test]
+fn instantiation_expression_source_surface_detects_unresolved_declaration_text() {
+    assert!(
+        !DeclarationEmitter::instantiated_source_type_needs_semantic_surface(
+            r#"() => { value: T extends Other ? "O" : "N"; }"#
+        )
+    );
+    assert!(
+        DeclarationEmitter::instantiated_source_type_needs_semantic_surface(
+            r#"() => { value: typeof import("./other").key; }"#
+        )
+    );
+    assert!(
+        DeclarationEmitter::instantiated_source_type_needs_semantic_surface(
+            r#"() => { value: typeof import('./other').key; }"#
+        )
+    );
+    assert!(
+        !DeclarationEmitter::instantiated_source_type_needs_semantic_surface(
+            r#"() => { value: string; }"#
+        )
+    );
+}
+
+#[test]
 fn declared_call_return_refines_callback_parameter_inference_from_later_arguments() {
     let source = r#"
 declare function merge<A>(left: (value: A) => void, right: (value: A) => void): (value: A) => void;
