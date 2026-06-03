@@ -218,6 +218,32 @@ after
             with self.subTest(state=state):
                 self.assertFalse(self.mod.emit_detail_is_current({"state": state}))
 
+    def test_committed_emit_detail_is_not_stale(self):
+        """Guard against the committed emit-detail.json silently drifting behind
+        the public README aggregate.
+
+        The 2026-05-19 -> 2026-06-03 drift left ``--families`` reporting ~413
+        phantom JS and ~55 phantom DTS failures that every lane then triaged.
+        When this fails, refresh ``scripts/emit/emit-detail.json`` and
+        ``scripts/emit/emit-snapshot.json`` from the CI ``emit-details`` artifact
+        (per-test ``ci-metrics/emit-detail-*.json``).
+        """
+        detail_summary = self.mod.emit_summary(self.mod.load_detail())
+        public_summary = self.mod.emit_summary_from_readme()
+        self.assertIsNotNone(
+            public_summary,
+            "README emit aggregate block missing; cannot evaluate freshness",
+        )
+        status = self.mod.emit_freshness_status(detail_summary, public_summary)
+        self.assertIn(
+            status["state"],
+            ("current", "detail-ahead"),
+            "committed scripts/emit/emit-detail.json is "
+            f"'{status['state']}' relative to the README emit aggregate "
+            f"({status}); refresh emit-detail.json + emit-snapshot.json from "
+            "the CI emit-details artifact before landing emit metric claims.",
+        )
+
     def test_stale_failure_family_heading_names_public_remaining_count(self):
         detail_summary = {
             "jsPass": 13094,
