@@ -27,8 +27,14 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 # #12260; JSX/import.meta subset tracked in #12261.
 # importMeta.ts oscillates; re-accepted after REGRESSED on PR #12243 CI run 26852720835.
 # intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
+# jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx fixed in #12261:
+# PR #12238 added a blanket early-return in check_jsx_attributes_against_props
+# that skipped ALL component prop checks whenever a JSX runtime import-source
+# error (TS2875) was deferred. tsc still checks function/class component props
+# against the component's own signature in that case, so the early-return
+# suppressed the legitimate TS2741 (and TS2322/excess) diagnostics. Removing it
+# restores parity; this fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
-TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts

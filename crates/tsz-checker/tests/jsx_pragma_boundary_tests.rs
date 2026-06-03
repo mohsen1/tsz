@@ -256,3 +256,97 @@ const _frag = <></>;
         "Expected TS2874 mentioning `Foo` from `@jsxFragment Foo`. Got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Automatic-runtime component prop checks survive an unresolved jsx-runtime
+// (issue #12261 / regressed by #12238)
+// ---------------------------------------------------------------------------
+
+/// When the automatic JSX runtime module (`<source>/jsx-runtime`) cannot be
+/// resolved, tsc still type-checks JSX attributes against the component's own
+/// signature: it emits the deferred TS2875 *and* the per-element prop
+/// diagnostics. `#12238` added a blanket early-return in
+/// `check_jsx_attributes_against_props` keyed on the deferred TS2875, which
+/// silently dropped every component prop check (TS2741/TS2322/excess) in
+/// automatic mode. These cases lock in the restored parity. Binder names are
+/// deliberately not the fixture's (`Wrong`/`offspring`) to keep the assertion
+/// structural rather than name-scoped.
+#[test]
+fn automatic_runtime_unresolved_emits_missing_required_prop_ts2741() {
+    let source = "\
+const Banner = (props: { headline: string }) => null as any;
+
+const _used = <Banner>body text</Banner>;
+";
+    let diags = check_with_jsx_mode(source, "auto-missing.tsx", JsxMode::ReactJsx);
+    let codes = diag_codes(&diags);
+    assert!(
+        codes.contains(&2875),
+        "Expected deferred TS2875 (unresolved react/jsx-runtime). Got: {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 2741 && d.message_text.contains("headline")),
+        "Expected TS2741 for the missing required `headline` prop even though the \
+         automatic runtime is unresolved. Got: {diags:?}"
+    );
+}
+
+/// Self-closing form (no body children) must also report the missing required
+/// prop — the regression suppressed it regardless of children.
+#[test]
+fn automatic_runtime_unresolved_self_closing_reports_missing_prop() {
+    let source = "\
+const Card = (props: { caption: string }) => null as any;
+
+const _used = <Card />;
+";
+    let diags = check_with_jsx_mode(source, "auto-self-closing.tsx", JsxMode::ReactJsx);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 2741 && d.message_text.contains("caption")),
+        "Expected TS2741 for self-closing element missing required prop. Got: {diags:?}"
+    );
+}
+
+/// A mistyped attribute value must still produce TS2322 under an unresolved
+/// automatic runtime; the suppression hid type mismatches too.
+#[test]
+fn automatic_runtime_unresolved_reports_attribute_type_mismatch() {
+    let source = "\
+const Gauge = (props: { level: string }) => null as any;
+
+const _used = <Gauge level={42} />;
+";
+    let diags = check_with_jsx_mode(source, "auto-type-mismatch.tsx", JsxMode::ReactJsx);
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for the `level={{42}}` mismatch under an unresolved \
+         automatic runtime. Got: {diags:?}"
+    );
+}
+
+/// A satisfied component must stay clean: providing the required prop (and the
+/// body children that map to the standard `children`) leaves only the
+/// runtime-resolution TS2875, with no spurious prop diagnostics.
+#[test]
+fn automatic_runtime_unresolved_satisfied_component_has_no_prop_errors() {
+    let source = "\
+const Heading = (props: { children: string }) => null as any;
+
+const _used = <Heading>hello</Heading>;
+";
+    let diags = check_with_jsx_mode(source, "auto-ok.tsx", JsxMode::ReactJsx);
+    let codes = diag_codes(&diags);
+    assert!(
+        codes.contains(&2875),
+        "Expected the deferred TS2875 for the unresolved runtime. Got: {diags:?}"
+    );
+    assert!(
+        !codes.iter().any(|&c| c == 2741 || c == 2322),
+        "A component whose required `children` prop is satisfied by body text \
+         must not report prop errors. Got: {diags:?}"
+    );
+}
