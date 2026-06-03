@@ -285,7 +285,20 @@ pub(super) fn apply_cli_overrides_with_config_options(
     if args.no_implicit_use_strict {
         options.checker.no_implicit_use_strict = true;
     }
-    if args.es_module_interop {
+    // tsc 6.0 defaults `esModuleInterop` to `true` unless it is explicitly set on
+    // the command line or in `tsconfig.json`. The config path already applies
+    // this default in `resolve_compiler_options`; mirror it here so the CLI-only
+    // path (no tsconfig) matches tsc instead of falling back to the historical
+    // `false`. An explicit `--esModuleInterop false` (recorded in
+    // `explicitly_disabled_bool_flags`) or a tsconfig value opts back out.
+    let es_module_interop_disabled = args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .any(|name| name == "esModuleInterop");
+    if args.es_module_interop
+        || (!es_module_interop_disabled
+            && config_options.is_none_or(|config| config.es_module_interop.is_none()))
+    {
         options.es_module_interop = true;
         options.checker.es_module_interop = true;
         options.printer.es_module_interop = true;

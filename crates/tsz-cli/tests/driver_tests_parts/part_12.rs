@@ -823,3 +823,90 @@ fn ts1192_suppressed_for_js_default_import_without_check_js() {
         "TS1192 must not appear for unchecked JS, got: {codes:?}"
     );
 }
+
+// tsc 6.0 defaults `esModuleInterop` to `true` when it is not set on the
+// command line or in tsconfig. The config path already applies this default in
+// `resolve_compiler_options`; the CLI-only path must mirror it so that
+// `tsz file.ts` (no tsconfig) emits the same default-import interop helper as
+// `tsc file.ts`. Regression for the divergence behind issue #11330.
+#[test]
+fn cli_only_default_import_uses_es_module_interop_default_true() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("dep.ts"),
+        "export default { version: \"1.0.0\" };\n",
+    );
+    write_file(
+        &base.join("a.ts"),
+        "import dep from './dep';\nexport const v = dep.version;\n",
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--module",
+        "commonjs",
+        "--target",
+        "es2020",
+        "--outDir",
+        "out",
+        "a.ts",
+    ]);
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected clean compile, got: {:#?}",
+        result.diagnostics
+    );
+
+    let a_js = std::fs::read_to_string(base.join("out/a.js")).expect("read out/a.js");
+    assert!(
+        a_js.contains("__importDefault"),
+        "CLI-only commonjs emit must apply the tsc 6.0 esModuleInterop=true \
+         default and wrap the default import with __importDefault, got:\n{a_js}"
+    );
+}
+
+// The flip side: an explicit `--esModuleInterop false` must opt back out of the
+// tsc 6.0 default and keep the classic (no-helper) default-import lowering.
+#[test]
+fn cli_only_explicit_es_module_interop_false_keeps_classic_default_import() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("dep.ts"),
+        "export default { version: \"1.0.0\" };\n",
+    );
+    write_file(
+        &base.join("a.ts"),
+        "import dep from './dep';\nexport const v = dep.version;\n",
+    );
+
+    // `preprocess_args` (the real CLI entry point) forwards `--esModuleInterop
+    // false` into this side-channel; replicate it directly since the test builds
+    // `CliArgs` with clap's parser without the preprocessing pass.
+    let mut args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--module",
+        "commonjs",
+        "--target",
+        "es2020",
+        "--outDir",
+        "out",
+        "a.ts",
+    ]);
+    args.explicitly_disabled_bool_flags
+        .push("esModuleInterop".to_string());
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let a_js = std::fs::read_to_string(base.join("out/a.js")).expect("read out/a.js");
+    assert!(
+        !a_js.contains("__importDefault"),
+        "explicit --esModuleInterop false must not emit the interop helper, got:\n{a_js}"
+    );
+}
