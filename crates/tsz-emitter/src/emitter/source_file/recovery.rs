@@ -183,7 +183,8 @@ impl<'a> Printer<'a> {
         if name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             return false;
         }
-        let Some((keywords, initializer_text)) = self.recovered_reserved_array_binding_parts(node)
+        let Some((keywords, initializer_text)) =
+            self.recovered_reserved_array_binding_parts(node, name_node)
         else {
             return false;
         };
@@ -228,16 +229,38 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
     }
 
+    /// Collect the reserved-word keywords that appear as *binding-element
+    /// names* inside an array binding pattern, plus the trailing initializer
+    /// text.
+    ///
+    /// Only reserved words at the top level of the pattern and in name
+    /// position are binding names. Reserved words sitting in a default-value
+    /// initializer (`[a = true]`) or in the right-hand initializer expression
+    /// (`= [1, null]`) are values, not names, and must be ignored. The scan
+    /// therefore tracks bracket/brace/paren depth, only collects reserved words
+    /// at the pattern's top level (depth 1) outside a default value, and stops
+    /// the name-collection phase at the matching `]`. The initializer text is
+    /// read from source (the AST is unreliable here because the malformed
+    /// pattern derails the parser).
+    ///
+    /// The scan window runs from the pattern's `[` to the end of the enclosing
+    /// variable statement. The statement span is reliable even when the
+    /// malformed pattern truncates `name_node.end`, and bounding it avoids
+    /// copying the rest of the file into the scanner for every array-binding
+    /// declaration.
     fn recovered_reserved_array_binding_parts(
         &self,
-        node: &Node,
+        statement: &Node,
+        name_node: &Node,
     ) -> Option<(Vec<&'static str>, String)> {
         let text = self.source_text?;
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let source = text.get(start..)?;
+        let start = self.skip_trivia_forward(name_node.pos, name_node.end) as usize;
+        let source = text.get(start..statement.end as usize)?;
         let mut scanner = ScannerState::new(source.to_string(), true);
         let mut keywords = Vec::new();
-        let mut in_array_binding = false;
+        let mut depth: i32 = 0;
+        let mut pattern_closed = false;
+        let mut in_default_value = false;
         let mut initializer_start = None;
         let mut initializer_end = None;
 
@@ -246,27 +269,45 @@ impl<'a> Printer<'a> {
             if token == SyntaxKind::EndOfFileToken {
                 break;
             }
-            let token_start = scanner.get_token_start();
-            let token_end = scanner.get_token_end();
-            match token {
-                SyntaxKind::OpenBracketToken => in_array_binding = true,
-                SyntaxKind::CloseBracketToken if in_array_binding => in_array_binding = false,
-                SyntaxKind::EqualsToken => {
-                    initializer_start = Some(token_end);
+            if !pattern_closed {
+                match token {
+                    SyntaxKind::OpenBracketToken
+                    | SyntaxKind::OpenBraceToken
+                    | SyntaxKind::OpenParenToken => depth += 1,
+                    SyntaxKind::CloseBracketToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::CloseParenToken => {
+                        depth -= 1;
+                        if depth <= 0 {
+                            pattern_closed = true;
+                        }
+                    }
+                    SyntaxKind::EqualsToken if depth == 1 => in_default_value = true,
+                    SyntaxKind::CommaToken if depth == 1 => in_default_value = false,
+                    _ if depth == 1
+                        && !in_default_value
+                        && tsz_scanner::token_is_reserved_word(token) =>
+                    {
+                        keywords.extend(tsz_scanner::keyword_to_text_static(token));
+                    }
+                    _ => {}
                 }
-                SyntaxKind::SemicolonToken => {
-                    initializer_end = Some(token_start);
-                    break;
+            } else {
+                match token {
+                    SyntaxKind::EqualsToken if initializer_start.is_none() => {
+                        initializer_start = Some(scanner.get_token_end());
+                    }
+                    SyntaxKind::SemicolonToken => {
+                        initializer_end = Some(scanner.get_token_start());
+                        break;
+                    }
+                    _ => {}
                 }
-                _ if in_array_binding && tsz_scanner::token_is_reserved_word(token) => {
-                    keywords.push(self.reserved_keyword_text(scanner.get_token_text_ref())?);
-                }
-                _ => {}
             }
         }
 
         let initializer_start = initializer_start?;
-        let initializer_end = initializer_end.unwrap_or_else(|| scanner.get_pos());
+        let initializer_end = initializer_end.unwrap_or(scanner.get_pos());
         let initializer_text = source
             .get(initializer_start..initializer_end)?
             .trim()
@@ -327,19 +368,27 @@ impl<'a> Printer<'a> {
         Some(tail.to_string())
     }
 
+    /// Return the reserved keyword text when the declaration's name token is
+    /// *exactly* a reserved word (e.g. `var typeof = 10`).
+    ///
+    /// The whole leading identifier token is read — including the
+    /// digit/`_`/`$` characters that continue it — so ordinary identifiers
+    /// that merely begin with a keyword (`var1`, `function1`) read as a single
+    /// non-reserved identifier rather than matching the keyword prefix.
+    /// Reading from the source (rather than the name node's span) also works
+    /// when the parser synthesizes an empty name node for a keyword used in
+    /// name position.
     fn reserved_keyword_text_at_declaration_start(&self, node: &Node) -> Option<&'static str> {
         let text = self.source_text?;
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         let bytes = text.as_bytes();
         let mut end = start;
-        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+        while end < bytes.len()
+            && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'$')
+        {
             end += 1;
         }
         let keyword = crate::safe_slice::slice(text, start, end).ok()?;
-        self.reserved_keyword_text(keyword)
-    }
-
-    fn reserved_keyword_text(&self, keyword: &str) -> Option<&'static str> {
         let token = tsz_scanner::string_to_token(keyword);
         tsz_scanner::token_is_reserved_word(token)
             .then(|| tsz_scanner::keyword_to_text_static(token))?

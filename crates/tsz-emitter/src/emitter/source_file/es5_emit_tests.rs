@@ -2206,6 +2206,75 @@ fn reserved_array_binding_name_emits_recovered_keyword_statements() {
 }
 
 #[test]
+fn array_binding_with_reserved_default_values_emits_normally() {
+    // Reserved words that appear as default values (`= true`) or inside the
+    // right-hand initializer (`= [.., null]`) are values, not binding names,
+    // so the reserved-array-binding error recovery must not fire.
+    for source in [
+        "var [a = true, b = false] = [1, 2];",
+        "var [c, d] = [undefined, null];",
+        "var [e = [null]] = [[1]];",
+        "var [f, g] = [1, 2, \"string\", true];",
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("var [];"),
+            "{source}: valid array binding must not trigger reserved-name recovery.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains('['),
+            "{source}: array binding pattern should still emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn identifier_beginning_with_keyword_emits_normally() {
+    // Ordinary identifiers that merely start with a reserved keyword
+    // (`var1`, `function1`, `typeofx`) must not be mistaken for reserved
+    // binding names by the variable-declaration error recovery.
+    for (source, expected_name) in [
+        ("var var1 = 0;", "var1"),
+        ("var function1 = 1;", "function1"),
+        ("var typeofx = 2;", "typeofx"),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("var ;"),
+            "{source}: identifier starting with a keyword must not trigger recovery.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(expected_name),
+            "{source}: declaration name should still emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn reserved_function_name_emits_anonymous_function_and_keyword_arrow_tail() {
     for (source, expected_tail) in [
         ("function throw() {}", "function () { }\nthrow () => { };"),
