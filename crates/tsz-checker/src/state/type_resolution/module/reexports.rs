@@ -108,6 +108,7 @@ impl<'a> CheckerState<'a> {
             })
         {
             let source_modules = source_modules.clone();
+
             // When multiple wildcard sources provide the same name, prefer a VALUE
             // export over type-only paths, including pure TYPE declarations and
             // value-bearing declarations reached through `export type *`.
