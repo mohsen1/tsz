@@ -1,5 +1,5 @@
 use super::super::Printer;
-use super::top_level_using_decorated::strip_decorate_export_prefix;
+use super::top_level_using_decorated::{export_decorate_assignment, strip_decorate_export_prefix};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter, emit_utils};
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
@@ -1647,22 +1647,16 @@ impl<'a> Printer<'a> {
                 emitted.push_str(&export_stmt);
             } else {
                 let export_prefix = self.top_level_using_export_binding_prefix(export_name);
-                let decorate_pattern = format!("{binding_name} = __decorate(");
-                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
                 if let Some(first_stmt_end) = emitted.find(';') {
                     emitted.insert_str(first_stmt_end + 1, &format!("\n{export_stmt}"));
                 }
-                if !emitted.contains(&exported_decorate) {
-                    emitted = emitted.replacen(&decorate_pattern, &exported_decorate, 1);
-                    if self.in_system_execute_body
-                        && let Some(relative_end) = emitted.rfind(");")
-                    {
-                        emitted.replace_range(relative_end..relative_end + 2, "));\n");
-                        if emitted.ends_with("\n\n") {
-                            emitted.pop();
-                        }
-                    }
-                }
+                emitted = export_decorate_assignment(
+                    emitted,
+                    &export_prefix,
+                    binding_name,
+                    self.in_system_execute_body,
+                )
+                .0;
             }
             return emitted;
         }
@@ -1690,20 +1684,13 @@ impl<'a> Printer<'a> {
             let mut remainder = emitted[first_stmt_end + 1..]
                 .trim_start_matches(['\n', '\r'])
                 .to_string();
-            let decorate_pattern = format!("{binding_name} = __decorate(");
-            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-            if !remainder.contains(&exported_decorate) {
-                remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
-                if self.in_system_execute_body
-                    && let Some(relative_end) = remainder.rfind(");")
-                {
-                    let end = relative_end;
-                    remainder.replace_range(end..end + 2, "));\n");
-                    if remainder.ends_with("\n\n") {
-                        remainder.pop();
-                    }
-                }
-            }
+            remainder = export_decorate_assignment(
+                remainder,
+                &export_prefix,
+                binding_name,
+                self.in_system_execute_body,
+            )
+            .0;
             let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
             if !remainder.trim().is_empty() {
                 rewritten.push('\n');
@@ -1798,20 +1785,13 @@ impl<'a> Printer<'a> {
                 let mut remainder = emitted[first_stmt_end + 1..]
                     .trim_start_matches(['\n', '\r'])
                     .to_string();
-                let decorate_pattern = format!("{binding_name} = __decorate(");
-                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-                if !remainder.contains(&exported_decorate) {
-                    remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
-                    if self.in_system_execute_body
-                        && let Some(relative_end) = remainder.rfind(");")
-                    {
-                        let end = relative_end;
-                        remainder.replace_range(end..end + 2, "));\n");
-                        if remainder.ends_with("\n\n") {
-                            remainder.pop();
-                        }
-                    }
-                }
+                remainder = export_decorate_assignment(
+                    remainder,
+                    &export_prefix,
+                    binding_name,
+                    self.in_system_execute_body,
+                )
+                .0;
                 let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
                 if !remainder.trim().is_empty() {
                     rewritten.push('\n');
@@ -1830,25 +1810,14 @@ impl<'a> Printer<'a> {
             return emitted;
         }
 
-        let decorate_pattern = format!("{binding_name} = __decorate(");
-        let mut replaced_decorate_assignment = false;
-        if let Some(decorate_start) = emitted.rfind(&decorate_pattern) {
-            let replacement = format!("{export_prefix}{binding_name} = __decorate(");
-            emitted.replace_range(
-                decorate_start..decorate_start + decorate_pattern.len(),
-                &replacement,
+        let (emitted_after_decorate_export, replaced_decorate_assignment) =
+            export_decorate_assignment(
+                emitted,
+                &export_prefix,
+                binding_name,
+                self.in_system_execute_body,
             );
-            if self.in_system_execute_body
-                && let Some(relative_end) = emitted[decorate_start..].rfind(");")
-            {
-                let end = decorate_start + relative_end;
-                emitted.replace_range(end..end + 2, "));\n");
-                if emitted.ends_with("\n\n") {
-                    emitted.pop();
-                }
-            }
-            replaced_decorate_assignment = true;
-        }
+        emitted = emitted_after_decorate_export;
 
         if self.in_system_execute_body {
             if !replaced_decorate_assignment {
