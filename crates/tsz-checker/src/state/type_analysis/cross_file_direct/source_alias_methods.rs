@@ -302,28 +302,37 @@ impl<'a> CheckerState<'a> {
             && let Some(decl_node) = symbol_arena.get(decl_idx)
             && let Some(type_alias) = symbol_arena.get_type_alias(decl_node)
         {
-            seen.push(sym_id);
-            self.prime_source_file_alias_application_targets(
-                symbol_arena,
-                delegate_binder,
-                type_alias.type_node,
-                seen,
-            );
-            let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
-                sym_id,
-                decl_idx,
-                symbol_arena,
-                type_alias,
-            );
-            if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx
-                    .register_def_auto_params_in_envs(def_id, alias_type, params);
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(alias_type, def_id);
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let params_registered = type_alias
+                .type_parameters
+                .as_ref()
+                .is_none_or(|params| params.nodes.is_empty())
+                || self.ctx.get_def_type_params(def_id).is_some();
+            let body_registered =
+                self.ctx.definition_store.get_body(def_id).is_some() && params_registered;
+            if !body_registered {
+                seen.push(sym_id);
+                self.prime_source_file_alias_application_targets(
+                    symbol_arena,
+                    delegate_binder,
+                    type_alias.type_node,
+                    seen,
+                );
+                let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
+                    sym_id,
+                    decl_idx,
+                    symbol_arena,
+                    type_alias,
+                );
+                if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, alias_type, params);
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(alias_type, def_id);
+                }
+                seen.pop();
             }
-            seen.pop();
         }
 
         for child in symbol_arena.get_children(root) {
