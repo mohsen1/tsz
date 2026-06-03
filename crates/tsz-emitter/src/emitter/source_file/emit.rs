@@ -1769,37 +1769,8 @@ impl<'a> Printer<'a> {
             // "runtime module syntax" AFTER emit, because the emit step may decide
             // to erase it (e.g., text heuristic determines all imported names are
             // type-only and drops the import).
-            let is_module_indicating_stmt = if !is_erased {
-                let k = stmt_node.kind;
-                if k == syntax_kind_ext::IMPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                {
-                    true
-                } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                    // External module imports (`import x = require("mod")`) and
-                    // exported aliases count as runtime module syntax. Plain
-                    // namespace aliases (`import x = M.A`) are erased and should
-                    // not suppress deferred `export {};` emission.
-                    self.arena
-                        .get_import_decl(stmt_node)
-                        .is_some_and(|import_data| {
-                            self.arena
-                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
-                                || self.arena.get(import_data.module_specifier).is_some_and(
-                                    |spec_node| {
-                                        spec_node.is_string_literal()
-                                            || spec_node.kind
-                                                == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
-                                    },
-                                )
-                        })
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            let is_module_indicating_stmt =
+                self.is_runtime_module_indicating_statement(stmt_node, is_erased);
 
             // Find the actual start of the statement's first token by
             // scanning forward from node.pos past ALL trivia (whitespace AND
