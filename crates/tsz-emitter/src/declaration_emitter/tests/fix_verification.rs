@@ -1761,6 +1761,54 @@ const same = f("hello", { "type": "hello" });
 }
 
 #[test]
+fn fix_generic_call_non_literal_property_value_widens_to_constraint() {
+    // `{ type: two }` carries an identifier value — the emitter cannot resolve
+    // it to a primitive literal.  tsc widens to the constraint rather than
+    // committing to either inference site.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const two = "two";
+declare function f<T extends string>(options: { type?: T }, fallback: T): T;
+
+const result = f({ type: two }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "non-literal property value (identifier) must trigger conservative conflict: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "three";"#),
+        "must not narrow to the fallback literal when property value is opaque: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_as_const_object_arg_widens_to_constraint() {
+    // `options` is an identifier bound to an `as const` object — it is not an
+    // inline object literal, so its properties are opaque to the emitter.
+    // tsc widens to the constraint when the two sites cannot be compared.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const options = { type: "two" } as const;
+declare function f<T extends string>(options: { type?: T }, fallback: T): T;
+
+const result = f(options, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "as-const identifier argument must trigger conservative conflict: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "three";"#),
+        "must not narrow to the fallback literal when options arg is an opaque reference: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"

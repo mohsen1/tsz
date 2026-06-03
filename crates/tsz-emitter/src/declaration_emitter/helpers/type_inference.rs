@@ -1715,6 +1715,39 @@ impl<'a> DeclarationEmitter<'a> {
                             &type_param_constraints,
                         ),
                     );
+                    // When the return type is a bare type parameter and the
+                    // argument inference produced a *primitive literal* substitution,
+                    // check whether a conflicting object-property inference site
+                    // invalidates it.  Only act when the substitution is itself a
+                    // literal (e.g. `"three"`) — already-widened values like `string`
+                    // or a constraint alias have already been resolved correctly.
+                    let return_name = type_param_names
+                        .iter()
+                        .find(|name| type_text.trim() == name.as_str())
+                        .cloned();
+                    if let Some(ref return_name) = return_name
+                        && type_param_substitutions.iter().any(|(name, val)| {
+                            name.as_str() == return_name.as_str()
+                                && Self::is_literal_type_text_for_const_call(val)
+                        })
+                        && let Some(func) =
+                            self.callable_function_from_symbol_decl(source_arena, decl_idx)
+                        && matches!(
+                            self.literal_direct_type_parameter_argument_substitution(
+                                source_arena,
+                                func,
+                                call,
+                                return_name,
+                            ),
+                            Some(None)
+                        )
+                    {
+                        // Clear the pre-inferred literal so the type_param_fallbacks
+                        // loop below can substitute the constraint (e.g. "string" for
+                        // T extends string) instead of narrowing to the literal.
+                        let rn = return_name.clone();
+                        type_param_substitutions.retain(|(name, _)| name.as_str() != rn.as_str());
+                    }
                 }
                 if Self::type_text_contains_mapped_type_literal(&type_text) {
                     self.preserve_literal_mapped_return_type_substitutions(

@@ -622,8 +622,11 @@ impl<'a> DeclarationEmitter<'a> {
                                     func,
                                     type_text.trim(),
                                 );
-                            if (literal_direct_substitution.is_none()
-                                && simple_source_substitution.is_none()
+                            // `Some(None)` means conflict detected — treat the same as
+                            // `None` (no literal found) for the canonical-type lookup.
+                            let literal_direct_is_empty =
+                                !matches!(literal_direct_substitution, Some(Some(_)));
+                            if (literal_direct_is_empty && simple_source_substitution.is_none()
                                 || has_higher_order_type_param_param)
                                 && let Some(canonical_text) =
                                     self.fully_resolved_call_canonical_type_text(expr_idx)

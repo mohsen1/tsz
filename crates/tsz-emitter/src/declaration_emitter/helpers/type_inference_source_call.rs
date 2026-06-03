@@ -266,14 +266,24 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if explicit_type_args.is_empty()
             && let Some(name_text) = return_type_param_name.as_deref()
-            && let Some(literal_text) = self.literal_direct_type_parameter_argument_substitution(
+        {
+            match self.literal_direct_type_parameter_argument_substitution(
                 source_arena,
                 func,
                 call,
                 name_text,
-            )
-        {
-            Self::replace_or_push_substitution(&mut substitutions, name_text, literal_text);
+            ) {
+                Some(Some(literal_text)) => {
+                    Self::replace_or_push_substitution(&mut substitutions, name_text, literal_text);
+                }
+                Some(None) => {
+                    // Conflict detected: clear any literal the argument-inference pass
+                    // pre-inferred for this type param so the return type stays
+                    // unsubstituted and the caller falls back to the constraint.
+                    substitutions.retain(|(name, _)| name.as_str() != name_text);
+                }
+                None => {}
+            }
         }
         for (name_text, default_text) in type_param_defaults {
             if substitutions
@@ -310,16 +320,25 @@ impl<'a> DeclarationEmitter<'a> {
         Some(type_text)
     }
 
+    /// Returns:
+    /// - `Some(Some(literal))` — found an unambiguous direct-T literal; use it.
+    /// - `Some(None)` — found a direct-T parameter with a literal argument, but a
+    ///   conflicting object-property inference site prevents committing to it.
+    ///   The caller should clear any pre-inferred substitution for `type_param_name`
+    ///   so the return type falls back to the constraint.
+    /// - `None` — no direct-T parameter with a primitive literal argument was found;
+    ///   leave existing substitutions untouched.
     pub(in crate::declaration_emitter) fn literal_direct_type_parameter_argument_substitution(
         &self,
         source_arena: &NodeArena,
         func: &tsz_parser::parser::node::FunctionData,
         call: &tsz_parser::parser::node::CallExprData,
         type_param_name: &str,
-    ) -> Option<String> {
+    ) -> Option<Option<String>> {
         let args = call.arguments.as_ref()?;
         let params = &func.parameters.nodes;
         let args_nodes = &args.nodes;
+        let mut found_candidate = false;
         for (candidate_pos, (&param_idx, &arg_idx)) in
             params.iter().zip(args_nodes.iter()).enumerate()
         {
@@ -340,6 +359,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(candidate_literal) = self.primitive_literal_argument_type_text(arg_idx) else {
                 continue;
             };
+            found_candidate = true;
             // A conflicting inference site requires THREE conditions:
             //
             // (1) Another parameter's type annotation has T in a direct
@@ -368,6 +388,7 @@ impl<'a> DeclarationEmitter<'a> {
                         .is_some_and(|other_param| {
                             object_arg_has_property_with_different_literal(
                                 source_arena,
+                                &self.arena,
                                 other_param.type_annotation,
                                 other_arg_idx,
                                 type_param_name,
@@ -376,10 +397,12 @@ impl<'a> DeclarationEmitter<'a> {
                         })
                 });
             if !has_conflicting_site {
-                return Some(candidate_literal);
+                return Some(Some(candidate_literal));
             }
         }
-        None
+        // Distinguish "conflict detected" (Some(None)) from "no direct-T param" (None)
+        // so callers can actively clear a pre-inferred literal substitution on conflict.
+        if found_candidate { Some(None) } else { None }
     }
 
     pub(in crate::declaration_emitter) fn simple_type_parameter_argument_substitution(
@@ -987,23 +1010,37 @@ fn type_annotation_is_or_contains_type_param(
 ///   → `false` (the T-typed property is absent from the argument).
 /// - Different-literal property value (e.g. `{ type: "two" }` vs `"three"`)
 ///   → `true` (genuine conflict; tsc widens to constraint).
+///
+/// `annotation_arena` owns the parameter type-annotation nodes (`annotation_idx`).
+/// `arg_arena` owns the call-argument nodes (`arg_idx`); this is always the
+/// emitter's own arena, even when the callee's declaration lives in a different
+/// arena (e.g. a global or re-exported symbol arena).
 fn object_arg_has_property_with_different_literal(
-    source_arena: &NodeArena,
+    annotation_arena: &NodeArena,
+    arg_arena: &NodeArena,
     annotation_idx: NodeIndex,
     arg_idx: NodeIndex,
     type_param_name: &str,
     candidate_literal: &str,
 ) -> bool {
-    if !type_node_has_object_property_site_for(source_arena, annotation_idx, type_param_name, 0) {
+    if !type_node_has_object_property_site_for(annotation_arena, annotation_idx, type_param_name, 0)
+    {
         return false;
     }
-    let Some(arg_node) = source_arena.get(arg_idx) else {
+    let Some(arg_node) = arg_arena.get(arg_idx) else {
         return false;
     };
     if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-        return false;
+        // `undefined` supplies no property value; any other non-object reference
+        // (const variable, as-const binding, …) is opaque — treat conservatively
+        // as a potential conflict.
+        let is_undefined = arg_node.kind == SyntaxKind::Identifier as u16
+            && arg_arena
+                .get_identifier(arg_node)
+                .is_some_and(|ident| ident.escaped_text == "undefined");
+        return !is_undefined;
     }
-    let Some(obj) = source_arena.get_literal_expr(arg_node) else {
+    let Some(obj) = arg_arena.get_literal_expr(arg_node) else {
         return false;
     };
     if obj.elements.nodes.is_empty() {
@@ -1011,7 +1048,7 @@ fn object_arg_has_property_with_different_literal(
     }
     let mut t_prop_names: Vec<String> = Vec::new();
     collect_property_names_for_type_param(
-        source_arena,
+        annotation_arena,
         annotation_idx,
         type_param_name,
         &mut t_prop_names,
@@ -1021,16 +1058,16 @@ fn object_arg_has_property_with_different_literal(
         return false;
     }
     obj.elements.nodes.iter().copied().any(|elem_idx| {
-        let Some(elem_node) = source_arena.get(elem_idx) else {
+        let Some(elem_node) = arg_arena.get(elem_idx) else {
             return false;
         };
         if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
             return false;
         }
-        let Some(prop) = source_arena.get_property_assignment(elem_node) else {
+        let Some(prop) = arg_arena.get_property_assignment(elem_node) else {
             return false;
         };
-        let Some(prop_name_text) = arena_property_name_text(source_arena, prop.name) else {
+        let Some(prop_name_text) = arena_property_name_text(arg_arena, prop.name) else {
             return false;
         };
         if !t_prop_names
@@ -1040,21 +1077,21 @@ fn object_arg_has_property_with_different_literal(
             return false;
         }
         // This property carries T.  Check if its value differs from the candidate.
-        let Some(val_node) = source_arena.get(prop.initializer) else {
+        let Some(val_node) = arg_arena.get(prop.initializer) else {
             return false;
         };
         let val_literal = match val_node.kind {
-            k if k == SyntaxKind::StringLiteral as u16 => source_arena
+            k if k == SyntaxKind::StringLiteral as u16 => arg_arena
                 .get_literal(val_node)
                 .map(|lit| format!("\"{}\"", escape_string_for_double_quote(&lit.text))),
-            k if k == SyntaxKind::NumericLiteral as u16 => source_arena
-                .get_literal(val_node)
-                .map(|lit| lit.text.clone()),
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                arg_arena.get_literal(val_node).map(|lit| lit.text.clone())
+            }
             k if k == SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
             k if k == SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
-            // Non-primitive value (expression, variable, …) — cannot determine
-            // the literal; treat conservatively as non-conflicting.
-            _ => return false,
+            // Non-primitive value (identifier, expression, …) — cannot determine
+            // the literal statically; treat conservatively as conflicting.
+            _ => return true,
         };
         val_literal.is_some_and(|lit| lit != candidate_literal)
     })
