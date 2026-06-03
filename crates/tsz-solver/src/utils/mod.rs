@@ -20,6 +20,55 @@ pub(crate) fn required_element_count(elements: &[TupleElement]) -> usize {
     elements.iter().filter(|e| e.is_required()).count()
 }
 
+/// Classify a tuple-to-tuple length incompatibility into tsc's `TS2618`–`TS2621`
+/// family, or return `None` when the two arities are compatible (so the caller
+/// proceeds to per-element comparison).
+///
+/// This mirrors the arity gate in `tupleTypesRelated` (`checker.ts`) exactly,
+/// using each side's *arity* (slot count, where a variadic/rest element is a
+/// single slot) and *minimum length* (count of required elements) together with
+/// whether each side carries a rest element. Crucially, a variadic source
+/// contributes its required length — not its slot count — to the reported
+/// numbers, so `[boolean, ...number[]]` against `[]` reports `1`, not `2`.
+///
+/// The branch order matches tsc so that, e.g., a closed source that is simply
+/// too long is reported as "Source has N but target allows only M" rather than
+/// the "source may have more" wording reserved for genuinely open-ended sources.
+pub(crate) fn classify_tuple_arity(
+    source: &[TupleElement],
+    target: &[TupleElement],
+) -> Option<crate::diagnostics::TupleArity> {
+    use crate::diagnostics::TupleArity;
+
+    let source_arity = source.len();
+    let target_arity = target.len();
+    let source_min = required_element_count(source);
+    let target_min = required_element_count(target);
+    let source_has_rest = source.iter().any(|e| e.rest);
+    let target_has_rest = target.iter().any(|e| e.rest);
+
+    if !source_has_rest && source_arity < target_min {
+        return Some(TupleArity::SourceTooFew {
+            source_arity,
+            target_min,
+        });
+    }
+    if !target_has_rest && target_arity < source_min {
+        return Some(TupleArity::SourceTooMany {
+            source_min,
+            target_arity,
+        });
+    }
+    if !target_has_rest && (source_has_rest || target_arity < source_arity) {
+        return Some(if source_min < target_min {
+            TupleArity::TargetRequiresMore { target_min }
+        } else {
+            TupleArity::TargetAllowsFewer { target_arity }
+        });
+    }
+    None
+}
+
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
 ///
 /// This function consolidates the previously duplicated `is_numeric_property_name` implementations

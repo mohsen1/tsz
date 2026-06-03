@@ -88,6 +88,84 @@ impl<T: SubtypeTracer> DynSubtypeTracer for T {
 /// Some variants include `nested_reason` to capture failures in nested types.
 /// For example, a property type mismatch might include why the property types
 /// themselves don't match.
+///
+/// Pre-classified tuple arity mismatch family (`TS2618`–`TS2621`).
+///
+/// `tsc` (`tupleTypesRelated` in `checker.ts`) gates a tuple-to-tuple relation
+/// on four length comparisons that use the *arity* (total element slots,
+/// including a single variadic/rest slot) and *minimum length* (count of
+/// required elements) of each side together with whether each side carries a
+/// rest element. Each branch reports a distinct message with its own wording,
+/// argument count, and diagnostic code, so the failing relation records the
+/// resolved family here rather than re-deriving it from raw element counts in
+/// the renderer (which cannot distinguish a fixed slot from a variadic slot).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TupleArity {
+    /// `TS2618` — "Source has {0} element(s) but target requires {1}." The
+    /// source is a closed tuple too short to satisfy the target's required
+    /// elements. Carries `(source_arity, target_min)`.
+    SourceTooFew {
+        source_arity: usize,
+        target_min: usize,
+    },
+    /// `TS2619` — "Source has {0} element(s) but target allows only {1}." The
+    /// target is a closed tuple and the source's minimum length already exceeds
+    /// it. Carries `(source_min, target_arity)`.
+    SourceTooMany {
+        source_min: usize,
+        target_arity: usize,
+    },
+    /// `TS2620` — "Target requires {0} element(s) but source may have fewer."
+    /// The target is closed and requires more elements than the (variadic)
+    /// source is guaranteed to provide. Carries `target_min`.
+    TargetRequiresMore { target_min: usize },
+    /// `TS2621` — "Target allows only {0} element(s) but source may have more."
+    /// The target is closed and the variadic source may overflow it. Carries
+    /// `target_arity`.
+    TargetAllowsFewer { target_arity: usize },
+}
+
+impl TupleArity {
+    /// The diagnostic code for this arity family.
+    pub const fn diagnostic_code(self) -> u32 {
+        match self {
+            Self::SourceTooFew { .. } => codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+            Self::SourceTooMany { .. } => codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+            Self::TargetRequiresMore { .. } => {
+                codes::TARGET_REQUIRES_ELEMENT_S_BUT_SOURCE_MAY_HAVE_FEWER
+            }
+            Self::TargetAllowsFewer { .. } => {
+                codes::TARGET_ALLOWS_ONLY_ELEMENT_S_BUT_SOURCE_MAY_HAVE_MORE
+            }
+        }
+    }
+
+    /// The catalog message template for this arity family. Derived from the
+    /// shared diagnostic catalog via [`diagnostic_code`](Self::diagnostic_code)
+    /// so the wording and code can never drift apart, and so the rendering layer
+    /// does not need its own variant-to-message mapping.
+    pub fn diagnostic_message(self) -> &'static str {
+        get_message_template(self.diagnostic_code())
+    }
+
+    /// The numeric message arguments, in catalog order. `SourceTooFew` and
+    /// `SourceTooMany` take two; the `may-have` variants take one.
+    pub fn message_args(self) -> Vec<usize> {
+        match self {
+            Self::SourceTooFew {
+                source_arity,
+                target_min,
+            } => vec![source_arity, target_min],
+            Self::SourceTooMany {
+                source_min,
+                target_arity,
+            } => vec![source_min, target_arity],
+            Self::TargetRequiresMore { target_min } => vec![target_min],
+            Self::TargetAllowsFewer { target_arity } => vec![target_arity],
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SubtypeFailureReason {
     /// A required property is missing in the source type.
@@ -149,6 +227,15 @@ pub enum SubtypeFailureReason {
         source_count: usize,
         target_count: usize,
     },
+    /// Tuple arity mismatch pre-classified to tsc's `TS2618`–`TS2621` family.
+    ///
+    /// Unlike [`Self::TupleElementMismatch`] (which only carries raw element
+    /// counts and so cannot tell a fixed slot from a variadic one), this variant
+    /// records the exact `tsc` branch — including whether the count refers to a
+    /// minimum length or a full arity — so a variadic source like
+    /// `[boolean, ...number[]]` reports its required length (`1`) rather than its
+    /// slot count (`2`).
+    TupleArityMismatch(TupleArity),
     /// Tuple element type mismatch.
     ///
     /// When the related tuple has **more than one** element (`multi_element`),
@@ -586,6 +673,12 @@ pub mod codes {
     pub use dc::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET as TUPLE_ELEMENT_POSITION_MISMATCH;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
+    // Tuple arity mismatch family (TS2618–TS2621).
+    pub use dc::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY;
+    pub use dc::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES;
+    pub use dc::TARGET_ALLOWS_ONLY_ELEMENT_S_BUT_SOURCE_MAY_HAVE_MORE;
+    pub use dc::TARGET_REQUIRES_ELEMENT_S_BUT_SOURCE_MAY_HAVE_FEWER;
+
     // Function/call errors
     pub use dc::CANNOT_FIND_NAME;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB as CANNOT_FIND_NAME_TARGET_LIB;
@@ -709,6 +802,7 @@ impl SubtypeFailureReason {
             | Self::UnionTargetMismatch { .. }
             | Self::ConditionalBranchMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
+            Self::TupleArityMismatch(arity) => arity.diagnostic_code(),
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
             Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
@@ -885,6 +979,15 @@ impl SubtypeFailureReason {
             .with_related(PendingDiagnostic::error(
                 codes::ARG_COUNT_MISMATCH,
                 vec![(*target_count).into(), (*source_count).into()],
+            )),
+
+            Self::TupleArityMismatch(arity) => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source.into(), target.into()],
+            )
+            .with_related(PendingDiagnostic::error(
+                arity.diagnostic_code(),
+                arity.message_args().into_iter().map(|n| n.into()).collect(),
             )),
 
             Self::TupleElementTypeMismatch {

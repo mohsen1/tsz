@@ -72,7 +72,7 @@ pub mod type_handles {
     pub use crate::diagnostics::format::TypeFormatter;
     pub use crate::diagnostics::{
         DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
-        SubtypeFailureReason,
+        SubtypeFailureReason, TupleArity,
     };
     pub use crate::types::{
         CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
@@ -246,7 +246,6 @@ pub use def::{
     FileChange, FileChangeSet, InvalidationSummary, StoreStatistics, diff_fingerprints,
     incremental, resolver,
 };
-pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
@@ -256,6 +255,7 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
+pub use diagnostics::{SubtypeFailureReason, TupleArity};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use evaluation::evaluate::{
