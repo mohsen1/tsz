@@ -1,6 +1,7 @@
 //! Source-call type-parameter substitution helpers for declaration emit.
 
 use super::super::DeclarationEmitter;
+use super::escape_string_for_double_quote;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -333,44 +334,49 @@ impl<'a> DeclarationEmitter<'a> {
             if param_type_text.trim() != type_param_name {
                 continue;
             }
-            // A conflicting inference site requires TWO conditions, both at the
-            // call site:
+            // Compute the candidate literal early so the conflict test can compare
+            // against it.  If this parameter has no primitive literal argument there
+            // is nothing to preserve, so skip it.
+            let Some(candidate_literal) = self.primitive_literal_argument_type_text(arg_idx) else {
+                continue;
+            };
+            // A conflicting inference site requires THREE conditions:
             //
             // (1) Another parameter's type annotation has T in a direct
-            //     object-property position (e.g. `options: { type?: T }`), and
-            // (2) The corresponding call argument actually supplies a non-empty
-            //     object literal — `{}`, `undefined`, and omitted optional
-            //     arguments supply no inference through the property path and
-            //     therefore do not conflict.
+            //     object-property position (e.g. `options: { type?: T }`).
+            // (2) The corresponding call argument is a non-empty object literal
+            //     (`{}`, `undefined`, and omitted optional args do not contribute).
+            // (3) That object literal has a property whose type is T and whose
+            //     value is a *different* primitive literal than the candidate.
+            //     Same-literal contributions (e.g. `f("x", { type: "x" })`) are
+            //     not a conflict — tsc keeps the literal in that case.
             //
             // Callback positions (`(x: T) => R`, method signatures, and generic
-            // aliases `Callback<T>`) are excluded by the structural walk.
+            // aliases `Callback<T>`) are excluded by the structural annotation walk.
             let has_conflicting_site = params
                 .iter()
                 .copied()
                 .enumerate()
                 .filter(|&(i, _)| i != candidate_pos)
                 .any(|(i, other_param_idx)| {
-                    let other_arg = args_nodes.get(i).copied();
+                    let Some(other_arg_idx) = args_nodes.get(i).copied() else {
+                        return false;
+                    };
                     source_arena
                         .get(other_param_idx)
                         .and_then(|node| source_arena.get_parameter(node))
                         .is_some_and(|other_param| {
-                            type_node_has_object_property_site_for(
+                            object_arg_has_property_with_different_literal(
                                 source_arena,
                                 other_param.type_annotation,
+                                other_arg_idx,
                                 type_param_name,
-                                0,
-                            ) && other_arg.is_some_and(|other_arg_idx| {
-                                argument_has_object_property_values(source_arena, other_arg_idx)
-                            })
+                                &candidate_literal,
+                            )
                         })
                 });
-            if has_conflicting_site {
-                continue;
-            }
-            if let Some(literal_text) = self.primitive_literal_argument_type_text(arg_idx) {
-                return Some(literal_text);
+            if !has_conflicting_site {
+                return Some(candidate_literal);
             }
         }
         None
@@ -968,21 +974,169 @@ fn type_annotation_is_or_contains_type_param(
     }
 }
 
-/// Returns `true` when `arg_idx` is an object-literal expression that contains
-/// at least one element (property assignment, shorthand, spread, etc.) — i.e.
-/// it can contribute a concrete inference through an object-property inference
-/// site.
+/// Returns `true` when the argument at `arg_idx` is an object literal that
+/// contains at least one `PropertyAssignment` whose name matches a T-typed
+/// property in `annotation_idx` AND whose value is a primitive literal that
+/// differs from `candidate_literal`.
 ///
-/// `{}` (empty object literal), `undefined`, and absent (omitted optional)
-/// arguments all return `false`.
-fn argument_has_object_property_values(source_arena: &NodeArena, arg_idx: NodeIndex) -> bool {
+/// This is the full call-site-aware conflict predicate:
+/// - `{}`, `undefined`, and absent optional args → `false` (no inference).
+/// - Same-literal property values (e.g. `{ type: "x" }` when candidate is
+///   `"x"`) → `false` (no *conflicting* inference).
+/// - Non-matching property names (e.g. `{ other: "y" }` against `{ type?: T }`)
+///   → `false` (the T-typed property is absent from the argument).
+/// - Different-literal property value (e.g. `{ type: "two" }` vs `"three"`)
+///   → `true` (genuine conflict; tsc widens to constraint).
+fn object_arg_has_property_with_different_literal(
+    source_arena: &NodeArena,
+    annotation_idx: NodeIndex,
+    arg_idx: NodeIndex,
+    type_param_name: &str,
+    candidate_literal: &str,
+) -> bool {
+    if !type_node_has_object_property_site_for(source_arena, annotation_idx, type_param_name, 0) {
+        return false;
+    }
     let Some(arg_node) = source_arena.get(arg_idx) else {
         return false;
     };
     if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
         return false;
     }
-    source_arena
-        .get_literal_expr(arg_node)
-        .is_some_and(|obj| !obj.elements.nodes.is_empty())
+    let Some(obj) = source_arena.get_literal_expr(arg_node) else {
+        return false;
+    };
+    if obj.elements.nodes.is_empty() {
+        return false;
+    }
+    let mut t_prop_names: Vec<String> = Vec::new();
+    collect_property_names_for_type_param(
+        source_arena,
+        annotation_idx,
+        type_param_name,
+        &mut t_prop_names,
+        0,
+    );
+    if t_prop_names.is_empty() {
+        return false;
+    }
+    obj.elements.nodes.iter().copied().any(|elem_idx| {
+        let Some(elem_node) = source_arena.get(elem_idx) else {
+            return false;
+        };
+        if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            return false;
+        }
+        let Some(prop) = source_arena.get_property_assignment(elem_node) else {
+            return false;
+        };
+        let Some(prop_name_text) = source_arena
+            .get(prop.name)
+            .and_then(|n| source_arena.get_identifier(n))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        if !t_prop_names.iter().any(|n| n.as_str() == prop_name_text) {
+            return false;
+        }
+        // This property carries T.  Check if its value differs from the candidate.
+        let Some(val_node) = source_arena.get(prop.initializer) else {
+            return false;
+        };
+        let val_literal = match val_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => source_arena
+                .get_literal(val_node)
+                .map(|lit| format!("\"{}\"", escape_string_for_double_quote(&lit.text))),
+            k if k == SyntaxKind::NumericLiteral as u16 => source_arena
+                .get_literal(val_node)
+                .map(|lit| lit.text.clone()),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
+            // Non-primitive value (expression, variable, …) — cannot determine
+            // the literal; treat conservatively as non-conflicting.
+            _ => return false,
+        };
+        val_literal.is_some_and(|lit| lit != candidate_literal)
+    })
+}
+
+/// Walks the type annotation at `type_idx` and appends to `names` the name of
+/// every `PropertySignature` member whose type annotation is (or contains) a
+/// direct reference to `type_param_name`.
+fn collect_property_names_for_type_param(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+    type_param_name: &str,
+    names: &mut Vec<String>,
+    depth: u8,
+) {
+    if depth > 16 {
+        return;
+    }
+    let Some(type_node) = source_arena.get(type_idx) else {
+        return;
+    };
+    match type_node.kind {
+        k if k == syntax_kind_ext::TYPE_LITERAL => {
+            let Some(lit) = source_arena.get_type_literal(type_node) else {
+                return;
+            };
+            for member_idx in lit.members.nodes.iter().copied() {
+                let Some(member_node) = source_arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                    continue;
+                }
+                let Some(sig) = source_arena.get_signature(member_node) else {
+                    continue;
+                };
+                if type_annotation_is_or_contains_type_param(
+                    source_arena,
+                    sig.type_annotation,
+                    type_param_name,
+                    depth + 1,
+                ) {
+                    if let Some(name) = source_arena
+                        .get(sig.name)
+                        .and_then(|n| source_arena.get_identifier(n))
+                        .map(|ident| ident.escaped_text.clone())
+                    {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+            let Some(composite) = source_arena.get_composite_type(type_node) else {
+                return;
+            };
+            for part_idx in composite.types.nodes.iter().copied() {
+                collect_property_names_for_type_param(
+                    source_arena,
+                    part_idx,
+                    type_param_name,
+                    names,
+                    depth + 1,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+            || k == syntax_kind_ext::OPTIONAL_TYPE
+            || k == syntax_kind_ext::REST_TYPE =>
+        {
+            let Some(wrapped) = source_arena.get_wrapped_type(type_node) else {
+                return;
+            };
+            collect_property_names_for_type_param(
+                source_arena,
+                wrapped.type_node,
+                type_param_name,
+                names,
+                depth + 1,
+            );
+        }
+        _ => {}
+    }
 }

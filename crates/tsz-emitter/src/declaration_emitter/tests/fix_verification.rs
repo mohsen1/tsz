@@ -1682,6 +1682,42 @@ const undef    = f("hello", undefined);
 }
 
 #[test]
+fn fix_generic_call_object_property_guard_same_literal_no_conflict() {
+    // When both `a: T` and `options.type` contribute the SAME literal, tsc has
+    // no disagreement between inference sites and keeps the literal.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const same = f("hello", { type: "hello" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const same = "hello";"#),
+        "same-literal object-property value must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_object_property_guard_non_matching_property_no_conflict() {
+    // `{ other: "world" }` has no property named `type`, so it supplies no
+    // inference for T through the `options: { type?: T }` path — not a conflict.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const unrelated = f("hello", { other: "world" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const unrelated = "hello";"#),
+        "object with non-matching property must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"
