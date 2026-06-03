@@ -2329,14 +2329,8 @@ impl<'a> CheckerState<'a> {
 
         // Check for circular reference
         if use_local_symbol_state && self.ctx.symbol_resolution_set.contains(&sym_id) {
-            // CRITICAL: For named entities (Interface, Class, TypeAlias, Enum), return Lazy placeholder
-            // instead of ERROR. This allows circular dependencies to work correctly.
-            //
-            // For example: `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
-            // When Filtered evaluates `keyof User` and User is still being checked, we return Lazy(User)
-            // instead of ERROR, allowing the type system to defer evaluation.
-            //
-            // For other symbols (variables, functions, etc.), we still return ERROR to prevent infinite loops.
+            // Named entities use Lazy placeholders so circular dependencies can
+            // defer evaluation; other symbols still return ERROR to avoid loops.
             let symbol = self.ctx.binder.get_symbol(sym_id);
             if let Some(symbol) = symbol {
                 let flags = symbol.flags;
@@ -2349,19 +2343,8 @@ impl<'a> CheckerState<'a> {
                         | symbol_flags::VALUE_MODULE)
                     != 0
                 {
-                    // For CLASS symbols: when a partial constructor type with
-                    // rough construct signatures has already been installed in
-                    // symbol_types (e.g. by build_partial_static_constructor_type
-                    // before evaluating a static initializer), return that
-                    // instead of a bare Lazy so that `new SameCls(...)` inside
-                    // the initializer sees the correct constructor arity.
                     if flags & symbol_flags::CLASS != 0
-                        && let Some(&partial) = self.ctx.symbol_types.get(&sym_id)
-                        && crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            partial,
-                        )
-                        .is_some()
+                        && let Some(partial) = self.circular_class_partial_constructor_type(sym_id)
                     {
                         return partial;
                     }
