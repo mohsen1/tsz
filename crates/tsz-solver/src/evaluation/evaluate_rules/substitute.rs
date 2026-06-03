@@ -11,11 +11,61 @@
 use crate::caches::db::TypeDatabase;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    ConditionalType, FunctionShape, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    ConditionalType, FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo,
+    TemplateSpan, TupleElement, TypeData, TypeId,
 };
 use rustc_hash::FxHashMap;
 
 use super::super::evaluate::TypeEvaluator;
+
+/// Rewrite `from -> to` inside every property's read and write type, keeping
+/// all declaration-site metadata (optionality, readonly, visibility, symbol,
+/// declaration order) intact. Returns the rebuilt list and whether any type
+/// changed so callers can preserve hash-consed identity on a no-op.
+fn substitute_properties_db(
+    db: &dyn TypeDatabase,
+    properties: &[PropertyInfo],
+    from: TypeId,
+    to: TypeId,
+    memo: &mut FxHashMap<TypeId, TypeId>,
+) -> (Vec<PropertyInfo>, bool) {
+    let mut changed = false;
+    let rebuilt = properties
+        .iter()
+        .map(|prop| {
+            let type_id = substitute_exact_type_db(db, prop.type_id, from, to, memo);
+            // Getter-only / plain properties share one type; reuse the result
+            // instead of re-walking the same node for the write slot.
+            let write_type = if prop.write_type == prop.type_id {
+                type_id
+            } else {
+                substitute_exact_type_db(db, prop.write_type, from, to, memo)
+            };
+            changed |= type_id != prop.type_id || write_type != prop.write_type;
+            PropertyInfo {
+                type_id,
+                write_type,
+                ..prop.clone()
+            }
+        })
+        .collect();
+    (rebuilt, changed)
+}
+
+/// Rewrite `from -> to` inside an index signature's value type, preserving the
+/// key type and `readonly`/cosmetic metadata. Returns the rebuilt signature and
+/// whether the value type changed.
+fn substitute_index_signature_db(
+    db: &dyn TypeDatabase,
+    idx: &IndexSignature,
+    from: TypeId,
+    to: TypeId,
+    memo: &mut FxHashMap<TypeId, TypeId>,
+) -> (IndexSignature, bool) {
+    let value_type = substitute_exact_type_db(db, idx.value_type, from, to, memo);
+    let changed = value_type != idx.value_type;
+    (IndexSignature { value_type, ..*idx }, changed)
+}
 
 /// Free-function form of [`TypeEvaluator::substitute_exact_type`] that walks
 /// the type graph using only a [`TypeDatabase`]. Crate-private so the
@@ -237,8 +287,51 @@ pub(crate) fn substitute_exact_type_db(
                 type_id
             }
         }
-        // Object/Function/Mapped/etc. — substitution does not reach into
-        // these in the original method either; preserve behaviour.
+        // Object literals reached as a distributive-conditional branch carry
+        // the distribution variable in their property/index value types — e.g.
+        // `T extends ... ? { kind: 'x'; value: T } : ...`. When the check side
+        // is a deferred union the per-member rewrite happens here (not at
+        // instantiation time), so the variable must be substituted inside the
+        // shape; otherwise every union member collapses to one widened object.
+        Some(TypeData::Object(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let (properties, changed) =
+                substitute_properties_db(db, &shape.properties, from, to, memo);
+            if changed {
+                db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let (properties, mut changed) =
+                substitute_properties_db(db, &shape.properties, from, to, memo);
+            let string_index = shape.string_index.as_ref().map(|idx| {
+                let (sig, sig_changed) = substitute_index_signature_db(db, idx, from, to, memo);
+                changed |= sig_changed;
+                sig
+            });
+            let number_index = shape.number_index.as_ref().map(|idx| {
+                let (sig, sig_changed) = substitute_index_signature_db(db, idx, from, to, memo);
+                changed |= sig_changed;
+                sig
+            });
+            if changed {
+                db.object_with_index(ObjectShape {
+                    flags: shape.flags,
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: shape.symbol,
+                })
+            } else {
+                type_id
+            }
+        }
+        // Callable/Mapped/etc. — substitution does not reach into these; the
+        // distributive-conditional and mapped callers only place object,
+        // tuple, function, union, and intersection shapes in branch position.
         _ => type_id,
     };
 
@@ -403,6 +496,75 @@ mod tests {
         assert_eq!(
             result, expected,
             "distributive branch substitution must update T[K] and template-literal K spans"
+        );
+    }
+
+    /// Regression for the distributive-conditional-over-deferred-union family
+    /// (issue #10864): when a distributive conditional's check side is a
+    /// deferred union the per-member rewrite runs through
+    /// `substitute_exact_type`. The true branch is frequently an object literal
+    /// (`{ value: T }`, `{ kind; value: T }`), so substitution must reach into
+    /// object property read/write types — otherwise every union member collapses
+    /// to one widened object and the conditional becomes over-constrained.
+    #[test]
+    fn test_substitute_exact_type_reaches_object_property_types() {
+        let interner = TypeInterner::new();
+
+        let t_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let value_atom = interner.intern_string("value");
+        let nested_atom = interner.intern_string("inner");
+
+        // `{ value: { inner: T } }` — the distribution variable is two object
+        // levels deep, so the rewrite must recurse structurally.
+        let inner = interner.object(vec![PropertyInfo::new(nested_atom, t_param)]);
+        let branch = interner.object(vec![PropertyInfo::new(value_atom, inner)]);
+
+        let mut evaluator =
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+        let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+        let result = evaluator.substitute_exact_type(branch, t_param, TypeId::NUMBER, &mut memo);
+
+        let expected_inner = interner.object(vec![PropertyInfo::new(nested_atom, TypeId::NUMBER)]);
+        let expected = interner.object(vec![PropertyInfo::new(value_atom, expected_inner)]);
+        assert_eq!(
+            result, expected,
+            "object-valued distributive branch must substitute the variable inside property types"
+        );
+        assert_ne!(
+            result, branch,
+            "pre-fix behaviour left object property types unsubstituted, widening the branch"
+        );
+    }
+
+    /// A no-op substitution (the variable does not occur in the object) must
+    /// return the original hash-consed `TypeId` so identity-based caches and
+    /// display aliases are preserved.
+    #[test]
+    fn test_substitute_exact_type_object_no_match_preserves_identity() {
+        let interner = TypeInterner::new();
+
+        let t_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let value_atom = interner.intern_string("value");
+        let branch = interner.object(vec![PropertyInfo::new(value_atom, TypeId::STRING)]);
+
+        let mut evaluator =
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+        let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+        let result = evaluator.substitute_exact_type(branch, t_param, TypeId::NUMBER, &mut memo);
+
+        assert_eq!(
+            result, branch,
+            "object without the substituted variable must keep its original TypeId"
         );
     }
 }
