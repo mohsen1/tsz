@@ -46,6 +46,11 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # jsxIntrinsicUnions.tsx and jsxJsxsCjsTransformNestedSelfClosingChild.tsx:
 # accepted after REGRESSED on PR #12368 exact head 9ee797b6 / run 26906037226.
 # Tracked in #12376.
+# inferentialTypingWithFunctionTypeZip.ts then reappeared on PR #11890 exact
+# head 5266d5c0 after rebasing onto origin/main 9142cd6a95 (CI run
+# 26902607247): all six conformance shards passed, aggregate strictness was
+# 12570/12585 observed vs 12582/12585 expected with this one newly unlisted
+# inference-family drift. Re-accepted below and tracked by #8432.
 # intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
@@ -64,6 +69,7 @@ TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosing
 # variance, and recursive relation-policy families tracked by #8432; keep them
 # visible here until the owning parity fixes remove them.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
