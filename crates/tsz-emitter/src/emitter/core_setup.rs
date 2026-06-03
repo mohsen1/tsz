@@ -415,6 +415,7 @@ impl<'a> Printer<'a> {
             scoped_class_expression_self_alias_ancestors: Vec::new(),
             pending_tc39_class_expression_name: None,
             es5_class_expression_extends_this_captured: false,
+            async_arrow_generator_this_arg: None,
             tagged_template_var_map: FxHashMap::default(),
         }
     }
@@ -431,6 +432,10 @@ impl<'a> Printer<'a> {
 
     pub(crate) const fn set_es5_class_expression_extends_this_captured(&mut self, captured: bool) {
         self.es5_class_expression_extends_this_captured = captured;
+    }
+
+    pub(crate) fn set_async_arrow_generator_this_arg(&mut self, arg: Option<String>) {
+        self.async_arrow_generator_this_arg = arg;
     }
 
     /// Emit an object-literal property node, marking accessor members to enable

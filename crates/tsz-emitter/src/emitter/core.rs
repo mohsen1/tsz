@@ -1004,6 +1004,10 @@ pub struct Printer<'a> {
     /// receiver.
     pub(crate) es5_class_expression_extends_this_captured: bool,
 
+    /// Receiver to use for `__generator(<receiver>, ...)` when an embedded
+    /// async arrow is emitted from an IR-owned static class context.
+    pub(crate) async_arrow_generator_this_arg: Option<String>,
+
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 

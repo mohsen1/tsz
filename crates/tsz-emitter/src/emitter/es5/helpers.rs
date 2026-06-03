@@ -933,6 +933,9 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             async_emitter.set_source_map_context(text, self.writer.current_source_index());
         }
+        if let Some(generator_this_arg) = &self.async_arrow_generator_this_arg {
+            async_emitter.set_generator_this_arg(generator_this_arg.clone());
+        }
         async_emitter.set_lexical_this(this_expr != "this");
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             async_emitter.set_tslib_prefix(true);

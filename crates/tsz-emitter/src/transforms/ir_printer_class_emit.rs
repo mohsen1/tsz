@@ -521,7 +521,10 @@ impl<'a> IRPrinter<'a> {
         };
         self.write("return ");
         self.write_helper("__generator");
-        self.write("(this, function (");
+        self.write("(");
+        let generator_this_arg = self.generator_this_arg.clone();
+        self.write(&generator_this_arg);
+        self.write(", function (");
         self.write(self.generator_state_name);
         self.write(") {");
         if !*has_await || cases.is_empty() {

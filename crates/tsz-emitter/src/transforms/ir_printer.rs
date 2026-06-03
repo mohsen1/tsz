@@ -82,6 +82,7 @@ pub struct IRPrinter<'a> {
     system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
+    generator_this_arg: String,
     /// Outer names (e.g. a class-expression alias) excluded from generator state
     /// variable selection.  Treated as already-allocated hoisted vars so the
     /// state-name picker skips past them.
@@ -318,6 +319,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_this_arg: "this".to_string(),
             outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
@@ -350,6 +352,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_this_arg: "this".to_string(),
             outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
@@ -382,6 +385,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_this_arg: "this".to_string(),
             outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
@@ -519,6 +523,10 @@ impl<'a> IRPrinter<'a> {
 
     pub const fn set_generator_state_name(&mut self, name: &'static str) {
         self.generator_state_name = name;
+    }
+
+    pub fn set_generator_this_arg(&mut self, arg: String) {
+        self.generator_this_arg = arg;
     }
 
     /// Set names that must not be chosen as the `__generator` state variable.
@@ -1686,16 +1694,12 @@ impl<'a> IRPrinter<'a> {
             } => {
                 if let Some(arena) = self.arena {
                     let mut printer = self.build_nested_ast_printer(arena);
+                    printer.set_async_arrow_generator_this_arg(Some(generator_this.to_string()));
                     printer.emit_expression(*node);
                     self.merge_ast_printer_block_scope_reserved_names(&printer);
                     let output = printer.get_output();
-                    let rewritten = output.replacen(
-                        "__generator(this,",
-                        &format!("__generator({generator_this},"),
-                        1,
-                    );
                     self.write_embedded_output(&Self::rename_colliding_outer_generator_state(
-                        &rewritten,
+                        output,
                         generator_this,
                     ));
                     return;
