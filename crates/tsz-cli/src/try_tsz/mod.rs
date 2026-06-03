@@ -19,7 +19,11 @@ use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
 const SUCCESS: i32 = 0;
 const MISMATCH: i32 = 1;
 const SETUP_FAILURE: i32 = 2;
-const TSZ_TIMEOUT: Duration = Duration::from_secs(600);
+const DEFAULT_TSZ_TIMEOUT_SECS: u64 = 120;
+const TSZ_PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
+const MAX_TSCONFIG_REPORT_FILES: usize = 12;
+const MAX_TSCONFIG_REPORT_BYTES: usize = 32 * 1024;
+const MAX_TSCONFIG_REPORT_TOTAL_BYTES: usize = 48 * 1024;
 const TSC_HELPER: &str = include_str!("tsc_diagnostics_helper.js");
 
 #[derive(Parser, Debug)]
@@ -246,9 +250,10 @@ fn run_config(cwd: &Path, config: &Path) -> ConfigReport {
             };
         }
         Ok(TszRunOutcome::TimedOut { elapsed_ms }) => {
+            let timeout = tsz_timeout();
             let message = format!(
                 "tsz exceeded the {}s timeout before producing diagnostics",
-                TSZ_TIMEOUT.as_secs()
+                timeout.as_secs()
             );
             return ConfigReport {
                 config: config_label,
@@ -383,6 +388,8 @@ fn run_tsc(cwd: &Path, config: &Path) -> Result<CompilerRun> {
 fn run_tsz(cwd: &Path, config: &Path) -> Result<TszRunOutcome> {
     println!("Running tsz --noEmit -p {} ...", relative_path(cwd, config));
     let start = Instant::now();
+    let timeout = tsz_timeout();
+    let mut next_progress_at = TSZ_PROGRESS_INTERVAL;
     let worker_exe = std::env::current_exe().context("failed to locate try-tsz executable")?;
     let mut child = Command::new(worker_exe)
         .arg("--try-tsz-worker")
@@ -401,14 +408,23 @@ fn run_tsz(cwd: &Path, config: &Path) -> Result<TszRunOutcome> {
         {
             break;
         }
-        if start.elapsed() >= TSZ_TIMEOUT {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
             let _ = child.kill();
             let _output = child
                 .wait_with_output()
                 .context("failed to collect timed-out tsz worker output")?;
             return Ok(TszRunOutcome::TimedOut {
-                elapsed_ms: start.elapsed().as_millis(),
+                elapsed_ms: elapsed.as_millis(),
             });
+        }
+        if elapsed >= next_progress_at {
+            println!(
+                "Still running tsz after {:.0}s (timeout at {}s) ...",
+                elapsed.as_secs_f64(),
+                timeout.as_secs()
+            );
+            next_progress_at += TSZ_PROGRESS_INTERVAL;
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -450,6 +466,18 @@ fn run_tsz(cwd: &Path, config: &Path) -> Result<TszRunOutcome> {
         diagnostics,
         raw_output: stderr,
     }))
+}
+
+fn tsz_timeout() -> Duration {
+    tsz_timeout_from_env_value(std::env::var("TRY_TSZ_TIMEOUT_SECS").ok().as_deref())
+}
+
+fn tsz_timeout_from_env_value(value: Option<&str>) -> Duration {
+    let seconds = value
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_TSZ_TIMEOUT_SECS);
+    Duration::from_secs(seconds)
 }
 
 fn run_tsz_worker(cwd: &Path, config: &Path) -> Result<i32> {
@@ -994,61 +1022,23 @@ fn maybe_prepare_interactive_report(cwd: &Path, summary: &SummaryReport) -> Resu
     fs::create_dir_all(&report_dir)?;
     let summary_path = report_dir.join("summary.json");
     write_json_report(&summary_path, summary)?;
-    let markdown = render_markdown_report(summary);
+    let markdown = render_markdown_report(cwd, summary);
     let report_path = report_dir.join("report.md");
     fs::write(&report_path, markdown)?;
     write_raw_outputs(summary, &report_dir)?;
+    write_tsconfig_context(cwd, summary, &report_dir)?;
     println!("Wrote {}", report_path.display());
 
     if confirm("Create snippet repro candidates for the first mismatches? [y/N] ")? {
         write_snippet_candidates(cwd, summary, &report_dir)?;
     }
 
-    if confirm("Open the report in your editor? [y/N] ")? {
-        open_report_in_editor(&report_path)?;
-    } else {
-        println!("Report: {}", report_path.display());
-    }
+    println!("Report: {}", report_path.display());
 
     if confirm("Submit this report to GitHub Discussions with gh? [y/N] ")? {
         submit_discussion_or_print_fallback(&report_path)?;
     }
 
-    Ok(())
-}
-
-fn open_report_in_editor(report_path: &Path) -> Result<()> {
-    let editor = std::env::var("VISUAL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("EDITOR")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        });
-    let Some(editor) = editor else {
-        println!(
-            "No VISUAL or EDITOR is set. Report: {}",
-            report_path.display()
-        );
-        return Ok(());
-    };
-    let mut parts = editor.split_whitespace();
-    let Some(program) = parts.next() else {
-        println!("No editor command found. Report: {}", report_path.display());
-        return Ok(());
-    };
-    let status = Command::new(program)
-        .args(parts)
-        .arg(report_path)
-        .status()
-        .with_context(|| format!("failed to open report with {editor}"))?;
-    if !status.success() {
-        println!(
-            "Editor exited with {status}. Report: {}",
-            report_path.display()
-        );
-    }
     Ok(())
 }
 
@@ -1070,7 +1060,7 @@ fn write_json_report(path: &Path, summary: &SummaryReport) -> Result<()> {
     Ok(())
 }
 
-fn render_markdown_report(summary: &SummaryReport) -> String {
+fn render_markdown_report(cwd: &Path, summary: &SummaryReport) -> String {
     let mut out = String::new();
     out.push_str("# try-tsz report\n\n");
     for report in &summary.configs {
@@ -1124,6 +1114,7 @@ fn render_markdown_report(summary: &SummaryReport) -> String {
             "Missing tsc diagnostics",
             &report.missing_tsc_diagnostics,
         );
+        push_tsconfig_section(cwd, &mut out, report);
     }
     out
 }
@@ -1153,6 +1144,188 @@ fn write_raw_outputs(summary: &SummaryReport, report_dir: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct TsconfigSnapshot {
+    label: String,
+    text: String,
+    truncated: bool,
+}
+
+fn collect_tsconfig_context(cwd: &Path, report: &ConfigReport) -> Vec<TsconfigSnapshot> {
+    let mut snapshots = Vec::new();
+    let mut seen = Vec::<PathBuf>::new();
+    let mut displayed_bytes = 0usize;
+    let root = cwd.join(&report.config);
+    collect_tsconfig_context_from_path(cwd, &root, &mut snapshots, &mut seen, &mut displayed_bytes);
+    snapshots
+}
+
+fn collect_tsconfig_context_from_path(
+    cwd: &Path,
+    path: &Path,
+    snapshots: &mut Vec<TsconfigSnapshot>,
+    seen: &mut Vec<PathBuf>,
+    displayed_bytes: &mut usize,
+) {
+    if snapshots.len() >= MAX_TSCONFIG_REPORT_FILES
+        || *displayed_bytes >= MAX_TSCONFIG_REPORT_TOTAL_BYTES
+    {
+        return;
+    }
+
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if seen.iter().any(|seen_path| seen_path == &normalized) {
+        return;
+    }
+    seen.push(normalized.clone());
+
+    let Ok(full_text) = fs::read_to_string(&normalized) else {
+        return;
+    };
+    let parsed_config = json5::from_str::<serde_json::Value>(&full_text).ok();
+    let remaining_bytes = MAX_TSCONFIG_REPORT_TOTAL_BYTES - *displayed_bytes;
+    let display_limit = MAX_TSCONFIG_REPORT_BYTES.min(remaining_bytes);
+    let truncated = full_text.len() > display_limit;
+    let text = if truncated {
+        full_text.chars().take(display_limit).collect()
+    } else {
+        full_text
+    };
+    *displayed_bytes += text.len();
+    snapshots.push(TsconfigSnapshot {
+        label: normalize_path_label(cwd, &normalized),
+        text,
+        truncated,
+    });
+
+    let Some(value) = parsed_config else {
+        return;
+    };
+    let base_dir = normalized.parent().unwrap_or(cwd);
+
+    if let Some(extends) = value.get("extends").and_then(serde_json::Value::as_str)
+        && let Some(extended) = resolve_local_extends(base_dir, extends)
+    {
+        collect_tsconfig_context_from_path(cwd, &extended, snapshots, seen, displayed_bytes);
+    }
+
+    let Some(references) = value
+        .get("references")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    for reference in references {
+        let Some(path_value) = reference
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|path_value| resolve_project_reference(base_dir, path_value))
+        else {
+            continue;
+        };
+        collect_tsconfig_context_from_path(cwd, &path_value, snapshots, seen, displayed_bytes);
+    }
+}
+
+fn resolve_local_extends(base_dir: &Path, extends: &str) -> Option<PathBuf> {
+    if !(extends.starts_with("./") || extends.starts_with("../") || extends.starts_with('/')) {
+        return None;
+    }
+    let candidate = if Path::new(extends).is_absolute() {
+        PathBuf::from(extends)
+    } else {
+        base_dir.join(extends)
+    };
+    Some(if candidate.extension().is_none() {
+        candidate.with_extension("json")
+    } else {
+        candidate
+    })
+}
+
+fn resolve_project_reference(base_dir: &Path, path_value: &str) -> Option<PathBuf> {
+    if !(path_value.starts_with("./")
+        || path_value.starts_with("../")
+        || path_value.starts_with('/'))
+    {
+        return None;
+    }
+    let candidate = if Path::new(path_value).is_absolute() {
+        PathBuf::from(path_value)
+    } else {
+        base_dir.join(path_value)
+    };
+    Some(if candidate.is_dir() || candidate.extension().is_none() {
+        candidate.join("tsconfig.json")
+    } else {
+        candidate
+    })
+}
+
+fn push_tsconfig_section(cwd: &Path, out: &mut String, report: &ConfigReport) {
+    let snapshots = collect_tsconfig_context(cwd, report);
+    if snapshots.is_empty() {
+        return;
+    }
+    out.push_str("### tsconfig context\n\n");
+    for snapshot in snapshots {
+        out.push_str(&format!("#### `{}`\n\n", snapshot.label));
+        out.push_str("```jsonc\n");
+        out.push_str(&snapshot.text);
+        if !snapshot.text.ends_with('\n') {
+            out.push('\n');
+        }
+        if snapshot.truncated {
+            out.push_str("// ... truncated by try-tsz\n");
+        }
+        out.push_str("```\n\n");
+    }
+}
+
+fn write_tsconfig_context(cwd: &Path, summary: &SummaryReport, report_dir: &Path) -> Result<()> {
+    let config_dir = report_dir.join("tsconfig");
+    fs::create_dir_all(&config_dir)?;
+    for (report_index, report) in summary.configs.iter().enumerate() {
+        for (config_index, snapshot) in collect_tsconfig_context(cwd, report).iter().enumerate() {
+            let stem = format!(
+                "config-{:03}-{:03}-{}",
+                report_index + 1,
+                config_index + 1,
+                sanitize_report_file_name(&snapshot.label)
+            );
+            let mut out = String::new();
+            out.push_str(&format!("path: {}\n", snapshot.label));
+            out.push_str(&format!("truncated: {}\n\n", snapshot.truncated));
+            out.push_str(&snapshot.text);
+            if !snapshot.text.ends_with('\n') {
+                out.push('\n');
+            }
+            fs::write(config_dir.join(stem), out)?;
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_report_file_name(label: &str) -> String {
+    let mut sanitized = label
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.len() > 96 {
+        sanitized.truncate(96);
+    }
+    if sanitized.is_empty() {
+        sanitized.push_str("tsconfig.json");
+    }
+    sanitized
 }
 
 fn write_compiler_raw(path: &Path, run: &CompilerRun) -> Result<()> {
@@ -1405,6 +1578,31 @@ mod tests {
         }
     }
 
+    fn report_for_config(config: &str) -> ConfigReport {
+        ConfigReport {
+            config: config.to_string(),
+            state: ResultState::Mismatch,
+            metadata: ProjectMetadata {
+                try_tsz_version: "test".to_string(),
+                tsz_version: "test".to_string(),
+                typescript_version: Some("6.0.3".to_string()),
+                node_version: None,
+                os: "test".to_string(),
+                arch: "test".to_string(),
+                package_manager: None,
+                project_references: true,
+                file_count: 0,
+                approx_loc: 0,
+            },
+            tsc: None,
+            tsz: None,
+            extra_tsz_diagnostics: Vec::new(),
+            missing_tsc_diagnostics: Vec::new(),
+            order_mismatches: 0,
+            setup_error: None,
+        }
+    }
+
     #[test]
     fn discover_nearest_tsconfig() {
         let temp = TempDir::new();
@@ -1464,6 +1662,60 @@ mod tests {
 
         assert!(error.contains("TypeScript 6.0.3 or newer"));
         assert!(error.contains("node_modules/.bin/tsc"));
+    }
+
+    #[test]
+    fn tsz_timeout_env_value_must_be_positive_seconds() {
+        assert_eq!(
+            tsz_timeout_from_env_value(None),
+            Duration::from_secs(DEFAULT_TSZ_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            tsz_timeout_from_env_value(Some("45")),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            tsz_timeout_from_env_value(Some("0")),
+            Duration::from_secs(DEFAULT_TSZ_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            tsz_timeout_from_env_value(Some("nope")),
+            Duration::from_secs(DEFAULT_TSZ_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn tsconfig_context_collects_local_extends_and_references() {
+        let temp = TempDir::new();
+        write_file(
+            &temp.path.join("tsconfig.base.json"),
+            "{ // jsonc is accepted\n  \"compilerOptions\": { \"strict\": true }\n}\n",
+        );
+        write_file(
+            &temp.path.join("packages/shared/tsconfig.json"),
+            "{ \"compilerOptions\": { \"composite\": true } }\n",
+        );
+        write_file(
+            &temp.path.join("packages/app/tsconfig.json"),
+            "{\n  \"extends\": \"../../tsconfig.base.json\",\n  \"references\": [{ \"path\": \"../shared\" }]\n}\n",
+        );
+
+        let snapshots =
+            collect_tsconfig_context(&temp.path, &report_for_config("packages/app/tsconfig.json"));
+        let labels = snapshots
+            .iter()
+            .map(|snapshot| snapshot.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec![
+                "packages/app/tsconfig.json",
+                "tsconfig.base.json",
+                "packages/shared/tsconfig.json"
+            ]
+        );
+        assert!(snapshots.iter().all(|snapshot| !snapshot.truncated));
     }
 
     #[test]

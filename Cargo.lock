@@ -1492,6 +1492,7 @@ dependencies = [
  "colored",
  "dashmap",
  "globset",
+ "json5",
  "mimalloc",
  "notify",
  "rayon",
