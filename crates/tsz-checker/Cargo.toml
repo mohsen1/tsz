@@ -699,6 +699,10 @@ name = "union_source_missing_property_elaboration_tests"
 path = "tests/union_source_missing_property_elaboration_tests.rs"
 
 [[test]]
+name = "union_target_missing_property_elaboration_tests"
+path = "tests/union_target_missing_property_elaboration_tests.rs"
+
+[[test]]
 name = "union_source_structural_elaboration_tests"
 path = "tests/union_source_structural_elaboration_tests.rs"
 

@@ -310,6 +310,28 @@ pub enum SubtypeFailureReason {
         member_type: TypeId,
         nested_reason: Box<Self>,
     },
+    /// A source is not assignable to a union **target** because it fails to
+    /// match any member, and the best-matching member fails through a missing
+    /// required property.
+    ///
+    /// tsc relates an object literal / source against a union by selecting the
+    /// best-matching constituent (`getBestMatchingType` -> `findMostOverlappyType`:
+    /// the member sharing the most property-name keys with the source, ties
+    /// broken by the *last* such member) and elaborates the failure against it.
+    /// The top-level line stays `Type 'S' is not assignable to type 'U'.`, and
+    /// the best member's `Property 'x' is missing in type 'S' but required in
+    /// type '<member>'.` line (or the multi-property TS2739 form) is carried in
+    /// `nested_reason` and rendered one level deeper — instead of stopping at
+    /// the bare union-to-target line.
+    ///
+    /// `member_type` is the best-matching union member; `nested_reason` is the
+    /// missing-property failure of `source_type` against that member.
+    UnionTargetMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+        member_type: TypeId,
+        nested_reason: Box<Self>,
+    },
     /// A deferred conditional type relation failed because one of its branches
     /// fails the corresponding branch relation.
     ///
@@ -684,6 +706,7 @@ impl SubtypeFailureReason {
             | Self::IndexAccessTypeParameterMismatch { .. }
             | Self::TypeArgumentMismatch { .. }
             | Self::UnionSourceMismatch { .. }
+            | Self::UnionTargetMismatch { .. }
             | Self::ConditionalBranchMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
@@ -1096,6 +1119,16 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             )
             .with_related(nested_reason.to_diagnostic(*member_type, *target_type)),
+            Self::UnionTargetMismatch {
+                source_type,
+                target_type,
+                member_type,
+                nested_reason,
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            )
+            .with_related(nested_reason.to_diagnostic(*source_type, *member_type)),
             Self::ConditionalBranchMismatch {
                 source_type,
                 target_type,

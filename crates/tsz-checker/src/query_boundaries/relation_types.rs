@@ -250,6 +250,15 @@ impl RelationFailure {
                 target_type,
                 ..
             }
+            // A union *target* failure: the checker-facing classification keeps
+            // the source/union pair; the best-matching member and its
+            // missing-property reason are rendered from the solver reason's
+            // structured chain via `render_failure_reason`.
+            | SubtypeFailureReason::UnionTargetMismatch {
+                source_type,
+                target_type,
+                ..
+            }
             // A deferred-conditional relation failure: the checker-facing
             // classification keeps the outer conditional/concrete pair; the
             // failing branch and its nested reason are rendered from the
