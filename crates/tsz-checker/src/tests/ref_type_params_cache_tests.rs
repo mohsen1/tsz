@@ -18,6 +18,22 @@ fn alias_body_explicit_type_refs_use_validator_only_path() {
 }
 
 #[test]
+fn type_reference_body_reuses_resolved_type_arguments() {
+    let checker_source =
+        std::fs::read_to_string("src/state/type_resolution/core.rs").expect("read type resolver");
+    assert!(
+        checker_source.contains("resolve_type_argument_nodes_once"),
+        "type-reference lowering should resolve explicit type arguments once \
+         for branches that need checker-owned TypeIds"
+    );
+    assert!(
+        checker_source.contains("if self.type_arg_needs_checker_resolution(arg_idx)"),
+        "Application rebuild should only replace explicit type-argument slots \
+         that need checker resolution, preserving lowered alias identity otherwise"
+    );
+}
+
+#[test]
 fn multiple_refs_to_same_two_param_utility_no_spurious_errors() {
     let diags = check_source_diagnostics(
         r#"

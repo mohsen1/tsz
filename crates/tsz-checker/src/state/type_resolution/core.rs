@@ -11,26 +11,53 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Keep the lowered generic base/defaults, but replace explicit type
-    /// arguments with checker-resolved forms so inline type literals preserve
-    /// computed property names and other checker-owned facts.
+    /// Keep the lowered generic base/defaults and ordinary argument identity,
+    /// but replace checker-owned explicit type-argument slots when needed so
+    /// inline type literals preserve computed property names and related facts.
     fn rebuild_application_with_checker_type_args(
         &mut self,
         application: TypeId,
         type_args: &NodeList,
+        resolved_type_args: Option<&[TypeId]>,
     ) -> TypeId {
         let Some((base, mut app_args)) = query::get_application_info(self.ctx.types, application)
         else {
             return application;
         };
 
-        for (slot, &arg_idx) in app_args.iter_mut().zip(type_args.nodes.iter()) {
+        for (arg_pos, (slot, &arg_idx)) in
+            app_args.iter_mut().zip(type_args.nodes.iter()).enumerate()
+        {
             if self.type_arg_needs_checker_resolution(arg_idx) {
-                *slot = self.get_type_from_type_node(arg_idx);
+                *slot = if let Some(resolved) = resolved_type_args
+                    .and_then(|args| args.get(arg_pos))
+                    .copied()
+                {
+                    resolved
+                } else {
+                    self.get_type_from_type_node(arg_idx)
+                };
             }
         }
 
         self.ctx.types.application(base, app_args)
+    }
+
+    fn resolve_type_argument_nodes_once(
+        &mut self,
+        resolved_type_args: &mut Option<Vec<TypeId>>,
+        type_args: &NodeList,
+    ) -> Vec<TypeId> {
+        if let Some(cached) = resolved_type_args.as_ref() {
+            return cached.clone();
+        }
+        let resolved = type_args
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect::<Vec<_>>();
+        *resolved_type_args = Some(resolved.clone());
+        resolved
     }
 
     fn type_arg_needs_checker_resolution(&self, arg_idx: NodeIndex) -> bool {
@@ -368,7 +395,7 @@ impl<'a> CheckerState<'a> {
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut type_id = lowering.lower_type(idx);
                 if let Some(args) = &type_ref.type_arguments {
-                    type_id = self.rebuild_application_with_checker_type_args(type_id, args);
+                    type_id = self.rebuild_application_with_checker_type_args(type_id, args, None);
                 }
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
@@ -704,6 +731,7 @@ impl<'a> CheckerState<'a> {
             let is_known_global = self.is_well_known_lib_type_name(name);
 
             if has_type_args {
+                let mut resolved_type_args_cache: Option<Vec<TypeId>> = None;
                 let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
@@ -830,11 +858,8 @@ impl<'a> CheckerState<'a> {
                         self.same_file_type_alias_parts_for_name(name)
                     && let Some(args) = &type_ref.type_arguments
                 {
-                    let type_args = args
-                        .nodes
-                        .iter()
-                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                        .collect::<Vec<_>>();
+                    let type_args =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
                     let (params, updates) = self.push_type_parameters(&type_params);
                     let body = self.get_type_from_type_node(type_node);
                     self.pop_type_parameters(updates);
@@ -872,19 +897,13 @@ impl<'a> CheckerState<'a> {
                         .map(|symbol| symbol.escaped_name.clone())
                         .unwrap_or_else(|| name.to_string());
                     self.ensure_def_ready_for_lowering(target_sym_id, &target_name);
-                    for &arg_idx in &args.nodes {
-                        let _ = self.get_type_from_type_node(arg_idx);
-                    }
+                    let type_args =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
                     if !self.is_inside_type_parameter_declaration(idx)
                         && self.validate_type_reference_type_arguments(target_sym_id, args, idx)
                     {
                         return TypeId::ERROR;
                     }
-                    let type_args = args
-                        .nodes
-                        .iter()
-                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                        .collect::<Vec<_>>();
                     let def_id = self
                         .ctx
                         .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name);
@@ -938,17 +957,10 @@ impl<'a> CheckerState<'a> {
                             !symbol.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
                         }
                     };
-                if array_is_unshadowed
-                    && let Some(args) = &type_ref.type_arguments
-                    && let Some(&first_arg) = args.nodes.first()
-                {
-                    // Process all type-argument nodes so their referenced
-                    // symbols get registered (matching the lowering path's
-                    // side effects). Only the first arg is used semantically.
-                    for &arg_idx in &args.nodes {
-                        let _ = self.get_type_from_type_node(arg_idx);
-                    }
-                    let elem_type = self.get_type_from_type_node(first_arg);
+                if array_is_unshadowed && let Some(args) = &type_ref.type_arguments {
+                    let type_args =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
+                    let elem_type = type_args.first().copied().unwrap_or(TypeId::ERROR);
                     let factory = self.ctx.types.factory();
                     let array_type = factory.array(elem_type);
                     if name == "ReadonlyArray" {
@@ -991,11 +1003,10 @@ impl<'a> CheckerState<'a> {
                                 return TypeId::ERROR;
                             }
 
-                            let type_args: Vec<TypeId> = args
-                                .nodes
-                                .iter()
-                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                .collect();
+                            let type_args = self.resolve_type_argument_nodes_once(
+                                &mut resolved_type_args_cache,
+                                args,
+                            );
                             if !type_params.is_empty() && !type_args.is_empty() {
                                 return crate::query_boundaries::common::instantiate_generic(
                                     self.ctx.types,
@@ -1110,11 +1121,8 @@ impl<'a> CheckerState<'a> {
                 // This is needed so that when we evaluate the Application, we can
                 // resolve Ref types in the arguments
                 if let Some(args) = &type_ref.type_arguments {
-                    for &arg_idx in &args.nodes {
-                        // Recursively get type from the arg - this will add any referenced
-                        // symbols to type_env
-                        let _ = self.get_type_from_type_node(arg_idx);
-                    }
+                    let _ =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
                     // Validate type arguments against constraints (TS2344)
                     // Skip validation inside type parameter declarations (constraints/defaults)
                     if !is_builtin_array
@@ -1152,10 +1160,10 @@ impl<'a> CheckerState<'a> {
                         .type_arguments
                         .as_ref()
                         .map(|args| {
-                            args.nodes
-                                .iter()
-                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                .collect::<Vec<_>>()
+                            self.resolve_type_argument_nodes_once(
+                                &mut resolved_type_args_cache,
+                                args,
+                            )
                         })
                         .unwrap_or_default();
                     let def_id = self
@@ -1175,9 +1183,10 @@ impl<'a> CheckerState<'a> {
                     && !self.ctx.file_local_type_shadow_for_lib_name(name)
                     && self.ctx.actual_lib_def_id_for_bare_name(name).is_some()
                     && let Some(args) = &type_ref.type_arguments
-                    && let Some(&arg_idx) = args.nodes.first()
                 {
-                    let arg_type = self.get_type_from_type_node(arg_idx);
+                    let type_args =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
+                    let arg_type = type_args.first().copied().unwrap_or(TypeId::ERROR);
                     let resolved_arg = self.evaluate_type_with_resolution(arg_type);
                     let array_like =
                         crate::query_boundaries::type_checking_utilities::classify_array_like(
@@ -1271,7 +1280,11 @@ impl<'a> CheckerState<'a> {
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut result = lowering.lower_type(idx);
                 if let Some(args) = &type_ref.type_arguments {
-                    result = self.rebuild_application_with_checker_type_args(result, args);
+                    result = self.rebuild_application_with_checker_type_args(
+                        result,
+                        args,
+                        resolved_type_args_cache.as_deref(),
+                    );
                 }
                 if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
                     && !is_builtin_array
