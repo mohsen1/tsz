@@ -899,4 +899,13 @@ mod tests {
 
         assert!(is_continue(&["tsz", "--build", "file.ts"]));
     }
+
+    #[test]
+    fn ordinary_invocation_returns_continue_byte_stable() {
+        // A normal compile invocation triggers no early exit and needs no
+        // rewrite: it must come back as Continue with the argv unchanged.
+        let input = &["tsz", "--noEmit", "src/main.ts"];
+        assert!(is_continue(input));
+        assert_eq!(preprocess_strs(input), input.to_vec());
+    }
 }
