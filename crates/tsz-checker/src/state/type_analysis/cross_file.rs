@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
     }
 
-    fn try_resolve_cross_arena_named_alias_without_child(
+    pub(super) fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
@@ -261,7 +261,20 @@ impl<'a> CheckerState<'a> {
                         .cached_cross_file_symbol_type(target_sym_id, file_idx as u32)
                 })
                 .or_else(|| {
-                    self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
+                    let resolved = self.direct_source_file_type_alias_result(
+                        target_sym_id,
+                        target_file_idx,
+                        true,
+                    )?;
+                    if let Some(file_idx) = target_file_idx {
+                        self.ctx.cache_cross_file_symbol_type(
+                            target_sym_id,
+                            file_idx as u32,
+                            resolved.0,
+                            resolved.1.clone(),
+                        );
+                    }
+                    Some(resolved)
                 })
                 .unwrap_or_else(|| {
                     let resolved = self.type_reference_symbol_type_with_params(target_sym_id);

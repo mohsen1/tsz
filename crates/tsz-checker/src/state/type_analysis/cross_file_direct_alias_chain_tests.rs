@@ -406,6 +406,109 @@ fn direct_source_file_type_alias_lowers_imported_keyset_range_leaf() {
 }
 
 #[test]
+fn imported_alias_shortcut_caches_direct_source_target_for_second_alias() {
+    with_program_state_with_libs(
+        &[
+            (
+                "target.ts",
+                "type Pad0 = unknown;\ntype Pad1 = unknown;\nexport type Shared<T> = { readonly value: T };",
+            ),
+            (
+                "requester.ts",
+                "import { Shared as FirstShared } from './target';\nimport { Shared as SecondShared } from './target';",
+            ),
+        ],
+        "requester.ts",
+        "target.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            state.ctx.share_owner_symbol_type_results = true;
+            let requester_idx = state.ctx.current_file_idx;
+            let first_alias = state
+                .ctx
+                .binder
+                .file_locals
+                .get("FirstShared")
+                .expect("first import alias");
+            let second_alias = state
+                .ctx
+                .binder
+                .file_locals
+                .get("SecondShared")
+                .expect("second import alias");
+            let target_sym = target_binder
+                .file_locals
+                .get("Shared")
+                .expect("target alias");
+            state
+                .ctx
+                .register_symbol_file_target(first_alias, requester_idx);
+            state
+                .ctx
+                .register_symbol_file_target(second_alias, requester_idx);
+            assert_eq!(
+                state
+                    .ctx
+                    .resolve_import_target_from_file(requester_idx, "./target"),
+                Some(target_idx),
+                "fixture module resolution should find target.ts",
+            );
+            assert_eq!(
+                state.resolve_cross_file_export_from_file(
+                    "./target",
+                    "Shared",
+                    Some(requester_idx)
+                ),
+                Some(target_sym),
+                "fixture export lookup should find Shared",
+            );
+
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(target_sym, target_idx as u32),
+                None,
+                "target cache should start empty",
+            );
+
+            let (first_ty, first_params) = state
+                .try_resolve_cross_arena_named_alias_without_child(first_alias)
+                .expect("first import alias should resolve through the shortcut");
+            assert_ne!(first_ty, TypeId::UNKNOWN);
+            assert_ne!(first_ty, TypeId::ERROR);
+
+            let (cached_target_ty, cached_target_params) = state
+                .ctx
+                .cached_cross_file_symbol_type(target_sym, target_idx as u32)
+                .expect("direct-source target result should be cached for sibling import aliases");
+            assert_eq!(cached_target_ty, first_ty);
+            assert_eq!(cached_target_params.len(), first_params.len());
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(second_alias, requester_idx as u32),
+                None,
+                "second alias should not be cached before it is resolved",
+            );
+
+            let (second_ty, second_params) = state
+                .try_resolve_cross_arena_named_alias_without_child(second_alias)
+                .expect("second import alias should resolve through the shortcut");
+            assert_eq!(second_ty, cached_target_ty);
+            assert_eq!(second_params.len(), cached_target_params.len());
+            assert_eq!(
+                state
+                    .ctx
+                    .cached_cross_file_symbol_type(second_alias, requester_idx as u32)
+                    .map(|(ty, params)| (ty, params.len())),
+                Some((cached_target_ty, cached_target_params.len())),
+                "second alias should cache its own alias entry after reusing the target",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_single_hop_local_alias_chain() {
     with_two_file_state(
         "type Leaf = string | number;\nexport type Alias = Leaf;",
