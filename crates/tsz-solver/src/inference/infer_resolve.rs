@@ -174,37 +174,13 @@ impl<'a> InferenceContext<'a> {
             return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
-        // Mirror tsc's `getCommonSubtype` for high-priority contra-candidates
-        // (NakedTypeVariable, HomomorphicMappedType, PartialHomomorphicMappedType):
-        // use common-subtype tournament rather than intersection. Switching these
-        // to intersection caused conformance regressions in coAndContraVariantInferences2,
-        // correlatedUnions, and inferentialTypingWithFunctionTypeZip because tsz's
-        // interner does not simplify `string & number` to `never` as tsc does.
-        // Only lower-priority (combination) priorities use intersection, matching
-        // tsc's PriorityImpliesCombination flag.
-        let best_priority = contra_types.iter().map(|c| c.priority).min();
-        let priority_implies_combination = best_priority.is_some_and(|priority| {
-            matches!(
-                priority,
-                InferencePriority::ReturnType
-                    | InferencePriority::LowPriority
-                    | InferencePriority::MappedType
-                    | InferencePriority::LiteralKeyof
-            )
-        });
-        if priority_implies_combination {
-            return self.interner.intersection(effective_types);
-        }
-
-        // Mirror tsc's `getCommonSubtype`: return the leftmost type for which
-        // no type to the right is a subtype.
-        let mut winner = effective_types[0];
-        for &candidate in &effective_types[1..] {
-            if self.is_subtype(candidate, winner) {
-                winner = candidate;
-            }
-        }
-        winner
+        // Use intersection for all contra-candidate priorities. In tsc (strict mode),
+        // `getCommonSubtype` calls `getIntersectionType` when strictNullChecks is on,
+        // which is the default. The previous tournament path was a workaround for tsz
+        // not simplifying `string & number` to `never`, but the interner now correctly
+        // reduces disjoint primitive intersections to `never` via
+        // `intersection_has_disjoint_primitives`, so intersection is safe here.
+        self.interner.intersection(effective_types)
     }
 
     // =========================================================================
@@ -885,19 +861,17 @@ impl<'a> InferenceContext<'a> {
         // Only apply to Object types — simple literals and unions are already handled
         // by widen_candidate_types above; tuples/arrays are excluded to avoid
         // over-widening in contexts like `new Map([["", true]])`.
-        // Deep-widen: only for non-contextual inference (NakedTypeVariable,
-        // HomomorphicMappedType, etc). Skip for ReturnType/LowPriority since
-        // those come from contextual typing where literal types should be
-        // preserved (tsc uses RequiresWidening flag for this; we approximate
+        // Deep-widen object literal candidates for non-contextual priorities
+        // (NakedTypeVariable, HomomorphicMappedType, etc). Skip for ReturnType
+        // and LowPriority which come from contextual typing where literal types
+        // should be preserved (tsc uses RequiresWidening for this; we approximate
         // by checking the inference priority).
+        // HomomorphicMappedType is non-contextual: `{ [K in keyof T]: ... }` candidates
+        // should be deep-widened, e.g. `{ c: false }` → `{ c: boolean }`.
         let highest_priority = filtered_no_never.first().map(|c| c.priority);
         let is_contextual_inference = matches!(
             highest_priority,
-            Some(
-                InferencePriority::ReturnType
-                    | InferencePriority::LowPriority
-                    | InferencePriority::HomomorphicMappedType
-            )
+            Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
         );
         let resolved = if !preserve_literals && !is_contextual_inference && !resolved.is_intrinsic()
         {
