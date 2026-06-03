@@ -279,13 +279,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Run named-property value checks before excess-property reporting. When
-        // a known property is already invalid, tsc reports that assignability
-        // error instead of additionally reporting an excess property from the
-        // same object literal.
-        let emitted_named_property_value_error = self
-            .check_object_literal_named_property_values_against_target(object_literal_idx, target);
-        if emitted_named_property_value_error {
+        // When a present-in-target property is already invalid, tsc reports that
+        // assignability error (TS2322) instead of additionally reporting an
+        // excess property (TS2353) from the same object literal. See
+        // `object_literal_property_mismatch_preempts_excess`.
+        if self.object_literal_property_mismatch_preempts_excess(source, object_literal_idx, target)
+        {
             return;
         }
 

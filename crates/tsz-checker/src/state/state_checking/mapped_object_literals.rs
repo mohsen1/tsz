@@ -462,6 +462,79 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Whether `tsc` would report a present-in-target property mismatch
+    /// (`TS2322`) for this object literal instead of an excess-property error
+    /// (`TS2353`) from the same literal — so the excess-property checker must
+    /// skip its emission.
+    ///
+    /// First runs the mapped/`Partial` named-value emit-check (which reports the
+    /// `TS2322` itself for those targets). Then, **only when the literal has an
+    /// excess candidate** — a property that no normalized view of the target
+    /// accepts — a present property whose value is incompatible is detected by
+    /// relating a *freshness-widened* source (widening disables excess-property
+    /// checking, so the relation can only fail on a real structural mismatch).
+    /// Gating on an excess candidate matters: a clean literal (every property
+    /// present) has no `TS2353` to suppress, so probing it must not perturb its
+    /// diagnostics; and a mapped/reverse-mapped target that accepts the extra
+    /// key likewise has no candidate, so its own diagnostics are left intact.
+    ///
+    /// The probe is limited to a terminal primitive/literal (or union/
+    /// intersection of those) target property — the unambiguous `TS2322` leaf
+    /// case. A mismatch on a structural (object/array) property is left alone,
+    /// since relating against a deeply-nested or recursive schema can surface a
+    /// misleading object-level mismatch that would drop legitimate nested excess
+    /// errors. None of this changes which relation runs — only whether the
+    /// excess error defers to the relation's `TS2322`.
+    pub(super) fn object_literal_property_mismatch_preempts_excess(
+        &mut self,
+        source: TypeId,
+        obj_literal_idx: NodeIndex,
+        target: TypeId,
+    ) -> bool {
+        if self.check_object_literal_named_property_values_against_target(obj_literal_idx, target) {
+            return true;
+        }
+        let Some(source_shape) =
+            crate::query_boundaries::state::checking::object_shape(self.ctx.types, source)
+        else {
+            return false;
+        };
+        let source_prop_names: Vec<Atom> = source_shape
+            .properties
+            .iter()
+            .map(|prop| prop.name)
+            .collect();
+        let effective_target = self.normalized_target_for_excess_properties(target);
+        let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
+        let resolved_for_access = self.resolve_type_for_property_access(resolved_target);
+        let has_excess_candidate = source_prop_names.iter().any(|&name| {
+            let prop_name = self.ctx.types.resolve_atom(name);
+            use tsz_solver::operations::property::PropertyAccessResult;
+            !matches!(
+                self.resolve_property_access_with_env(resolved_for_access, prop_name.as_ref()),
+                PropertyAccessResult::Success { .. }
+                    | PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: Some(_),
+                        ..
+                    }
+            )
+        });
+        if !has_excess_candidate {
+            return false;
+        }
+        let widened = crate::query_boundaries::common::widen_freshness(self.ctx.types, source);
+        matches!(
+            self.assign_relation_outcome(widened, target).failure,
+            Some(crate::query_boundaries::relation_types::RelationFailure::IncompatiblePropertyValue {
+                target_property_type,
+                ..
+            }) if crate::query_boundaries::common::is_literal_or_primitive_or_compound_of_those(
+                self.ctx.types,
+                target_property_type,
+            )
+        )
+    }
+
     pub(crate) fn check_object_literal_named_property_values_against_any_target(
         &mut self,
         obj_literal_idx: NodeIndex,
