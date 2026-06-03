@@ -881,7 +881,7 @@ impl<'a> Printer<'a> {
                         // Keep named class export assignment immediately after the class
                         // declaration and before lowered static blocks/IIFEs.
                         self.pending_commonjs_class_export_name =
-                            Some((export.export_clause, name));
+                            Some((export.export_clause, name.clone(), vec![name]));
                         named_export_emitted_with_class = true;
                     }
 
@@ -1025,7 +1025,7 @@ impl<'a> Printer<'a> {
                                     None
                                 };
                                 self.pending_commonjs_class_export_name =
-                                    Some((export.export_clause, name.clone()));
+                                    Some((export.export_clause, name.clone(), vec![name.clone()]));
                                 self.emit_class_es6_with_options(
                                     clause_node,
                                     export.export_clause,

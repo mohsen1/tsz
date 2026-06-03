@@ -8,7 +8,7 @@ use crate::context::transform::TransformDirective;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
-use tsz_parser::parser::node::{FunctionData, Node};
+use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::node_flags;
 use tsz_parser::syntax::transform_utils::{
     collect_class_computed_name_this_references, contains_new_target_reference,
@@ -1794,19 +1794,6 @@ impl<'a> AstToIr<'a> {
         }
         // Await expressions are handled by the async transform.
         IRNode::ASTRef(idx)
-    }
-
-    fn convert_type_assertion(&self, idx: NodeIndex) -> IRNode {
-        let node = self
-            .arena
-            .get(idx)
-            .expect("NodeIndex must be valid in arena");
-        // Both TYPE_ASSERTION and AS_EXPRESSION use TypeAssertionData
-        if let Some(assertion) = self.arena.get_type_assertion(node) {
-            self.convert_expression(assertion.expression)
-        } else {
-            IRNode::ASTRef(idx)
-        }
     }
 
     fn convert_non_null(&self, idx: NodeIndex) -> IRNode {

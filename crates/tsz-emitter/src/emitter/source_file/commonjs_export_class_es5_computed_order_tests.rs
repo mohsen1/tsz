@@ -129,3 +129,37 @@ fn export_class_es5_without_computed_members_still_emits_export() {
         "The class must be lowered to an ES5 IIFE binding.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn export_alias_before_es5_class_emits_alias_before_class_export() {
+    let source = "export { Renamed as Alias };\nexport class Renamed {}\n";
+    let output = emit_commonjs(source, ScriptTarget::ES5, false);
+
+    let alias_line = line_index_starts_with(&output, "exports.Alias = Renamed;");
+    let class_line = line_index_starts_with(&output, "exports.Renamed = Renamed;");
+    assert!(
+        alias_line.is_some() && class_line.is_some(),
+        "ES5 class export aliases should both emit at the class IIFE boundary.\nOutput:\n{output}"
+    );
+    assert!(
+        alias_line < class_line,
+        "A source-earlier alias export must precede the direct class export in ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn export_alias_before_es2015_class_keeps_native_class_export_order() {
+    let source = "export { Later as Alias };\nexport class Later {}\n";
+    let output = emit_commonjs(source, ScriptTarget::ES2015, false);
+
+    let class_line = line_index_starts_with(&output, "exports.Later = Later;");
+    let alias_line = line_index_starts_with(&output, "exports.Alias = Later;");
+    assert!(
+        class_line.is_some() && alias_line.is_some(),
+        "ES2015 class export and alias export should both emit once.\nOutput:\n{output}"
+    );
+    assert!(
+        class_line < alias_line,
+        "ES2015 native class output should keep the direct class export before the later alias assignment.\nOutput:\n{output}"
+    );
+}

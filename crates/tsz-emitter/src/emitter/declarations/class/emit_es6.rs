@@ -1966,18 +1966,20 @@ impl<'a> Printer<'a> {
         if self
             .pending_commonjs_class_export_name
             .as_ref()
-            .is_some_and(|(class_idx, _)| *class_idx == _idx)
+            .is_some_and(|(class_idx, _, _)| *class_idx == _idx)
         {
-            let (_, class_name) = self
+            let (_, local_name, export_names) = self
                 .pending_commonjs_class_export_name
                 .take()
                 .expect("pending class export should be present");
-            self.write_line();
-            self.write("exports.");
-            self.write(&class_name);
-            self.write(" = ");
-            self.write(&class_name);
-            self.write(";");
+            for export_name in export_names {
+                self.write_line();
+                self.write("exports.");
+                self.write(&export_name);
+                self.write(" = ");
+                self.write(&local_name);
+                self.write(";");
+            }
         }
 
         self.emit_class_es6_after_body(ClassEs6AfterBody {

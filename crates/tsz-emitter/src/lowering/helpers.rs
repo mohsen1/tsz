@@ -6,6 +6,7 @@
 use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
+use tsz_common::ScriptTarget;
 use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
@@ -45,9 +46,9 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Walk source-order statements once and record every export alias
-    /// attached to local enum/namespace IIFE bindings so the emitter can fold
-    /// every alias into the IIFE tail.
+    /// Walk source-order statements once and record every export alias attached
+    /// to local enum/namespace IIFE bindings or ES5-lowered class bindings so
+    /// the emitter can place every alias at the declaration boundary.
     fn collect_all_export_aliases_in_order(&mut self, statements: &tsz_parser::parser::NodeList) {
         let mut foldable_locals: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
         for &stmt_idx in &statements.nodes {
@@ -110,6 +111,13 @@ impl<'a> LoweringPass<'a> {
                         )
                 })
             }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.ctx.options.target == ScriptTarget::ES5
+                    && self
+                        .arena
+                        .get_class(node)
+                        .is_some_and(|class_decl| !self.arena.is_declare(&class_decl.modifiers))
+            }
             _ => false,
         }
     }
@@ -126,6 +134,11 @@ impl<'a> LoweringPass<'a> {
                 let module_decl = self.arena.get_module(node)?;
                 self.get_module_root_name_text(module_decl.name)
             }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let class_decl = self.arena.get_class(node)?;
+                self.get_identifier_text_ref(class_decl.name)
+                    .map(str::to_string)
+            }
             _ => None,
         }
     }
@@ -141,6 +154,10 @@ impl<'a> LoweringPass<'a> {
                 let module_decl = self.arena.get_module(node)?;
                 self.get_module_root_name(module_decl.name)
             }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let class_decl = self.arena.get_class(node)?;
+                self.get_identifier_id(class_decl.name)
+            }
             _ => None,
         }
     }
@@ -155,6 +172,12 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.arena.get_module(node).is_some_and(|decl| {
+                    self.arena
+                        .has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(node).is_some_and(|decl| {
                     self.arena
                         .has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
                 })

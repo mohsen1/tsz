@@ -12,85 +12,15 @@ use std::sync::Arc;
 use tracing::debug;
 use tsz_parser::parser::node::NodeAccess;
 
+#[path = "transform_dispatch_directive.rs"]
+mod transform_dispatch_directive;
+use transform_dispatch_directive::EmitDirective;
+
 #[path = "transform_dispatch_chain.rs"]
 mod transform_dispatch_chain;
 
 #[path = "transform_dispatch_class_binding.rs"]
 mod transform_dispatch_class_binding;
-
-enum EmitDirective {
-    Identity,
-    ES5Class {
-        class_node: NodeIndex,
-    },
-    ES5ClassExpression {
-        class_node: NodeIndex,
-    },
-    ES5Namespace {
-        namespace_node: NodeIndex,
-        should_declare_var: bool,
-    },
-    ES5Enum {
-        enum_node: NodeIndex,
-    },
-    CommonJSExport {
-        names: Arc<[IdentifierId]>,
-        is_default: bool,
-        inner: Box<Self>,
-    },
-    CommonJSExportDefaultExpr,
-    CommonJSExportDefaultClassES5 {
-        class_node: NodeIndex,
-    },
-    ES5ArrowFunction {
-        arrow_node: NodeIndex,
-        captures_this: bool,
-        captures_arguments: bool,
-        class_alias: Option<Arc<str>>,
-    },
-    ES5AsyncFunction {
-        function_node: NodeIndex,
-    },
-    ES5GeneratorFunction {
-        function_node: NodeIndex,
-    },
-    ES5ForOf {
-        for_of_node: NodeIndex,
-    },
-    ES5ObjectLiteral {
-        object_literal: NodeIndex,
-    },
-    ES5ArrayLiteral {
-        array_literal: NodeIndex,
-    },
-    ES5CallSpread {
-        call_expr: NodeIndex,
-    },
-    ES5NewSpread {
-        new_expr: NodeIndex,
-    },
-    ES5VariableDeclarationList {
-        decl_list: NodeIndex,
-    },
-    ES5FunctionParameters {
-        function_node: NodeIndex,
-    },
-    ES5TemplateLiteral,
-    SubstituteThis {
-        capture_name: Arc<str>,
-    },
-    SubstituteArguments,
-    ES5SuperCall,
-    TC39Decorators {
-        class_node: NodeIndex,
-        function_name: Option<String>,
-    },
-    ModuleWrapper {
-        format: crate::context::transform::ModuleFormat,
-        dependencies: Arc<[String]>,
-    },
-    Chain(Vec<Self>),
-}
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -628,11 +558,22 @@ impl<'a> Printer<'a> {
                         // body but BEFORE any lowered static block IIFEs or static field
                         // initializers. emit_class_es6_with_options consumes this field
                         // at the class-body boundary.
-                        if let Some(name_id) = names.first()
-                            && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
+                        if let Some(class) = self.arena.get_class(node)
+                            && let Some(local_name) = self.get_identifier_text_opt(class.name)
                         {
+                            let export_names = if self.ctx.target_es5 {
+                                self.commonjs_export_name_strings(names.as_ref())
+                            } else {
+                                vec![local_name.clone()]
+                            };
+                            for export_name in &export_names {
+                                self.ctx
+                                    .module_state
+                                    .inline_exported_names
+                                    .insert(export_name.clone());
+                            }
                             self.pending_commonjs_class_export_name =
-                                Some((idx, ident.escaped_text.clone()));
+                                Some((idx, local_name, export_names));
                         }
                         let export_name = names.first().copied();
                         self.with_cjs_export_body_mask(|this| {
@@ -641,18 +582,20 @@ impl<'a> Printer<'a> {
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
-                        if let Some((_, class_name)) =
+                        if let Some((_, local_name, export_names)) =
                             self.pending_commonjs_class_export_name.take()
                         {
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
-                            self.write("exports.");
-                            self.write(&class_name);
-                            self.write(" = ");
-                            self.write(&class_name);
-                            self.write(";");
-                            self.write_line();
+                            for export_name in export_names {
+                                self.write("exports.");
+                                self.write(&export_name);
+                                self.write(" = ");
+                                self.write(&local_name);
+                                self.write(";");
+                                self.write_line();
+                            }
                         }
                     } else {
                         let export_name = names.first().copied();
@@ -1222,7 +1165,7 @@ impl<'a> Printer<'a> {
                 emitter.set_function_name(name.to_string());
             } else if let Some(ref name) = self.anonymous_default_export_name {
                 emitter.set_function_name(name.clone());
-            } else if let Some((_, ref name)) = self.pending_commonjs_class_export_name {
+            } else if let Some((_, ref name, _)) = self.pending_commonjs_class_export_name {
                 emitter.set_function_name(name.clone());
             } else if let Some(name) = self.resolve_class_expr_binding_name(_idx) {
                 emitter.set_function_name(name);

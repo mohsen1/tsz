@@ -90,12 +90,7 @@ pub struct IRPrinter<'a> {
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
-    /// Deferred CommonJS `exports.<name> = <name>;` assignment for a top-level
-    /// `export class` lowered to an ES5 IIFE. When set, the assignment is
-    /// emitted immediately after the class IIFE statement and BEFORE any
-    /// trailing computed-property-name side-effect statements, mirroring the
-    /// ES2015+ class export ordering in `emit_es6.rs`.
-    pending_commonjs_class_export_name: Option<String>,
+    pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -396,20 +391,24 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    /// Schedule a deferred CommonJS `exports.<name> = <name>;` assignment for a
-    /// top-level `export class` lowered to an ES5 IIFE. Emitted right after the
-    /// class IIFE statement, before any trailing computed-property side effects.
     pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
-        self.pending_commonjs_class_export_name = name;
+        self.pending_commonjs_class_export_name = name.map(|name| (name.clone(), vec![name]));
     }
 
-    /// Consume the scheduled CommonJS class export name, clearing it so a single
-    /// IIFE statement emits the assignment exactly once.
-    pub(super) const fn take_pending_commonjs_class_export_name(&mut self) -> Option<String> {
+    pub fn set_pending_commonjs_class_export_bindings(
+        &mut self,
+        local_name: String,
+        export_names: Vec<String>,
+    ) {
+        self.pending_commonjs_class_export_name = Some((local_name, export_names));
+    }
+
+    pub(super) const fn take_pending_commonjs_class_export_name(
+        &mut self,
+    ) -> Option<(String, Vec<String>)> {
         self.pending_commonjs_class_export_name.take()
     }
 
-    /// Set transform directives for `ASTRef` emission
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms);
     }
@@ -1059,7 +1058,16 @@ impl<'a> IRPrinter<'a> {
                 self.write(" && ");
                 self.emit_node(right);
             }
-
+            IRNode::LeadingCommentExpr {
+                comment,
+                expression,
+            } => {
+                if !self.remove_comments {
+                    self.write(comment);
+                    self.write(" ");
+                }
+                self.emit_node(expression);
+            }
             // Statements
             IRNode::HoistedVarGroupBreak => {}
             IRNode::VarDecl { name, initializer } => {
@@ -1579,13 +1587,9 @@ impl<'a> IRPrinter<'a> {
 
             // Special
             IRNode::Raw(s) => {
-                // Comments stored as Raw nodes bypass IRNode::Comment guards.
-                // Detect and suppress them when removeComments is enabled.
                 if self.remove_comments {
                     let t = s.trim_start();
-                    if t.starts_with("//") || t.starts_with("/*") {
-                        // Skip comment-like Raw node
-                    } else {
+                    if !(t.starts_with("//") || t.starts_with("/*")) {
                         self.write(s);
                     }
                 } else {

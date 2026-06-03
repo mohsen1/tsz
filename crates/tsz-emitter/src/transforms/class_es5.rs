@@ -94,7 +94,7 @@ pub struct ClassES5Emitter<'a> {
     /// Deferred CommonJS `exports.<name> = <name>;` assignment for a top-level
     /// `export class` lowered to an ES5 IIFE. Emitted right after the IIFE
     /// statement, before trailing computed-property side effects.
-    pending_commonjs_class_export_name: Option<String>,
+    pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -140,7 +140,15 @@ impl<'a> ClassES5Emitter<'a> {
     /// Schedule a deferred CommonJS `exports.<name> = <name>;` assignment for a
     /// top-level `export class` lowered to an ES5 IIFE.
     pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
-        self.pending_commonjs_class_export_name = name;
+        self.pending_commonjs_class_export_name = name.map(|name| (name.clone(), vec![name]));
+    }
+
+    pub fn set_pending_commonjs_class_export_bindings(
+        &mut self,
+        local_name: String,
+        export_names: Vec<String>,
+    ) {
+        self.pending_commonjs_class_export_name = Some((local_name, export_names));
     }
 
     pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
@@ -546,9 +554,9 @@ impl<'a> ClassES5Emitter<'a> {
         }
         printer.set_block_scope_shadowed_names(self.block_scope_shadowed_names.clone());
         printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
-        printer.set_pending_commonjs_class_export_name(
-            self.pending_commonjs_class_export_name.clone(),
-        );
+        if let Some((local_name, export_names)) = self.pending_commonjs_class_export_name.clone() {
+            printer.set_pending_commonjs_class_export_bindings(local_name, export_names);
+        }
         if !self.outer_reserved_for_generator_state.is_empty() {
             printer.set_outer_reserved_for_generator_state(
                 self.outer_reserved_for_generator_state.clone(),
