@@ -74,8 +74,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(acc) = self.arena.get_accessor(n) {
                         if let Some(name) = self.object_literal_member_name_text(acc.name) {
                             setter_names.insert(name);
-                        } else if let Some(name_node) = self.arena.get(acc.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        } else if self.computed_property_name_is_symbol_access(acc.name)
+                            && let Some(name_node) = self.arena.get(acc.name)
                             && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
                         {
                             computed_setter_source_texts.insert(src.trim().to_string());
@@ -85,8 +85,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(acc) = self.arena.get_accessor(n) {
                         if let Some(name) = self.object_literal_member_name_text(acc.name) {
                             getter_names.insert(name);
-                        } else if let Some(name_node) = self.arena.get(acc.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        } else if self.computed_property_name_is_symbol_access(acc.name)
+                            && let Some(name_node) = self.arena.get(acc.name)
                             && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
                         {
                             computed_getter_source_texts.insert(src.trim().to_string());
@@ -142,6 +142,11 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(mut name_text) = self
                 .object_literal_member_name_text(name_idx)
                 .or_else(|| self.emittable_computed_property_name_text(name_idx))
+                .or_else(|| {
+                    (member_node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                        .then(|| self.computed_identifier_or_access_name_text(name_idx))
+                        .flatten()
+                })
                 .or_else(|| {
                     // Fallback: when a getter and setter share the same computed
                     // property name source text but type info is unavailable, use
