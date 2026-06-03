@@ -1348,7 +1348,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_external_module = if let Some(ref map) = self.ctx.is_external_module_by_file {
-            map.get(&self.ctx.file_name).copied().unwrap_or(false)
+            crate::context::lookup_is_external_module_in_map(map, &self.ctx.file_name)
+                .unwrap_or(false)
         } else {
             self.ctx.binder.is_external_module()
         };

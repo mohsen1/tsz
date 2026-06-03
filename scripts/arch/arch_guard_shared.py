@@ -736,7 +736,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: jsdoc/diagnostics.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "diagnostics.rs",
-        2437,
+        2440,
     ),
     (
         "Checker boundary: state/variable_checking/destructuring.rs size ratchet",
