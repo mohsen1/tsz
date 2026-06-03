@@ -278,7 +278,7 @@ impl<'a> Printer<'a> {
                         binding_name,
                         &class_name,
                     ) {
-                        self.write(&output);
+                        self.writer.write_raw_text(&output);
                         self.skip_comments_for_erased_node(node);
                         return;
                     }
@@ -1188,7 +1188,7 @@ impl<'a> Printer<'a> {
                     &binding_name,
                     &display_name,
                 ) {
-                    self.write(&output);
+                    self.writer.write_raw_text(&output);
                     self.skip_comments_for_erased_node(node);
                     self.track_decorated_class_namespace_binding(node);
                     return;
