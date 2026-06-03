@@ -102,7 +102,6 @@ impl<'a> DeclarationEmitter<'a> {
         let mut only_numeric_like = true;
         let mut has_non_emittable_computed_members = false;
         let mut synthetic_number_index_member = None;
-        let mut negative_numeric_computed_names = Vec::new();
         let mut computed_method_value_types = Vec::new();
 
         for &member_idx in &object.elements.nodes {
@@ -128,15 +127,6 @@ impl<'a> DeclarationEmitter<'a> {
             };
             if !self.object_literal_member_needs_syntax_override(member_idx) {
                 continue;
-            }
-
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                && let Some(source_name_text) = self.get_source_slice(name_node.pos, name_node.end)
-                && let Some(key_text) =
-                    Self::negative_numeric_computed_property_key_text(&source_name_text)
-            {
-                negative_numeric_computed_names
-                    .push((key_text.to_string(), source_name_text.trim().to_string()));
             }
 
             let Some(mut name_text) = self
@@ -411,21 +401,6 @@ impl<'a> DeclarationEmitter<'a> {
             } else if !exact_exists {
                 lines.insert(insert_at + actual_insertions, line);
                 actual_insertions += 1;
-            }
-        }
-
-        if !negative_numeric_computed_names.is_empty() {
-            for line in &mut lines {
-                for (key_text, source_name_text) in &negative_numeric_computed_names {
-                    if let Some(rewritten) = Self::object_literal_property_line_with_name(
-                        line,
-                        key_text,
-                        source_name_text,
-                    ) {
-                        *line = rewritten;
-                        break;
-                    }
-                }
             }
         }
 
@@ -1268,35 +1243,6 @@ impl<'a> DeclarationEmitter<'a> {
         name_text.trim().strip_prefix('[')?.strip_suffix(']')
     }
 
-    fn object_literal_property_line_with_name(
-        line: &str,
-        key_text: &str,
-        replacement_name: &str,
-    ) -> Option<String> {
-        // OUTPUT_SURGERY_DEBT: rebuilds a DTS member line after type printing;
-        // migrate to declaration summary member spelling facts.
-        let leading_len = line.len() - line.trim_start().len();
-        let trimmed = &line[leading_len..];
-        let candidates = [
-            format!("\"{key_text}\":"),
-            format!("'{key_text}':"),
-            format!("{key_text}:"),
-        ];
-        for candidate in candidates {
-            if trimmed.starts_with(&candidate) {
-                let replacement = format!("{replacement_name}:");
-                let suffix = &trimmed[candidate.len()..];
-                let mut rewritten =
-                    String::with_capacity(leading_len + replacement.len() + suffix.len());
-                rewritten.push_str(&line[..leading_len]);
-                rewritten.push_str(&replacement);
-                rewritten.push_str(suffix);
-                return Some(rewritten);
-            }
-        }
-        None
-    }
-
     fn object_index_signature_line_with_key(line: &str, replacement_key: &str) -> Option<String> {
         let leading_len = line.len() - line.trim_start().len();
         let leading = &line[..leading_len];
@@ -1717,40 +1663,5 @@ mod object_index_signature_rewrite_tests {
             .as_deref(),
             Some("\t[x: symbol]:   New | Old;  ")
         );
-    }
-}
-
-#[cfg(test)]
-mod object_property_name_rewrite_tests {
-    use super::DeclarationEmitter;
-
-    fn rewrite(line: &str, key: &str, replacement: &str) -> Option<String> {
-        DeclarationEmitter::object_literal_property_line_with_name(line, key, replacement)
-    }
-
-    #[test]
-    fn rewrites_quoted_property_prefix_to_source_name() {
-        assert_eq!(
-            rewrite("    \"-1\": string;", "-1", "[-1]").as_deref(),
-            Some("    [-1]: string;")
-        );
-        assert_eq!(
-            rewrite("    '-2': number;", "-2", "[-2]").as_deref(),
-            Some("    [-2]: number;")
-        );
-    }
-
-    #[test]
-    fn rewrites_bare_property_prefix_and_preserves_suffix() {
-        assert_eq!(
-            rewrite("\t-3: boolean;  ", "-3", "[-3]").as_deref(),
-            Some("\t[-3]: boolean;  ")
-        );
-    }
-
-    #[test]
-    fn ignores_non_matching_property_lines() {
-        assert_eq!(rewrite("    other: boolean;", "-1", "[-1]"), None);
-        assert_eq!(rewrite("    method(): boolean;", "-1", "[-1]"), None);
     }
 }
