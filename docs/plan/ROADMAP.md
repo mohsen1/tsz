@@ -86,17 +86,18 @@ changes the picture.
    canonical `agent:*` label hygiene with `gh pr list` plus
    `scripts/agents/ensure-agent-labels.sh --audit`; this plan should not
    preserve static PR queue inventories.
-2. Multi-computer coordination is now explicit. Fourteen implementation-session
-   labels exist:
-   `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and
-   `agent:Studio-A` through `agent:Studio-F`. For the initial launch, apply
-   `agent:*` labels to PRs only; issues are context until the open PR runway is
-   drained. A labelled PR has exactly one next-step owner.
-   `agent:Reviewer` is a standing review lane that comments on PRs but does not
-   own implementation. Claude Code and other runner-backed agents are valid
-   contributors inside these lanes, but generated runner names such as
-   `agent:claude-sonnet-*`, `agent:dreamy-*`, machine/model aliases, and typo
-   labels such as `agnet:*` are not ownership lanes.
+2. Multi-computer coordination is now explicit. Eleven canonical ownership labels
+   exist: `agent:M1-A`, `agent:M1-B`, `agent:M1-Opus`, `agent:M4-A`,
+   `agent:M4-B`, `agent:M4-Opus`, `agent:Studio-A`, `agent:Studio-B`,
+   `agent:Studio-C`, `agent:Studio-Opus`, plus the PR-management/review lane
+   `agent:Studio-manager`. For launch work, apply `agent:*` labels to PRs
+   first; issues are context until the open PR runway is drained. A labelled PR
+   has exactly one next-step owner. `Studio-manager` manages PRs, submits
+   reviews, queues eligible work, and prevents duplicate ownership. Claude Code
+   and other runner-backed agents are valid contributors inside these lanes,
+   but generated runner names such as `agent:claude-sonnet-*`, `agent:dreamy-*`,
+   machine/model aliases, and typo labels such as `agnet:*` are not ownership
+   lanes.
 3. Open issue language is concentrated around recursive conditionals, mapped
    and indexed access, inference/session state, unique-symbol identity,
    module/lib identity, relation false positives, and benchmark-project
@@ -175,10 +176,10 @@ GitHub is the coordination surface.
     caches are expensive to recreate, so agents should reuse inactive sibling
     worktrees, use `scripts/setup/link-ts-submodule.sh` in worktrees, and clean
     with cache-preserving scripts before creating new worktrees.
-15. The `Reviewer` lane is intentionally ongoing. It reviews open PRs for
+15. The `Studio-manager` lane is intentionally ongoing. It manages open PRs for
     roadmap fit, architecture boundaries, parity risk, duplicate work, tests,
-    and readiness; when no PRs are reviewable, it waits for new PRs instead of
-    marking the goal complete.
+    queue readiness, and submitted reviews; when no PR needs action, it waits
+    and refreshes instead of marking the goal complete.
 16. Every launch starts by inspecting live PRs. If a lane still owns open PRs,
     land, close, or clearly hand them off before claiming issue backlog. If the
     PR runway is empty, issues become intake context and should be clustered

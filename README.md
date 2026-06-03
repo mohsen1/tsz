@@ -41,6 +41,12 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 > Diagnostics, inference, and emit may differ from TypeScript today. Use for
 > experimentation only.
 
+To check whether `tsz` currently matches `tsc` on your project:
+
+```sh
+npx try-tsz
+```
+
 **macOS & Linux**
 
 ```sh

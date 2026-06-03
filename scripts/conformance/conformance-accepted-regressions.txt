@@ -24,8 +24,24 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 
 # Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
 # Mapped/keyof family tracked in #8432; large-union intersections tracked in
-# #12260; JSX/import.meta subset tracked in #12261.
-# importMeta.ts oscillates; re-accepted after REGRESSED on PR #12243 CI run 26852720835.
+# #12260. JSX/import.meta subset tracked in #12261 — re-verified against the
+# pinned TS 6.0.3 corpus, replacing the earlier vague "oscillates" notes with the
+# actual per-fixture fingerprints so each entry stays owner-visible:
+#   - jsxIntrinsicElementsTypeArgumentErrors.tsx: passes in an isolated harness
+#     run (3/3) but REGRESSES in the sharded ready-review aggregate, so the
+#     diagnostics on JSX type-argument recovery (TS1009/TS1099/TS2304/TS2344/
+#     TS2558) are resolution-order/shard sensitive. Kept allowlisted; the
+#     order-sensitivity is the bug to chase. Tracked in #12261.
+#   - importMeta.ts: diagnostic CODES already match [TS2339, TS2364, TS17012].
+#     The only remaining drift is one extra false TS2339 "Property 'appendChild'
+#     does not exist on type 'HTMLElement'" on `document.body.appendChild(...)`,
+#     a lib-interface heritage cycle-drop bug tracked in #12299 (not genuine
+#     oscillation).
+#   - jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx: tsz emits
+#     [TS2875] but misses TS2741. Under react-jsx the custom
+#     JSX.ElementChildrenAttribute ("offspring") is ignored, so body children map
+#     to `children` and the required `offspring` prop must be reported missing.
+#     Tracked in #12261.
 # intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 # jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx fixed in #12261:
 # PR #12238 added a blanket early-return in check_jsx_attributes_against_props

@@ -7,8 +7,11 @@ GitHub label: `agent:Studio-B`
 
 ## Mission
 
-Own green-row performance and residency blockers until eligible rows are at
-least `2x` faster than `tsgo`, without bypassing semantic parity.
+Own performance and residency until every eligible green timed benchmark row is
+at least `2x` faster than `tsgo`, without bypassing semantic parity.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next Studio-B release-gate item.
 
 ## Start Every Cycle
 
@@ -36,11 +39,11 @@ scripts/agents/list-owned-work.sh Studio-B
 
 ## Existing Work To Inspect First
 
-- Issues `#7378`, `#8356`, `#7574`, `#7531`, and `#8773`.
+- Live `agent:Studio-B` PRs.
 - `docs/plan/PERFORMANCE_PLAN.md`.
 - Latest `scripts/bench/tsgo-winner-report.mjs` output and project-row
   compatibility artifact.
-- Recent M1-A performance micro PRs before repeating allocation-only slices.
+- Recent semantic/cache PRs from M4-B and M4-Opus before repeating cache work.
 
 ## Non-Overlap Rules
 
@@ -49,7 +52,8 @@ scripts/agents/list-owned-work.sh Studio-B
 - Performance PRs state benchmark, before/after command, diagnostic status,
   measurement mode, RSS when relevant, and semantic invariant.
 - Do not use fixture names as fast-path keys.
-- If a row is red because of diagnostics, hand it to the owning semantic lane.
+- If a row is red because of diagnostics or semantic failure, hand it to the
+  owning M1/M4 lane.
 
 ## Verification
 

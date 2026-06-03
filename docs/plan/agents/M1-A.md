@@ -7,9 +7,13 @@ GitHub label: `agent:M1-A`
 
 ## Mission
 
-Keep the launch legible. This lane owns live ownership hygiene, release-gate
-scoreboard coordination, duplicate-work prevention, and bug-triage flow after
-the old PR runway has been closed or clearly handed off.
+Own checker diagnostic conformance, accepted-regression burn-down, and
+diagnostic hardcoding debt. Keep diagnostic parity at `100%` while replacing
+rendered/source-text/test-name shortcuts with structural checker or query
+facts.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next M1-A release-gate item.
 
 ## Start Every Cycle
 
@@ -18,48 +22,52 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 scripts/agents/disk-preflight.sh M1-A
 scripts/agents/list-owned-work.sh M1-A
-scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json
-node scripts/ci/pr-ownership-report.mjs
+python3 scripts/conformance/query-conformance.py --dashboard
 ```
 
 ## Current Assignment
 
-- Primary gate: coordination health for conformance strictness, emit 100%, bug
-  closure, green project rows, and `2x` perf target work.
-- Live PR rule: if any `agent:M1-A` PRs are open, land, close, or hand them off
-  before filing new coordination work.
-- Bug-triage contract: every open `bug`, `false-positive`, `false-negative`,
-  `accepted-regression`, and issue-level `WIP` should have a lane owner, a
-  duplicate/superseded/upstream/non-release explanation, or an active draft PR.
-- Architecture cleanup metric: ownership report mismatches, noncanonical
-  labels, duplicate active invariants, stale WIP markers, and claim-doc drift
-  should trend to zero.
-- Next concrete step: produce a live issue/PR handoff summary when the launch
-  starts, then route clusters to the owning lanes instead of taking over their
-  implementation.
+- Primary gates: all tests pass, diagnostic conformance stays at `100%`,
+  accepted-regression entries are removed or freshly justified, and diagnostic
+  bug issues are fixed or structurally owned.
+- Bug or metric families: `TS2322`, `TS2345`, `TS2416`, missing/excess
+  property diagnostics, weak type diagnostics, rendered-type mismatch
+  fingerprints, source-text diagnostic branches, and accepted-regression
+  strictness.
+- Architecture cleanup metric: counts of diagnostic decisions based on source
+  text, rendered type strings, fixture names, and accepted-regression entries
+  should trend down.
+- First live command: inspect owned PRs, then run the dashboard command above
+  and identify the highest-risk strictness or diagnostic debt item.
+- Next concrete step: open or update a draft PR that removes one diagnostic
+  shortcut or accepted-regression entry through a structural rule with focused
+  tests.
 
 ## Existing Work To Inspect First
 
-- `scripts/agents/list-owned-work.sh --all`.
-- `node scripts/ci/pr-ownership-report.mjs`.
-- `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json`.
-- Recent merged PRs touching `docs/plan/agents`, `scripts/ci/pr-ownership-report.mjs`,
-  and label/WIP tooling.
-- Open issues with `bug`, `false-positive`, `false-negative`,
-  `accepted-regression`, `urgent`, `help wanted`, or `WIP`.
+- Live `agent:M1-A` PRs from `scripts/agents/list-owned-work.sh M1-A`.
+- `scripts/conformance/conformance-accepted-regressions.txt`.
+- Open issues labelled `accepted-regression`, `bug`, `false-positive`, and
+  `false-negative`.
+- Recent merged PRs that changed diagnostic rendering, relation diagnostics,
+  query boundaries, or conformance fingerprints.
 
 ## Non-Overlap Rules
 
-- Do not take over implementation lanes unless the current owner asks or a
-  stale branch needs a signed handoff.
-- When changing WIP state, leave a signed comment with reason, blocker/current
-  work, and next owner/action.
-- Do not create new claim documents under `docs/plan/claims`.
-- Prefer routing and consolidation over opening new coordination-only PRs.
+- Do not change solver relation policy, evaluation behavior, or cache keys
+  unless the PR is explicitly stacked with M4-B or M4-Opus.
+- Do not add new source-text, display-string, fixture-name, or conformance
+  test-name special cases.
+- If the diagnostic mismatch needs a solver answer or relation policy, hand off
+  to M4-B or M4-Opus with a signed comment.
+- If the issue is checker routing rather than diagnostic content, coordinate
+  with M1-B.
 
 ## Verification
 
-- Use `scripts/ci/pr-ownership-report.mjs` for PR topology.
-- Use `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` for label hygiene.
-- Use `scripts/ci/check-wip-state-comments.mjs` when changing WIP state.
-- No compiler suite is needed for metadata-only cleanup.
+- Prefer focused checker tests and narrow conformance queries that answer the
+  changed diagnostic path.
+- Use `cargo nextest run -p tsz_checker -- <test-filter>` for Rust tests.
+- Use `python3 scripts/conformance/query-conformance.py --dashboard` before
+  making conformance claims.
+- Do not run full conformance locally unless explicitly asked.

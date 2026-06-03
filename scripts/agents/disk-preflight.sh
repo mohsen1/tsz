@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$AGENT" in
-  unknown|M1-A|M1-B|M1-C|M1-D|M4-A|M4-B|M4-C|M4-D|Studio-A|Studio-B|Studio-C|Studio-D|Studio-E|Studio-F|Reviewer) ;;
+  unknown|M1-A|M1-B|M1-Opus|M4-A|M4-B|M4-Opus|Studio-A|Studio-B|Studio-C|Studio-Opus|Studio-manager) ;;
   *) echo "unknown AgentName: $AGENT" >&2; exit 1 ;;
 esac
 

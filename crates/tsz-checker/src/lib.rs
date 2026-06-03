@@ -114,6 +114,9 @@ mod async_imported_promise_tests;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "tests/class_extends_generic_override_variance_tests.rs"]
+mod class_extends_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/class_extends_index_relation_routing_arch_tests.rs"]
 mod class_extends_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -683,6 +686,9 @@ mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;
+#[cfg(test)]
+#[path = "tests/in_narrow_apparent_member_tests.rs"]
+mod in_narrow_apparent_member_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;

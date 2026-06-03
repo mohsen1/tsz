@@ -5,10 +5,10 @@
 set -euo pipefail
 
 AGENTS=(
-  M1-A M1-B M1-C M1-D
-  M4-A M4-B M4-C M4-D
-  Studio-A Studio-B Studio-C Studio-D Studio-E Studio-F
-  Reviewer
+  M1-A M1-B M1-Opus
+  M4-A M4-B M4-Opus
+  Studio-A Studio-B Studio-C Studio-Opus
+  Studio-manager
 )
 
 usage() {
@@ -20,8 +20,8 @@ Lists owned open PRs/issues and prints compact per-agent summary counters.
 Examples:
   scripts/agents/list-owned-work.sh M1-A
   scripts/agents/list-owned-work.sh --all
-  scripts/agents/list-owned-work.sh --pr-state Studio-F
-  scripts/agents/list-owned-work.sh Studio-F --json-report /tmp/tsz-owned-work.json
+  scripts/agents/list-owned-work.sh --pr-state Studio-manager
+  scripts/agents/list-owned-work.sh Studio-manager --json-report /tmp/tsz-owned-work.json
 USAGE
 }
 
@@ -256,7 +256,7 @@ NODE
 
 for agent in "${SELECTED[@]}"; do
   case "$agent" in
-    M1-A|M1-B|M1-C|M1-D|M4-A|M4-B|M4-C|M4-D|Studio-A|Studio-B|Studio-C|Studio-D|Studio-E|Studio-F|Reviewer) ;;
+    M1-A|M1-B|M1-Opus|M4-A|M4-B|M4-Opus|Studio-A|Studio-B|Studio-C|Studio-Opus|Studio-manager) ;;
     *) echo "unknown AgentName: $agent" >&2; exit 1 ;;
   esac
 

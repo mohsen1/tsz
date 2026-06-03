@@ -969,12 +969,9 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
-            // Pattern 4: Import/Export specifier brace mismatch cascading error suppression
-            // If we encounter 'from' keyword in the specifier list, it likely means we have:
-            // import { a from "module"  (missing closing brace)
-            // In this case, break the loop to avoid parsing 'from' as an identifier
-            if self.is_token(SyntaxKind::FromKeyword)
-                && !self.next_token_continues_import_specifier_name()
+            // `from` here is an imported name (e.g. `import { from } from "m"`)
+            // unless the following token shows it is the from-clause keyword.
+            if self.is_token(SyntaxKind::FromKeyword) && !self.next_token_continues_specifier_name()
             {
                 self.last_named_imports_recovered_to_from = true;
                 break;
@@ -1123,7 +1120,17 @@ impl ParserState {
         )
     }
 
-    fn next_token_continues_import_specifier_name(&mut self) -> bool {
+    /// Decide whether a `from` token currently sitting at a specifier-list
+    /// position is being used as an *exported/imported name* rather than the
+    /// from-clause keyword.
+    ///
+    /// `from` is a contextual keyword and a valid module export name, so
+    /// `import { from } from "m"` / `export { from } from "m"` are legal. It is
+    /// the from-clause keyword only when what follows cannot continue a
+    /// specifier name — i.e. the next token is not `as` (rename), `,` (more
+    /// specifiers), or `}` (end of the list). Shared by the import and export
+    /// specifier loops so both sides disambiguate identically.
+    pub(crate) fn next_token_continues_specifier_name(&mut self) -> bool {
         let saved_token = self.current_token;
         let saved_state = self.scanner.save_state();
         self.next_token();
