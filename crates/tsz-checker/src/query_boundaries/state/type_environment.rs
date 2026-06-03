@@ -409,9 +409,17 @@ pub(crate) struct EvalWithCacheResult {
     pub cache_entries: Vec<(TypeId, TypeId)>,
 }
 
+/// Controls whether `evaluate_type_with_cache` drains the evaluator's
+/// intermediate cache into the returned side-channel.
+///
+/// This is a speed-only residency policy. It must not affect the evaluated
+/// `TypeId`, depth flags, top-level env-eval memo, or closed-eval cache writes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CacheEntryCollection {
+    /// Materialize intermediate `TypeId` -> `TypeId` entries for env-eval
+    /// seed/persist when the structural cap says they can be reused cheaply.
     Collect,
+    /// Do not materialize intermediate entries for result-only callers.
     Skip,
 }
 
