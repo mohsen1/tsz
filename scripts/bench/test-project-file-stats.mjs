@@ -20,10 +20,13 @@ import { fileURLToPath } from "node:url";
 import {
   aggregateProjectStats,
   cacheKeyForTsconfig,
+  computeProjectFileStats,
   countNewlinesStream,
+  expandWatchedDirectories,
   isLocalProjectFile,
   isTypeScriptFile,
   loadStatsCache,
+  resolveTsconfigFilesCached,
   saveStatsCache,
   statFileEntry,
 } from "./project-file-stats.mjs";
@@ -203,6 +206,179 @@ assert.equal(
     assert.equal(cache.dirty, true, "removal of a file dirties the cache");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --------------------------------------------------------------------------
+// expandWatchedDirectories: recursive watches contribute every existing
+// subdirectory (including empty ones); non-recursive watches contribute only
+// the watched directory; node_modules subtrees are skipped.
+
+{
+  const dir = makeTempDir("tsz-stats-watchdirs-");
+  try {
+    const srcDir = path.join(dir, "src");
+    writeFile(srcDir, "a.ts", "alpha\n");
+    fs.mkdirSync(path.join(srcDir, "empty"), { recursive: true });
+    writeFile(path.join(srcDir, "nested"), "b.ts", "beta\n");
+    writeFile(path.join(dir, "node_modules", "pkg"), "leak.ts", "leak\n");
+
+    const recursive = expandWatchedDirectories([{ dir: srcDir, recursive: true }]);
+    assert.ok(recursive.includes(srcDir));
+    assert.ok(
+      recursive.includes(path.join(srcDir, "empty")),
+      "recursive watch tracks a currently empty included directory",
+    );
+    assert.ok(recursive.includes(path.join(srcDir, "nested")));
+    assert.ok(
+      !recursive.some((d) => d.split(path.sep).join("/").includes("/node_modules/")),
+      "node_modules subtrees are excluded from the watched directory set",
+    );
+
+    const flat = expandWatchedDirectories([{ dir: srcDir, recursive: false }]);
+    assert.deepEqual(flat, [srcDir], "a non-recursive watch tracks only the watched directory");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --------------------------------------------------------------------------
+// resolveTsconfigFilesCached: skip re-walking an unchanged tree, re-resolve on
+// file-list-affecting changes.
+
+{
+  const dir = makeTempDir("tsz-stats-filelist-");
+  try {
+    const srcDir = path.join(dir, "src");
+    const fileA = writeFile(srcDir, "a.ts", "alpha\n");
+    const fileB = writeFile(srcDir, "b.ts", "beta\n");
+    const tsconfig = writeFile(dir, "tsconfig.json", JSON.stringify({ include: ["src"] }));
+    const watchDirectories = [{ dir: srcDir, recursive: true }];
+
+    let resolveCalls = 0;
+    let currentFiles = [fileA, fileB];
+    const resolve = () => {
+      resolveCalls += 1;
+      return { files: currentFiles.slice().sort(), watchDirectories };
+    };
+
+    const cache = { entries: {} };
+    const first = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 1, "cold cache resolves the file list once");
+    assert.deepEqual(first, [fileA, fileB].sort());
+    assert.equal(cache.fileListDirty, true, "cold resolve dirties the file-list cache");
+    assert.ok(cache.fileList && cache.fileList.files.length === 2, "file list is cached");
+
+    const second = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 1, "an unchanged tree reuses the cached file list");
+    assert.deepEqual(second, first);
+    assert.equal(cache.fileListDirty, false, "a cache hit leaves the file-list cache clean");
+
+    // Adding a file bumps the tracked source directory's mtime. Use uniquely
+    // named files so the directory mtime is guaranteed to advance even on a
+    // coarse-resolution filesystem.
+    const beforeDirMtime = statFileEntry(srcDir).mtimeNs;
+    let fileC;
+    let counter = 0;
+    do {
+      fileC = writeFile(srcDir, `c${counter++}.ts`, "gamma\n");
+    } while (statFileEntry(srcDir).mtimeNs === beforeDirMtime);
+    currentFiles = [fileA, fileB, fileC];
+    const third = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 2, "a new file in a tracked directory re-resolves the list");
+    assert.equal(third.length, 3, "the freshly discovered file appears in the list");
+    assert.equal(cache.fileListDirty, true);
+
+    // A subsequent unchanged pass is a hit again.
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 2, "the refreshed file list is reused while the tree is stable");
+
+    // Regression (review #12277): a file added under a previously EMPTY included
+    // subdirectory must invalidate the cache even though no resolved file lived
+    // there. The recursive watch tracks `src/empty`, so writing into it bumps a
+    // fingerprinted directory.
+    const emptyDir = path.join(srcDir, "empty");
+    fs.mkdirSync(emptyDir, { recursive: true });
+    // Re-resolve so the (now-tracked) empty directory is part of the fingerprint.
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    const resolveCallsBeforeEmptyAdd = resolveCalls;
+    const beforeEmptyMtime = statFileEntry(emptyDir).mtimeNs;
+    let fileD;
+    let emptyCounter = 0;
+    do {
+      fileD = writeFile(emptyDir, `d${emptyCounter++}.ts`, "delta\n");
+    } while (statFileEntry(emptyDir).mtimeNs === beforeEmptyMtime);
+    currentFiles = [fileA, fileB, fileC, fileD];
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(
+      resolveCalls,
+      resolveCallsBeforeEmptyAdd + 1,
+      "a file added under a previously empty included directory re-resolves the list",
+    );
+
+    // Editing the tsconfig (its size changes here) re-resolves even when the
+    // source tree is otherwise unchanged, since include/exclude may differ.
+    fs.writeFileSync(tsconfig, JSON.stringify({ include: ["src", "lib"] }));
+    const resolveCallsBeforeTsconfigEdit = resolveCalls;
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(
+      resolveCalls,
+      resolveCallsBeforeTsconfigEdit + 1,
+      "editing the tsconfig re-resolves the file list",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --------------------------------------------------------------------------
+// computeProjectFileStats: the persisted file-list cache survives a fresh
+// cache load (the cross-process row-mode pattern) and skips file discovery.
+
+{
+  const dir = makeTempDir("tsz-stats-filelist-stats-");
+  const cacheHome = makeTempDir("tsz-stats-filelist-cache-");
+  const prevCacheDir = process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR;
+  try {
+    const srcDir = path.join(dir, "src");
+    const fileA = writeFile(srcDir, "a.ts", "alpha\nbeta\n");
+    const fileB = writeFile(srcDir, "b.ts", "gamma\n");
+    const tsconfig = writeFile(dir, "tsconfig.json", "{}");
+    // The cache directory lives outside the project tree (as in the real
+    // harness, where it sits under TMPDIR) so writing it does not perturb the
+    // tracked project directory mtimes.
+    process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR = cacheHome;
+
+    let resolveCalls = 0;
+    const resolve = () => {
+      resolveCalls += 1;
+      return { files: [fileA, fileB], watchDirectories: [{ dir: srcDir, recursive: true }] };
+    };
+
+    const first = computeProjectFileStats(tsconfig, { resolve });
+    assert.equal(resolveCalls, 1, "first invocation discovers the file list");
+    assert.equal(first.fileCount, 2);
+    assert.equal(first.lines, 3);
+
+    const cacheFile = path.join(cacheHome, cacheKeyForTsconfig(path.resolve(tsconfig)) + ".json");
+    const persisted = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    assert.ok(persisted.fileList, "the fileList section is persisted to disk");
+    assert.equal(persisted.fileList.files.length, 2);
+
+    // Second invocation reloads the cache from disk (simulating a separate
+    // process) and must not re-discover the file list.
+    resolveCalls = 0;
+    const second = computeProjectFileStats(tsconfig, { resolve });
+    assert.equal(resolveCalls, 0, "an unchanged tree skips file discovery on cache reload");
+    assert.deepEqual(second, first, "stats are identical across the cached invocations");
+  } finally {
+    if (prevCacheDir === undefined) {
+      delete process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR;
+    } else {
+      process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR = prevCacheDir;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cacheHome, { recursive: true, force: true });
   }
 }
 
