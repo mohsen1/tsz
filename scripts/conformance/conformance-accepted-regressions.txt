@@ -15,8 +15,9 @@
 # interfaceExtendsObjectIntersectionErrors.ts is covered by the class heritage
 # TS2416 tests for construct-signature expression bases.
 # circularReference.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
-# exportDefaultInterface.ts: RESOLVED in PR #12377 queue synthetic merge
-# run 26911310049; removed.
+# exportDefaultInterface.ts oscillates; still REGRESSED on PR #12377 exact head
+# run 26912505823 after ledger alignment.
+TypeScript/tests/cases/compiler/exportDefaultInterface.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 
 
@@ -42,8 +43,8 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
 # intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
-# contextuallyTypedJsxChildren2.tsx: accepted after REGRESSED on PR #12377
-# queue synthetic merge run 26911310049. Tracked in #12376.
+# contextuallyTypedJsxChildren2.tsx: RESOLVED on PR #12377 exact head
+# run 26912505823 after transient queue synthetic drift; removed.
 # jsxIntrinsicUnions.tsx: RESOLVED in PR #12377 queue synthetic merge
 # run 26911310049; removed.
 # jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
@@ -54,7 +55,7 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
 # (HTMLElementTagNameMap) still fails — the full lib type hierarchy exercises a
-# different code path. RESOLVED in PR #12377 queue synthetic merge run
-# 26911310049; removed.
-TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx
+# different code path. Still REGRESSED on PR #12377 exact head run
+# 26912505823 after ledger alignment.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
