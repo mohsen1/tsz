@@ -347,3 +347,105 @@ const allowed: 1 | 2 | 3 = sizes;
 "#,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Object-valued distributive branches over a *deferred* union check side
+// (issue #10864). When the conditional's check type is a wrapping alias /
+// application (`Wrap<U>`, an inline `Id<U>` argument) rather than a literal
+// union, the per-member rewrite runs through `substitute_exact_type`. If that
+// rewrite does not reach into object property types, every union member
+// collapses to one widened object (`{ value: A | B }`) and the conditional
+// becomes over-constrained. Binder names are varied so no fixture-name path
+// can match.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn distributive_object_branch_through_inline_application_arg() {
+    no_assignability_errors(
+        r#"
+type Tag<Elem> = Elem extends unknown ? { value: Elem } : never;
+type Members = [string] | [number];
+
+// `Tag<Members>` is passed inline as an application argument; the outer
+// conditional's check side is therefore a deferred application, not a literal
+// union. tsc keeps per-member precision: { value: [string] } | { value: [number] }.
+type Same<Left, Right> = [Left] extends [Right]
+  ? ([Right] extends [Left] ? true : false)
+  : false;
+
+const exact: Same<
+  Tag<Members>,
+  { value: [string] } | { value: [number] }
+> = true;
+"#,
+    );
+}
+
+#[test]
+fn distributive_object_branch_through_wrapping_alias() {
+    no_assignability_errors(
+        r#"
+type Wrap<Inner> = Classify<Inner>;
+type Classify<Item> = Item extends unknown
+  ? Item extends string
+    ? { kind: "string"; value: Item }
+    : { kind: "other"; value: Item }
+  : never;
+
+type Inputs = [string, string] | [number, number] | [];
+
+type Equal<Lhs, Rhs> = [Lhs] extends [Rhs]
+  ? ([Rhs] extends [Lhs] ? true : false)
+  : false;
+
+// V's body is Application(Wrap, [Inputs]) — a deferred check side. Each tuple
+// arm classifies to { kind: "other"; value: <arm> }; precision must survive.
+const ok: Equal<
+  Wrap<Inputs>,
+  | { kind: "other"; value: [string, string] }
+  | { kind: "other"; value: [number, number] }
+  | { kind: "other"; value: [] }
+> = true;
+"#,
+    );
+}
+
+#[test]
+fn distributive_object_branch_inline_application_rejects_widening() {
+    // The widened collapse `{ value: [string] | [number] }` must NOT be
+    // accepted as the result, which would be the pre-fix (over-constrained)
+    // behavior. Assigning a widened-shaped value to the per-member union fails.
+    let source = r#"
+type Mark<Slot> = Slot extends unknown ? { value: Slot } : never;
+type Slots = [string] | [number];
+type Result = Mark<Slots>;
+
+declare const widened: { value: [string] | [number] };
+const back: Result = widened;
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    assert!(
+        has_error(&diagnostics, 2322),
+        "widened single object must not satisfy the per-member distributed union. diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn distributive_nested_object_branch_preserves_inner_variable() {
+    no_assignability_errors(
+        r#"
+type Deep<Elem> = Elem extends unknown ? { outer: { inner: Elem } } : never;
+type Arms = [string] | [number];
+type Pass<X> = Deep<X>;
+
+type Same<Left, Right> = [Left] extends [Right]
+  ? ([Right] extends [Left] ? true : false)
+  : false;
+
+const ok: Same<
+  Pass<Arms>,
+  { outer: { inner: [string] } } | { outer: { inner: [number] } }
+> = true;
+"#,
+    );
+}
