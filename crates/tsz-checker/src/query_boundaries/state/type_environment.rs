@@ -437,10 +437,10 @@ impl CacheEntryCollection {
 /// This is the canonical boundary for `TypeEvaluator` construction with cache
 /// management — checker code must not construct `TypeEvaluator` directly.
 ///
-/// `cache_entry_collection` controls only whether the evaluator's intermediate
+/// `CacheEntryCollection` controls only whether the evaluator's intermediate
 /// per-run cache is drained into the result. It must not affect evaluation or
-/// top-level result caching; env-eval disables it when the structural seed/
-/// persist cap says those intermediates would be discarded.
+/// top-level result caching; env-eval disables collection when the structural
+/// seed/persist cap says those intermediates would be discarded.
 pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
