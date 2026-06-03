@@ -1109,3 +1109,155 @@ class StringChild extends Middle<string> {
         "Expected inherited generic method on `this` to contextualize callback with subclass base arguments, got: {relevant:#?}"
     );
 }
+
+#[test]
+fn discriminated_union_for_of_loop_narrows_variant_properties() {
+    // ZodNumberCheck-style discriminated union accessed in a for-of loop.
+    // After `if (check.kind === "min")`, tsz must narrow `check` to the
+    // `{ kind: "min"; value: number; inclusive: boolean; ... }` variant so
+    // `check.value` and `check.inclusive` are accessible without TS2339.
+    let diags = check_source_diagnostics(
+        r#"
+type ZodNumberCheck =
+  | { kind: "min"; value: number; inclusive: boolean; message?: string }
+  | { kind: "max"; value: number; inclusive: boolean; message?: string }
+  | { kind: "int"; message?: string }
+  | { kind: "finite"; message?: string }
+  | { kind: "multipleOf"; value: number; message?: string };
+
+function checkNumber(data: number, checks: ZodNumberCheck[]) {
+  for (const check of checks) {
+    if (check.kind === "min") {
+      if (check.inclusive ? data >= check.value : data > check.value) {
+        return "fail";
+      }
+    } else if (check.kind === "max") {
+      if (check.inclusive ? data <= check.value : data < check.value) {
+        return "fail";
+      }
+    } else if (check.kind === "multipleOf") {
+      if (data % check.value !== 0) {
+        return "fail";
+      }
+    }
+  }
+  return "ok";
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 in discriminated union for-of narrowing; got: {ts2339:?}"
+    );
+}
+
+#[test]
+fn discriminated_union_for_of_in_class_method_with_generic_def_narrows_correctly() {
+    // Mirrors the ZodNumber._parse pattern: `this._def` is typed as generic `Def`,
+    // but `ZodNumber` specialises `Def = ZodNumberDef`, so in the method body
+    // `this._def.checks` must be `ZodNumberCheck[]` and the for-of binding must
+    // be narrowable by discriminant — no TS2339 false positives.
+    let diags = check_source_diagnostics(
+        r#"
+interface ZodTypeDef {}
+
+type ZodNumberCheck =
+  | { kind: "min"; value: number; inclusive: boolean; message?: string }
+  | { kind: "max"; value: number; inclusive: boolean; message?: string }
+  | { kind: "int"; message?: string }
+  | { kind: "multipleOf"; value: number; message?: string };
+
+interface ZodNumberDef extends ZodTypeDef {
+  checks: ZodNumberCheck[];
+}
+
+abstract class ZodType<Output, Def extends ZodTypeDef = ZodTypeDef> {
+  readonly _def!: Def;
+  constructor(def: Def) { (this as any)._def = def; }
+  abstract _parse(data: any): boolean;
+}
+
+class ZodNumber extends ZodType<number, ZodNumberDef> {
+  _parse(data: number): boolean {
+    for (const check of this._def.checks) {
+      if (check.kind === "min") {
+        if (check.inclusive ? data >= check.value : data > check.value) {
+          return false;
+        }
+      } else if (check.kind === "max") {
+        if (check.inclusive ? data <= check.value : data < check.value) {
+          return false;
+        }
+      } else if (check.kind === "multipleOf") {
+        if (data % check.value !== 0) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 in generic class method for-of discriminant narrowing; got: {ts2339:?}"
+    );
+}
+
+#[test]
+fn discriminated_union_for_of_with_compound_conditions_in_class_method() {
+    // Mirrors the actual Zod pattern at types.ts:682-702 where `check.value` and
+    // `check.inclusive` appear in compound boolean conditions after the discriminant guard.
+    // The flow narrowing must survive the `&&` and `||` operators inside the narrowed branch.
+    let diags = check_source_diagnostics(
+        r#"
+interface ZodTypeDef {}
+
+type ZodNumberCheck =
+  | { kind: "min"; value: number; inclusive: boolean; message?: string }
+  | { kind: "max"; value: number; inclusive: boolean; message?: string }
+  | { kind: "int"; message?: string }
+  | { kind: "multipleOf"; value: number; message?: string };
+
+interface ZodNumberDef extends ZodTypeDef {
+  checks: ZodNumberCheck[];
+}
+
+abstract class ZodType<Output, Def extends ZodTypeDef = ZodTypeDef> {
+  readonly _def!: Def;
+  constructor(def: Def) { (this as any)._def = def; }
+}
+
+interface ParseCtx { data: number; }
+
+class ZodNumber extends ZodType<number, ZodNumberDef> {
+  _parse(ctx: ParseCtx): boolean {
+    for (const check of this._def.checks) {
+      if (check.kind === "min") {
+        if (ctx.data < check.value || (ctx.data === check.value && !check.inclusive)) {
+          return false;
+        }
+      } else if (check.kind === "max") {
+        if (ctx.data > check.value || (ctx.data === check.value && !check.inclusive)) {
+          return false;
+        }
+      } else if (check.kind === "multipleOf") {
+        if (ctx.data % check.value !== 0) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 in for-of with compound conditions after discriminant guard; got: {ts2339:?}"
+    );
+}

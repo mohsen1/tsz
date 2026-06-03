@@ -19,7 +19,7 @@
 //! method), so the matrix below varies all three.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_with_options, strict_checker_options};
+use crate::test_utils::{check_source_diagnostics, check_with_options, strict_checker_options};
 
 /// Full elaboration text (primary message plus every related-information line)
 /// of the single error with `code` in `source`, checked under strict options.
@@ -196,5 +196,37 @@ f = g;
     assert!(
         !text.contains("Types of parameters"),
         "A return-only mismatch must not emit a parameter frame. Got: {text:?}"
+    );
+}
+
+#[test]
+fn class_method_with_fewer_params_implements_interface_with_more_params() {
+    // TypeScript allows a class method to implement an interface method with
+    // fewer required parameters; extra parameters are simply ignored by the
+    // implementation. This mirrors the Kysely pattern where dialect adapters
+    // implement `acquireMigrationLock(db, options)` with only `(db)`.
+    let diags = check_source_diagnostics(
+        r#"
+interface Options { timeout?: number }
+declare class DB<T> {}
+
+interface Adapter {
+    lock(db: DB<any>, options: Options): Promise<void>
+}
+
+class MssqlAdapter implements Adapter {
+    async lock(_db: DB<any>): Promise<void> {}
+}
+
+// Direct function-type assignment: fewer params is valid
+type F2 = (a: string, b: number) => void;
+const f1: (a: string) => void = (_a) => {};
+const assignCheck: F2 = f1;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322: fewer-param function must be assignable to more-param type; got: {ts2322:?}"
     );
 }
