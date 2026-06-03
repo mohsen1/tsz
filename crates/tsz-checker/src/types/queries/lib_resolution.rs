@@ -807,12 +807,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        for ty in lib_types.iter().copied() {
-            if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_some() {
-                continue;
-            }
-            self.ensure_relation_input_ready(ty);
-        }
+        // Relation-input readiness is intentionally deferred until after the
+        // final cache write below (see that call site); running it here, while
+        // `name`'s cache slot still holds the in-progress sentinel, dropped
+        // heritage bases mid-cycle. Issue #12299.
 
         // Merge repeated lib interface declarations using interface-merge
         // semantics instead of a raw intersection. Constructor interfaces like
@@ -991,6 +989,23 @@ impl<'a> CheckerState<'a> {
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
         {
             shared.insert(name.to_string(), lib_type_id);
+        }
+
+        // Now that `name` is fully resolved and cached, prepare its relation
+        // inputs (resolve `Lazy` refs / application symbols). Doing this here
+        // rather than mid-resolution is load-bearing: readying a type walks its
+        // member refs and can transitively resolve a *derived* interface (e.g.
+        // readying `Node` pulls `HTMLElement` -> `Element`). If `name`'s cache
+        // slot still held the in-progress `None` sentinel, that derived
+        // interface's `extends name` clause would resolve to `None` and be
+        // silently dropped, caching an incomplete type (false TS2339 on
+        // inherited methods like `appendChild`, false TS2740). Running after the
+        // cache write means nested resolutions observe the completed `name`.
+        // Issue #12299. Lazy alias bodies are left alone — they expand on demand.
+        if let Some(ty) = lib_type_id
+            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_none()
+        {
+            self.ensure_relation_input_ready(ty);
         }
 
         lib_type_id
