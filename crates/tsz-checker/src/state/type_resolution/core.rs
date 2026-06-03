@@ -446,6 +446,8 @@ impl<'a> CheckerState<'a> {
                         && self.type_alias_has_computed_recursive_conditional_body(sym_id);
                     let same_input_recursive_union_alias = is_type_alias
                         && self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
+                    let recursive_alias_body =
+                        is_type_alias && self.type_alias_body_has_recursive_alias_ref(sym_id);
                     let default_reset_recursive_alias = is_type_alias
                         && self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
                     let default_omitting_recursive_alias = is_type_alias
@@ -557,7 +559,12 @@ impl<'a> CheckerState<'a> {
                                         self.def_body_involves_depth_poisoned_def(def_id)
                                     })));
 
-                        if (exceeded && !suppress_depth_cascade)
+                        if (exceeded
+                            && !suppress_depth_cascade
+                            && (computed_recursive_alias
+                                || same_input_recursive_union_alias
+                                || defaulted_recursive_alias
+                                || recursive_alias_body))
                             || circular_mapped
                             || tuple_too_large
                         {
@@ -1393,6 +1400,8 @@ impl<'a> CheckerState<'a> {
                             self.type_alias_has_computed_recursive_conditional_body(sym_id);
                         let same_input_recursive_union_alias =
                             self.type_alias_has_same_input_recursive_conditional_union_body(sym_id);
+                        let recursive_alias_body =
+                            self.type_alias_body_has_recursive_alias_ref(sym_id);
                         let default_reset_recursive_alias =
                             self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
                         let default_omitting_recursive_alias = !default_reset_recursive_alias
@@ -1497,7 +1506,12 @@ impl<'a> CheckerState<'a> {
                                             self.def_body_involves_depth_poisoned_def(def_id)
                                         })));
 
-                            if (exceeded && !suppress_depth_cascade)
+                            if (exceeded
+                                && !suppress_depth_cascade
+                                && (computed_recursive_alias
+                                    || same_input_recursive_union_alias
+                                    || defaulted_recursive_alias
+                                    || recursive_alias_body))
                                 || circular_mapped
                                 || tuple_too_large
                             {

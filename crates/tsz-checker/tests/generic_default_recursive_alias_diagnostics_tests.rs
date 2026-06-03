@@ -119,3 +119,54 @@ type Thousand = BuildTuple<number, 1000>;
         "ordinary nonrecursive conditional wrappers should still report deep concrete instantiations; got {codes:?}"
     );
 }
+
+#[test]
+fn bounded_recursive_merge_wrapped_in_list_alias_no_ts2589() {
+    let codes = semantic_codes(
+        r#"
+interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+}
+
+type List<A = any> = ReadonlyArray<A>;
+type Cast<A1 extends any, A2 extends any> = A1 extends A2 ? A1 : A2;
+type Extends<A1 extends any, A2 extends any> =
+    [A1] extends [never] ? 0 : A1 extends A2 ? 1 : 0;
+
+type Iteration = [
+    value: number,
+    next: keyof IterationMap,
+];
+type IterationMap = {
+    "__": [number, "__"],
+    "0": [0, "1"],
+    "1": [1, "__"],
+};
+type IterationOf<N extends keyof IterationMap> = IterationMap[N];
+type Next<I extends Iteration> = IterationMap[I[1]];
+type Pos<I extends Iteration> = I[0];
+type Length<L extends List> = L["length"];
+
+type Merge<O extends object, O1 extends object> = O & O1;
+type __MergeAll<
+    O extends object,
+    Os extends List<object>,
+    I extends Iteration = IterationOf<"0">,
+> = {
+    0: __MergeAll<Merge<O, Os[Pos<I>] & object>, Os, Next<I>>;
+    1: O;
+}[Extends<Pos<I>, Length<Os>>];
+type _MergeAll<O extends object, Os extends List<object>> = __MergeAll<O, Os>;
+type MergeAll<L extends List, Ls extends List<List>> =
+    Cast<_MergeAll<L, Ls>, List>;
+
+type Result = MergeAll<[{}], [[{ value: 1 }]]>;
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2589),
+        "bounded recursive merge through a non-recursive List wrapper must not emit TS2589; got {codes:?}"
+    );
+}
