@@ -2335,14 +2335,14 @@ impl<'a> Printer<'a> {
                     export_name,
                     is_es_module_output,
                 ));
-            } else if let Some(mut rewritten) =
-                self.render_simple_tc39_decorated_class_es5(node, idx, &binding_name, &display_name)
+            } else if let Some(mut rewritten) = self
+                .render_simple_tc39_decorated_class_es5_assignment(
+                    node,
+                    idx,
+                    &binding_name,
+                    &display_name,
+                )
             {
-                rewritten = rewritten.replacen(
-                    &format!("var {binding_name} = "),
-                    &format!("{binding_name} = "),
-                    1,
-                );
                 if self.in_system_execute_body {
                     let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
                     if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
