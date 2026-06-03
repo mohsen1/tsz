@@ -683,6 +683,20 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }),
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                arena.get_named_tuple_member(node).is_some_and(|member| {
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+                        arena,
+                        binder,
+                        member.type_node,
+                        type_param_names,
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        inferred_guard_names,
+                    )
+                })
+            }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 arena.get_composite_type(node).is_some_and(|composite| {
                     composite.types.nodes.iter().copied().all(|member| {
@@ -1168,6 +1182,19 @@ impl<'a> CheckerState<'a> {
                             inferred_guard_names,
                         )
                     })
+                })
+            }
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                arena.get_named_tuple_member(node).is_some_and(|member| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
+                        arena,
+                        binder,
+                        member.type_node,
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        inferred_guard_names,
+                    )
                 })
             }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE
