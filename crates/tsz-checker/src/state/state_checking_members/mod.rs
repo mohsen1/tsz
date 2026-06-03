@@ -2,6 +2,7 @@
 
 mod ambient_signature_checks;
 mod class_expression_initializers;
+mod class_member_checks;
 mod class_member_context;
 mod class_type_param_checks;
 mod decorator_signature_checks;

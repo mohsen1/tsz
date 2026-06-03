@@ -238,10 +238,8 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
-            "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
