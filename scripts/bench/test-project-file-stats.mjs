@@ -20,10 +20,13 @@ import { fileURLToPath } from "node:url";
 import {
   aggregateProjectStats,
   cacheKeyForTsconfig,
+  computeProjectFileStats,
+  contributingDirectories,
   countNewlinesStream,
   isLocalProjectFile,
   isTypeScriptFile,
   loadStatsCache,
+  resolveTsconfigFilesCached,
   saveStatsCache,
   statFileEntry,
 } from "./project-file-stats.mjs";
@@ -203,6 +206,147 @@ assert.equal(
     assert.equal(cache.dirty, true, "removal of a file dirties the cache");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --------------------------------------------------------------------------
+// contributingDirectories: parent dirs plus ancestors up to the tsconfig dir.
+
+{
+  const root = path.join(path.sep, "proj");
+  const dirs = contributingDirectories(
+    [
+      path.join(root, "src", "a.ts"),
+      path.join(root, "src", "nested", "deep", "b.ts"),
+      path.join(root, "lib", "c.ts"),
+    ],
+    root,
+  );
+  for (const expected of [
+    root,
+    path.join(root, "src"),
+    path.join(root, "src", "nested"),
+    path.join(root, "src", "nested", "deep"),
+    path.join(root, "lib"),
+  ]) {
+    assert.ok(dirs.includes(expected), `expected ${expected} in contributing dirs`);
+  }
+
+  // Files outside the tsconfig directory contribute their parent directory but
+  // do not pull in the (unrelated) tsconfig-dir ancestor chain.
+  const outsideDirs = contributingDirectories([path.join(path.sep, "other", "x.ts")], root);
+  assert.ok(outsideDirs.includes(path.join(path.sep, "other")));
+  assert.ok(!outsideDirs.includes(root), "out-of-tree files do not track the tsconfig dir");
+}
+
+// --------------------------------------------------------------------------
+// resolveTsconfigFilesCached: skip re-walking an unchanged tree, re-resolve on
+// file-list-affecting changes.
+
+{
+  const dir = makeTempDir("tsz-stats-filelist-");
+  try {
+    const srcDir = path.join(dir, "src");
+    const fileA = writeFile(srcDir, "a.ts", "alpha\n");
+    const fileB = writeFile(srcDir, "b.ts", "beta\n");
+    const tsconfig = writeFile(dir, "tsconfig.json", JSON.stringify({ include: ["src"] }));
+
+    let resolveCalls = 0;
+    let currentFiles = [fileA, fileB];
+    const resolve = () => {
+      resolveCalls += 1;
+      return currentFiles.slice().sort();
+    };
+
+    const cache = { entries: {} };
+    const first = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 1, "cold cache resolves the file list once");
+    assert.deepEqual(first, [fileA, fileB].sort());
+    assert.equal(cache.fileListDirty, true, "cold resolve dirties the file-list cache");
+    assert.ok(cache.fileList && cache.fileList.files.length === 2, "file list is cached");
+
+    const second = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 1, "an unchanged tree reuses the cached file list");
+    assert.deepEqual(second, first);
+    assert.equal(cache.fileListDirty, false, "a cache hit leaves the file-list cache clean");
+
+    // Adding a file bumps the tracked source directory's mtime. Use uniquely
+    // named files so the directory mtime is guaranteed to advance even on a
+    // coarse-resolution filesystem.
+    const beforeDirMtime = statFileEntry(srcDir).mtimeNs;
+    let fileC;
+    let counter = 0;
+    do {
+      fileC = writeFile(srcDir, `c${counter++}.ts`, "gamma\n");
+    } while (statFileEntry(srcDir).mtimeNs === beforeDirMtime);
+    currentFiles = [fileA, fileB, fileC];
+    const third = resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 2, "a new file in a tracked directory re-resolves the list");
+    assert.equal(third.length, 3, "the freshly discovered file appears in the list");
+    assert.equal(cache.fileListDirty, true);
+
+    // A subsequent unchanged pass is a hit again.
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 2, "the refreshed file list is reused while the tree is stable");
+
+    // Editing the tsconfig (its size changes here) re-resolves even when the
+    // source tree is otherwise unchanged, since include/exclude may differ.
+    fs.writeFileSync(tsconfig, JSON.stringify({ include: ["src", "lib"] }));
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(resolveCalls, 3, "editing the tsconfig re-resolves the file list");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --------------------------------------------------------------------------
+// computeProjectFileStats: the persisted file-list cache survives a fresh
+// cache load (the cross-process row-mode pattern) and skips file discovery.
+
+{
+  const dir = makeTempDir("tsz-stats-filelist-stats-");
+  const cacheHome = makeTempDir("tsz-stats-filelist-cache-");
+  const prevCacheDir = process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR;
+  try {
+    const srcDir = path.join(dir, "src");
+    const fileA = writeFile(srcDir, "a.ts", "alpha\nbeta\n");
+    const fileB = writeFile(srcDir, "b.ts", "gamma\n");
+    const tsconfig = writeFile(dir, "tsconfig.json", "{}");
+    // The cache directory lives outside the project tree (as in the real
+    // harness, where it sits under TMPDIR) so writing it does not perturb the
+    // tracked project directory mtimes.
+    process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR = cacheHome;
+
+    let resolveCalls = 0;
+    const resolve = () => {
+      resolveCalls += 1;
+      return [fileA, fileB];
+    };
+
+    const first = computeProjectFileStats(tsconfig, { resolve });
+    assert.equal(resolveCalls, 1, "first invocation discovers the file list");
+    assert.equal(first.fileCount, 2);
+    assert.equal(first.lines, 3);
+
+    const cacheFile = path.join(cacheHome, cacheKeyForTsconfig(path.resolve(tsconfig)) + ".json");
+    const persisted = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    assert.ok(persisted.fileList, "the fileList section is persisted to disk");
+    assert.equal(persisted.fileList.files.length, 2);
+
+    // Second invocation reloads the cache from disk (simulating a separate
+    // process) and must not re-discover the file list.
+    resolveCalls = 0;
+    const second = computeProjectFileStats(tsconfig, { resolve });
+    assert.equal(resolveCalls, 0, "an unchanged tree skips file discovery on cache reload");
+    assert.deepEqual(second, first, "stats are identical across the cached invocations");
+  } finally {
+    if (prevCacheDir === undefined) {
+      delete process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR;
+    } else {
+      process.env.TSZ_PROJECT_FILE_STATS_CACHE_DIR = prevCacheDir;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cacheHome, { recursive: true, force: true });
   }
 }
 

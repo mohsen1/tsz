@@ -7,10 +7,18 @@
 //
 // Performance contract: when the same tsconfig is used across multiple
 // invocations within a single bench run (the project-row harness pattern),
-// unchanged files must not be re-opened or re-read. Set the
+// unchanged files must not be re-opened or re-read, AND the project file list
+// must not be re-discovered by re-walking the whole source tree. Set the
 // `TSZ_PROJECT_FILE_STATS_CACHE_DIR` env var (a writable directory) to enable
-// the on-disk cache. The cache key is the absolute tsconfig path; cache
-// entries are invalidated per file by `(mtime_ns, size)`.
+// the on-disk cache. The cache key is the absolute tsconfig path. Two layers
+// are cached:
+//   1. The resolved project file list (the recursive `include`/`exclude`
+//      directory walk done by TypeScript's `parseJsonConfigFileContent`).
+//      Invalidated by the tsconfig's own `(mtime_ns, size)` and by the
+//      `mtime_ns` of every directory that spans the resolved files, so a file
+//      added/removed/renamed anywhere in the tree re-triggers discovery while
+//      an unchanged tree skips loading TypeScript entirely.
+//   2. Per-file line counts, invalidated per file by `(mtime_ns, size)`.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -224,12 +232,131 @@ export function resolveCachePath(tsconfigAbsolutePath) {
   return path.join(cacheDir, cacheKeyForTsconfig(tsconfigAbsolutePath) + ".json");
 }
 
-export function computeProjectFileStats(tsconfigAbsolutePath) {
-  const files = resolveTsconfigFiles(tsconfigAbsolutePath);
+// True when `child` is `parent` itself or nested somewhere beneath it. Uses a
+// relative-path probe so it is robust to mixed separators and trailing
+// slashes without touching the filesystem.
+function isPathUnder(child, parent) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+// The set of directories whose `mtime` governs whether the resolved file list
+// is still current: the parent directory of every file, plus — for files that
+// live under the tsconfig directory — every intermediate directory up to and
+// including the tsconfig directory. A file added, removed, or renamed in any
+// of these directories bumps that directory's `mtime`, which lets us detect a
+// stale file list without re-walking the tree. Returned sorted for stable
+// cache contents.
+export function contributingDirectories(files, rootDir) {
+  const root = path.resolve(rootDir);
+  const dirs = new Set();
+  for (const file of files) {
+    let dir = path.dirname(path.resolve(file));
+    dirs.add(dir);
+    // Walk up to `root` for in-tree files; `root` itself is added by the loop
+    // when descending from a deeper file, or by the `dirs.add(dir)` above when
+    // the file sits directly in it.
+    if (isPathUnder(dir, root)) {
+      while (dir !== root) {
+        const parent = path.dirname(dir);
+        if (parent === dir) break; // reached the filesystem root
+        dir = parent;
+        dirs.add(dir);
+      }
+    }
+  }
+  return [...dirs].sort();
+}
+
+// Stat every directory in `dirs` and return a `{ dir: mtimeNs }` map, or `null`
+// if any directory cannot be stat'd (a vanished directory means the file list
+// is stale and must be re-resolved).
+export function directoryFingerprint(dirs) {
+  const fingerprint = {};
+  for (const dir of dirs) {
+    let stat;
+    try {
+      stat = fs.statSync(dir);
+    } catch {
+      return null;
+    }
+    fingerprint[dir] = mtimeNsKey(stat);
+  }
+  return fingerprint;
+}
+
+// True when the cached file list is still valid: the tsconfig's own
+// `(mtimeNs, size)` is unchanged (catches `include`/`exclude`/config edits) and
+// every recorded directory `mtime` is unchanged (catches file additions,
+// removals, and renames anywhere the file list spans).
+export function fileListCacheValid(cache, tsconfigAbsolutePath) {
+  const fileList = cache && cache.fileList;
+  if (!fileList || !fileList.tsconfig || !fileList.dirs || !Array.isArray(fileList.files)) {
+    return false;
+  }
+  let tsconfigStat;
+  try {
+    tsconfigStat = fs.statSync(tsconfigAbsolutePath);
+  } catch {
+    return false;
+  }
+  if (
+    fileList.tsconfig.size !== tsconfigStat.size ||
+    fileList.tsconfig.mtimeNs !== mtimeNsKey(tsconfigStat)
+  ) {
+    return false;
+  }
+  // Re-stat the recorded directories through the same helper used to build the
+  // fingerprint, so the stat-and-compare logic lives in exactly one place.
+  const current = directoryFingerprint(Object.keys(fileList.dirs));
+  if (current === null) return false;
+  for (const [dir, mtimeNs] of Object.entries(fileList.dirs)) {
+    if (current[dir] !== mtimeNs) return false;
+  }
+  return true;
+}
+
+// Resolve the project file list, reusing a cached list when the tsconfig and
+// the directories spanning the project are unchanged. On a cache hit this
+// skips loading TypeScript and re-walking the source tree entirely; on a miss
+// it records a fresh fingerprint and sets `cache.fileListDirty` so the caller
+// persists the updated cache. `resolve` is injectable for tests so the file
+// discovery can be exercised without the TypeScript package installed.
+export function resolveTsconfigFilesCached(tsconfigAbsolutePath, { cache, resolve } = {}) {
+  const resolveFiles = resolve ?? resolveTsconfigFiles;
+  if (cache && fileListCacheValid(cache, tsconfigAbsolutePath)) {
+    cache.fileListDirty = false;
+    return cache.fileList.files.slice();
+  }
+
+  const files = resolveFiles(tsconfigAbsolutePath);
+  if (cache) {
+    const rootDir = path.dirname(path.resolve(tsconfigAbsolutePath));
+    const dirFingerprint = directoryFingerprint(contributingDirectories(files, rootDir));
+    let tsconfigStat = null;
+    try {
+      const stat = fs.statSync(tsconfigAbsolutePath);
+      tsconfigStat = { size: stat.size, mtimeNs: mtimeNsKey(stat) };
+    } catch {
+      // Leave null; without a tsconfig stat the list cannot be cached safely.
+    }
+    if (dirFingerprint && tsconfigStat) {
+      cache.fileList = { tsconfig: tsconfigStat, dirs: dirFingerprint, files: files.slice() };
+    } else {
+      delete cache.fileList;
+    }
+    cache.fileListDirty = true;
+  }
+  return files;
+}
+
+export function computeProjectFileStats(tsconfigAbsolutePath, { resolve } = {}) {
   const cachePath = resolveCachePath(tsconfigAbsolutePath);
   const cache = cachePath ? (loadStatsCache(cachePath) ?? { entries: {} }) : null;
+  const files = resolveTsconfigFilesCached(tsconfigAbsolutePath, { cache, resolve });
+  const fileListDirty = cache?.fileListDirty === true;
   const stats = aggregateProjectStats(files, { cache });
-  if (cache && cache.dirty) saveStatsCache(cachePath, cache);
+  if (cache && (cache.dirty || fileListDirty)) saveStatsCache(cachePath, cache);
   return stats;
 }
 
