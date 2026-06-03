@@ -1090,3 +1090,45 @@ fn test_import_type_only_assert_newline_not_attributes() {
         "type-only import: newline before 'assert' must not be parsed as attributes"
     );
 }
+
+#[test]
+fn test_new_dot_targ_meta_property_ts17012() {
+    // `new.targ` (misspelled `new.target`) should emit TS17012
+    let source = "function f() { return new.targ; }";
+    let (parser, _root) = parse_source(source);
+
+    let ts17012_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN
+        })
+        .count();
+    assert_eq!(
+        ts17012_count,
+        1,
+        "Expected 1 TS17012 for new.targ, got {ts17012_count}. All diagnostics: {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_new_dot_target_no_ts17012() {
+    // `new.target` (correctly spelled) must not emit TS17012
+    let source = "function f() { return new.target; }";
+    let (parser, _root) = parse_source(source);
+
+    let ts17012_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN
+        })
+        .count();
+    assert_eq!(
+        ts17012_count,
+        0,
+        "Expected no TS17012 for valid new.target, got {ts17012_count}. All diagnostics: {:?}",
+        parser.get_diagnostics(),
+    );
+}

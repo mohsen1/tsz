@@ -11,7 +11,7 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
-mod application_types;
+pub(in crate::evaluation) mod application_types;
 mod array_methods;
 
 use crate::caches::db::QueryDatabase;
@@ -926,6 +926,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return ApplicationEvalOutcome::Computed(call_return);
         }
+
+        // `typeof f<Args>` instantiation expression: specialize per-signature
+        // (consume, not shadow, the callable's type params) — see helper (#10933).
+        if let Some(specialized) = self.try_specialize_typeof_instantiation_expression(ctx, args) {
+            return ApplicationEvalOutcome::Computed(specialized);
+        }
+
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
                 return ApplicationEvalOutcome::Computed(original_type_id);
@@ -979,23 +986,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             )
         } else if let Some(resolved) = ctx.resolved {
             // Lite-resolver fallback: extract type parameters from the
-            // resolved type's properties.
-            //
-            // For `typeof ClassExpr<T>` (TypeQuery base, Callable resolved type),
-            // use per-signature instantiation so that the class type parameters
-            // stored in `sig.type_params` are CONSUMED rather than SHADOWED.
-            // `instantiate_generic` calls `TypeInstantiator` which calls
-            // `enter_shadowing_scope(&sig.type_params)`, blocking substitution
-            // of those names from the outer substitution built from extracted params.
+            // resolved type's properties. A `typeof X<Args>` base whose
+            // signatures could consume `Args` was already specialized at the
+            // top of this function; reaching here means the arity did not
+            // match, so keep it opaque (invalid instantiation, TS2635/TS2344
+            // parity) instead of feeding it to the extracted-params path.
             if ctx.base_is_type_query
                 && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
                 && !args.is_empty()
             {
-                if let Some(specialized) = self.try_instantiate_callable_type_params(resolved, args)
-                {
-                    let evaluated = self.evaluate(specialized);
-                    return ApplicationEvalOutcome::Computed(evaluated);
-                }
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
             let extracted_params = self.extract_type_params_from_type(resolved);

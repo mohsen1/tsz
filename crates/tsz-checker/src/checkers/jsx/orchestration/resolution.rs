@@ -336,6 +336,7 @@ impl<'a> CheckerState<'a> {
         let effective_tag: Option<&str> = tag_name.or(namespaced_tag_owned.as_deref());
 
         if is_intrinsic {
+            let has_explicit_type_args = jsx_opening.type_arguments.is_some();
             if let Some(type_args) = jsx_opening.type_arguments.as_ref() {
                 self.validate_jsx_intrinsic_type_arguments(type_args);
             }
@@ -352,20 +353,25 @@ impl<'a> CheckerState<'a> {
                 // For intrinsic elements, the display target is just the props type
                 // (tsc doesn't wrap intrinsic element props in IntrinsicAttributes).
                 let display_target = self.build_jsx_display_target(evaluated_props, None);
-                self.check_jsx_attributes_against_props(
-                    super::super::props::resolution::JsxPropsCheckOpts {
-                        attributes_idx: jsx_opening.attributes,
-                        props_type: evaluated_props,
-                        tag_name_idx: jsx_opening.tag_name,
-                        component_type: None,
-                        special_attr_component_type: None,
-                        raw_props_has_type_params: false,
-                        display_target,
-                        preferred_target_display: None,
-                        request,
-                        children_ctx,
-                    },
-                );
+                if has_explicit_type_args {
+                    self.check_grammar_jsx_element(jsx_opening.attributes);
+                    self.evaluate_jsx_attribute_expressions(jsx_opening.attributes);
+                } else {
+                    self.check_jsx_attributes_against_props(
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type: evaluated_props,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: None,
+                            special_attr_component_type: None,
+                            raw_props_has_type_params: false,
+                            display_target,
+                            preferred_target_display: None,
+                            request,
+                            children_ctx,
+                        },
+                    );
+                }
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
                 // JSX.Element. Returning IntrinsicElements["tag"] causes false TS2322
@@ -418,26 +424,7 @@ impl<'a> CheckerState<'a> {
             // Even when IntrinsicElements is missing, evaluate attribute expressions
             // to trigger definite-assignment checks (TS2454) and other diagnostics.
             // tsc evaluates these expressions regardless of JSX infrastructure availability.
-            if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
-                && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
-            {
-                for &attr_idx in &attrs.properties.nodes {
-                    if let Some(attr_node) = self.ctx.arena.get(attr_idx) {
-                        if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                            if let Some(spread_data) =
-                                self.ctx.arena.get_jsx_spread_attribute(attr_node)
-                            {
-                                self.compute_type_of_node(spread_data.expression);
-                            }
-                        } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
-                            && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
-                            && attr_data.initializer.is_some()
-                        {
-                            self.compute_type_of_node(attr_data.initializer);
-                        }
-                    }
-                }
-            }
+            self.evaluate_jsx_attribute_expressions(jsx_opening.attributes);
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -1146,6 +1133,7 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         }
     }
+
     /// Emit TS7026 for a JSX closing element if no `JSX.IntrinsicElements` exists.
     /// Covers the closing tag; opening tag is handled by `get_type_of_jsx_opening_element`.
     pub(crate) fn check_jsx_closing_element_for_implicit_any(&mut self, idx: NodeIndex) {
