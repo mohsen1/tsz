@@ -41,10 +41,10 @@ export function assertNodeProperty<
     );
 }
 
-/// Pinning test: NarrowMap[T][P] where T extends keyof WideMap must emit exactly
-/// two TS2536 errors — one for `NarrowMap[T]` (T may not index NarrowMap) and one
+/// Pinning test: `NarrowMap[T][P]` where T extends keyof `WideMap` must emit exactly
+/// two TS2536 errors — one for `NarrowMap[T]` (T may not index `NarrowMap`) and one
 /// for `NarrowMap[T][P]` (P may not index the (already-invalid) result).
-/// tsc invariant: both errors anchor at the outermost NarrowMap expression start.
+/// tsc invariant: both errors anchor at the outermost `NarrowMap` expression start.
 /// This is the structural rule for intersectionsOfLargeUnions.ts.
 #[test]
 fn test_ts2536_nested_indexed_access_emits_two_errors() {
