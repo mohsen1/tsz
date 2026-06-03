@@ -1411,10 +1411,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                if !self.check_explicit_type_reference_for_alias_body_validation(
-                    node_idx,
-                    nested_in_type_literal,
-                ) {
+                if !self.check_explicit_type_reference_for_alias_body_validation(node_idx) {
                     let _ = if nested_in_type_literal {
                         self.get_type_from_type_node_in_type_literal(node_idx)
                     } else {

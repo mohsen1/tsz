@@ -126,52 +126,7 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
     }
 
-    fn cross_arena_symbol_miss_kind(&self, sym_id: SymbolId) -> CrossArenaSymbolMissKind {
-        let Some(flags) = self
-            .get_cross_file_symbol(sym_id)
-            .map(|symbol| symbol.flags)
-        else {
-            return CrossArenaSymbolMissKind::Unresolved;
-        };
-
-        if flags & symbol_flags::TYPE_ALIAS != 0 {
-            CrossArenaSymbolMissKind::TypeAlias
-        } else if flags & symbol_flags::INTERFACE != 0 {
-            CrossArenaSymbolMissKind::Interface
-        } else if flags & symbol_flags::CLASS != 0 {
-            CrossArenaSymbolMissKind::Class
-        } else if flags & symbol_flags::FUNCTION != 0 {
-            CrossArenaSymbolMissKind::Function
-        } else if flags & symbol_flags::VARIABLE != 0 {
-            CrossArenaSymbolMissKind::Variable
-        } else if flags & symbol_flags::PROPERTY != 0 {
-            CrossArenaSymbolMissKind::Property
-        } else if flags & symbol_flags::METHOD != 0 {
-            CrossArenaSymbolMissKind::Method
-        } else if flags & symbol_flags::ACCESSOR != 0 {
-            CrossArenaSymbolMissKind::Accessor
-        } else if flags & symbol_flags::ENUM != 0 {
-            CrossArenaSymbolMissKind::Enum
-        } else if flags & symbol_flags::MODULE != 0 {
-            CrossArenaSymbolMissKind::Module
-        } else if flags & symbol_flags::ALIAS != 0 {
-            CrossArenaSymbolMissKind::Alias
-        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
-            CrossArenaSymbolMissKind::TypeParameter
-        } else if flags & symbol_flags::TYPE_LITERAL != 0 {
-            CrossArenaSymbolMissKind::TypeLiteral
-        } else if flags & symbol_flags::SIGNATURE != 0 {
-            CrossArenaSymbolMissKind::Signature
-        } else if flags & symbol_flags::CONSTRUCTOR != 0 {
-            CrossArenaSymbolMissKind::Constructor
-        } else if flags & symbol_flags::OBJECT_LITERAL != 0 {
-            CrossArenaSymbolMissKind::ObjectLiteral
-        } else {
-            CrossArenaSymbolMissKind::Other
-        }
-    }
-
-    fn try_resolve_cross_arena_named_alias_without_child(
+    pub(super) fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
@@ -288,10 +243,51 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let target_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(target_sym_id)
+            .or_else(|| {
+                self.ctx
+                    .resolve_import_target_from_file(alias_source_file_idx, &module_name)
+            });
+        if let Some(file_idx) = target_file_idx {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
         let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
-            let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
-            self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
-                .unwrap_or_else(|| self.type_reference_symbol_type_with_params(target_sym_id))
+            target_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .cached_cross_file_symbol_type(target_sym_id, file_idx as u32)
+                })
+                .or_else(|| {
+                    let resolved = self.direct_source_file_type_alias_result(
+                        target_sym_id,
+                        target_file_idx,
+                        true,
+                    )?;
+                    if let Some(file_idx) = target_file_idx {
+                        self.ctx.cache_cross_file_symbol_type(
+                            target_sym_id,
+                            file_idx as u32,
+                            resolved.0,
+                            resolved.1.clone(),
+                        );
+                    }
+                    Some(resolved)
+                })
+                .unwrap_or_else(|| {
+                    let resolved = self.type_reference_symbol_type_with_params(target_sym_id);
+                    if let Some(file_idx) = target_file_idx {
+                        self.ctx.cache_cross_file_symbol_type(
+                            target_sym_id,
+                            file_idx as u32,
+                            resolved.0,
+                            resolved.1.clone(),
+                        );
+                    }
+                    resolved
+                })
         } else {
             (self.get_type_of_symbol(target_sym_id), Vec::new())
         };
@@ -1985,6 +1981,8 @@ impl<'a> CheckerState<'a> {
         derived_type
     }
 }
+include!("cross_file_miss_kind.rs");
+
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;

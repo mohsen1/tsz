@@ -74,7 +74,16 @@ impl<'a> CheckerContext<'a> {
         if cache.is_empty() {
             return Vec::new();
         }
-        cache.iter().map(|(&k, v)| (k, v.result)).collect()
+        if !env_eval_seed_cap_disabled() && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
+            return Vec::new();
+        }
+        let mut entries = Vec::with_capacity(cache.len());
+        for (&k, v) in cache.iter() {
+            if k != v.result && !k.is_intrinsic() && !v.depth_exceeded {
+                entries.push((k, v.result));
+            }
+        }
+        entries
     }
 
     pub(crate) fn cache_env_eval_result(
@@ -135,6 +144,10 @@ impl<'a> CheckerContext<'a> {
             contains_infer_types_db, contains_type_query_db, is_application_type,
         };
 
+        if entries.is_empty() {
+            return;
+        }
+
         // Declaration files like react16.d.ts generate very large volumes of
         // transient evaluator entries. Persisting every intermediate entry
         // forces an expensive recursive `contains_infer_types_db` scan that can
@@ -144,14 +157,31 @@ impl<'a> CheckerContext<'a> {
             return;
         }
 
+        // The drained evaluator cache is a speed-only intermediate memo. Keep
+        // its persistence bounded and cheap: once the structural cap is crossed,
+        // callers still use the authoritative top-level env-eval memo but stop
+        // scanning and storing intermediate entries.
+        let cap_disabled = env_eval_seed_cap_disabled();
         let mut cache = self.env_eval_cache.borrow_mut();
+        if !cap_disabled && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
+            return;
+        }
         for (k, v) in entries {
-            if k != v
-                && !k.is_intrinsic()
-                && !contains_this_type(self.types, k)
-                && !contains_this_type(self.types, v)
-                && !contains_infer_types_db(self.types, v)
-                && !contains_type_query_db(self.types, v)
+            if !cap_disabled && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
+                break;
+            }
+            if k == v || k.is_intrinsic() {
+                continue;
+            }
+            let key_contains_this = contains_this_type(self.types, k);
+            if key_contains_this {
+                continue;
+            }
+            let result_is_intrinsic = v.is_intrinsic();
+            if result_is_intrinsic
+                || (!contains_this_type(self.types, v)
+                    && !contains_infer_types_db(self.types, v)
+                    && !contains_type_query_db(self.types, v))
             {
                 // Guard against union->non-union cache poisoning: when the
                 // evaluator maps a union type to a non-union Application,
@@ -160,7 +190,8 @@ impl<'a> CheckerContext<'a> {
                 // TypeEnvironment). Caching such entries causes downstream
                 // assignability checks to fail because union member checking
                 // is bypassed.
-                if is_union_type(self.types, k)
+                if !result_is_intrinsic
+                    && is_union_type(self.types, k)
                     && !is_union_type(self.types, v)
                     && is_application_type(self.types, v)
                 {

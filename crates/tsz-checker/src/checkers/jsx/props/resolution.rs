@@ -355,13 +355,26 @@ impl<'a> CheckerState<'a> {
                 // Checking them against the props type produces false positives when the
                 // props type is an unevaluated application (e.g. DetailedHTMLProps<...>).
                 if attr_name == "key" || attr_name == "ref" {
-                    let expected_special_type = self
+                    let mut expected_special_type = self
                         .get_jsx_special_attribute_expected_type(
                             &attr_name,
                             ctx.props_type,
                             opts.special_attr_component_type,
                         )
                         .map(|type_id| self.normalize_jsx_function_context_type(type_id));
+                    if attr_name == "key"
+                        && expected_special_type.is_some_and(|expected_type| {
+                            !self
+                                .assign_relation_outcome(TypeId::STRING, expected_type)
+                                .related
+                                && !self
+                                    .assign_relation_outcome(TypeId::NUMBER, expected_type)
+                                    .related
+                        })
+                    {
+                        expected_special_type = None;
+                    }
+                    let has_usable_special_type = expected_special_type.is_some();
                     let value_node_idx =
                         if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                             if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
@@ -476,13 +489,11 @@ impl<'a> CheckerState<'a> {
                         );
                         outcome.has_prop_type_error = true;
                     }
-                    // Only skip normal prop checking if we found a special type for
-                    // this attribute (from IntrinsicAttributes/IntrinsicClassAttributes
-                    // or the props type itself). When the attribute isn't declared
-                    // anywhere (e.g. minimal JSX types without IntrinsicAttributes
-                    // defining 'key'), fall through so it gets checked as an excess
-                    // property — matching tsc behavior.
-                    if expected_special_type.is_some() || attr_name == "ref" {
+                    // `key`/`ref` skip ordinary prop checks only when the JSX
+                    // namespace exposes a usable special-attribute surface. If
+                    // `key` has no such surface, tsc lets ordinary intrinsic
+                    // prop validation report it as an excess/mismatched prop.
+                    if has_usable_special_type || attr_name == "ref" {
                         continue;
                     }
                 }
