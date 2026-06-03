@@ -141,6 +141,37 @@ impl<'a> DeclarationEmitter<'a> {
         self.type_node_is_type_parameter_or_array_of(source_arena, func, annotation_idx)
     }
 
+    pub(in crate::declaration_emitter) fn source_return_rest_parameter_type_parameter_name(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let annotation_idx = func.type_annotation.into_option()?;
+        let return_name =
+            self.type_node_bare_type_parameter_name(source_arena, func, annotation_idx)?;
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .any(|param_idx| {
+                source_arena
+                    .get(param_idx)
+                    .and_then(|param_node| source_arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.dot_dot_dot_token
+                            && self
+                                .type_node_bare_type_parameter_name(
+                                    source_arena,
+                                    func,
+                                    param.type_annotation,
+                                )
+                                .as_deref()
+                                == Some(return_name.as_str())
+                    })
+            })
+            .then_some(return_name)
+    }
+
     fn type_node_is_type_parameter_or_array_of(
         &self,
         source_arena: &NodeArena,
@@ -162,33 +193,45 @@ impl<'a> DeclarationEmitter<'a> {
                 array.element_type,
             );
         }
+        let Some(name) = self.type_node_bare_type_parameter_name(source_arena, func, type_idx)
+        else {
+            return false;
+        };
+        !name.is_empty()
+    }
+
+    fn type_node_bare_type_parameter_name(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
         // A bare type-parameter reference is a plain identifier or a type
         // reference with no type arguments naming a declared type parameter.
         let name = if type_node.kind == SyntaxKind::Identifier as u16 {
             self.identifier_text_from_arena(source_arena, type_idx)
         } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            let Some(type_ref) = source_arena.get_type_ref(type_node) else {
-                return false;
-            };
+            let type_ref = source_arena.get_type_ref(type_node)?;
             if type_ref.type_arguments.is_some() {
-                return false;
+                return None;
             }
             self.identifier_text_from_arena(source_arena, type_ref.type_name)
         } else {
             None
-        };
-        let Some(name) = name else {
-            return false;
-        };
-        func.type_parameters.as_ref().is_some_and(|type_params| {
-            type_params.nodes.iter().copied().any(|param_idx| {
-                source_arena
-                    .get(param_idx)
-                    .and_then(|param_node| source_arena.get_type_parameter(param_node))
-                    .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
-                    .is_some_and(|param_name| param_name == name)
+        }?;
+        func.type_parameters
+            .as_ref()
+            .is_some_and(|type_params| {
+                type_params.nodes.iter().copied().any(|param_idx| {
+                    source_arena
+                        .get(param_idx)
+                        .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                        .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+                        .is_some_and(|param_name| param_name == name)
+                })
             })
-        })
+            .then_some(name)
     }
 
     pub(in crate::declaration_emitter) fn substitute_source_call_type_parameters(

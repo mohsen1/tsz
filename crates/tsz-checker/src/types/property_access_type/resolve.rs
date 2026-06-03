@@ -380,8 +380,38 @@ impl<'a> CheckerState<'a> {
         // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
         // below will resolve property access through `resolve_type_for_property_access`,
         // and eagerly evaluating applications here is redundant on hot paths.
+        // Keep the wider env evaluation on the imported builder callback case
+        // this PR targets; applying it to ordinary alias property reads
+        // over-normalizes flow-narrowed unions.
+        let is_builder_select_access = self
+            .ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|prop_ident| prop_ident.escaped_text == "select");
+        let receiver_fallback_def = crate::query_boundaries::common::get_application_lazy_def_id(
+            self.ctx.types,
+            original_object_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
+        });
+        let receiver_needs_env_fallback = is_builder_select_access
+            && (receiver_fallback_def
+                .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
+                || crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    original_object_type,
+                )
+                || crate::query_boundaries::common::index_access_types(
+                    self.ctx.types,
+                    original_object_type,
+                )
+                .is_some());
         let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
+        } else if receiver_needs_env_fallback {
+            self.evaluate_property_access_receiver_type(original_object_type)
         } else {
             self.evaluate_application_type(original_object_type)
         };

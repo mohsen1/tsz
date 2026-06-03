@@ -46,7 +46,8 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # jsxIntrinsicUnions.tsx: accepted after REGRESSED on PR #12368 exact head
 # 9ee797b6 / run 26906037226. Tracked in #12376.
 # jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
-# aggregate run on exact head 2dd802cf / run 26908103845; removed.
+# aggregate run on exact head 2dd802cf / run 26908103845, then reproduced on
+# current main 920f8d63cdf6818ff667358ced55de0144338639 with extra TS2740.
 # jsxImportForSideEffectsNonExtantNoError.tsx: accepted after REGRESSED in
 # the same PR #12367 aggregate run. Tracked in #12376.
 # contextuallyTypedJsxChildren2.tsx: reproduces on current main
@@ -62,3 +63,4 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
+TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx
