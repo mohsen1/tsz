@@ -515,12 +515,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.readonly = existing.readonly && prop.readonly;
                 // Write type tracks read type for writable properties; readonly
                 // members intersect their setter types (see issue #11323).
-                existing.write_type = self.interner.merged_property_write_type(
-                    existing.readonly,
-                    existing.type_id,
-                    existing.write_type,
-                    prop.write_type,
-                );
+                existing.write_type = if existing.readonly {
+                    self.interner
+                        .intersect_types_raw2(existing.write_type, prop.write_type)
+                } else {
+                    existing.type_id
+                };
                 // Merge visibility: use the more restrictive one (private > protected > public)
                 existing.visibility = merge_visibility(existing.visibility, prop.visibility);
                 // is_method: if one is a method, treat as property (more general)

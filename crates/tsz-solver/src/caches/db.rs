@@ -370,17 +370,6 @@ pub trait TypeDatabase:
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId;
     /// Raw intersection without normalization (used to avoid infinite recursion)
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
-    /// Write type for a property merged from two object members. Writable
-    /// properties keep `write == read` so the merge is never mistaken for a
-    /// split accessor (issue #11323); readonly properties intersect their
-    /// setter types.
-    fn merged_property_write_type(
-        &self,
-        readonly: bool,
-        read_type: TypeId,
-        existing_write: TypeId,
-        prop_write: TypeId,
-    ) -> TypeId;
     fn array(&self, element: TypeId) -> TypeId;
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
@@ -787,16 +776,6 @@ impl TypeDatabase for TypeInterner {
 
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
         Self::intersect_types_raw2(self, left, right)
-    }
-
-    fn merged_property_write_type(
-        &self,
-        readonly: bool,
-        read_type: TypeId,
-        existing_write: TypeId,
-        prop_write: TypeId,
-    ) -> TypeId {
-        Self::merged_property_write_type(self, readonly, read_type, existing_write, prop_write)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
