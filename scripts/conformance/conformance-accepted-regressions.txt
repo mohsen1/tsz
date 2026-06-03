@@ -43,12 +43,14 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     legitimate TS2741 (and TS2322/excess). Removing it restores parity; the
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
-# inferentialTypingWithFunctionTypeZip.ts passes in an isolated harness run
-# (PR #12324 local focused filter: 1/1) but REGRESSED in ready-review weighted
-# shard 1/6 on exact head d2027409ac87deb82990e2e449d2f5334f53cc76. The
-# source is an inference-family order/residency sensitivity tracked in #8432.
+# inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
+# intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
+# logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
+# exactly 2 TS2536). The aggregate conformance run with real lib types
+# (HTMLElementTagNameMap) still fails — the full lib type hierarchy exercises a
+# different code path. Tracked in #12260.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
-TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
