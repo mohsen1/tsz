@@ -11,7 +11,7 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
-mod application_types;
+pub(in crate::evaluation) mod application_types;
 mod array_methods;
 
 use crate::caches::db::QueryDatabase;
@@ -927,28 +927,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return ApplicationEvalOutcome::Computed(call_return);
         }
 
-        // Instantiation expression `typeof f<Args>` / `typeof Class<Args>`
-        // (a `TypeQuery` base resolving to a `Callable`): the resolved
-        // callable's call/construct signatures DECLARE the applied type
-        // params, so they must be CONSUMED via per-signature instantiation.
-        // The alias-style known-params path below would `instantiate_generic`
-        // the callable body and `enter_shadowing_scope(&sig.type_params)`,
-        // treating those same names as bound and cancelling the substitution —
-        // freezing the instantiation expression (e.g. `ReturnType<typeof f<U>>`
-        // in a generic method never specializes, see #10933). This must run
-        // regardless of whether the resolver surfaces def-level type params:
-        // a generic function value reports `Some([T])` and would otherwise be
-        // routed through the shadowing path. Only divert when a signature
-        // actually consumes the arguments (`try_*` returns `Some`); a `None`
-        // means no signature matched the arity, so fall through to the
-        // existing param-based / opaque handling unchanged.
-        if ctx.base_is_type_query
-            && !args.is_empty()
-            && let Some(resolved) = ctx.resolved
-            && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
-            && let Some(specialized) = self.try_instantiate_callable_type_params(resolved, args)
-        {
-            return ApplicationEvalOutcome::Computed(self.evaluate(specialized));
+        // `typeof f<Args>` instantiation expression: specialize per-signature
+        // (consume, not shadow, the callable's type params) — see helper (#10933).
+        if let Some(specialized) = self.try_specialize_typeof_instantiation_expression(ctx, args) {
+            return ApplicationEvalOutcome::Computed(specialized);
         }
 
         if let Some(type_params) = ctx.type_params.as_ref() {
@@ -1004,16 +986,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             )
         } else if let Some(resolved) = ctx.resolved {
             // Lite-resolver fallback: extract type parameters from the
-            // resolved type's properties.
-            //
-            // For `typeof ClassExpr<T>` (TypeQuery base, Callable resolved type)
-            // the instantiation-expression specialization at the top of this
-            // function already consumed any signature-level type params via
-            // `try_instantiate_callable_type_params`. Reaching here with such a
-            // base means no signature matched the arg arity, so the
-            // instantiation is invalid (non-generic value or wrong arity) and
-            // the application is kept opaque rather than fed to the
-            // extracted-params path.
+            // resolved type's properties. A `typeof X<Args>` base whose
+            // signatures could consume `Args` was already specialized at the
+            // top of this function; reaching here means the arity did not
+            // match, so keep it opaque (invalid instantiation, TS2635/TS2344
+            // parity) instead of feeding it to the extracted-params path.
             if ctx.base_is_type_query
                 && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
                 && !args.is_empty()
