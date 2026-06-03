@@ -683,6 +683,9 @@ impl<'a> CheckerContext<'a> {
         // causing unbounded mutual recursion through resolve_lib_type_by_name ↔
         // merge_lib_interface_heritage ↔ build_type_environment chains.
         ctx.lib_heritage_in_progress = parent.lib_heritage_in_progress.clone();
+        // The cyclic-heritage recovery state is a thread-local (see
+        // `lib_resolution::LIB_CYCLE_RECOVERY`), so a cross-arena child running on
+        // the same thread already shares it with the parent — no propagation here.
 
         // Propagate JSDoc typedef re-entrancy state across child checkers.
         // Cross-file JSDoc import/typedef resolution spawns nested CheckerStates;

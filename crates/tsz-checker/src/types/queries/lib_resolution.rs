@@ -25,6 +25,39 @@ use super::lib_resolution_selected::{
 /// Index from identifier text to `(file_idx, SymbolId)` entries in `file_locals`.
 pub(crate) type FileLocalsIndex = FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>;
 
+/// Cyclic library-interface heritage recovery state for [`CheckerState::resolve_lib_type_by_name`].
+///
+/// Held in a thread-local so a checker and every cross-arena child it spawns —
+/// which run synchronously on the same thread — share one instance. This is the
+/// natural place for it: the state is empty whenever no lib resolution is in
+/// flight (it self-clears at the outermost boundary), so it never leaks across
+/// files, and parallel file checks each get their own thread-local. Keeping it
+/// off `CheckerContext` also avoids growing the checker-boundary field surface.
+#[derive(Default)]
+struct LibCycleRecovery {
+    /// Lib type names currently being resolved, outermost first. A name that
+    /// re-enters while already on the stack marks a cyclic dependency; every name
+    /// above the first occurrence is resolved against the not-yet-complete anchor
+    /// and is therefore incomplete.
+    in_progress_stack: Vec<String>,
+
+    /// Lib interface names whose in-flight resolution depended on an in-progress
+    /// (cyclic) anchor and is therefore structurally incomplete (its heritage
+    /// merge dropped the anchor's members). Such a result is *not* published to
+    /// any cache, so the next top-level access recomputes it against the now-warm
+    /// anchor and gets the complete shape. The outermost (anchor) resolution is
+    /// never in this set — nothing sits below it on the stack — so it always
+    /// publishes its complete result. Declining to publish never mutates an
+    /// already-published lib type identity, so it cannot corrupt an in-flight
+    /// evaluation of an unrelated type. Cleared at the outermost boundary.
+    incomplete_names: rustc_hash::FxHashSet<String>,
+}
+
+thread_local! {
+    static LIB_CYCLE_RECOVERY: std::cell::RefCell<LibCycleRecovery> =
+        std::cell::RefCell::new(LibCycleRecovery::default());
+}
+
 /// Stub value resolver for lib lowering; lib declarations have no runtime values.
 pub(crate) const fn no_value_resolver(_: NodeIndex) -> Option<u32> {
     None
@@ -477,6 +510,26 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Cyclic re-entry detection. When `name` is already on the in-progress
+        // stack, this call is a cyclic dependency reached through lazy member
+        // references (e.g. `Node.parentElement: HTMLElement`, where
+        // `HTMLElement` extends `Element` extends `Node`). Every name *above*
+        // the first occurrence is being resolved against this not-yet-complete
+        // anchor, so its heritage merge will silently drop the anchor's members.
+        // Record those dependents as incomplete so their partial result is not
+        // published to any cache (see the cache-write guards below); the next
+        // top-level access recomputes them against the now-warm anchor. The
+        // cycle itself is still broken below by the `None` in-progress sentinel.
+        //
+        // The stack is only non-empty while a lib resolution is already running,
+        // so the common top-level call (and every cache hit below) skips the scan.
+        LIB_CYCLE_RECOVERY.with_borrow_mut(|recovery| {
+            if let Some(pos) = recovery.in_progress_stack.iter().position(|n| n == name) {
+                let dependents: Vec<String> = recovery.in_progress_stack[pos + 1..].to_vec();
+                recovery.incomplete_names.extend(dependents);
+            }
+        });
+
         // TS 6.0 lib intrinsic: resolves to `undefined` when
         // `strictBuiltinIteratorReturn` is enabled (implied by `--strict`),
         // or `any` when disabled.
@@ -532,6 +585,11 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), None);
+        // Track this resolution on the in-progress stack so re-entrant cyclic
+        // dependents can be detected (see the top-of-function check above). Only
+        // the compute path pushes; cache hits returned earlier.
+        LIB_CYCLE_RECOVERY
+            .with_borrow_mut(|recovery| recovery.in_progress_stack.push(name.to_string()));
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
         let mut symbol_has_interface = false;
@@ -957,41 +1015,71 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Finalize after heritage merge — `merge_lib_interface_heritage`
-        // above may have produced a new TypeId; helper rewires type→def
-        // and the DefId body so literal and annotation paths agree.
-        if let Some(ty) = lib_type_id {
-            self.register_finalized_lib_body(name, ty);
-            // Update the symbol_types cache for the INTERFACE type position.
-            // compute_type_of_symbol may have cached a DIFFERENT TypeId
-            // when has_local_interface_decl was a false positive (NodeIndex
-            // collision), causing it to bypass resolve_lib_type_by_name and
-            // use incomplete manual lowering.  We only update when:
-            //   1. The symbol exists in file_locals (it's a global type)
-            //   2. The cached type differs from the lib-resolved type
-            //   3. The cached type was NOT produced by resolve_lib_type_by_name
-            //      (first call to this function for this name)
-            // This preserves user-file augmentations while fixing the
-            // mismatch between annotation and literal type resolution paths.
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
-                && let Some(&old) = self.ctx.symbol_types.get(&sym_id)
-                && old != ty
-                && old != TypeId::ERROR
-                && old != TypeId::ANY
-            {
-                self.ctx.symbol_types.insert(sym_id, ty);
+        // Publish the result only when it is structurally complete. A name
+        // recorded as cyclically incomplete had its heritage merged against an
+        // in-progress anchor, so the anchor's members were dropped; caching it
+        // would publish a partial shape (and a partial `Lazy(DefId)` body the
+        // property-access path reads). Leaving it unpublished makes the next
+        // top-level access recompute it — by which point the anchor (the
+        // outermost interface, which is never itself incomplete) has cached a
+        // complete shape. Crucially, declining to publish never mutates an
+        // already-published lib type identity, so it cannot corrupt an in-flight
+        // evaluation of an unrelated type.
+        let publish =
+            !LIB_CYCLE_RECOVERY.with_borrow(|recovery| recovery.incomplete_names.contains(name));
+
+        if publish {
+            // Finalize after heritage merge — `merge_lib_interface_heritage`
+            // above may have produced a new TypeId; helper rewires type→def
+            // and the DefId body so literal and annotation paths agree.
+            if let Some(ty) = lib_type_id {
+                self.register_finalized_lib_body(name, ty);
+                // Update the symbol_types cache for the INTERFACE type position.
+                // compute_type_of_symbol may have cached a DIFFERENT TypeId
+                // when has_local_interface_decl was a false positive (NodeIndex
+                // collision), causing it to bypass resolve_lib_type_by_name and
+                // use incomplete manual lowering.  We only update when:
+                //   1. The symbol exists in file_locals (it's a global type)
+                //   2. The cached type differs from the lib-resolved type
+                //   3. The cached type was NOT produced by resolve_lib_type_by_name
+                //      (first call to this function for this name)
+                // This preserves user-file augmentations while fixing the
+                // mismatch between annotation and literal type resolution paths.
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                    && let Some(&old) = self.ctx.symbol_types.get(&sym_id)
+                    && old != ty
+                    && old != TypeId::ERROR
+                    && old != TypeId::ANY
+                {
+                    self.ctx.symbol_types.insert(sym_id, ty);
+                }
             }
+
+            // Generic lib interfaces had their type params cached above.
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), lib_type_id);
+            if !self.lib_name_locally_augmented(name)
+                && let Some(ref shared) = self.ctx.shared_lib_type_cache
+            {
+                shared.insert(name.to_string(), lib_type_id);
+            }
+        } else {
+            // Drop the in-progress `None` sentinel so the next access recomputes
+            // from scratch rather than reading the placeholder as "no type".
+            self.ctx.lib_type_resolution_cache.remove(name);
         }
 
-        // Generic lib interfaces had their type params cached above.
-        self.ctx
-            .lib_type_resolution_cache
-            .insert(name.to_string(), lib_type_id);
-        if !self.lib_name_locally_augmented(name)
-            && let Some(ref shared) = self.ctx.shared_lib_type_cache
-        {
-            shared.insert(name.to_string(), lib_type_id);
-        }
+        // Pop this resolution off the in-progress stack; once the stack drains
+        // (outermost boundary), the incomplete set has served its purpose.
+        LIB_CYCLE_RECOVERY.with_borrow_mut(|recovery| {
+            if recovery.in_progress_stack.last().map(String::as_str) == Some(name) {
+                recovery.in_progress_stack.pop();
+            }
+            if recovery.in_progress_stack.is_empty() {
+                recovery.incomplete_names.clear();
+            }
+        });
 
         lib_type_id
     }
