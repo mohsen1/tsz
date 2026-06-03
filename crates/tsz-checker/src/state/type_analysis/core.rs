@@ -2349,6 +2349,22 @@ impl<'a> CheckerState<'a> {
                         | symbol_flags::VALUE_MODULE)
                     != 0
                 {
+                    // For CLASS symbols: when a partial constructor type with
+                    // rough construct signatures has already been installed in
+                    // symbol_types (e.g. by build_partial_static_constructor_type
+                    // before evaluating a static initializer), return that
+                    // instead of a bare Lazy so that `new SameCls(...)` inside
+                    // the initializer sees the correct constructor arity.
+                    if flags & symbol_flags::CLASS != 0
+                        && let Some(&partial) = self.ctx.symbol_types.get(&sym_id)
+                        && crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            partial,
+                        )
+                        .is_some()
+                    {
+                        return partial;
+                    }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     let lazy_type = factory.lazy(def_id);
                     // Don't cache the Lazy type - we want to retry when the circular reference is broken

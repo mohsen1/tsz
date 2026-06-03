@@ -1629,15 +1629,25 @@ impl<'a> CheckerState<'a> {
                             self.ctx.class_constructor_type_cache.get(&class_idx)
                     {
                         cached_ctor
+                    } else if let Some(&partial) = self.ctx.symbol_types.get(&sym_id)
+                        && common_query::callable_shape_for_type(self.ctx.types, partial).is_some()
+                    {
+                        // A partial constructor type (built during static-property
+                        // processing, carrying rough construct signatures) is already in
+                        // symbol_types. Return it so that subclasses resolving their
+                        // `rough_construct_signatures` during this window see the correct
+                        // constructor arity rather than opaque ANY.
+                        // The callable_shape guard prevents returning the Lazy placeholder
+                        // that symbol_types holds before the partial ctor is installed.
+                        partial
                     } else {
                         // The constructor type is actively being resolved and no
-                        // cached value is available. Returning the Lazy placeholder
-                        // from get_type_of_symbol would give the instance type,
-                        // causing false TS2339 on static member access (e.g.,
-                        // `Bar.instance`). Return ANY as a safe fallback - the
-                        // property access succeeds without a false error, and the
-                        // final type will be computed correctly after the
-                        // constructor resolution completes.
+                        // cached or partial callable value is available. Returning the
+                        // Lazy placeholder from get_type_of_symbol would give the instance
+                        // type, causing false TS2339 on static member access (e.g.,
+                        // `Bar.instance`). Return ANY as a safe fallback — the property
+                        // access succeeds without a false error, and the final type will
+                        // be computed correctly once constructor resolution completes.
                         TypeId::ANY
                     }
                 } else {

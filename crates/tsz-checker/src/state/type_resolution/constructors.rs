@@ -578,7 +578,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let ctor_types = self.constructor_types_from_type(evaluated_type);
-        tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
+        tracing::debug!(?ctor_types, ?expr_idx, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
             if matches!(evaluated_type, TypeId::ERROR | TypeId::UNKNOWN) {
                 return None;

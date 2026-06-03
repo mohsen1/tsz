@@ -1447,9 +1447,16 @@ impl<'a> CheckerState<'a> {
                     });
                 }
 
+                // Include rough_construct_signatures so that re-entrant lookups
+                // during instance-type computation (e.g., a subclass inheriting from
+                // this class while this class's instance type is being built) see the
+                // correct constructor arity instead of an empty-signature placeholder.
+                // Without this, subclasses computed in this window (e.g., ZodEffects
+                // triggered by ZodType._refinement's return-type annotation) would fall
+                // back to a synthetic 0-param constructor (TS2554 false positives).
                 let partial_ctor = factory.callable(CallableShape {
                     call_signatures: Vec::new(),
-                    construct_signatures: Vec::new(),
+                    construct_signatures: rough_construct_signatures,
                     properties: partial_ctor_props,
                     string_index: static_string_index,
                     number_index: static_number_index,
@@ -1895,6 +1902,13 @@ impl<'a> CheckerState<'a> {
                         (instantiated, Some(substitution))
                     };
 
+                tracing::debug!(
+                    class_name = ?current_sym.map(|s| s.0),
+                    ?base_constructor_type,
+                    ?instantiated_base_constructor_type,
+                    callable = callable_shape_for_type(self.ctx.types, instantiated_base_constructor_type).is_some(),
+                    "get_class_constructor_type_inner: checking callable_shape_for_type on instantiated base"
+                );
                 if let Some(base_shape) =
                     callable_shape_for_type(self.ctx.types, instantiated_base_constructor_type)
                 {
@@ -2009,6 +2023,11 @@ impl<'a> CheckerState<'a> {
                     construct_signatures = sigs;
                 } else {
                     // No base class or base class has no explicit constructor - use default
+                    tracing::debug!(
+                        class_name = ?current_sym.map(|s| s.0),
+                        has_heritage = class.heritage_clauses.is_some(),
+                        "get_class_constructor_type_inner: 0-param fallback (heritage, no inherited sigs)"
+                    );
                     construct_signatures.push(CallSignature {
                         type_params: class_type_params,
                         params: Vec::new(),
@@ -2020,6 +2039,11 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 // No base class or base class has no explicit constructor - use default
+                tracing::debug!(
+                    class_name = ?current_sym.map(|s| s.0),
+                    has_heritage = class.heritage_clauses.is_some(),
+                    "get_class_constructor_type_inner: 0-param fallback (no heritage)"
+                );
                 construct_signatures.push(CallSignature {
                     type_params: class_type_params,
                     params: Vec::new(),
