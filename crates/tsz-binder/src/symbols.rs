@@ -336,6 +336,21 @@ impl Symbol {
         (self.flags & flags) != 0
     }
 
+    /// Returns `true` when this symbol carries type-namespace meaning only
+    /// (a `TYPE_ALIAS` or `INTERFACE` with no value or alias flags).
+    ///
+    /// TypeScript resolves type and value namespaces independently.  When
+    /// multiple wildcard re-export sources provide the same name, a pure-type
+    /// declaration must not shadow a value export from a later source.  Call
+    /// sites use this predicate to prefer VALUE symbols over pure-type ones.
+    #[must_use]
+    pub const fn is_pure_type(&self) -> bool {
+        const TYPE_KINDS: u32 = symbol_flags::TYPE_ALIAS | symbol_flags::INTERFACE;
+        (self.flags & TYPE_KINDS) != 0
+            && (self.flags & symbol_flags::VALUE) == 0
+            && (self.flags & symbol_flags::ALIAS) == 0
+    }
+
     /// Whether a top-level declaration of this symbol is visible in the
     /// cross-file global scope.
     ///

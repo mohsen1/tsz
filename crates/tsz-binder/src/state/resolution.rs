@@ -750,6 +750,19 @@ impl BinderState {
         if let Some(source_modules) = self.wildcard_reexports.get(module_specifier) {
             let source_type_only_flags = self.wildcard_reexports_type_only.get(module_specifier);
 
+            // When the caller is in value context (`is_type_only = false`), a
+            // type-only path found in one wildcard source must not shadow a
+            // VALUE export of the same name from a later wildcard source.
+            // Type-only paths include pure type declarations
+            // (TYPE_ALIAS/INTERFACE without value flags) and value-bearing
+            // declarations reached through `export type *`.
+            // TypeScript resolves each name in both type and value namespaces
+            // independently: the VALUE wins for value-position uses.
+            //
+            // Strategy: collect a type-only fallback on the first pass; only return it
+            // if no value export is found from any subsequent wildcard source.
+            let mut type_only_fallback: Option<(SymbolId, bool)> = None;
+
             for (i, source_module) in source_modules.iter().enumerate() {
                 let source_is_type_only = source_type_only_flags
                     .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
@@ -765,8 +778,25 @@ impl BinderState {
                     is_type_only || source_is_type_only,
                     visited,
                 ) {
+                    // When in a type-only chain any match is fine; in value
+                    // context prefer VALUE exports over type-only paths so a
+                    // later `export * from './values'` can win over an earlier
+                    // `export * from './types'` or `export type *`.
+                    if is_type_only {
+                        return Some(result);
+                    }
+                    if (result.1 || self.symbols.get(result.0).is_some_and(|s| s.is_pure_type()))
+                        && type_only_fallback.is_none()
+                    {
+                        type_only_fallback = Some(result);
+                        continue;
+                    }
                     return Some(result);
                 }
+            }
+
+            if let Some(fallback) = type_only_fallback {
+                return Some(fallback);
             }
         }
 

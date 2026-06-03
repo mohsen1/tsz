@@ -60,6 +60,62 @@ const x: Drink = Drink.TEA;
     );
 }
 
+/// Type+value merged symbol is usable through a wildcard barrel.
+///
+/// When a file has both `export * as NS from './mod'` and `export type NS = ...`,
+/// and a barrel does `export * from './that-file'`, the imported symbol must still
+/// provide both type meaning (NS<A>) and value meaning (NS.of(...)).
+#[test]
+fn no_errors_for_type_namespace_merge_through_wildcard_barrel() {
+    let something = r#"
+export type Something<A> = { value: A }
+export declare function of<A>(value: A): Something<A>
+"#;
+    let prelude = r#"
+import * as S from "./Something"
+export * as Something from "./Something"
+export type Something<A> = S.Something<A>
+"#;
+    let barrel = "export * from \"./prelude\";\n";
+    let usage = r#"
+import { Something } from "./barrel"
+const _myValue: Something<string> = Something.of("abc")
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./Something.ts", something),
+            ("./prelude.ts", prelude),
+            ("./barrel.ts", barrel),
+            ("./usage.ts", usage),
+        ],
+        3,
+    );
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1362)
+        .collect::<Vec<_>>();
+    assert!(
+        ts1362.is_empty(),
+        "Should not emit TS1362 for type+namespace merge through wildcard barrel. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+    let ts2305 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2305)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2305.is_empty(),
+        "Should not emit TS2305 for type+namespace merge through wildcard barrel. Got: {ts2305:?}. All: {diagnostics:?}"
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 for type+namespace merge through wildcard barrel. Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}
+
 /// Reproduces exportTypeMergedWithExportStarAsNamespace.ts
 #[test]
 fn no_ts1362_for_export_type_merged_with_export_star_as_namespace() {
@@ -229,5 +285,153 @@ export const IdentifierNode: IdentifierNodeFactory = {
     assert!(
         ts2339.is_empty(),
         "Imported interface+const merge should use the const value side in expression context. Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}
+
+/// Verify that a type-alias-only export (no matching value) through a wildcard
+/// barrel correctly produces TS1362 when used as a value. This is the control
+/// case that proves we *do* correctly detect type-only symbols.
+#[test]
+fn ts1362_for_type_only_through_wildcard_barrel() {
+    let types_file = r#"
+export type Config = { debug: boolean };
+"#;
+    let barrel = r#"
+export * from "./types";
+"#;
+    let usage = r#"
+import { Config } from "./barrel";
+Config.debug;
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./types.ts", types_file),
+            ("./barrel.ts", barrel),
+            ("./usage.ts", usage),
+        ],
+        2,
+    );
+    // Config is only a type, so using it as a value should produce TS2693 or
+    // TS1362 (or similar type-used-as-value diagnostic). It must NOT be silent.
+    let has_type_usage_error = diagnostics
+        .iter()
+        .any(|(c, _)| [1362u32, 2693, 2339, 2448].contains(c));
+    assert!(
+        has_type_usage_error,
+        "Should emit a type-used-as-value error for type-only wildcard export. Got: {diagnostics:?}"
+    );
+}
+
+/// When two `export *` sources each provide the same name — one as a type-only
+/// re-export and one as a real value — the resolved binding must be the value.
+/// tsc sees no ambiguity because one is type-only; tsz must not emit TS1362 or
+/// TS2308 (ambiguous re-export) for that case.
+#[test]
+fn no_ts1362_for_type_value_split_across_wildcard_sources() {
+    // Use different shapes so we can tell which one is actually used at the
+    // value site: value has `{ count: number }`, type has `{ debug: boolean }`.
+    let types_file = r#"
+export type Config = { debug: boolean };
+"#;
+    let values_file = r#"
+export const Config = { count: 42 };
+"#;
+    let barrel = r#"
+export * from "./types";
+export * from "./values";
+"#;
+    // Accessing .count — only valid if the VALUE (not the type alias) is used.
+    // Accessing as type Config — only valid if the TYPE alias is used in type position.
+    // tsc resolves value-position `Config` to the VALUE (from values.ts), not the TYPE.
+    let usage = r#"
+import { Config } from "./barrel";
+const _n: number = Config.count;
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./types.ts", types_file),
+            ("./values.ts", values_file),
+            ("./barrel.ts", barrel),
+            ("./usage.ts", usage),
+        ],
+        3,
+    );
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1362)
+        .collect::<Vec<_>>();
+    assert!(
+        ts1362.is_empty(),
+        "Should not emit TS1362 when type and value for same name come from separate wildcard sources. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+    let ts2308 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2308)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2308.is_empty(),
+        "Should not emit TS2308 for type+value from separate wildcard sources. Got: {ts2308:?}. All: {diagnostics:?}"
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 for .count access when VALUE provides 'count' (types-first barrel). Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}
+
+/// `export type *` makes even value-bearing declarations type-only along that
+/// path. A later value wildcard source with the same name must win in value
+/// context.
+#[test]
+fn no_ts1362_for_type_only_wildcard_value_source_before_value_source() {
+    let classes_file = r#"
+export class Config {}
+"#;
+    let values_file = r#"
+export const Config = { count: 42 };
+"#;
+    let barrel = r#"
+export type * from "./classes";
+export * from "./values";
+"#;
+    let usage = r#"
+import { Config } from "./barrel";
+const _n: number = Config.count;
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./classes.ts", classes_file),
+            ("./values.ts", values_file),
+            ("./barrel.ts", barrel),
+            ("./usage.ts", usage),
+        ],
+        3,
+    );
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1362)
+        .collect::<Vec<_>>();
+    assert!(
+        ts1362.is_empty(),
+        "Should not emit TS1362 when an earlier type-only wildcard path points at a value-bearing declaration. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+    let ts2308 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2308)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2308.is_empty(),
+        "Should not emit TS2308 for type-only wildcard plus later value wildcard source. Got: {ts2308:?}. All: {diagnostics:?}"
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 for .count access when the later VALUE export provides 'count'. Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }
