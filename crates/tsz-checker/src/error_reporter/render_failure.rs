@@ -16,6 +16,8 @@ use super::assignability::{
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 mod nested_application_property_mismatch;
+#[path = "render_failure_index_access.rs"]
+mod render_failure_index_access;
 #[path = "render_failure_missing_property.rs"]
 mod render_failure_missing_property;
 #[path = "render_failure_property_helpers.rs"]
@@ -727,20 +729,55 @@ impl<'a> CheckerState<'a> {
                 target_count,
             } => {
                 if depth == 0 {
+                    // Top level: tsc keeps the `TS2322` headline and attaches the
+                    // arity reason as a nested elaboration line, matching the
+                    // sibling function-arity elaboration above. Direction picks the
+                    // catalog message: a source longer than a closed target ->
+                    // "target allows only M" (`TS2619`); shorter than required ->
+                    // "target requires M" (`TS2618`).
+                    let (arity_message, arity_code) = if source_count > target_count {
+                        (
+                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_ALLOWS_ONLY,
+                        )
+                    } else {
+                        (
+                            diagnostic_messages::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                            diagnostic_codes::SOURCE_HAS_ELEMENT_S_BUT_TARGET_REQUIRES,
+                        )
+                    };
+                    let arity_text = format_message(
+                        arity_message,
+                        &[&source_count.to_string(), &target_count.to_string()],
+                    );
                     let (source_str, target_str) =
                         self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    Diagnostic::error(
-                        file_name,
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: arity_text,
+                        category: DiagnosticCategory::Message,
+                        code: arity_code,
+                        depth: 0,
+                    });
+                    diag
                 } else {
+                    // Nested rendering is preserved as-is: this PR's scope is the
+                    // top-level (`depth == 0`) elaboration that was missing. The
+                    // nested wording is left untouched to avoid perturbing existing
+                    // diagnostic chains in conformance fixtures.
                     let message = format!(
                         "Tuple type has {source_count} elements but target requires {target_count}."
                     );
@@ -1206,102 +1243,6 @@ impl<'a> CheckerState<'a> {
                 )
             }
         }
-    }
-
-    /// Render the TS2322 + TS5075 elaboration chain for two distinct
-    /// type-parameter keys of structurally-identical index accesses.
-    ///
-    /// tsc emits, for `S[T1] = c1 as S[T2]`:
-    ///
-    /// ```text
-    /// error TS2322: Type 'S[T1]' is not assignable to type 'S[T2]'.
-    ///   Type 'T1' is not assignable to type 'T2'.
-    ///     'T1' is assignable to the constraint of type 'T2', but 'T2'
-    ///     could be instantiated with a different subtype of constraint
-    ///     '<constraint>'.
-    /// ```
-    ///
-    /// The structural rule is independent of name choice: the elaboration
-    /// uses whichever surface type parameters the user wrote, and falls
-    /// back to a single-line message when the target parameter is
-    /// unconstrained (no useful TS5075 anchor).
-    fn render_index_access_type_parameter_mismatch(
-        &mut self,
-        ctx: &RenderContext,
-        source_param: TypeId,
-        target_param: TypeId,
-        target_constraint: Option<TypeId>,
-    ) -> Diagnostic {
-        let source = ctx.source;
-        let target = ctx.target;
-        let idx = ctx.idx;
-        let start = ctx.start;
-        let length = ctx.length;
-        let file_name = ctx.file_name.clone();
-        let (source_str, target_str) =
-            self.format_top_level_assignability_message_types_at(source, target, idx);
-        let message = format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        );
-        let mut diag = Diagnostic::error(
-            file_name.clone(),
-            start,
-            length,
-            message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        );
-        let source_param_str = self.format_type_diagnostic(source_param);
-        let target_param_str = self.format_type_diagnostic(target_param);
-        let share_declared_param_name =
-            crate::query_boundaries::diagnostics::distinct_type_parameters_share_declared_name(
-                self.ctx.types,
-                source_param,
-                target_param,
-            );
-        let (inner, inner_code) = if share_declared_param_name {
-            (
-                format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
-                    &[&source_param_str, &target_param_str],
-                ),
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
-            )
-        } else {
-            (
-                format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_param_str, &target_param_str],
-                ),
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            )
-        };
-        diag.related_information.push(DiagnosticRelatedInformation {
-            file: file_name.clone(),
-            start,
-            length,
-            message_text: inner,
-            category: DiagnosticCategory::Message,
-            code: inner_code,
-            depth: 0,
-        });
-        if let Some(constraint) = target_constraint {
-            let constraint_str = self.format_type_diagnostic(constraint);
-            let elaboration = format_message(
-                diagnostic_messages::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
-                &[&source_param_str, &target_param_str, &constraint_str],
-            );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: elaboration,
-                category: DiagnosticCategory::Message,
-                code: diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
-                            depth: 0,
-            });
-        }
-        diag
     }
 
     /// Render the TS2322 + TS2517 elaboration chain emitted when an abstract
