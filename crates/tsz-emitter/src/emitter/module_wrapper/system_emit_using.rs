@@ -315,13 +315,19 @@ impl<'a> Printer<'a> {
                                 .and_then(|class| self.get_identifier_text_opt(class.name))
                         };
                         if let Some(export_name) = export_name {
-                            // When a legacy-decorated ES5 class with value-position self-references
-                            // is inside a System module's top-level `using` try block, tsc uses the
-                            // outer-alias pattern (C_1) and emits two separate exports_1 calls:
-                            //   exports_1("C", C = C_1 = /** @class */ (...));
+                            // When a legacy-decorated ES5 class is inside a System module's
+                            // top-level `using` try block, tsc always emits two separate
+                            // exports_1 calls — one wrapping the IIFE and one wrapping
+                            // __decorate — regardless of whether the class has value-position
+                            // self-references:
+                            //   exports_1("C", C = /** @class */ (...));        // no alias
+                            //   exports_1("C", C = __decorate([dec], C));
+                            // When the class has self-references an outer alias is added:
+                            //   exports_1("C", C = C_1 = /** @class */ (...)); // with alias
                             //   exports_1("C", C = C_1 = __decorate([dec], C_1));
-                            // The generic emit_top_level_using_class_assignment path uses the
-                            // inline-alias pattern instead, producing a structural mismatch.
+                            // The generic emit_top_level_using_class_assignment path inlines
+                            // __decorate inside the IIFE, producing a structural mismatch for
+                            // both cases.
                             if !export.is_default_export
                                 && self.ctx.options.legacy_decorators
                                 && self.ctx.target_es5
@@ -349,18 +355,16 @@ impl<'a> Printer<'a> {
                                             &class_name,
                                             &members,
                                         );
-                                        if alias_name.is_some() {
-                                            self.emit_system_using_legacy_decorated_es5_class_export(
-                                                clause_node,
-                                                export.export_clause,
-                                                &export_name,
-                                                &class_name,
-                                                &decorators,
-                                                &members,
-                                                alias_name.as_deref(),
-                                            );
-                                            return true;
-                                        }
+                                        self.emit_system_using_legacy_decorated_es5_class_export(
+                                            clause_node,
+                                            export.export_clause,
+                                            &export_name,
+                                            &class_name,
+                                            &decorators,
+                                            &members,
+                                            alias_name.as_deref(),
+                                        );
+                                        return true;
                                     }
                                 }
                             }

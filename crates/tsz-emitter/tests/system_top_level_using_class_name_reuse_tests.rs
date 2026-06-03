@@ -121,6 +121,40 @@ fn exported_decorated_class_in_top_level_using_region_exports_hoisted_name() {
         !output.contains("C_1"),
         "exported decorated class must not be renamed.\n{output}"
     );
+    // __decorate must appear in a SEPARATE exports_1 call, not inside the IIFE.
+    // tsc emits two exports_1 calls for the outer-split pattern:
+    //   exports_1("C", C = /** @class */ (function () { return C; }()));
+    //   exports_1("C", C = __decorate([dec], C));
+    assert!(
+        output.contains("exports_1(\"C\", C = __decorate("),
+        "exported decorated class must emit __decorate in a separate exports_1 call.\n{output}"
+    );
+}
+
+#[test]
+fn exported_decorated_class_no_self_ref_decorate_is_outside_iife() {
+    // When a legacy-decorated exported class has NO value-position self-references
+    // (no alias needed), tsc still uses the two-call pattern in a System using-block:
+    //   exports_1("C", C = /** @class */ (function () { …no __decorate… }()));
+    //   exports_1("C", C = __decorate([dec], C));
+    // The __decorate call must NOT appear inside the IIFE return body.
+    let source = "export {};\ndeclare var dec: any;\nusing res = null;\n@dec\nexport class Widget {\n    greet() { return 42; }\n}\n";
+    let output = parse_lower_emit(source, system_es5_opts(true));
+    // First exports_1 wraps the clean IIFE.
+    assert!(
+        output.contains("exports_1(\"Widget\", Widget = /** @class */ (function () {"),
+        "IIFE must be inside first exports_1.\n{output}"
+    );
+    // Second exports_1 wraps __decorate.
+    assert!(
+        output.contains("exports_1(\"Widget\", Widget = __decorate("),
+        "__decorate must appear in a separate exports_1 call.\n{output}"
+    );
+    // No outer alias: Widget should not be renamed.
+    assert!(
+        !output.contains("Widget_1"),
+        "class must not be renamed to Widget_1.\n{output}"
+    );
 }
 
 #[test]
