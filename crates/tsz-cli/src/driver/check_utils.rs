@@ -1203,17 +1203,7 @@ fn build_export_signature_input(
 
     // 3. Wildcard re-exports (with type_only provenance)
     if let Some(wildcards) = program.wildcard_reexports.get(file_name) {
-        let type_only_entries = program.wildcard_reexports_type_only.get(file_name);
-        let mut entries: Vec<(String, bool)> = wildcards
-            .iter()
-            .enumerate()
-            .map(|(i, module)| {
-                let is_type_only = type_only_entries
-                    .and_then(|v| v.get(i))
-                    .is_some_and(|(_, to)| *to);
-                (module.clone(), is_type_only)
-            })
-            .collect();
+        let mut entries: Vec<(String, bool)> = wildcards.to_vec();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         input.wildcard_reexports = entries;
     }
@@ -1855,7 +1845,6 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
-            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
             sym_to_decl_indices,
@@ -1990,7 +1979,6 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // several GB on the large-ts-repo benchmark fixture.
             reexports: Default::default(),
             wildcard_reexports: Default::default(),
-            wildcard_reexports_type_only: Default::default(),
             // Cross-file lookup binders only need local scopes/symbol ownership plus the
             // merged export/augmentation tables. Cloning the full cross-program arena maps
             // into every file binder makes all_binders setup scale with total declarations.

@@ -116,8 +116,7 @@ pub struct ProgramContext {
     /// Program-wide re-export index shared across cross-file lookup binders;
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
-    pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
-    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
+    pub program_wildcard_reexports: Option<Arc<tsz_binder::WildcardReexportsMap>>,
     /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
     /// Program-wide cross-file node-symbol map; see
@@ -185,7 +184,6 @@ impl Default for ProgramContext {
             global_file_name_index: None,
             program_reexports: None,
             program_wildcard_reexports: None,
-            program_wildcard_reexports_type_only: None,
             program_module_exports: None,
             program_cross_file_node_symbols: None,
             program_alias_partners: None,
@@ -260,9 +258,6 @@ impl ProgramContext {
         }
         if let Some(ref m) = self.program_wildcard_reexports {
             ctx.program_wildcard_reexports = Some(Arc::clone(m));
-        }
-        if let Some(ref m) = self.program_wildcard_reexports_type_only {
-            ctx.program_wildcard_reexports_type_only = Some(Arc::clone(m));
         }
         if let Some(ref m) = self.program_module_exports {
             ctx.program_module_exports = Some(Arc::clone(m));

@@ -48,12 +48,10 @@ pub(crate) const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 pub type ReexportTarget = (String, Option<String>);
 pub type FileReexports = FxHashMap<String, ReexportTarget>;
 pub type FileReexportsMap = FxHashMap<String, FileReexports>;
-/// Per-file map of `export * from "X"` source modules.
-/// Maps `current_file` -> `Vec<source_module>`.
-pub type WildcardReexportsMap = FxHashMap<String, Vec<String>>;
-/// Type-only provenance aligned with [`WildcardReexportsMap`].
+/// Per-file map of `export * from "X"` source modules with type-only provenance.
 /// Maps `current_file` -> `Vec<(source_module, is_type_only)>`.
-pub type WildcardReexportsTypeOnlyMap = FxHashMap<String, Vec<(String, bool)>>;
+/// The `is_type_only` flag is `true` for `export type * from "X"` chains.
+pub type WildcardReexportsMap = FxHashMap<String, Vec<(String, bool)>>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 /// Cache for the type-only re-export resolver. Mirrors [`ExportCache`] but also
 /// records whether the resolution path crossed an `export type * from ...`
@@ -542,8 +540,9 @@ pub struct BinderState {
     pub reexports: Arc<FileReexportsMap>,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
-    /// Maps `current_file` -> Vec of `source_modules`
-    /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
+    /// Maps `current_file` -> Vec of `(source_module, is_type_only)`.
+    /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`).
+    /// The `is_type_only` flag is `true` for `export type * from "X"` chains.
     ///
     /// `Arc`-wrapped so the cross-file merge can hand a single shared
     /// allocation to every per-file `BinderState` via `Arc::clone`
@@ -552,12 +551,6 @@ pub struct BinderState {
     /// `Arc::make_mut` (zero-cost when refcount=1, which is always
     /// during binding).
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
-    /// Tracks whether wildcard re-export entries are type-only.
-    /// Maps `current_file` -> Vec of (`source_module`, `is_type_only`).
-    /// This captures `export type * from './module'` chains during import resolution.
-    ///
-    /// Same `Arc` rationale as `wildcard_reexports`.
-    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
 
     /// Cache for resolved exports to avoid repeated lookups through re-export chains.
     /// Key: (`module_specifier`, `export_name`) -> resolved `SymbolId` (or None if not found)
@@ -1076,7 +1069,6 @@ pub struct BinderStateScopeInputs {
     pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
-    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     pub declaration_arenas: Arc<DeclarationArenaMap>,
     pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,

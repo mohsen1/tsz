@@ -944,10 +944,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // `ctx.reexports_for_file` / `wildcard_reexports_for_file`.
     // `program.reexports` is already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
     let program_reexports = Arc::clone(&program.reexports);
-    // `program.wildcard_reexports` and `program.wildcard_reexports_type_only`
-    // are already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
+    // `program.wildcard_reexports` is already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
     let program_wildcard_reexports = Arc::clone(&program.wildcard_reexports);
-    let program_wildcard_reexports_type_only = Arc::clone(&program.wildcard_reexports_type_only);
     // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
     // cheap atomic clone for ProgramContext install.
     let program_module_exports = Arc::clone(&program.module_exports);
@@ -982,7 +980,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         has_deprecation_diagnostics,
         program_reexports: Some(program_reexports),
         program_wildcard_reexports: Some(program_wildcard_reexports),
-        program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
         program_module_exports: Some(program_module_exports),
         program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         program_alias_partners: Some(program_alias_partners),

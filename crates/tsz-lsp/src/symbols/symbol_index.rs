@@ -438,8 +438,8 @@ impl SymbolIndex {
         }
 
         // Index wildcard reexports
-        if let Some(wildcards) = binder.wildcard_reexports.get(file_name) {
-            for source_module in wildcards {
+        if let Some(entries) = binder.wildcard_reexports.get(file_name) {
+            for (source_module, _) in entries {
                 self.importers
                     .entry(source_module.clone())
                     .or_default()

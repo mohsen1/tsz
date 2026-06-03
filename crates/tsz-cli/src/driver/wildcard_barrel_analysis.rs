@@ -7,7 +7,7 @@ pub(super) const LARGE_WILDCARD_BARREL_EXPORTS: usize = 32;
 
 pub(super) struct WildcardBarrelAnalysisInput<'a> {
     pub(super) files: &'a [BoundFile],
-    pub(super) wildcard_reexports: &'a FxHashMap<String, Vec<String>>,
+    pub(super) wildcard_reexports: &'a FxHashMap<String, Vec<(String, bool)>>,
     pub(super) work_items: &'a [usize],
     pub(super) large_export_threshold: usize,
 }
@@ -25,7 +25,7 @@ fn work_item_file_name(files: &[BoundFile], file_idx: usize) -> Option<&str> {
 }
 
 fn wildcard_export_count(
-    wildcard_reexports: &FxHashMap<String, Vec<String>>,
+    wildcard_reexports: &FxHashMap<String, Vec<(String, bool)>>,
     file_name: &str,
 ) -> Option<usize> {
     wildcard_reexports.get(file_name).map(Vec::len)

@@ -836,12 +836,8 @@ impl BinderState {
 
                 if let Some(source_module) = module_name {
                     let current_file = self.debugger.current_file.clone();
-                    // Add to wildcard_reexports list - a file can have multiple export * from
+                    // A file can have multiple `export * from` — each entry is (source_module, is_type_only).
                     Arc::make_mut(&mut self.wildcard_reexports)
-                        .entry(current_file.clone())
-                        .or_default()
-                        .push(source_module.clone());
-                    Arc::make_mut(&mut self.wildcard_reexports_type_only)
                         .entry(current_file)
                         .or_default()
                         .push((source_module, export_type_only));

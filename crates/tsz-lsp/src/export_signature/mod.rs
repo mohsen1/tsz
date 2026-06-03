@@ -154,17 +154,7 @@ impl ExportSignatureInput {
 
         // 3. Wildcard re-exports (with type_only provenance)
         if let Some(wildcards) = binder.wildcard_reexports.get(file_name) {
-            let type_only_entries = binder.wildcard_reexports_type_only.get(file_name);
-            let mut entries: Vec<(String, bool)> = wildcards
-                .iter()
-                .enumerate()
-                .map(|(i, module)| {
-                    let is_type_only = type_only_entries
-                        .and_then(|v| v.get(i))
-                        .is_some_and(|(_, to)| *to);
-                    (module.clone(), is_type_only)
-                })
-                .collect();
+            let mut entries: Vec<(String, bool)> = wildcards.to_vec();
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             input.wildcard_reexports = entries;
         }

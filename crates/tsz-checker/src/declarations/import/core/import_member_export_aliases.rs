@@ -422,7 +422,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        for source_module in wildcard_sources {
+        for (source_module, _) in wildcard_sources {
             let Some(source_idx) = self
                 .ctx
                 .resolve_import_target_from_file(file_idx, source_module)

@@ -281,7 +281,6 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
-        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders: Arc::new(Vec::new()),
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
@@ -565,8 +564,6 @@ pub struct BindResult {
     /// final `MergedProgram` builds its own `Arc` once and shares it
     /// with every per-file `BinderState` via `Arc::clone`.
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
-    /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
-    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Arc<Vec<Arc<BinderState>>>,
@@ -753,16 +750,8 @@ impl BindResult {
         // wildcard_reexports
         for (k, v) in self.wildcard_reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
-            for s in v {
-                size += s.capacity();
-            }
-        }
-
-        // wildcard_reexports_type_only
-        for (k, v) in self.wildcard_reexports_type_only.iter() {
-            size += k.capacity() + std::mem::size_of::<u64>();
             for (s, _) in v {
-                size += s.capacity() + 1;
+                size += s.capacity() + std::mem::size_of::<bool>();
             }
         }
 
@@ -883,7 +872,6 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 augmentation_target_modules: binder.augmentation_target_modules,
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
-                wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
                 lib_binders: Arc::new(Vec::new()), // No libs in this path
                 lib_arenas: Vec::new(),
                 lib_symbol_ids: binder.lib_symbol_ids,
@@ -938,7 +926,6 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
-        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders: Arc::new(Vec::new()), // No libs in this path
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
@@ -1662,7 +1649,6 @@ fn bind_file_with_libs_with_language_version(
         augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
-        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders,
         lib_arenas,
         lib_symbol_ids: binder.lib_symbol_ids,

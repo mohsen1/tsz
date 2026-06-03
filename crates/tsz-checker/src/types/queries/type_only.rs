@@ -1709,25 +1709,18 @@ impl<'a> CheckerState<'a> {
         // Two-pass approach: first check if any non-type-only wildcard provides
         // a value binding for the name (which overrides type-only from other
         // wildcards), then check type-only wildcards.
-        if let Some(source_modules) = self
+        if let Some(entries) = self
             .ctx
             .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
-            let source_type_only_flags = self
-                .ctx
-                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
-
             // Pass 1: Check non-type-only wildcards for value exports.
             // If a non-type-only `export *` re-exports the name AND the name is
             // not type-only in the source module, the value binding takes precedence
             // over any type-only wildcard (even if a `export type *` also has it).
             // Note: `name_exists_in_module_exports` only checks existence,
             // `is_export_type_only_in_file` checks the full type-only chain.
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let source_is_type_only = source_type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-                if source_is_type_only {
+            for (source_module, source_is_type_only) in entries {
+                if *source_is_type_only {
                     continue; // Skip type-only wildcards in pass 1
                 }
                 // Non-type-only wildcard: check if name exists as a value in source.
@@ -1763,11 +1756,8 @@ impl<'a> CheckerState<'a> {
                 || target_file_name.ends_with(".cjs");
 
             // Pass 2: Check type-only wildcards and transitive chains
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let source_is_type_only = source_type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-                if source_is_type_only {
+            for (source_module, source_is_type_only) in entries {
+                if *source_is_type_only {
                     // In JS files, `export type` is invalid syntax — don't treat as type-only
                     if target_is_js {
                         continue;

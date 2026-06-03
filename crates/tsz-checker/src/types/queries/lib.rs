@@ -1079,19 +1079,11 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_default();
 
         // Check if there's a type-only wildcard re-export
-        if let Some(source_modules) = self
+        if let Some(entries) = self
             .ctx
             .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
-            let type_only_flags = self
-                .ctx
-                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
-
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let is_type_only = type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-
+            for (source_module, is_type_only) in entries {
                 if !is_type_only {
                     continue;
                 }

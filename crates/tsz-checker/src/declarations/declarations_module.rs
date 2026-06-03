@@ -1085,7 +1085,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if let Some(source_modules) = binder.wildcard_reexports.get(&file_name) {
-            for source_module in source_modules {
+            for (source_module, _is_type_only) in source_modules {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)

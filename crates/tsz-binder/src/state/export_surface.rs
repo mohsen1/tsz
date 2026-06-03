@@ -155,14 +155,10 @@ impl ExportSurface {
 
         // 3. Wildcard re-exports
         if let Some(wildcards) = binder.wildcard_reexports.get(file_name) {
-            let type_only_entries = binder.wildcard_reexports_type_only.get(file_name);
-            for (i, module) in wildcards.iter().enumerate() {
-                let is_type_only = type_only_entries
-                    .and_then(|v| v.get(i))
-                    .is_some_and(|(_, to)| *to);
+            for (source_module, is_type_only) in wildcards.iter() {
                 surface.wildcard_reexports.push(WildcardReexport {
-                    source_module: module.clone(),
-                    is_type_only,
+                    source_module: source_module.clone(),
+                    is_type_only: *is_type_only,
                 });
             }
             surface

@@ -1196,9 +1196,7 @@ pub struct CheckerContext<'a> {
     /// program-wide map into every one of N cross-file binders.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     /// Program-wide wildcard re-exports map; see `program_reexports`.
-    pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
-    /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
-    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
+    pub program_wildcard_reexports: Option<Arc<tsz_binder::WildcardReexportsMap>>,
     /// Program-wide module-exports index keyed by file name (or ambient
     /// module specifier). Consulted by `ctx.module_exports_for_module`
     /// in preference to per-binder `module_exports`. Driver wraps

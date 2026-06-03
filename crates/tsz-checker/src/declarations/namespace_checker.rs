@@ -714,7 +714,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for wildcard re-exports: `export * from 'bar'`
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
-            for source_module in source_modules {
+            for (source_module, _is_type_only) in source_modules {
                 if let Some(sym_id) =
                     self.resolve_reexported_member(source_module, member_name, lib_binders)
                 {
@@ -740,7 +740,7 @@ impl<'a> CheckerState<'a> {
             }
             // Then check lib binder's wildcard re-exports
             if let Some(source_modules) = lib_binder.wildcard_reexports.get(module_specifier) {
-                for source_module in source_modules {
+                for (source_module, _is_type_only) in source_modules {
                     if let Some(sym_id) =
                         self.resolve_reexported_member(source_module, member_name, lib_binders)
                     {
