@@ -278,7 +278,14 @@ impl<'a> Printer<'a> {
                         binding_name,
                         &class_name,
                     ) {
-                        self.write(&output);
+                        // `render_simple_tc39_decorated_class_es5` produces a
+                        // fully indented block (leading `base_indent` already
+                        // embedded). Use `write_raw_text` so the writer's
+                        // `ensure_indent()` doesn't prepend a second level
+                        // when the class appears inside a non-zero-indent
+                        // context (e.g. the try-block of a top-level `using`
+                        // region).
+                        self.writer.write_raw_text(&output);
                         self.skip_comments_for_erased_node(node);
                         return;
                     }
@@ -1188,7 +1195,7 @@ impl<'a> Printer<'a> {
                     &binding_name,
                     &display_name,
                 ) {
-                    self.write(&output);
+                    self.writer.write_raw_text(&output);
                     self.skip_comments_for_erased_node(node);
                     self.track_decorated_class_namespace_binding(node);
                     return;
