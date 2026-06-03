@@ -20,8 +20,10 @@
 //! varied across cases.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
-use tsz_common::common::ModuleKind;
+use tsz_checker::test_utils::{
+    check_multi_file_with_libs, check_source, load_compiled_lib_files, load_lib_files,
+};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 
 const TS1343: u32 = 1343;
 const TS1470: u32 = 1470;
@@ -193,4 +195,151 @@ fn nodenext_commonjs_file_emits_ts1470() {
         !codes.contains(&TS1343),
         "nodenext must not report TS1343; got {codes:?}"
     );
+}
+
+#[test]
+fn document_body_append_child_uses_inherited_dom_node_member() {
+    for target in [ScriptTarget::ESNext, ScriptTarget::ES5] {
+        let options = CheckerOptions {
+            module: ModuleKind::ESNext,
+            target,
+            ..CheckerOptions::default()
+        };
+        let codes: Vec<u32> = check_source(
+            r#"
+export const image = new Image();
+document.body.appendChild(image);
+"#,
+            "dom-access.ts",
+            options,
+        )
+        .into_iter()
+        .map(|d| d.code)
+        .collect();
+        assert!(
+            !codes.contains(&2339),
+            "`HTMLElement` should inherit `Node.appendChild` under target {target:?}; got {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn document_body_append_child_survives_later_import_meta_global_augmentation() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let options = CheckerOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "example.ts",
+                r##"
+export const image = new Image();
+document.body.appendChild(image);
+"##,
+            ),
+            (
+                "augmentations.ts",
+                r##"
+declare global {
+    interface ImportMeta {
+        wellKnownProperty: { a: number, b: string, c: boolean };
+    }
+}
+"##,
+            ),
+        ],
+        "example.ts",
+        options,
+        &lib_files,
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2339),
+        "global `ImportMeta` augmentation must not hide inherited `HTMLElement` DOM members; got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn import_meta_fixture_keeps_document_body_append_child() {
+    let lib_files = load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"]);
+    let files = [
+        (
+            "example.ts",
+            r##"
+(async () => {
+  const response = await fetch(new URL("../hamsters.jpg", import.meta.url).toString());
+  const blob = await response.blob();
+
+  const size = import.meta.scriptElement.dataset.size || 300;
+
+  const image = new Image();
+  image.src = URL.createObjectURL(blob);
+  image.width = image.height = size;
+
+  document.body.appendChild(image);
+})();
+"##,
+        ),
+        (
+            "moduleLookingFile01.ts",
+            r##"
+export let x = import.meta;
+export let y = import.metal;
+export let z = import.import.import.malkovich;
+"##,
+        ),
+        (
+            "scriptLookingFile01.ts",
+            r##"
+let globalA = import.meta;
+let globalB = import.metal;
+let globalC = import.import.import.malkovich;
+"##,
+        ),
+        (
+            "assignmentTargets.ts",
+            r##"
+export const foo: ImportMeta = import.meta.blah = import.meta.blue = import.meta;
+import.meta = foo;
+
+// @Filename augmentations.ts
+declare global {
+  interface ImportMeta {
+    wellKnownProperty: { a: number, b: string, c: boolean };
+  }
+}
+
+const { a, b, c } = import.meta.wellKnownProperty;
+"##,
+        ),
+    ];
+    for target in [ScriptTarget::ESNext, ScriptTarget::ES5] {
+        for module in [
+            ModuleKind::ESNext,
+            ModuleKind::CommonJS,
+            ModuleKind::System,
+            ModuleKind::ES2020,
+        ] {
+            let options = CheckerOptions {
+                module,
+                target,
+                ..CheckerOptions::default()
+            };
+            let diagnostics = check_multi_file_with_libs(&files, "example.ts", options, &lib_files);
+            let append_child_errors: Vec<_> = diagnostics
+                .iter()
+                .filter(|diag| {
+                    (diag.code == 2339 && diag.message_text.contains("appendChild"))
+                        || (diag.code == 2345 && diag.message_text.contains("HTMLImageElement"))
+                })
+                .collect();
+            assert!(
+                append_child_errors.is_empty(),
+                "fixture should not report DOM appendChild drift under module {module:?} target {target:?}; got {diagnostics:#?}"
+            );
+        }
+    }
 }

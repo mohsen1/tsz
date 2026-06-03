@@ -1483,7 +1483,7 @@ type Record<K extends keyof any, T> = { [P in K]: T };
 declare namespace JSX {
     interface Element {}
     interface IntrinsicElements {
-        div: {};
+        div: { alpha: string; beta: number; gamma: boolean; delta: string; epsilon: number; };
     }
 }
 
@@ -1516,6 +1516,10 @@ const l = <div<number>/>;
     assert!(
         codes.contains(&2558),
         "intrinsic JSX elements should reject explicit type arguments, got: {codes:?}"
+    );
+    assert!(
+        !codes.iter().any(|code| matches!(code, 2739 | 2740 | 2741)),
+        "invalid intrinsic JSX type arguments should suppress props assignability cascades, got: {codes:?}"
     );
 }
 

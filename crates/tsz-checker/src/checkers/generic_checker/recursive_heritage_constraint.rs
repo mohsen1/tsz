@@ -72,7 +72,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an interface symbol extends (directly or transitively) a target symbol.
-    pub(super) fn interface_extends_symbol(
+    pub(crate) fn interface_extends_symbol(
         &self,
         interface_sym_id: tsz_binder::SymbolId,
         target_sym_id: tsz_binder::SymbolId,

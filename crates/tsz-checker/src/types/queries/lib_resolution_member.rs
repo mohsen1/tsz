@@ -10,9 +10,10 @@
 //!
 //! Scope (intentionally narrow for soundness — anything else returns `None` and
 //! falls back to the full-materialization path):
-//! - Plain property signatures only (`prop: T` / `prop?: T`). Methods,
-//!   accessors, index signatures, call/construct signatures, readonly writes,
-//!   and computed/symbol-named members take the full path.
+//! - Plain property signatures (`prop: T` / `prop?: T`) and single method
+//!   signatures. Accessors, index signatures, call/construct signatures,
+//!   readonly writes, computed/symbol-named members, and overloads take the
+//!   full path.
 //! - A single own declaration of the member. Members declared more than once
 //!   (overloads / split declarations) take the full path.
 //! - Heritage-inherited members can be resolved when the inherited annotation
@@ -23,7 +24,7 @@
 
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext::{self, PROPERTY_SIGNATURE};
+use tsz_parser::parser::syntax_kind_ext::{self, METHOD_SIGNATURE, PROPERTY_SIGNATURE};
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -104,7 +105,7 @@ impl CheckerState<'_> {
             Some(self.ctx.arena),
         );
 
-        // Find the single own plain-property-signature declaration of `prop_name`
+        // Find the single own plain-property or method declaration of `prop_name`
         // across the interface's declarations. Bail (None) on any ambiguity so
         // overloads/split declarations keep their full-path semantics.
         let mut member: Option<(NodeIndex, &NodeArena, Vec<SymbolId>)> = None;
@@ -135,7 +136,7 @@ impl CheckerState<'_> {
                 let Some(member_node) = arena.get(member_idx) else {
                     continue;
                 };
-                if member_node.kind != PROPERTY_SIGNATURE {
+                if member_node.kind != PROPERTY_SIGNATURE && member_node.kind != METHOD_SIGNATURE {
                     continue;
                 }
                 let Some(sig) = arena.get_signature(member_node) else {
@@ -222,17 +223,20 @@ impl CheckerState<'_> {
         };
         let member_node = member_arena.get(member_idx)?;
         let sig = member_arena.get_signature(member_node)?;
-        if sig.type_annotation == NodeIndex::NONE {
+        if member_node.kind == METHOD_SIGNATURE && sig.question_token {
+            return None;
+        }
+        if member_node.kind == PROPERTY_SIGNATURE && sig.type_annotation == NodeIndex::NONE {
             // `prop;` with no annotation lowers to `any` in the full path; that
             // is cheap, but keep the full path authoritative for the implicit
             // shape rather than reimplement the default here.
             return None;
         }
         if !type_param_symbols.is_empty()
-            && self.type_annotation_references_type_params(
+            && self.member_signature_references_type_params(
                 selected_binder,
                 member_arena,
-                sig.type_annotation,
+                member_idx,
                 &type_param_symbols,
                 &decls_with_arenas,
                 fallback_arena,
@@ -245,6 +249,28 @@ impl CheckerState<'_> {
         // properties are safe here because property access returns the read
         // annotation type; optionality itself is tracked by full object shapes.
         if self.has_readonly_modifier(&sig.modifiers) {
+            return None;
+        }
+        if member_node.kind == METHOD_SIGNATURE
+            && sig
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+        {
+            if let Some(base_type) = self.resolve_lib_type_by_name(name) {
+                self.ensure_relation_input_ready(base_type);
+                let base_type = self.resolve_type_for_property_access_force(base_type);
+                if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id,
+                    ..
+                } = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    base_type,
+                    prop_name,
+                ) {
+                    return Some(type_id);
+                }
+            }
             return None;
         }
 
@@ -290,7 +316,7 @@ impl CheckerState<'_> {
 
         let member_type = lowering
             .with_arena(member_arena)
-            .lower_type(sig.type_annotation);
+            .lower_interface_member_simple_type(member_idx)?;
         if member_type == TypeId::ERROR {
             return None;
         }
@@ -316,7 +342,7 @@ impl CheckerState<'_> {
             .collect()
     }
 
-    fn type_annotation_references_type_params(
+    fn member_signature_references_type_params(
         &self,
         binder: &tsz_binder::BinderState,
         arena: &NodeArena,

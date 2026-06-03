@@ -1656,6 +1656,10 @@ const Wrong = (props: { offspring: string }) => <h1>{props.offspring}</h1>;
 <Wrong>Byebye, world!</Wrong>;
 "#;
     let diags = jsx_full_diagnostics_with_mode(source, JsxMode::ReactJsx);
+    assert!(
+        diags.iter().any(|diag| diag.code == 2875),
+        "Expected TS2875 in react-jsx conformance mode, got: {diags:?}"
+    );
     let ts2741 = diags
         .iter()
         .find(|diag| {
@@ -1778,4 +1782,3 @@ let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
         "Multiple children for non-array children type should emit TS2746, got: {diags:?}"
     );
 }
-

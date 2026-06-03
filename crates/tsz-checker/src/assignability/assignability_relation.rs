@@ -421,6 +421,9 @@ impl<'a> CheckerState<'a> {
         let mut target = self.substitute_this_type_if_needed(target);
         let raw_source = source;
         let raw_target = target;
+        if self.actual_lib_interface_extends_relation(raw_source, raw_target) {
+            return true;
+        }
         source = self.normalize_awaited_application_args_for_variance(source);
         target = self.normalize_awaited_application_args_for_variance(target);
 
@@ -686,6 +689,47 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn actual_lib_interface_extends_relation(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(source_sym) = self.relation_interface_symbol(source) else {
+            return false;
+        };
+        let Some(target_sym) = self.relation_interface_symbol(target) else {
+            return false;
+        };
+        if source_sym == target_sym {
+            return true;
+        }
+        let lib_binders = self.get_lib_binders();
+        let Some(source_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(source_sym, &lib_binders)
+        else {
+            return false;
+        };
+        let Some(target_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(target_sym, &lib_binders)
+        else {
+            return false;
+        };
+        if !source_symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+            || !target_symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+            || !self.ctx.symbol_is_from_actual_or_cloned_lib(source_sym)
+            || !self.ctx.symbol_is_from_actual_or_cloned_lib(target_sym)
+        {
+            return false;
+        }
+        self.interface_extends_symbol(source_sym, target_sym)
+    }
+
+    fn relation_interface_symbol(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+            .or_else(|| crate::query_boundaries::common::type_shape_symbol(self.ctx.types, type_id))
     }
 
     pub(crate) fn type_predicate_type_assignable_to_parameter(

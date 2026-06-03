@@ -1660,7 +1660,7 @@ impl<'a> CheckerState<'a> {
                 self.apparent_enum_instance_type(object_type)
                     .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))
             } else {
-                self.resolve_type_for_property_access(object_type)
+                self.resolve_property_access_base_materialized(object_type)
             };
             if object_type_for_access == TypeId::ANY
                 && is_this_access

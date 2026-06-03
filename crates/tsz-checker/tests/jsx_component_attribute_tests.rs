@@ -74,6 +74,7 @@ fn jsx_full_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<Diagno
         file_name.to_string(),
         options,
     );
+    checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()

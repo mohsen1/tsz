@@ -336,9 +336,13 @@ impl<'a> CheckerState<'a> {
         let effective_tag: Option<&str> = tag_name.or(namespaced_tag_owned.as_deref());
 
         if is_intrinsic {
-            if let Some(type_args) = jsx_opening.type_arguments.as_ref() {
-                self.validate_jsx_intrinsic_type_arguments(type_args);
-            }
+            let has_explicit_type_args =
+                if let Some(type_args) = jsx_opening.type_arguments.as_ref() {
+                    self.validate_jsx_intrinsic_type_arguments(type_args);
+                    true
+                } else {
+                    false
+                };
             let ie_type = self.get_intrinsic_elements_type();
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
             if let Some(tag) = effective_tag
@@ -347,25 +351,25 @@ impl<'a> CheckerState<'a> {
                 let evaluated_props = self
                     .get_jsx_intrinsic_props_for_tag(idx, tag, true)
                     .unwrap_or(TypeId::ANY);
-
-                // Check JSX attributes against the resolved props type.
-                // For intrinsic elements, the display target is just the props type
-                // (tsc doesn't wrap intrinsic element props in IntrinsicAttributes).
-                let display_target = self.build_jsx_display_target(evaluated_props, None);
-                self.check_jsx_attributes_against_props(
-                    super::super::props::resolution::JsxPropsCheckOpts {
-                        attributes_idx: jsx_opening.attributes,
-                        props_type: evaluated_props,
-                        tag_name_idx: jsx_opening.tag_name,
-                        component_type: None,
-                        special_attr_component_type: None,
-                        raw_props_has_type_params: false,
-                        display_target,
-                        preferred_target_display: None,
-                        request,
-                        children_ctx,
-                    },
-                );
+                if has_explicit_type_args {
+                    self.check_grammar_jsx_element(jsx_opening.attributes);
+                } else {
+                    let display_target = self.build_jsx_display_target(evaluated_props, None);
+                    self.check_jsx_attributes_against_props(
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type: evaluated_props,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: None,
+                            special_attr_component_type: None,
+                            raw_props_has_type_params: false,
+                            display_target,
+                            preferred_target_display: None,
+                            request,
+                            children_ctx,
+                        },
+                    );
+                }
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
                 // JSX.Element. Returning IntrinsicElements["tag"] causes false TS2322
