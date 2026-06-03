@@ -579,16 +579,8 @@ fn value_export_preferred_over_type_alias_in_wildcard_sources() {
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./barrel".to_string())
         .or_default()
-        .push("./types".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports)
-        .entry("./barrel".to_string())
-        .or_default()
-        .push("./values".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./barrel".to_string())
-        .or_default()
         .push(("./types".to_string(), false));
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./barrel".to_string())
         .or_default()
         .push(("./values".to_string(), false));
@@ -627,16 +619,8 @@ fn value_export_preferred_over_type_only_wildcard_value_source() {
     Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./barrel".to_string())
         .or_default()
-        .push("./classes".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports)
-        .entry("./barrel".to_string())
-        .or_default()
-        .push("./values".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-        .entry("./barrel".to_string())
-        .or_default()
         .push(("./classes".to_string(), true));
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./barrel".to_string())
         .or_default()
         .push(("./values".to_string(), false));
@@ -666,10 +650,6 @@ fn type_alias_returned_when_no_value_in_wildcard_sources() {
     Arc::make_mut(&mut binder.module_exports).insert("./types".to_string(), types_exports);
 
     Arc::make_mut(&mut binder.wildcard_reexports)
-        .entry("./barrel".to_string())
-        .or_default()
-        .push("./types".to_string());
-    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./barrel".to_string())
         .or_default()
         .push(("./types".to_string(), false));
