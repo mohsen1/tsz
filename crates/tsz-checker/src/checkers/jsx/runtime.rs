@@ -5,6 +5,7 @@
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
+use tsz_common::text_scan::{JSX_PRAGMA_SCAN_BYTES, leading_window};
 use tsz_parser::parser::NodeIndex;
 
 /// Returns true when the byte at `pos` (or end-of-string) is a JSDoc pragma
@@ -51,8 +52,7 @@ fn find_complete_pragma_tag(body: &str, tag: &str) -> Option<usize> {
 pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
     // Only scan leading comments (pragmas must appear before code).
     // We limit scanning to prevent searching entire large files.
-    let scan_limit = source.len().min(4096);
-    let text = &source[..scan_limit];
+    let text = leading_window(source, JSX_PRAGMA_SCAN_BYTES);
 
     let mut pos = 0;
     let bytes = text.as_bytes();
@@ -106,8 +106,7 @@ pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
 /// Mirrors `extract_jsx_pragma` behavior, but for fragment factory pragmas.
 /// Returns values like `"React.Fragment"` or `"Fragment"`.
 pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
-    let scan_limit = source.len().min(4096);
-    let text = &source[..scan_limit];
+    let text = leading_window(source, JSX_PRAGMA_SCAN_BYTES);
 
     let mut pos = 0;
     let bytes = text.as_bytes();
@@ -376,8 +375,7 @@ impl<'a> CheckerState<'a> {
     /// leading comments. Returns the package name or None.
     pub(crate) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
         let text = self.current_jsx_source_text()?;
-        let scan_limit = text.len().min(4096);
-        let scan_text = &text[..scan_limit];
+        let scan_text = leading_window(text, JSX_PRAGMA_SCAN_BYTES);
         let bytes = scan_text.as_bytes();
         let mut pos = 0;
         while pos < bytes.len() {
@@ -898,8 +896,7 @@ pub(crate) fn extract_jsx_import_source_pragma_text_only_for_test(text: &str) ->
     // Mirrors `CheckerState::extract_jsx_import_source_pragma` but operates on
     // a raw `&str`, so we can unit-test the boundary handling without
     // constructing a checker. Kept in sync with the real implementation.
-    let scan_limit = text.len().min(4096);
-    let scan_text = &text[..scan_limit];
+    let scan_text = leading_window(text, JSX_PRAGMA_SCAN_BYTES);
     let bytes = scan_text.as_bytes();
     let mut pos = 0;
     while pos < bytes.len() {
@@ -1087,6 +1084,51 @@ mod pragma_boundary_tests {
         assert_eq!(
             extract_jsx_pragma("/** @jsx React.createElement */\n"),
             Some("React.createElement".to_string())
+        );
+    }
+
+    // ---- UTF-8 scan-window boundary (regression for the byte-4096 panic) -----
+
+    /// Build a string in which the first byte of `mb` lands exactly at index
+    /// 4095, so byte 4096 (the historical fixed scan cap) falls *inside* a
+    /// multi-byte codepoint. Slicing `&text[..4096]` on such input used to
+    /// panic with "byte index 4096 is not a char boundary".
+    fn straddle_scan_cap(prefix: &str, mb: char) -> String {
+        assert!(prefix.len() < 4095, "prefix must fit before the cap");
+        let mut s = String::from(prefix);
+        while s.len() < 4095 {
+            s.push(' ');
+        }
+        s.push(mb); // 'Н' (U+041D) occupies bytes 4095..4097
+        s.push_str(" x\nexport const x = 1;\n");
+        s
+    }
+
+    #[test]
+    fn jsx_extractors_do_not_panic_on_multibyte_at_scan_cap() {
+        // No pragma present: the contract is simply "never panic" on a file
+        // whose multi-byte char straddles the 4096-byte scan cap.
+        let src = straddle_scan_cap("// header ", 'Н');
+        assert!(src.len() > 4096);
+        assert_eq!(extract_jsx_pragma(&src), None);
+        assert_eq!(extract_jsx_frag_pragma(&src), None);
+        assert_eq!(extract_jsx_runtime_pragma(&src), None);
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(&src),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_found_even_when_file_straddles_scan_cap() {
+        // The real pragma sits in the leading comment (well inside the window);
+        // the multi-byte char straddling byte 4096 must not break detection and
+        // must not panic.
+        let src = straddle_scan_cap("/* @jsxImportSource preact */\n", 'Н');
+        assert!(src.len() > 4096);
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(&src),
+            Some("preact".to_string())
         );
     }
 }

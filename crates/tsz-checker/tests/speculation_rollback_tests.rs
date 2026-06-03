@@ -243,8 +243,8 @@ fn overload_generic_candidate_contextual_refresh_clean() {
     );
 }
 
-/// Ensure that `TypeParameterConstraintViolation` during overload resolution
-/// correctly rolls back and tries the next candidate.
+/// Ensure that a type-parameter constraint violation during overload
+/// resolution correctly rolls back and tries the next candidate.
 #[test]
 fn overload_constraint_violation_tries_next_candidate() {
     let diags = check(
