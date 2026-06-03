@@ -2023,6 +2023,10 @@ name = "recursive_utility_alias_fanout_tests"
 path = "tests/recursive_utility_alias_fanout_tests.rs"
 
 [[test]]
+name = "recursive_alias_counter_convergence_ts2589_tests"
+path = "tests/recursive_alias_counter_convergence_ts2589_tests.rs"
+
+[[test]]
 name = "same_generic_application_assign_outcome_tests"
 path = "tests/same_generic_application_assign_outcome_tests.rs"
 

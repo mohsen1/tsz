@@ -755,6 +755,34 @@ pub fn recursive_growth_weight(types: &dyn TypeDatabase, type_id: TypeId) -> u64
     }
 }
 
+/// Per-argument weight along the dimensions that genuinely grow *without bound*
+/// across recursion steps — concrete string-literal length, generic
+/// template-literal span count, and tuple arity. Used by the checker's use-site
+/// TS2589 convergence check to decide whether a residual self-application is
+/// diverging.
+///
+/// Unlike [`recursive_growth_weight`], it deliberately does **not** count
+/// union/intersection arity: a homomorphic mapped type over an object with
+/// optional properties reintroduces a *bounded* `| undefined` on each structural
+/// descent (`{ [K in keyof T]: Rec<T[K]> }`), which is not evidence of
+/// divergence — `tsc` ties a finite knot for such recursive object/mapped types.
+/// Genuine distributive union/intersection blow-ups are still caught earlier, in
+/// the first-pass evaluation, by the evaluator's `detect_recursive_growth` (which
+/// uses the full metric) and by the per-`DefId` instantiation-depth limit.
+/// Counting only the unbounded eager-growth dimensions here keeps real
+/// string/tuple/template builders flagged while leaving knot-tying object and
+/// counter-driven recursions (`DeepObject<T, N>`) alone.
+fn unbounded_growth_weight(types: &dyn TypeDatabase, type_id: TypeId) -> u64 {
+    match types.lookup(type_id) {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
+            types.resolve_atom_ref(atom).as_ref().len() as u64
+        }
+        Some(TypeData::TemplateLiteral(spans)) => types.template_list(spans).len() as u64,
+        Some(TypeData::Tuple(list)) => types.tuple_list(list).len() as u64,
+        _ => 0,
+    }
+}
+
 /// Total structural weight of the arguments of a concrete `Application` of
 /// `target_def_id`, or `None` if `type_id` is not such an application.
 ///
@@ -776,7 +804,7 @@ pub fn self_application_arg_weight(
             return Some(
                 app.args
                     .iter()
-                    .map(|&a| recursive_growth_weight(types, a))
+                    .map(|&a| unbounded_growth_weight(types, a))
                     .sum(),
             );
         }

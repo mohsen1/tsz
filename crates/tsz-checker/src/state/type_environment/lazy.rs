@@ -780,13 +780,26 @@ impl<'a> CheckerState<'a> {
         // `Application(alias, args)` is the norm, not proof of infinite expansion.
         // It is divergence evidence only when it makes no *progress*: at a use site
         // (the checked type is itself a concrete application of the alias) compare
-        // the structural argument weight of the input against each residual — a
-        // residual that strictly shrinks is converging toward the base case (a
-        // variadic tuple tail) and must not raise TS2589, while one that stays the
-        // same size (`Foo<unknown>` -> `Foo<unknown>`) or grows is divergent. When
-        // there is no input application to compare against (the definition-site
-        // pass evaluates the conditional body directly), any surviving concrete
-        // self-reference stays divergent, preserving definition-site TS2589.
+        // the structural argument weight of the input against each residual. A
+        // residual whose argument weight is strictly larger than the input grows on
+        // every step along an unbounded dimension (a template-literal string that
+        // gains characters, a tuple that gains elements) and is genuinely
+        // divergent. A residual that stays the same size or shrinks is *not* proof
+        // of divergence:
+        //   * it may shrink along a dimension the coarse metric scores flat — a
+        //     numeric depth counter (`N` -> `Exclude<N, 0>`) or a structural descent
+        //     into `T[K]` — and so terminate at a base case (e.g. `DeepObject<T, N>`);
+        //   * or it may tie a finite knot the way `tsc` defers recursive object and
+        //     mapped-property references (`{ [K in keyof T]: Rec<T[K]> }`), which is
+        //     accepted, not flagged.
+        // The same-identity stall (`Foo<unknown>` -> `Foo<unknown>`) that this check
+        // once caught here is already detected earlier as an Application cycle
+        // (`eval_result.depth_exceeded`), and any residual the weight metric cannot
+        // see is still bounded by the per-`DefId` instantiation-depth limit, so
+        // requiring strict growth here only removes false positives. When there is
+        // no input application to compare against (the definition-site pass evaluates
+        // the conditional body directly), any surviving concrete self-reference stays
+        // divergent, preserving definition-site TS2589.
         let result = eval_result.result;
         if result != type_id && result != TypeId::ERROR {
             let db = self.ctx.types.as_type_database();
@@ -808,7 +821,7 @@ impl<'a> CheckerState<'a> {
                             residual,
                             alias_def_id,
                         )
-                        .is_none_or(|residual_weight| residual_weight >= input_weight)
+                        .is_none_or(|residual_weight| residual_weight > input_weight)
                     });
                     if diverges {
                         return true;
