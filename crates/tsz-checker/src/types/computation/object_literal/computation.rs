@@ -763,7 +763,16 @@ impl<'a> CheckerState<'a> {
                             let name_atom = self.ctx.types.intern_string(&name);
                             display_type_overrides.insert(name_atom, lit_type);
                         }
-                        let window_global_this_display_symbol = if prop.initializer != prop.name
+                        // Skip the window/globalThis display-parent lookup when
+                        // processing a destructuring assignment target (`{a: x} = src`).
+                        // `is_window_and_global_this_declared_expression` calls
+                        // `resolve_identifier_symbol`, which adds the identifier to
+                        // `referenced_symbols`. In a destructuring write target the
+                        // identifier is a WRITE, not a read, so marking it as referenced
+                        // suppresses TS6133 write-only detection (e.g. parameter `x`
+                        // in `function f(x=0) { ({x: x} = obj); }`).
+                        let window_global_this_display_symbol = if !self.ctx.in_destructuring_target
+                            && prop.initializer != prop.name
                             && (self
                                 .is_window_and_global_this_declared_expression(prop.initializer)
                                 || (!self.is_global_this_expression(prop.initializer)

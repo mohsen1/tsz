@@ -7,15 +7,13 @@
 # expression evaluation fix). The fix newly resolves 6 entries that were
 # previously accepted regressions (infiniteConstraints, longObjectInstantiationChain3,
 # nestedGlobalNamespaceInClass, tsxLibraryManagedAttributes, parserRealSource8,
-# conditionalTypes1) and introduces 4 new fingerprint-only diffs below.
-# Net change: -6 +4 = +2 wins on the aggregate gate. Each of the 4 new
-# entries is unrelated to instantiation expression semantics (interface
-# default export, unused-locals flow lint, circular module typing, interface
-# extends-intersection error rendering) and should be addressed in follow-up
-# PRs; track them with TypeScript-bug-style triage issues if they prove to be
-# upstream rendering differences rather than tsz regressions.
+# conditionalTypes1) and introduces 2 new fingerprint-only diffs below.
+# Net change: -6 +2 = +4 wins on the aggregate gate.
+# noUnusedLocals_writeOnly.ts was fixed in the write-only destructuring PR (#12243):
+# { x: x } = src did not emit TS6133 because is_window_and_global_this_declared_expression
+# called resolve_identifier_symbol on the write target, marking it as read.
+# circularReference.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 TypeScript/tests/cases/compiler/exportDefaultInterface.ts
-TypeScript/tests/cases/compiler/noUnusedLocals_writeOnly.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts
 
@@ -27,6 +25,8 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 # Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
 # Mapped/keyof family tracked in #8432; large-union intersections tracked in
 # #12260; JSX/import.meta subset tracked in #12261.
+# importMeta.ts oscillates; re-accepted after REGRESSED on PR #12243 CI run 26852720835.
+# intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
