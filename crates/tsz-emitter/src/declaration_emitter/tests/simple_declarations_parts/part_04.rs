@@ -73,6 +73,89 @@ var obj = {
 }
 
 #[test]
+fn bare_unique_symbol_computed_member_name_is_not_garbled() {
+    // Regression for #12328: a bare-identifier `unique symbol` key (`[x]`) is
+    // recovered through `emittable_computed_property_name_text`. That path must
+    // truncate the source slice at `]`, so the member reads `[x]: number` and
+    // never a garbled `[x]:: number` (which previously duplicated the
+    // solver-printed member because the raw slice kept the trailing `:`).
+    let source = r#"
+declare const x: unique symbol;
+const obj = {
+    [x]: 0
+};
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+        })
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+    let computed = parser
+        .arena
+        .get(prop_assignment.name)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .expect("missing computed property name");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let unique_symbol_type = interner.unique_symbol(SymbolRef(0));
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(computed.expression.0, unique_symbol_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.name.0, unique_symbol_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains("[x]::"),
+        "Did not expect a garbled computed key with a doubled separator: {output}"
+    );
+    assert!(
+        output.contains("[x]:"),
+        "Expected a bare unique-symbol computed key to recover as a clean `[x]` member: {output}"
+    );
+}
+
+#[test]
 fn symbol_observer_computed_member_drops_redundant_index_signature() {
     let source = r#"
 interface SymbolConstructor {
