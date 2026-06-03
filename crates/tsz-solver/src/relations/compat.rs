@@ -427,6 +427,35 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         )
     }
 
+    /// Whether an object-literal excess-property error (TS2353) should be
+    /// surfaced ahead of the given structural failure reason.
+    ///
+    /// `tsc` reports excess properties through the general relation's
+    /// excess-property pass, but its object-literal elaboration
+    /// (`elaborateObjectLiteral`) runs first and short-circuits when a
+    /// *present-in-target* source property has an incompatible type — so a
+    /// `TS2322` property-type mismatch is reported instead of the excess error.
+    /// The excess error does, however, still take precedence over a failure
+    /// caused solely by a *missing required* property (`TS2741`/`TS2739`),
+    /// which the relation only reports after the excess pass. The resulting
+    /// precedence is:
+    ///
+    /// > present-property mismatch  >  excess (TS2353)  >  missing required property
+    ///
+    /// Excess therefore outranks an absent reason (the literal is otherwise
+    /// assignable) and the missing-property family, but never a reason that
+    /// pins the failure to a property the source actually provides.
+    const fn excess_outranks_structural(reason: &Option<SubtypeFailureReason>) -> bool {
+        matches!(
+            reason,
+            None | Some(
+                SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+                    | SubtypeFailureReason::MissingIndexSignature { .. }
+            )
+        )
+    }
+
     fn remap_failure_surface(
         reason: SubtypeFailureReason,
         source: TypeId,
@@ -1595,13 +1624,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // Excess property checking (TS2353)
-        if let Some(excess_prop) = self.find_excess_property(source, target) {
-            return Some(SubtypeFailureReason::ExcessProperty {
-                property_name: excess_prop,
-                target_type: target,
-            });
-        }
+        // Excess property checking (TS2353) is deferred until after the
+        // structural failure reason is known: `tsc` reports a present-in-target
+        // property-type mismatch (TS2322) ahead of the excess-property error,
+        // while the excess error still preempts a missing-required-property
+        // failure. See `excess_outranks_structural` below.
 
         // Private brand incompatibility: remember the result but don't short-circuit.
         // Let the structural explain path run first — it may find real missing properties
@@ -1647,6 +1674,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     ));
                 }
             }
+        }
+
+        // Excess property checking (TS2353), ordered to match tsc. The excess
+        // error is surfaced only when the structural reason does not already
+        // pin the failure to a present-in-target property mismatch (which
+        // outranks it) — but it does take precedence over a missing-required
+        // property failure or an otherwise-assignable literal.
+        if Self::excess_outranks_structural(&structural_result)
+            && let Some(excess_prop) = self.find_excess_property(source, target)
+        {
+            return Some(SubtypeFailureReason::ExcessProperty {
+                property_name: excess_prop,
+                target_type: target,
+            });
         }
 
         // If the structural path found a useful reason, use it.
