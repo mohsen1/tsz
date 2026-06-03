@@ -1157,11 +1157,12 @@ fn ts6046_silent_for_valid_watch_file_value() {
     );
 }
 
-// TS5107 and TS5101 must append the TS5111 migration URL via `flattenDiagnosticMessageText`
-// semantics ("\n  " separator) so `try-tsz` project comparisons match tsc output.
+// TS5107 and TS5101 must produce the same combined message as tsc's
+// `flattenDiagnosticMessageText` ("\n  " separator before the TS5111 URL)
+// so `try-tsz` project comparisons match tsc output on (code, message) tuples.
 
 #[test]
-fn ts5107_message_includes_ts5111_migration_url() {
+fn ts5107_message_equals_flattened_tsc_output() {
     let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
@@ -1169,21 +1170,19 @@ fn ts5107_message_includes_ts5111_migration_url() {
         .iter()
         .find(|d| d.code == 5107)
         .expect("expected TS5107 for alwaysStrict=false");
-    assert!(
-        diag.message_text
-            .contains("Visit https://aka.ms/ts6 for migration information."),
-        "TS5107 message must include the TS5111 migration URL suffix.\nGot: {}",
-        diag.message_text
+    let expected = concat!(
+        "Option 'alwaysStrict=false' is deprecated and will stop functioning in TypeScript 7.0.",
+        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+        "\n  Visit https://aka.ms/ts6 for migration information.",
     );
-    assert!(
-        diag.message_text.contains("\n  Visit"),
-        "TS5111 suffix must be separated by '\\n  ' (flattenDiagnosticMessageText convention).\nGot: {}",
-        diag.message_text
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5107 message must exactly match tsc flattenDiagnosticMessageText output"
     );
 }
 
 #[test]
-fn ts5101_message_includes_ts5111_migration_url() {
+fn ts5101_message_equals_flattened_tsc_output() {
     let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
@@ -1191,15 +1190,13 @@ fn ts5101_message_includes_ts5111_migration_url() {
         .iter()
         .find(|d| d.code == 5101)
         .expect("expected TS5101 for baseUrl");
-    assert!(
-        diag.message_text
-            .contains("Visit https://aka.ms/ts6 for migration information."),
-        "TS5101 message must include the TS5111 migration URL suffix.\nGot: {}",
-        diag.message_text
+    let expected = concat!(
+        "Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0.",
+        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+        "\n  Visit https://aka.ms/ts6 for migration information.",
     );
-    assert!(
-        diag.message_text.contains("\n  Visit"),
-        "TS5111 suffix must be separated by '\\n  ' (flattenDiagnosticMessageText convention).\nGot: {}",
-        diag.message_text
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5101 message must exactly match tsc flattenDiagnosticMessageText output"
     );
 }
