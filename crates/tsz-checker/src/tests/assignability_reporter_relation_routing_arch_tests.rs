@@ -7,14 +7,16 @@ fn assignability_reporter_relation_probes_use_relation_outcome_boundary() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src/error_reporter/assignability.rs"),
     )
     .expect("failed to read assignability.rs");
+    let missing_property_source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/error_reporter/assignability_missing_property_satisfaction.rs"),
+    )
+    .expect("failed to read assignability_missing_property_satisfaction.rs");
 
-    let missing_property_helper = source
+    let missing_property_helper = missing_property_source
         .split("fn missing_property_is_satisfied_by_source")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("fn should_suppress_outer_callback_return_assignability")
-                .next()
-        })
+        .and_then(|tail| tail.split("}\n}").next())
         .expect("failed to isolate missing-property satisfaction helper");
     let missing_property_compact = missing_property_helper
         .split_whitespace()

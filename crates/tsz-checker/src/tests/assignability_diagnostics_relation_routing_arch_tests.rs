@@ -15,7 +15,7 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
     .expect("failed to read argument_reports.rs");
     let source = format!("{root_source}\n{argument_reports}");
 
-    assert!(
+    assert_eq!(
         source.matches("assign_relation_outcome(").count(),
         0,
         "top-level assignability diagnostics should not use generic assign requests"

@@ -4,14 +4,15 @@ use std::path::PathBuf;
 #[test]
 fn class_extends_index_signatures_use_relation_outcome_boundary() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = fs::read_to_string(manifest_dir.join("src/classes/class_checker_compat.rs"))
-        .expect("read class checker compatibility source");
+    let source =
+        fs::read_to_string(manifest_dir.join("src/classes/class_index_signature_compat.rs"))
+            .expect("read class index-signature compatibility source");
 
     let helper = source
         .split("// Check string index signature compatibility")
         .nth(1)
         .expect("find class extends index-signature compatibility block")
-        .split("pub(crate) fn check_interface_extension_compatibility")
+        .split("}\n}")
         .next()
         .expect("slice class extends index-signature compatibility block");
 

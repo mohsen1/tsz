@@ -1728,13 +1728,6 @@ impl<'a> CheckerState<'a> {
                                 fallback_return,
                             )
                         {
-                            // Keep the candidate's instantiated recovery return even
-                            // when it still mentions type parameters from the caller's
-                            // generic context. For `Object.assign(a, b)` inside
-                            // `<T, U>(a: T, b: U) => ...`, tsc recovers with
-                            // `{} & U` rather than the final catch-all overload's
-                            // `any`, so the outer call can still report assignment
-                            // errors against `U`.
                             mismatch_recovery_return = Some(fallback_return);
                         }
                         type_mismatch_count += 1;
@@ -1990,15 +1983,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Returns the source span for the argument at `index` in `args`, or `None`
-    /// when the index is out of range or the node has no recorded position.
     fn arg_source_span(&self, args: &[NodeIndex], index: usize) -> Option<tsz_solver::SourceSpan> {
         let &arg_idx = args.get(index)?;
-        let node = self.ctx.arena.get(arg_idx)?;
-        Some(tsz_solver::SourceSpan::new(
-            self.ctx.file_name.as_str(),
-            node.pos,
-            node.end.saturating_sub(node.pos),
-        ))
+        self.ctx.arena.get(arg_idx).map(|node| {
+            tsz_solver::SourceSpan::new(
+                self.ctx.file_name.as_str(),
+                node.pos,
+                node.end.saturating_sub(node.pos),
+            )
+        })
     }
 }
