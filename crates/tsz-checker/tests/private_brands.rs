@@ -1029,3 +1029,50 @@ b.#current;
         "Expected 2 TS18013 for #getValue and #current outside Box. Got: {diagnostics:#?}"
     );
 }
+
+/// Test that static private field assignment and mutation don't produce false TS2339 errors.
+///
+/// Static private field access patterns:
+/// - `C.#x = value` (assignment) - should be NO errors
+/// - `C.#x++` (unary mutation) - should be NO errors
+///
+/// This is a regression test for verifying that static private field access
+/// is properly recognized by the checker and doesn't incorrectly report
+/// "Property does not exist" (TS2339) errors.
+#[test]
+fn test_static_private_field_assignment_no_ts2339() {
+    let source = r#"
+class C {
+    static #x: number = 0;
+}
+
+C.#x = 5;
+C.#x++;
+"#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    // Filter for TS2339 errors (Property does not exist)
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+
+    assert!(
+        ts2339_errors.is_empty(),
+        "Should NOT emit TS2339 for valid static private field assignments/mutations. \
+        Static private field #x should be accessible on class C. \
+        Got {} TS2339 errors: {:?}",
+        ts2339_errors.len(),
+        ts2339_errors
+    );
+
+    // Also verify no other unexpected errors (except possibly 18013 for visibility outside class)
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| ![2339, 18013].contains(&d.code) && !d.message_text.is_empty())
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "Got unexpected diagnostics (only TS2339 and TS18013 were being checked for): {:?}",
+        unexpected
+    );
+}
