@@ -151,6 +151,7 @@ fn test_env_eval_threads_seed_persist_to_cache_entry_collection() {
     assert!(
         boundary.contains("enum CacheEntryCollection")
             && boundary.contains("CacheEntryCollection::Collect")
+            && boundary.contains("#[must_use]")
             && boundary.contains(
                 "matches!(cache_entry_collection, CacheEntryCollection::Collect)"
             ),
@@ -190,7 +191,7 @@ fn test_evaluate_type_with_cache_call_sites_pass_collection_flag() {
                 let tail = src
                     .lines()
                     .skip(line_no)
-                    .take(16)
+                    .take(24)
                     .collect::<Vec<_>>()
                     .join("\n");
                 assert!(
@@ -210,7 +211,7 @@ fn test_evaluate_type_with_cache_call_sites_pass_collection_flag() {
                 let tail = src
                     .lines()
                     .skip(line_no)
-                    .take(16)
+                    .take(24)
                     .collect::<Vec<_>>()
                     .join("\n");
                 assert!(
