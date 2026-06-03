@@ -14,16 +14,11 @@ use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
-// Thread-local depth counter for `ensure_application_symbols_resolved` nesting.
-//
-// This must be thread-local rather than per-context because cross-arena symbol
-// delegation (`delegate_cross_arena_symbol_resolution`) creates child CheckerContexts.
-// A per-context counter would reset to 0 in the child, defeating the depth guard.
+// Thread-local guards for recursive resolution; cross-arena delegation creates
+// child `CheckerContext`s, so per-context counters would reset in child arenas.
 thread_local! {
     static APP_SYMBOL_RESOLUTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Global fuel counter for total DefId resolutions within `ensure_application_symbols_resolved`.
-    // Limits total work across all nesting levels and context boundaries. Resets when
-    // the outermost `ensure_application_symbols_resolved` call completes.
+    // Total DefId resolutions within `ensure_application_symbols_resolved`.
     static APP_SYMBOL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     // Fuel counter for total DefId resolutions across recursive `ensure_refs_resolved`
     // invocations. The cascade ensure_refs_resolved → resolve_and_insert_def_type →
@@ -40,10 +35,8 @@ thread_local! {
     // can cause unbounded stack growth. Must be thread-local because cross-arena
     // delegation creates child CheckerContexts that reset per-context counters.
     static EVAL_ENV_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Global accumulating fuel counter that does NOT reset between top-level
-    // ensure_relation_input_ready calls. Prevents OOM when many top-level calls
-    // each reset per-call fuel but together create unbounded type data
-    // (e.g., DOM types + module augmentation in reactTransitiveImportHasValidDeclaration).
+    // Accumulates across top-level relation-input calls to prevent OOM when
+    // repeated per-call resets together create unbounded type data.
     static GLOBAL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
