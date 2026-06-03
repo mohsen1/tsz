@@ -190,3 +190,192 @@ const ok: Desc<[boolean], object> = b;
         "consecutive variadic rest segments should preserve the remaining suffix, got {diagnostics:#?}",
     );
 }
+
+// =============================================================================
+// Repeated `infer` names across variadic tuple slots (conditional inference)
+// =============================================================================
+//
+// Structural rule: the fixed prefix and suffix slots of a tuple pattern
+// `[p…, ...R, s…]` are co-located *covariant* positions. When the same
+// `infer T` name appears in more than one of them, `tsc` unions the per-slot
+// candidates (e.g. `[infer A, ...unknown[], infer A]` against `[1, 2, 3]`
+// binds `A = 1 | 3`) instead of failing the second slot's mutual-subtype check
+// and collapsing to the false branch. A name shared between a fixed slot and
+// the rest slot itself (`[infer A, ...infer A]`) stays a conflict and takes
+// the false branch, matching `tsc`'s post-inference re-check. Binder names are
+// varied per case so the behavior is structural, not name-driven.
+
+/// Header providing an exact type-identity probe. `Eq<X, Y>` is `true` only
+/// when `X` and `Y` are mutually identical; `Assert<T extends true>` raises
+/// TS2344 when its argument is not exactly `true`, so a correct inference
+/// yields zero diagnostics and a wrong one yields exactly `[2344]`.
+const EQ_HEADER: &str = r#"
+type Eq<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+"#;
+
+/// Each `body` ends in an `Assert<Eq<…>>` that encodes the type tsc produces
+/// (true or false branch). Matching tsc therefore means zero diagnostics; a
+/// wrong inference makes the `Eq` probe `false` and surfaces TS2344.
+fn assert_matches_tsc(body: &str, label: &str) {
+    let source = format!("{EQ_HEADER}{body}");
+    let codes = check_source_codes(&source);
+    assert!(
+        codes.is_empty(),
+        "{label}: expected the inferred type to match tsc (no diagnostics), got {codes:?}"
+    );
+}
+
+#[test]
+fn prefix_and_suffix_same_infer_unions_candidates() {
+    assert_matches_tsc(
+        r#"
+type FirstOrLast<Items extends unknown[]> =
+  Items extends [infer Edge, ...unknown[], infer Edge] ? Edge : "none";
+type _ = Assert<Eq<FirstOrLast<[1, 2, 3]>, 1 | 3>>;
+"#,
+        "prefix+suffix repeated infer over [1,2,3]",
+    );
+}
+
+#[test]
+fn prefix_and_suffix_same_infer_two_element_source() {
+    assert_matches_tsc(
+        r#"
+type Ends<Seq extends unknown[]> =
+  Seq extends [infer Mark, ...unknown[], infer Mark] ? Mark : "none";
+type _ = Assert<Eq<Ends<[1, 2]>, 1 | 2>>;
+"#,
+        "prefix+suffix repeated infer over a 2-tuple (empty middle)",
+    );
+}
+
+#[test]
+fn too_short_source_takes_false_branch() {
+    assert_matches_tsc(
+        r#"
+type Ends<Seq extends unknown[]> =
+  Seq extends [infer Mark, ...unknown[], infer Mark] ? Mark : "none";
+type _ = Assert<Eq<Ends<[1]>, "none">>;
+"#,
+        "single-element source cannot fill prefix+suffix, false branch",
+    );
+}
+
+#[test]
+fn repeated_infer_with_captured_middle_rest() {
+    assert_matches_tsc(
+        r#"
+type EdgesAndCore<List extends unknown[]> =
+  List extends [infer Side, ...infer Core, infer Side] ? [Side, Core] : "none";
+type _ = Assert<Eq<EdgesAndCore<[1, 2, 3, 4]>, [1 | 4, [2, 3]]>>;
+"#,
+        "repeated edge infer unions while distinct middle rest stays exact",
+    );
+}
+
+#[test]
+fn repeated_infer_with_extra_fixed_prefix_slot() {
+    assert_matches_tsc(
+        r#"
+type EdgePair<Row extends unknown[]> =
+  Row extends [infer Corner, infer Inner, ...unknown[], infer Corner]
+    ? [Corner, Inner]
+    : "none";
+type _ = Assert<Eq<EdgePair<[1, 2, 3, 4]>, [1 | 4, 2]>>;
+"#,
+        "repeated corner infer unions, distinct interior slot stays exact",
+    );
+}
+
+#[test]
+fn repeated_infer_in_two_prefix_slots() {
+    assert_matches_tsc(
+        r#"
+type FirstTwo<Tup extends unknown[]> =
+  Tup extends [infer Cell, infer Cell, ...unknown[]] ? Cell : "none";
+type _ = Assert<Eq<FirstTwo<[1, 2, 3]>, 1 | 2>>;
+"#,
+        "two adjacent prefix slots share an infer name",
+    );
+}
+
+#[test]
+fn repeated_infer_in_two_suffix_slots() {
+    assert_matches_tsc(
+        r#"
+type LastTwo<Tup extends unknown[]> =
+  Tup extends [...unknown[], infer Cell, infer Cell] ? Cell : "none";
+type _ = Assert<Eq<LastTwo<[1, 2, 3, 4]>, 3 | 4>>;
+"#,
+        "two adjacent suffix slots share an infer name",
+    );
+}
+
+#[test]
+fn infer_shared_between_fixed_slot_and_rest_slot_takes_false_branch() {
+    assert_matches_tsc(
+        r#"
+type FixedThenRest<Tup extends unknown[]> =
+  Tup extends [infer Cell, ...infer Cell] ? Cell : "none";
+type _ = Assert<Eq<FixedThenRest<[1, 2, 3]>, "none">>;
+"#,
+        "element-level vs array-level candidate conflict, false branch",
+    );
+}
+
+#[test]
+fn distinct_edge_infers_stay_exact() {
+    // Guard: the union only applies to repeated names; distinct names must keep
+    // their individual candidates exactly.
+    assert_matches_tsc(
+        r#"
+type BothEnds<Tup extends unknown[]> =
+  Tup extends [infer Head, ...unknown[], infer Tail] ? [Head, Tail] : "none";
+type _ = Assert<Eq<BothEnds<[1, 2, 3]>, [1, 3]>>;
+"#,
+        "distinct head/tail infers keep exact per-slot candidates",
+    );
+}
+
+#[test]
+fn three_way_repeated_infer_unions_all_slots() {
+    assert_matches_tsc(
+        r#"
+type TripleMark<Tup extends unknown[]> =
+  Tup extends [infer Mark, ...unknown[], infer Mark, infer Mark] ? Mark : "none";
+type _ = Assert<Eq<TripleMark<[1, 2, 3, 4]>, 1 | 3 | 4>>;
+"#,
+        "one prefix and two suffix slots share an infer name",
+    );
+}
+
+#[test]
+fn repeated_infer_in_readonly_tuple_pattern() {
+    // `readonly` tuples take a distinct relation path; the union over repeated
+    // edge infers must still apply.
+    assert_matches_tsc(
+        r#"
+type Edges<Seq extends readonly unknown[]> =
+  Seq extends readonly [infer Rim, ...unknown[], infer Rim] ? Rim : "none";
+type _ = Assert<Eq<Edges<readonly [1, 2, 3]>, 1 | 3>>;
+"#,
+        "readonly tuple repeated edge infer unions candidates",
+    );
+}
+
+#[test]
+fn repeated_infer_through_alias_indirection() {
+    // The pattern is reached through a second alias with a different type
+    // parameter name, guarding against any binder-environment reuse drift.
+    assert_matches_tsc(
+        r#"
+type Bookends<Seq extends unknown[]> =
+  Seq extends [infer Edge, ...unknown[], infer Edge] ? Edge : "none";
+type Probe<Row extends unknown[]> = Bookends<Row>;
+type _ = Assert<Eq<Probe<["a", "b", "c", "a"]>, "a">>;
+"#,
+        "repeated infer resolves identically through alias indirection",
+    );
+}
