@@ -27,6 +27,47 @@ pub(in crate::emitter::source_file) fn strip_decorate_export_prefix(
     stripped
 }
 
+pub(in crate::emitter::source_file) fn export_decorate_assignment(
+    emitted: String,
+    export_prefix: &str,
+    binding_name: &str,
+    wrap_system_call: bool,
+) -> (String, bool) {
+    let local_decorate = format!("{binding_name} = __decorate(");
+    let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+    if emitted.contains(&exported_decorate) {
+        return (emitted, false);
+    }
+    let Some(decorate_start) = emitted.find(&local_decorate) else {
+        return (emitted, false);
+    };
+
+    let mut exported = String::with_capacity(emitted.len() + export_prefix.len());
+    exported.push_str(&emitted[..decorate_start]);
+    exported.push_str(&exported_decorate);
+    exported.push_str(&emitted[decorate_start + local_decorate.len()..]);
+    if wrap_system_call {
+        exported = wrap_system_decorate_assignment(exported, decorate_start);
+    }
+    (exported, true)
+}
+
+fn wrap_system_decorate_assignment(emitted: String, search_from: usize) -> String {
+    let suffix_start = search_from.min(emitted.len());
+    let Some(relative_end) = emitted[suffix_start..].rfind(");") else {
+        return emitted;
+    };
+    let end = suffix_start + relative_end;
+    let mut wrapped = String::with_capacity(emitted.len() + 1);
+    wrapped.push_str(&emitted[..end]);
+    wrapped.push_str("));\n");
+    wrapped.push_str(&emitted[end + 2..]);
+    if wrapped.ends_with("\n\n") {
+        wrapped.pop();
+    }
+    wrapped
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter::source_file) fn emit_top_level_using_initializer(
         &mut self,
