@@ -63,6 +63,10 @@ name = "cross_file_lib_generic_heritage_tests"
 path = "tests/cross_file_lib_generic_heritage_tests.rs"
 
 [[test]]
+name = "lib_heritage_cycle_dom_tests"
+path = "tests/lib_heritage_cycle_dom_tests.rs"
+
+[[test]]
 name = "union_protected_intersection_property_tests"
 path = "tests/union_protected_intersection_property_tests.rs"
 

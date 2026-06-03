@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if has_resolvable_heritage == Some(true) {
-            ty = self.merge_lib_interface_heritage(ty, cache_name);
+            ty = self.merge_lib_interface_heritage(ty, cache_name).0;
         }
 
         self.ctx.register_lib_def_resolved(sym_id, ty, params);

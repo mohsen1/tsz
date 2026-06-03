@@ -1655,7 +1655,7 @@ impl<'a> CheckerState<'a> {
                         Some(prefix) => format!("{prefix}.{}", symbol.escaped_name),
                         None => symbol.escaped_name.clone(),
                     };
-                    merged = self.merge_lib_interface_heritage(merged, &name);
+                    merged = self.merge_lib_interface_heritage(merged, &name).0;
                 }
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {

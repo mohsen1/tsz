@@ -662,7 +662,7 @@ impl<'a> CheckerState<'a> {
         // qualified name so the base interface members are instantiated in.
         let (direct_type, params) = match heritage_merge_name {
             Some(merge_name) => {
-                let merged = self.merge_lib_interface_heritage(direct_type, &merge_name);
+                let merged = self.merge_lib_interface_heritage(direct_type, &merge_name).0;
                 (merged, params)
             }
             None => (direct_type, params),

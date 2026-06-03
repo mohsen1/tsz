@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(ty) = lib_type_id {
-            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name).0);
         }
 
         // Merge global augmentations (declare global { interface X { ... } }).

@@ -42,15 +42,19 @@ impl<'a> CheckerState<'a> {
     /// This is needed because `merge_interface_heritage_types` uses `self.ctx.arena`
     /// (the user file arena) and cannot read lib declarations that live in lib arenas.
     /// Takes the interface name and looks up declarations from the binder.
+    /// Merge heritage and report whether the result is incomplete because a
+    /// heritage base was dropped while it was itself mid-resolution (directly,
+    /// or transitively through a base that was already incomplete). The caller
+    /// uses the flag to avoid caching the incomplete derived type (#12299).
     pub(crate) fn merge_lib_interface_heritage(
         &mut self,
         mut derived_type: TypeId,
         name: &str,
-    ) -> TypeId {
+    ) -> (TypeId, bool) {
         // Guard against infinite recursion in recursive generic hierarchies
         // (e.g., interface B<T extends B<T,S>> extends A<B<T,S>, B<T,S>>)
         if !self.ctx.enter_recursion() {
-            return derived_type;
+            return (derived_type, false);
         }
 
         // Name-based cycle guard: prevent re-entrant heritage merging for the same
@@ -60,7 +64,7 @@ impl<'a> CheckerState<'a> {
         // CheckerStates are created for cross-arena type param resolution.
         if !self.ctx.lib_heritage_in_progress.insert(name.to_string()) {
             self.ctx.leave_recursion();
-            return derived_type;
+            return (derived_type, false);
         }
 
         let lib_contexts = self.ctx.lib_contexts.clone();
@@ -93,13 +97,13 @@ impl<'a> CheckerState<'a> {
         let Some((sym_id, selected_binder_arc)) = selected else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
-            return derived_type;
+            return (derived_type, false);
         };
         let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
         let Some(symbol) = selected_binder.get_symbol_with_libs(sym_id, &lib_binders) else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
-            return derived_type;
+            return (derived_type, false);
         };
 
         let fallback_arena =
@@ -132,7 +136,7 @@ impl<'a> CheckerState<'a> {
         if !has_any_heritage {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
-            return derived_type;
+            return (derived_type, false);
         }
 
         // Seed type-parameter scope with the derived interface's generic params so
@@ -210,6 +214,7 @@ impl<'a> CheckerState<'a> {
         let heritage_namespace = name.split_once('.').map(|(namespace, _)| namespace);
 
         // Now resolve each base type and merge, applying type argument substitution
+        let mut incomplete = false;
         for base in &bases {
             let namespace_base_sym = heritage_namespace
                 .filter(|_| !base.name.contains('.'))
@@ -225,6 +230,19 @@ impl<'a> CheckerState<'a> {
             }
             if base_type.is_none() {
                 base_type = self.resolve_lib_type_by_entity_name(&base.name);
+            }
+
+            // A base that resolved to `None` only because it is itself mid-resolution
+            // (its `resolve_lib_type_by_name` is on the stack) must not be silently
+            // dropped — that loses every inherited member and the gap gets cached
+            // (e.g. `Element extends Node` resolved while `Node` is in-progress, the
+            // DOM diamond in #12299). Distinguish that from a genuinely-missing base
+            // (a typo `extends Foo`), which is correctly dropped. Likewise, a base
+            // that resolved to an already-incomplete type taints this type too.
+            match base_type {
+                None if self.lib_name_resolution_in_progress(&base.name) => incomplete = true,
+                Some(_) if self.lib_name_heritage_incomplete(&base.name) => incomplete = true,
+                _ => {}
             }
 
             if let Some(mut base_type) = base_type {
@@ -283,7 +301,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.lib_heritage_in_progress.remove(name);
         self.ctx.leave_recursion();
-        derived_type
+        (derived_type, incomplete)
     }
 
     /// Resolve a type argument node from a lib arena to a TypeId.
