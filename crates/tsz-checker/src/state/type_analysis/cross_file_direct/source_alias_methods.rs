@@ -159,6 +159,9 @@ impl<'a> CheckerState<'a> {
             let global_type_is_lowerable = |binder: &BinderState, type_name: &str| {
                 self.source_file_global_type_is_direct_lowerable(binder, type_name)
             };
+            let global_value_is_lowerable = |binder: &BinderState, value_name: &str| {
+                self.source_file_global_value_is_direct_lowerable(binder, value_name)
+            };
             let import_alias_target = |source_file_idx: usize,
                                        binder: &BinderState,
                                        sym_id: SymbolId| {
@@ -167,6 +170,7 @@ impl<'a> CheckerState<'a> {
             let proof = super::cross_file_direct_alias_chain::SourceFileAliasProofContext {
                 current_file_idx: Some(target_file_idx),
                 global_type_is_lowerable: &global_type_is_lowerable,
+                global_value_is_lowerable: &global_value_is_lowerable,
                 import_alias_target: Some(&import_alias_target),
             };
             let mut seen = Vec::new();

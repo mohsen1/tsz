@@ -1,5 +1,5 @@
 use super::cross_file_direct_alias_chain_tests::{
-    parse_bound_source, with_two_file_state_with_libs,
+    parse_bound_source, with_program_state_with_libs, with_two_file_state_with_libs,
 };
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::state::CheckerState;
@@ -218,6 +218,143 @@ fn direct_source_file_type_alias_lowers_utility_augmented_required_context() {
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert_eq!(params.len(), 2, "AugmentedRequired should expose T and K");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_defaulted_builtin_leaf() {
+    with_program_state_with_libs(
+        &[
+            (
+                "built-in.ts",
+                "export type Builtin = Function | Date | Error | RegExp | Generator | { readonly [Symbol.toStringTag]: string };",
+            ),
+            (
+                "patch.ts",
+                "import { Builtin } from './built-in';\nexport type MergeFlat<Left extends object, Right extends object, Ignore extends object = Builtin, Fill = never> = Left extends unknown ? Right extends unknown ? { left: Left; right: Right; ignore: Ignore; fill: Fill } : never : never;",
+            ),
+            (
+                "exclude.ts",
+                "export type Without<Left, Right> = Left extends Right ? never : Left;",
+            ),
+            (
+                "delta.ts",
+                "import { Without } from './exclude';\nimport { MergeFlat as PatchFlat } from './patch';\nexport type Delta<Left extends object, Right extends object> = PatchFlat<Without<Left, Right>, Without<Right, Left>>;",
+            ),
+            ("requester.ts", "import { Delta } from './delta';"),
+        ],
+        "requester.ts",
+        "delta.ts",
+        &[
+            "es5.d.ts",
+            "es2015.symbol.d.ts",
+            "es2015.symbol.wellknown.d.ts",
+            "es2015.generator.d.ts",
+        ],
+        |state, target_binder, target_idx| {
+            let delta_sym = target_binder.file_locals.get("Delta").expect("Delta");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(delta_sym, Some(target_idx), true)
+                .expect("imported defaulted alias applications can remain lazy leaves");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Delta should expose Left and Right");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_imported_leaf_with_disallowed_default() {
+    with_program_state_with_libs(
+        &[
+            (
+                "helper.ts",
+                "declare const value: unique symbol;\nexport type Helper<Input, Mode = typeof value> = Input;",
+            ),
+            (
+                "use-helper.ts",
+                "import { Helper } from './helper';\nexport type Result<Item> = Helper<Item>;",
+            ),
+            ("requester.ts", "import { Result } from './use-helper';"),
+        ],
+        "requester.ts",
+        "use-helper.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(result_sym, Some(target_idx), true)
+                    .is_none(),
+                "omitted defaults must be proven before imported aliases stay lazy leaves",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_cast_of_mapped_argument() {
+    with_program_state_with_libs(
+        &[
+            (
+                "cast.ts",
+                "export type Cast<Input extends any, Target extends any> = Input extends Target ? Input : Target;",
+            ),
+            (
+                "list.ts",
+                "export type List<Item = any> = ReadonlyArray<Item>;",
+            ),
+            (
+                "clean.ts",
+                "export type Clean<Object> = { [Key in keyof Object]: Object[Key] } & {};",
+            ),
+            (
+                "holes.ts",
+                "import { Cast } from './cast';\nimport { Clean } from './clean';\nimport { List } from './list';\nexport type Holes<Row extends List> = Cast<Clean<{ [Slot in keyof Row]?: Row[Slot] | unknown }>, List>;",
+            ),
+            ("requester.ts", "import { Holes } from './holes';"),
+        ],
+        "requester.ts",
+        "holes.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let holes_sym = target_binder.file_locals.get("Holes").expect("Holes");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(holes_sym, Some(target_idx), true)
+                .expect("imported cast aliases should accept mapped object arguments");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Holes should expose Row");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_typeof_marker_leaf() {
+    with_program_state_with_libs(
+        &[
+            (
+                "marker.ts",
+                "const token = Symbol('marker');\nexport type Marker = typeof token & {};",
+            ),
+            (
+                "box.ts",
+                "import { Marker } from './marker';\nexport type Box<Item> = { value: Item | Marker };",
+            ),
+            ("requester.ts", "import { Box } from './box';"),
+        ],
+        "requester.ts",
+        "box.ts",
+        &["es5.d.ts", "es2015.symbol.d.ts"],
+        |state, target_binder, target_idx| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(box_sym, Some(target_idx), true)
+                .expect("imported no-arg aliases can remain lazy leaves");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Box should expose Item");
         },
     );
 }

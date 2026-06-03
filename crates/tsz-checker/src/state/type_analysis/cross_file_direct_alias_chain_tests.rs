@@ -70,7 +70,7 @@ where
     test(&mut state, &target_binder)
 }
 
-fn with_program_state_with_libs<F, R>(
+pub(super) fn with_program_state_with_libs<F, R>(
     files: &[(&str, &str)],
     requester_file: &str,
     target_file: &str,
