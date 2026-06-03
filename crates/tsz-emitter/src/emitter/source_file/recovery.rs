@@ -237,7 +237,9 @@ impl<'a> Printer<'a> {
         let source = text.get(start..)?;
         let mut scanner = ScannerState::new(source.to_string(), true);
         let mut keywords = Vec::new();
-        let mut in_array_binding = false;
+        let mut array_depth = 0_u32;
+        let mut at_element_start = false;
+        let mut binding_pattern_closed = false;
         let mut initializer_start = None;
         let mut initializer_end = None;
 
@@ -249,18 +251,41 @@ impl<'a> Printer<'a> {
             let token_start = scanner.get_token_start();
             let token_end = scanner.get_token_end();
             match token {
-                SyntaxKind::OpenBracketToken => in_array_binding = true,
-                SyntaxKind::CloseBracketToken if in_array_binding => in_array_binding = false,
+                SyntaxKind::OpenBracketToken if !binding_pattern_closed => {
+                    array_depth += 1;
+                    if array_depth == 1 {
+                        at_element_start = true;
+                    } else if array_depth > 1 {
+                        at_element_start = false;
+                    }
+                }
+                SyntaxKind::CloseBracketToken if array_depth > 0 => {
+                    array_depth -= 1;
+                    if array_depth == 0 {
+                        binding_pattern_closed = true;
+                    }
+                    at_element_start = false;
+                }
+                SyntaxKind::CommaToken if array_depth == 1 => {
+                    at_element_start = true;
+                }
+                SyntaxKind::DotDotDotToken if array_depth == 1 && at_element_start => {}
                 SyntaxKind::EqualsToken => {
                     initializer_start = Some(token_end);
+                    at_element_start = false;
                 }
                 SyntaxKind::SemicolonToken => {
                     initializer_end = Some(token_start);
                     break;
                 }
-                _ if in_array_binding && tsz_scanner::token_is_reserved_word(token) => {
+                _ if array_depth == 1
+                    && at_element_start
+                    && tsz_scanner::token_is_reserved_word(token) =>
+                {
                     keywords.push(self.reserved_keyword_text(scanner.get_token_text_ref())?);
+                    at_element_start = false;
                 }
+                _ if array_depth == 1 && at_element_start => at_element_start = false,
                 _ => {}
             }
         }
@@ -332,7 +357,7 @@ impl<'a> Printer<'a> {
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         let bytes = text.as_bytes();
         let mut end = start;
-        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+        while end < bytes.len() && is_identifier_continue(&bytes[end]) {
             end += 1;
         }
         let keyword = crate::safe_slice::slice(text, start, end).ok()?;

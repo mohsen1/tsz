@@ -2124,6 +2124,30 @@ fn reserved_variable_name_emits_empty_decl_keyword_and_initializer_statements() 
 }
 
 #[test]
+fn reserved_variable_recovery_ignores_identifier_prefixes() {
+    for source in ["let var1 = 0;", "var typeofValue = 10;"] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{source}"),
+            "{source}: reserved-name recovery must not match identifier prefixes.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn reserved_import_equals_name_emits_recovered_require_and_keyword_loop() {
     for (source, expected_tail) in [
         (
