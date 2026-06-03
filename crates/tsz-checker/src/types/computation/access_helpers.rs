@@ -189,7 +189,21 @@ impl<'a> CheckerState<'a> {
             // Numeric enum values are number-like at runtime.
             TypeId::NUMBER
         } else {
-            index_type
+            // Resolve `Lazy(DefId)` alias references on the index type before the
+            // solver query. The solver's element-access evaluator is
+            // resolver-less, so an index whose type is (or contains) a type-alias
+            // reference never matches the receiver's concrete keys and silently
+            // falls through to `undefined`. This surfaces as false TS2532/TS2722/
+            // TS18048 on `obj[expr]` whenever `expr`'s type is an alias — most
+            // commonly a property access of an alias-typed property
+            // (`obj[node.kind]` where `kind: SomeUnionAlias`), since a property
+            // read keeps the alias form while a plain variable read arrives
+            // already resolved. Resolve the top-level alias and any aliased union
+            // members here, mirroring `resolve_lazy_members_in_union` used for
+            // relation queries.
+            let resolved = self.resolve_lazy_type(index_type);
+            let resolved = self.evaluate_application_type(resolved);
+            self.resolve_lazy_members_in_union(resolved)
         };
 
         self.ctx

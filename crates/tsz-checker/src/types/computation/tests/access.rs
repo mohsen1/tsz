@@ -200,3 +200,117 @@ value["size"];
         "Expected TS2576 for inherited static field and accessor element access, got: {errors:?}"
     );
 }
+
+// Regression: `obj[expr]` where the index expression's type is a `Lazy(DefId)`
+// type-alias reference must resolve the alias before the solver's resolver-less
+// element-access query. Otherwise the index never matches the receiver's keys and
+// the result silently gains `| undefined`, producing false TS2532/TS2722/TS18048
+// (and the resulting TS2322 against a non-nullable annotation). This reproduced in
+// kysely's dispatch-table / priority-table patterns (issue #10669): the key is a
+// *property access of an alias-typed property* (`node.kind` where
+// `kind: SomeUnionAlias`), which keeps the alias form, unlike a plain variable
+// read which arrives already resolved.
+
+#[test]
+fn element_access_alias_typed_property_index_no_false_undefined() {
+    // Record indexed by a property whose declared type is a union alias, plus the
+    // dispatch-table shape via `this[...]`. Binder names are deliberately varied to
+    // keep the rule name-agnostic.
+    let diags = check_source_with_default_libs(
+        r#"
+type Selector = 'alpha' | 'beta' | 'gamma';
+interface Carrier { tag: Selector; }
+
+declare const handlers: Record<Selector, (c: Carrier) => Carrier>;
+declare const carrier: Carrier;
+const transformed: Carrier = handlers[carrier.tag](carrier);
+
+type Priority = 'low' | 'high';
+declare const ranks: Record<Priority, number>;
+declare const entry: { level: Priority };
+const rank: number = ranks[entry.level];
+const ranked = ranks[entry.level] + 1;
+
+declare const plainObj: { alpha: 1; beta: 2; gamma: 3 };
+const plainValue: 1 | 2 | 3 = plainObj[carrier.tag];
+
+class Dispatcher {
+    routes: Record<Selector, () => number> = {
+        alpha: () => 1,
+        beta: () => 2,
+        gamma: () => 3,
+    };
+    run(c: Carrier): number {
+        return this.routes[c.tag]();
+    }
+}
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "alias-typed property index must not introduce spurious `| undefined`; got: {errors:?}"
+    );
+}
+
+#[test]
+fn element_access_union_of_aliases_property_index_no_false_undefined() {
+    // The index type is a union whose members are themselves alias references.
+    let diags = check_source_with_default_libs(
+        r#"
+type Left = 'one' | 'two';
+type Right = 'three';
+type Combined = Left | Right;
+
+declare const lookup: Record<Combined, number>;
+declare const holder: { key: Combined };
+const picked: number = lookup[holder.key];
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "union-of-aliases property index must not introduce spurious `| undefined`; got: {errors:?}"
+    );
+}
+
+#[test]
+fn element_access_alias_index_through_string_index_signature_resolves() {
+    // A `string`-alias index must still resolve through a string index signature
+    // to the value type rather than collapsing to a false `undefined` result.
+    let diags = check_source_with_default_libs(
+        r#"
+type Name = string;
+declare const dict: { [k: string]: number };
+declare const named: { id: Name };
+const value: number = dict[named.id];
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "string-alias index through an index signature must resolve to the value type; got: {errors:?}"
+    );
+}
+
+#[test]
+fn element_access_optional_mapped_alias_index_keeps_optional_undefined() {
+    // Negative guard: resolving the alias index must NOT mask legitimate
+    // `| undefined` introduced by an optional member. tsc rejects assigning the
+    // optional member value to a non-nullable annotation here (TS2322). Uses an
+    // inline optional mapped type so the test does not depend on lib utilities.
+    let diags = check_source_with_default_libs(
+        r#"
+type Slot = 'x' | 'y' | 'z';
+type OptMap = { [K in Slot]?: number };
+declare const optional: OptMap;
+declare const holder: { slot: Slot };
+const value: number = optional[holder.slot];
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        has_code(&diags, 2322),
+        "optional mapped alias index must still surface the optional `| undefined` (TS2322); got: {errors:?}"
+    );
+}
