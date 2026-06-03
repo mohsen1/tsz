@@ -582,8 +582,15 @@ impl ParserState {
             // Pattern 4: Import/Export specifier brace mismatch cascading error suppression
             // If we encounter 'from' keyword in the specifier list, it likely means we have:
             // export { a from "module"  (missing closing brace)
-            // In this case, break the loop to avoid parsing 'from' as an identifier
-            if self.is_token(SyntaxKind::FromKeyword) {
+            // In this case, break the loop to avoid parsing 'from' as an identifier.
+            // However, `from` is a contextual keyword valid as a specifier name:
+            //   export { from } from './from';          — `from` is the exported name
+            //   export { from as fromObservable } from './from';
+            // Use the same lookahead as parse_named_imports: only break when the token
+            // after `from` is NOT `as`, `,`, or `}` (which would continue a specifier).
+            if self.is_token(SyntaxKind::FromKeyword)
+                && !self.next_token_continues_import_specifier_name()
+            {
                 break;
             }
 

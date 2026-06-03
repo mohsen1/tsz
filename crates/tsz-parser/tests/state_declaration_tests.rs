@@ -644,6 +644,43 @@ import { from as fromObservable } from "./from";
 }
 
 #[test]
+fn export_specifier_can_use_from_as_exported_name() {
+    // `from` is a contextual keyword valid as an export specifier name.
+    // rxjs/dist/types/index.d.ts uses: export { from } from './internal/observable/from';
+    let (parser, _root) = parse_source(
+        r#"
+export { from } from "./from";
+export { from as fromObservable } from "./from";
+"#,
+    );
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "`from` is valid as an export specifier name"
+    );
+}
+
+#[test]
+fn export_specifier_from_in_list_with_other_names() {
+    // `from` as one of several names in an export list
+    let (parser, _root) = parse_source(r#"export { a, from, b } from "./mod";"#);
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "`from` is valid as an export specifier name alongside other names"
+    );
+}
+
+#[test]
+fn export_specifier_missing_brace_recovery_still_works() {
+    // Error-recovery case: missing closing brace; `from` here IS the clause keyword.
+    // The parser should still break early and not produce a runaway parse.
+    let (parser, _root) = parse_source(r#"export { a from "./mod";"#);
+    // We just need this not to panic; some diagnostics are expected.
+    let _ = parser.get_diagnostics();
+}
+
+#[test]
 fn conditional_tuple_element_inside_conditional_extends_type_parses() {
     let (parser, _root) = parse_source(
         r#"

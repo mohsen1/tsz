@@ -1123,7 +1123,7 @@ impl ParserState {
         )
     }
 
-    fn next_token_continues_import_specifier_name(&mut self) -> bool {
+    pub(crate) fn next_token_continues_import_specifier_name(&mut self) -> bool {
         let saved_token = self.current_token;
         let saved_state = self.scanner.save_state();
         self.next_token();
