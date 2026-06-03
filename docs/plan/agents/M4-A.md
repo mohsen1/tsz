@@ -7,10 +7,13 @@ GitHub label: `agent:M4-A`
 
 ## Mission
 
-Own recursive conditional, mapped, template-literal, `infer`, and indexed-access
-evaluation bugs that block project rows, accepted-regression strictness, emit
-type facts, or open bug closure. Keep evaluation solver-owned and avoid checker
+Own advanced type evaluation bugs: recursive conditional types, mapped and
+key-remapped types, template literal inference, `infer`, indexed access,
+`keyof`, and key-space algebra. Keep evaluation solver-owned and avoid checker
 symptom patches.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next M4-A release-gate item.
 
 ## Start Every Cycle
 
@@ -23,22 +26,25 @@ scripts/agents/list-owned-work.sh M4-A
 
 ## Current Assignment
 
-- Primary gate: semantic correctness for advanced type evaluation.
-- Bug families: recursive conditionals, mapped/key-remapped types, template
-  literal inference, `infer`, indexed access into deferred/mapped types,
-  `keyof` over patterned or symbol keys, and evaluation fuel/TS2589 behavior.
-- Architecture cleanup metric: checker-local evaluation shortcuts,
-  deferred-to-`any` erasure, broad type-query quarantine wrappers, and
-  evaluation cache ambiguity should trend down.
-- First live command: inspect owned PRs, then search open issues for labels
-  `solver`, `accepted-regression`, `false-positive`, `false-negative`, and
-  terms `mapped`, `conditional`, `template`, `infer`, `keyof`, `indexed`.
-- Next concrete step: cluster open issues into one structural invariant, then
-  open/update a draft PR with solver tests and adjacent renamed/aliased cases.
+- Primary gates: all tests pass, project rows blocked by advanced type
+  evaluation turn green, accepted-regression strictness does not regress, and
+  advanced-type bug issues are fixed or structurally owned.
+- Bug or metric families: recursive conditionals, distributivity, mapped key
+  remapping, template literal inference, `infer` binding, indexed access into
+  deferred/mapped types, `keyof` over patterned or symbol keys, and evaluation
+  fuel/TS2589 behavior.
+- Architecture cleanup metric: deferred-to-`any` erasure, checker-local
+  evaluation shortcuts, ambiguous evaluation cache keys, and oversized solver
+  evaluation helpers should trend down.
+- First live command: inspect owned PRs, then search open issues for `mapped`,
+  `conditional`, `template`, `infer`, `keyof`, `indexed`, `recursive`, and
+  `accepted-regression`.
+- Next concrete step: cluster issues by one structural evaluation invariant and
+  open/update a draft PR with solver tests plus renamed/aliased adjacent cases.
 
 ## Existing Work To Inspect First
 
-- Open and recent M4-A PRs.
+- Live `agent:M4-A` PRs and recent merged advanced-evaluation PRs.
 - Accepted-regression paths involving mapped, conditional, and recursive
   evaluation.
 - Issues around ts-toolbelt, type-fest, ts-essentials, utility-types, Zod, and
@@ -51,8 +57,10 @@ scripts/agents/list-owned-work.sh M4-A
   cases.
 - Do not erase deferred conditionals to `any` or `error` to silence one
   diagnostic.
-- If the issue is relation policy or cache-key mode, coordinate with M4-B.
-- If the issue is contextual inference session state, coordinate with M4-C.
+- If the issue is relation policy, inference/session state, or cache-key mode,
+  coordinate with M4-B.
+- If the issue needs a broad solver substrate rewrite, hand off or stack with
+  M4-Opus.
 
 ## Verification
 

@@ -7,9 +7,12 @@ GitHub label: `agent:M1-B`
 
 ## Mission
 
-Move checker relation diagnostics onto shared relation/query-boundary
-entrypoints. Preserve `TS2322`/`TS2345`/`TS2416` parity while reducing raw
-boolean assignability plus local semantic post-checks.
+Own checker orchestration: relation diagnostic routing, flow/narrowing handoff,
+and query-boundary cleanup. Move checker paths toward request-shaped boundary
+APIs and away from raw solver reach-through.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next M1-B release-gate item.
 
 ## Start Every Cycle
 
@@ -18,43 +21,47 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-B
 scripts/agents/disk-preflight.sh M1-B
 scripts/agents/list-owned-work.sh M1-B
+scripts/arch/check-checker-boundaries.sh
 ```
 
 ## Current Assignment
 
-- Primary gate: all bugs fixed on checker relation diagnostic paths.
-- Bug families: assignment, argument, override, call/property relation, excess
-  property, weak type, and missing-property diagnostics that already have a
-  solver answer or need a checker-facing boundary.
-- Architecture cleanup metric: direct checker relation call sites that need
-  relation result plus structured reason should trend down; `query_boundaries`
-  should become request-shaped APIs rather than quarantine barrels.
-- First live command: inspect owned PRs, then query issues around `TS2322`,
-  `TS2345`, `TS2416`, `RelationRequest`, and checker `tech-debt`.
-- Next concrete step: choose one checker call path and route it through an
-  existing or narrow new boundary helper without changing solver policy.
+- Primary gates: all tests pass, bugs in checker relation/flow orchestration
+  are fixed, and architecture guard debt trends down.
+- Bug or metric families: assignment/argument/override relation routing,
+  flow-sensitive narrowing handoff, excess/freshness orchestration, query
+  boundary quarantine, checker-local solver reach-through, and diagnostic
+  reason propagation.
+- Architecture cleanup metric: direct checker relation call sites, broad
+  query-boundary barrels, and checker-owned semantic traversal should trend
+  down.
+- First live command: inspect owned PRs, then run the checker boundary guard and
+  identify one failing or high-debt path.
+- Next concrete step: route one checker call path through an existing or narrow
+  new boundary helper, with behavior unchanged unless a focused bug test proves
+  the intended structural rule.
 
 ## Existing Work To Inspect First
 
-- Open `agent:M1-B` PRs and recent merged checker relation PRs.
+- Live `agent:M1-B` PRs and recent merged checker relation/query-boundary PRs.
+- `docs/architecture/RELATION_REQUEST.md`.
+- `docs/architecture/QUERY_BOUNDARY_INVENTORY.md`.
 - Issues `#8227`, `#8225`, and `#8223` for durable boundary debt context.
-- `docs/architecture/RELATION_REQUEST.md` and
-  `docs/architecture/QUERY_BOUNDARY_INVENTORY.md`.
-- M4-B work on relation policy/cache keys before changing solver internals.
 
 ## Non-Overlap Rules
 
-- New checker code must not call `CompatChecker` directly for TS2322-family
-  paths when a boundary helper can exist.
-- If the fix needs variance, any propagation, relation policy, or cache-key
-  semantics, hand off to M4-B or stack explicitly.
+- New checker code should not call solver internals directly when a
+  query-boundary helper can own the request.
+- If the fix needs variance, relation policy, `any` propagation, inference
+  sessions, or cache-key semantics, coordinate with M4-B or M4-Opus.
+- If the fix only changes diagnostic wording or strictness artifacts,
+  coordinate with M1-A.
 - Every behavior-changing PR states the structural rule and adjacent cases.
-- Do not hide a diagnostic mismatch behind rendered type strings or file names.
 
 ## Verification
 
 - Prefer targeted checker tests or narrow `cargo nextest run -p tsz_checker`.
-- Use architecture guards when boundary code changes:
-  `scripts/arch/check-checker-boundaries.sh` and
-  `python3 scripts/arch/arch_guard.py`.
+- Run `scripts/arch/check-checker-boundaries.sh` after boundary changes.
+- Run `python3 scripts/arch/arch_guard.py` when architecture guard rules or
+  caps are touched.
 - Do not run full conformance locally.

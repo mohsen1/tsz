@@ -36,8 +36,8 @@ class DiskPreflightTests(unittest.TestCase):
         fake_guard.symlink_to(GUARD)
 
         self.run_git(["init"], fake_repo)
-        self.run_git(["config", "user.email", "studio-f@example.invalid"], fake_repo)
-        self.run_git(["config", "user.name", "Studio F"], fake_repo)
+        self.run_git(["config", "user.email", "studio-manager@example.invalid"], fake_repo)
+        self.run_git(["config", "user.name", "Studio Manager"], fake_repo)
         (fake_repo / "README.md").write_text("# fake repo\n", encoding="utf-8")
         self.run_git(["add", "README.md", "scripts"], fake_repo)
         self.run_git(["commit", "-m", "initial"], fake_repo)
@@ -53,7 +53,7 @@ class DiskPreflightTests(unittest.TestCase):
             **(env_overrides or {}),
         }
         return subprocess.run(
-            ["bash", str(fake_script), "Studio-F", *extra_args],
+            ["bash", str(fake_script), "Studio-manager", *extra_args],
             cwd=fake_repo,
             env=env,
             check=True,
@@ -75,7 +75,7 @@ class DiskPreflightTests(unittest.TestCase):
 
             result = self.run_preflight(fake_repo, fake_script)
 
-            self.assertIn("agent=Studio-F", result.stdout)
+            self.assertIn("agent=Studio-manager", result.stdout)
             self.assertIn("git_detached=false", result.stdout)
             self.assertIn("typescript=populated-local-submodule", result.stdout)
             self.assertIn(f"primary={fake_repo} ts-populated", result.stdout)
@@ -112,11 +112,11 @@ class DiskPreflightTests(unittest.TestCase):
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            self.assertIn("agent=Studio-F", result.stdout)
+            self.assertIn("agent=Studio-manager", result.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual("pass", report["status"])
             self.assertEqual("pass", report["disk_preflight_status"])
-            self.assertEqual("Studio-F", report["agent"])
+            self.assertEqual("Studio-manager", report["agent"])
             self.assertEqual(str(fake_repo), report["repo"])
             self.assertEqual(
                 self.run_git(["rev-parse", "HEAD"], fake_repo).stdout.strip(),
