@@ -1176,6 +1176,43 @@ impl<'a> DeclarationEmitter<'a> {
         ))
     }
 
+    pub(in crate::declaration_emitter) fn returned_object_literal_local_function_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let object_expr_idx = self.direct_returned_object_literal(body_idx)?;
+        self.object_literal_has_local_function_declaration_member(object_expr_idx)
+            .then(|| self.infer_object_literal_type_text_at(object_expr_idx, 0))
+            .flatten()
+    }
+
+    fn object_literal_has_local_function_declaration_member(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(object_node) = self.arena.get(object_expr_idx) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(object_node) else {
+            return false;
+        };
+
+        object.elements.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                data.name
+            } else if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                prop.initializer
+            } else {
+                return false;
+            };
+            self.local_function_declaration_identifier_type_text(value_idx)
+                .is_some()
+        })
+    }
+
     pub(in crate::declaration_emitter) fn infer_object_member_type_text_named_at(
         &self,
         member_idx: NodeIndex,
