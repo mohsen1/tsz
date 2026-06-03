@@ -35,67 +35,18 @@ impl<'a> CheckerState<'a> {
     }
 
     fn target_prefers_outer_assignment_diagnostic(&mut self, target: TypeId) -> bool {
-        let mut candidates = vec![
+        let candidates = vec![
             target,
             self.evaluate_contextual_type(target),
             self.resolve_type_for_property_access(target),
             self.evaluate_type_for_assignability(target),
         ];
 
-        let initial_candidates = candidates.clone();
-        for candidate in initial_candidates {
-            if let Some(alias) = self.ctx.types.get_display_alias(candidate) {
-                candidates.push(alias);
-            }
-        }
-
-        let alias_candidates = candidates.clone();
-        for candidate in alias_candidates {
-            if let Some((def_id, args)) =
-                crate::query_boundaries::checkers::generic::application_alias_def_and_args(
-                    self.ctx.types,
-                    candidate,
-                )
-                && let Some(def) = self.ctx.definition_store.get(def_id)
-                && let Some(body) = def.body
-                && let Some(instantiated) =
-                    crate::query_boundaries::checkers::generic::instantiate_alias_application_body(
-                        self.ctx.types,
-                        body,
-                        &def.type_params,
-                        &args,
-                    )
-            {
-                candidates.push(body);
-                candidates.push(instantiated);
-                candidates.push(self.evaluate_type_for_assignability(instantiated));
-            }
-        }
-
-        candidates.into_iter().any(|candidate| {
-            candidate != TypeId::ERROR
-                && candidate != TypeId::ANY
-                && (assignability_diagnostic_common::contains_generic_indexed_access_surface(
-                    self.ctx.types,
-                    candidate,
-                ) || assignability_diagnostic_common::is_generic_mapped_type(
-                    self.ctx.types,
-                    candidate,
-                ) || assignability_diagnostic_common::is_generic_mapped_application(
-                    self.ctx.types,
-                    &self.ctx,
-                    candidate,
-                ) || (assignability_diagnostic_common::contains_conditional_type(
-                    self.ctx.types,
-                    candidate,
-                ) && assignability_diagnostic_common::contains_type_parameters(
-                    self.ctx.types,
-                    candidate,
-                )) || assignability_diagnostic_common::is_generic_application_with_type_params(
-                    self.ctx.types,
-                    candidate,
-                ))
-        })
+        crate::query_boundaries::assignability::target_prefers_outer_assignment_diagnostic(
+            self.ctx.types,
+            &self.ctx,
+            &candidates,
+        )
     }
 
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {

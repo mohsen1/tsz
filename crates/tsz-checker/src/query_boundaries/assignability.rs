@@ -129,6 +129,42 @@ pub(crate) fn optional_mapped_type_adds_implicit_undefined<R: TypeResolver>(
     tsz_solver::type_queries::optional_mapped_type_adds_implicit_undefined(type_db, type_id)
 }
 
+/// Classify target surfaces where checker diagnostics should preserve the
+/// outer assignment instead of elaborating through an unresolved projection.
+pub(crate) fn target_prefers_outer_assignment_diagnostic<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidates: &[TypeId],
+) -> bool {
+    let type_db = db.as_type_database();
+    let mut expanded = candidates.to_vec();
+
+    for candidate in candidates.iter().copied() {
+        if let Some(alias) = type_db.get_display_alias(candidate) {
+            expanded.push(alias);
+        }
+    }
+
+    let alias_candidates = expanded.clone();
+    for candidate in alias_candidates {
+        if let Some(instantiated) = instantiate_alias_candidate(db, resolver, candidate) {
+            expanded.push(instantiated);
+            expanded.push(evaluate_type(type_db, instantiated));
+        }
+    }
+
+    expanded.into_iter().any(|candidate| {
+        candidate != TypeId::ERROR
+            && candidate != TypeId::ANY
+            && (super::common::contains_generic_indexed_access_surface(type_db, candidate)
+                || super::common::is_generic_mapped_type(type_db, candidate)
+                || super::common::is_generic_mapped_application(db, resolver, candidate)
+                || (super::common::contains_conditional_type(type_db, candidate)
+                    && super::common::contains_type_parameters(type_db, candidate))
+                || super::common::is_generic_application_with_type_params(type_db, candidate))
+    })
+}
+
 /// Return an instantiated homomorphic mapped target that projects over `source`.
 ///
 /// This preserves deferred targets such as `{ [P in keyof S]?: S[P] }` through
