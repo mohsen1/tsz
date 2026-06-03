@@ -272,6 +272,14 @@ impl<'a> CheckerState<'a> {
         // runs when first-pass progress was made (`result != type_id`), since
         // the more powerful resolver may then lower sub-terms further.
         let first_pass_made_no_progress = first_pass_silent_bailed && result == type_id;
+        let first_pass_unresolved_application = result != type_id
+            && crate::query_boundaries::spread::contains_unresolved_application(
+                self.ctx.types,
+                result,
+            );
+        if first_pass_unresolved_application {
+            self.resolve_unresolved_application_bodies(result);
+        }
         let needs_resolver_pass = !first_pass_made_no_progress
             && (query::index_access_types(self.ctx.types, result).is_some()
                 || query::mapped_type_id(self.ctx.types, result).is_some()
@@ -304,7 +312,7 @@ impl<'a> CheckerState<'a> {
                 || (result != type_id
                     && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
-            let seed_iter = if seed_persist {
+            let seed_iter = if seed_persist && !first_pass_unresolved_application {
                 self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
@@ -313,7 +321,11 @@ impl<'a> CheckerState<'a> {
             let eval_result = evaluate_type_with_cache(
                 self.ctx.types,
                 &self.ctx,
-                type_id,
+                if first_pass_unresolved_application {
+                    result
+                } else {
+                    type_id
+                },
                 seed_iter.into_iter(),
                 has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
@@ -357,6 +369,57 @@ impl<'a> CheckerState<'a> {
 
         EVAL_ENV_DEPTH.set(eval_depth);
         final_result
+    }
+
+    fn resolve_unresolved_application_bodies(&mut self, type_id: TypeId) {
+        let names = crate::query_boundaries::spread::collect_unresolved_application_names(
+            self.ctx.types,
+            type_id,
+        );
+        let declaring_file_idx = self.unresolved_application_declaring_file_idx(type_id);
+        for name in names {
+            let Some(def_id) = declaring_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .resolve_unresolved_type_name_from_file(name.as_str(), file_idx)
+                })
+                .or_else(|| TypeResolver::resolve_unresolved_type_name(&self.ctx, name.as_str()))
+            else {
+                continue;
+            };
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.insert_unresolved_resolution(name.clone(), def_id);
+            }
+            if self.ctx.definition_store.get_body(def_id).is_some() {
+                continue;
+            }
+            let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+                continue;
+            };
+            let Some((body, params)) = self.delegate_cross_arena_symbol_resolution(sym_id) else {
+                continue;
+            };
+            let params = if params.is_empty() {
+                self.ctx.get_def_type_params(def_id).unwrap_or_default()
+            } else {
+                params
+            };
+            self.ctx
+                .register_def_auto_params_in_envs(def_id, body, params);
+        }
+    }
+
+    fn unresolved_application_declaring_file_idx(&self, type_id: TypeId) -> Option<usize> {
+        let owner_def_id =
+            crate::query_boundaries::spread::application_or_display_alias_lazy_def_id(
+                self.ctx.types,
+                type_id,
+            )?;
+        self.ctx
+            .definition_store
+            .get(owner_def_id)
+            .and_then(|info| info.file_id)
+            .map(|file_idx| file_idx as usize)
     }
 
     /// Persist evaluator cache entries to the shared `env_eval_cache`.
@@ -623,6 +686,22 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         self.evaluate_type_with_env_impl(type_id, true)
+    }
+
+    /// Prefer full environment evaluation before the lighter application evaluator.
+    ///
+    /// Imported conditional aliases can materialize nested application bases
+    /// that the lighter application evaluator cannot resolve by itself.
+    pub(crate) fn evaluate_property_access_receiver_type(&mut self, type_id: TypeId) -> TypeId {
+        let env_evaluated = self.evaluate_type_with_env(type_id);
+        if env_evaluated != type_id
+            && env_evaluated != TypeId::ANY
+            && env_evaluated != TypeId::ERROR
+        {
+            env_evaluated
+        } else {
+            self.evaluate_application_type(type_id)
+        }
     }
 
     /// Resolve `TypeQuery` symbols in a type into the type environment.
