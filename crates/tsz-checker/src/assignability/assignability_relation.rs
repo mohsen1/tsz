@@ -264,6 +264,9 @@ impl<'a> CheckerState<'a> {
         let target = self.substitute_this_type_if_needed(target);
         let source = self.normalize_awaited_application_args_for_variance(source);
         let target = self.normalize_awaited_application_args_for_variance(target);
+        if self.same_type_alias_application_args_reject(source, target) {
+            return None;
+        }
         let flags = self.ctx.pack_relation_flags();
         let inputs = AssignabilityQueryInputs {
             db: self.ctx.types,
@@ -313,6 +316,10 @@ impl<'a> CheckerState<'a> {
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
+            return outcome(false);
+        }
+
+        if self.same_type_alias_application_args_reject(source, target) {
             return outcome(false);
         }
 
@@ -651,6 +658,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.same_type_alias_application_args_reject(source, target) {
+            return false;
+        }
+
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
@@ -681,10 +692,6 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.same_base_application_to_constrained_type_param_target(source, target) {
-            return false;
-        }
-
-        if self.same_type_alias_application_args_reject(source, target) {
             return false;
         }
 
@@ -987,7 +994,11 @@ impl<'a> CheckerState<'a> {
         Some(self.evaluate_type_for_assignability(instantiated))
     }
 
-    fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub(crate) fn same_type_alias_application_args_reject(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         let Some((source_base, source_args)) =
             self.application_info_for_alias_argument_rejection(source)
         else {
@@ -1017,7 +1028,13 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return false;
         }
-        if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
+        let alias_body = def.body;
+        let alias_body_is_generic_mapped = alias_body.is_some_and(|body| {
+            crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, body)
+        });
+        if self.type_alias_args_are_unwitnessed(def_id, source_args.len())
+            && !alias_body_is_generic_mapped
+        {
             return false;
         }
         if self.type_alias_projects_static_member(source_base) {
@@ -1036,6 +1053,13 @@ impl<'a> CheckerState<'a> {
             |(i, (&source_arg, &target_arg))| {
                 if target_arg.is_any() {
                     return false;
+                }
+                if alias_body_is_generic_mapped
+                    && source_arg != target_arg
+                    && crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
+                        .is_some()
+                {
+                    return true;
                 }
                 let variance = variances.as_ref().and_then(|vs| vs.get(i)).copied();
                 match variance {
@@ -1129,6 +1153,62 @@ impl<'a> CheckerState<'a> {
             source,
             target,
         )
+    }
+
+    pub(crate) fn pre_evaluation_index_access_relation_rejects(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source != TypeId::NEVER
+            && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
+        {
+            return true;
+        }
+
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+        {
+            if self.is_assignable_to(s_idx, t_idx)
+                && let Some(t_param) =
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
+                && t_param.constraint.is_some_and(|constraint| {
+                    constraint == s_obj
+                        || (crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            constraint,
+                        )
+                        .is_some()
+                            && crate::query_boundaries::common::type_param_info(
+                                self.ctx.types,
+                                s_obj,
+                            )
+                            .is_some()
+                            && self.type_parameter_identities_match(constraint, s_obj))
+                })
+            {
+                return true;
+            }
+
+            if s_obj == t_obj
+                && crate::query_boundaries::common::type_param_info(self.ctx.types, s_idx).is_some()
+                && crate::query_boundaries::common::type_param_info(self.ctx.types, t_idx).is_some()
+                && !self.type_parameter_identities_match(s_idx, t_idx)
+                && !self.type_param_constraint_chain_reaches(s_idx, t_idx)
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Type assertion overlap uses tsc's comparable relation, not ordinary

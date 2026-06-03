@@ -1039,6 +1039,19 @@ impl<'a> CheckerState<'a> {
                 check_assignability = false;
             }
 
+            if check_assignability
+                && let Some((source_declared, target_declared)) =
+                    declared_alias_application_assignment
+                && self.same_type_alias_application_args_reject(source_declared, target_declared)
+            {
+                self.error_type_not_assignable_at_with_anchor(
+                    source_declared,
+                    target_declared,
+                    left_idx,
+                );
+                check_assignability = false;
+            }
+
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
@@ -1890,10 +1903,8 @@ impl<'a> CheckerState<'a> {
         let target_declared = self.assignment_identifier_declared_type(left_idx)?;
         let source_declared = self.assignment_identifier_declared_type(right_idx)?;
 
-        let (target_base, target_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
-        let (source_base, source_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        let (target_base, target_args) = self.application_info_or_display_alias(target_declared)?;
+        let (source_base, source_args) = self.application_info_or_display_alias(source_declared)?;
         if target_base != source_base || target_args.len() != source_args.len() {
             return None;
         }
@@ -1923,10 +1934,8 @@ impl<'a> CheckerState<'a> {
         let target_declared = self.assignment_identifier_declared_type(left_idx)?;
         let source_declared = self.assignment_identifier_declared_type(right_idx)?;
 
-        let (target_base, target_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
-        let (source_base, source_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        let (target_base, target_args) = self.application_info_or_display_alias(target_declared)?;
+        let (source_base, source_args) = self.application_info_or_display_alias(source_declared)?;
         if target_base != source_base || target_args.len() != source_args.len() {
             return None;
         }

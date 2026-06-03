@@ -9,6 +9,16 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        if self.pre_evaluation_index_access_relation_rejects(source, target) {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: false,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }
