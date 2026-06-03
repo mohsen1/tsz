@@ -1,4 +1,3 @@
-use crate::query_boundaries::common::call_signatures_for_type;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -10,6 +9,7 @@ use tsz_solver::TypeId;
 use tsz_solver::computation::TypeSubstitution;
 
 mod callable_type_arguments;
+mod heritage_call_returns;
 
 pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,
@@ -545,22 +545,11 @@ impl<'a> CheckerState<'a> {
             let cached_expr_type = self.get_type_of_node(expr_idx);
             if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
                 if let Some(call_expr) = self.ctx.arena.get_call_expr(expr_node) {
-                    if let Some(type_args) = call_expr.type_arguments.as_ref() {
-                        let callee_type = self.get_type_of_node(call_expr.expression);
-                        let invoked_type = self
-                            .apply_type_arguments_to_callable_type(callee_type, Some(type_args));
-                        if let Some(call_signatures) =
-                            call_signatures_for_type(self.ctx.types, invoked_type)
-                        {
-                            call_signatures
-                                .first()
-                                .map_or(cached_expr_type, |sig| sig.return_type)
-                        } else {
-                            cached_expr_type
-                        }
-                    } else {
-                        cached_expr_type
-                    }
+                    self.heritage_call_return_type_for_base_constructor(
+                        call_expr,
+                        type_arguments,
+                        cached_expr_type,
+                    )
                 } else {
                     cached_expr_type
                 }
