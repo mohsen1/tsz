@@ -684,6 +684,9 @@ mod import_attributes_relation_routing_arch_tests;
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;
 #[cfg(test)]
+#[path = "tests/in_narrow_apparent_member_tests.rs"]
+mod in_narrow_apparent_member_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
