@@ -6,14 +6,14 @@ use crate::types::{MappedType, TypeId, TypeParamInfo};
 /// evaluation. Built once by `TypeEvaluator::application_evaluation_context`
 /// so the rest of `evaluate_application` operates on a typed bundle rather
 /// than recomputing the same facts at multiple call sites.
-pub(super) struct ApplicationEvalContext {
+pub(in crate::evaluation) struct ApplicationEvalContext {
     /// Formal type parameters declared on the `DefId` resolved from
     /// `app.base`, when the resolver exposes them. `None` triggers the
     /// lite-resolver fallback that extracts parameters from the resolved
     /// body's structure.
     pub(super) type_params: Option<Vec<TypeParamInfo>>,
     /// The resolved body of the `DefId`, when known.
-    pub(super) resolved: Option<TypeId>,
+    pub(in crate::evaluation) resolved: Option<TypeId>,
     /// Set when `app.base` resolves to a `DefKind::TypeAlias` (vs a class
     /// or interface). Drives display-alias storage policy.
     pub(super) is_type_alias_def: bool,
@@ -24,7 +24,7 @@ pub(super) struct ApplicationEvalContext {
     /// For `TypeQuery`-based applications the caller wants the constructor
     /// type, not the instance type, so `extract_class_instance_body` must
     /// be skipped.
-    pub(super) base_is_type_query: bool,
+    pub(in crate::evaluation) base_is_type_query: bool,
 }
 
 /// Common opening preamble for the homomorphic-mapped shortcuts:
