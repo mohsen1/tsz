@@ -260,33 +260,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn computed_identifier_or_access_name_text(
-        &self,
-        name_idx: NodeIndex,
-    ) -> Option<String> {
-        let name_node = self.arena.get(name_idx)?;
-        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return None;
-        }
-        let computed = self.arena.get_computed_property(name_node)?;
-        let expr_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(computed.expression);
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != SyntaxKind::Identifier as u16
-            && expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-
-        let mut text = self.get_source_slice(name_node.pos, name_node.end)?;
-        if let Some(bracket_pos) = text.rfind(']') {
-            text.truncate(bracket_pos + 1);
-        }
-        let text = text.trim().to_string();
-        (!text.is_empty()).then_some(text)
-    }
-
     pub(in crate::declaration_emitter) fn resolved_computed_property_name_text(
         &self,
         name_idx: NodeIndex,
@@ -717,12 +690,35 @@ impl<'a> DeclarationEmitter<'a> {
                 k if k == SyntaxKind::Identifier as u16
                     || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
                 {
-                    if self.computed_property_name_is_symbol_access(node_id)
-                        && let Some(text) = self.computed_identifier_or_access_name_text(node_id)
-                    {
-                        return Some(text);
+                    // `[this.prop]` — the object is `this`; not a stable property name
+                    // in a .d.ts without type info, so omit it here and let the caller
+                    // route it through the synthesized index-signature path.
+                    if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                        if let Some(access) = self.arena.get_access_expr(expr_node) {
+                            if let Some(obj) = self.arena.get(access.expression) {
+                                if obj.kind == SyntaxKind::ThisKeyword as u16 {
+                                    return None;
+                                }
+                            }
+                        }
                     }
-                    return self.emittable_computed_property_name_text(node_id);
+                    // Return the COMPUTED_PROPERTY_NAME source slice (e.g. `[someVar]`,
+                    // `[Symbol.iterator]`). Trim at `]` because node.end can include
+                    // trailing punctuation from the surrounding member.
+                    if let Some(mut s) = self.get_source_slice(node.pos, node.end) {
+                        if let Some(bracket_pos) = s.rfind(']') {
+                            s.truncate(bracket_pos + 1);
+                        } else {
+                            while s.ends_with(':') || s.ends_with('(') {
+                                s.pop();
+                                s = s.trim_end().to_string();
+                            }
+                        }
+                        if !s.is_empty() {
+                            return Some(s.trim().to_string());
+                        }
+                    }
+                    return None;
                 }
                 _ => return None,
             }

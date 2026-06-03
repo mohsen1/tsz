@@ -722,11 +722,7 @@ impl<'a> DeclarationEmitter<'a> {
             // via infer_property_name_text for `[Symbol.isConcatSpreadable]`),
             // use it directly. Only fall through to the non-nameable index-
             // signature path when the name cannot be reproduced at all.
-            let name_text = self.object_literal_member_name_text(name_idx).or_else(|| {
-                (member_node.kind == syntax_kind_ext::METHOD_DECLARATION)
-                    .then(|| self.computed_identifier_or_access_name_text(name_idx))
-                    .flatten()
-            });
+            let name_text = self.object_literal_member_name_text(name_idx);
 
             // A computed key whose expression cannot be reproduced as a literal
             // property name (e.g. `[this.a]`) is not a named member in tsc's

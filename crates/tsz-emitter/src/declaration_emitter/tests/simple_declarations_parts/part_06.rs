@@ -1,3 +1,73 @@
+// Regression coverage for Issue #12328: two DTS conformance tests
+// (`dynamicNamesErrors`, `indexSignatures1`) regressed in PR #12321 because
+// the METHOD_DECLARATION fallback that was added there made non-Symbol computed
+// method keys (like `[someVar]()`) skip the index-signature path even when the
+// key is a bare identifier. The fix restores source-text return for
+// identifier/property-access computed keys and adds a `this`-keyword guard.
+
+#[test]
+fn computed_method_key_bare_identifier_emits_as_named_member() {
+    // A method with a computed bare-identifier key (`[someVar]()`) must appear
+    // in the inferred object return type as a named member using the source text
+    // `[someVar]`, not be silently dropped or routed to an index signature.
+    // (Regression from PR #12321 METHOD_DECLARATION fallback removal.)
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const someVar: unique symbol;
+export function make() {
+    return { [someVar]() { return 1; } };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[someVar]"),
+        "Expected computed bare-identifier method key [someVar] to appear as a named member: {output}"
+    );
+}
+
+#[test]
+fn computed_this_property_key_routes_to_index_signature() {
+    // A method whose computed key is `[this.prop]` cannot be reproduced as a
+    // stable property name in a .d.ts without type info. The emitter must
+    // route it through the synthesized index-signature path, not emit it as a
+    // named member. (Regression guard: `this` is a keyword, not an identifier.)
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export class Container {
+    key = "x";
+    build() {
+        return { [this.key]() { return 1; } };
+    }
+}
+"#,
+    );
+
+    // The inferred return type must not produce a named member `[this.key]`.
+    assert!(
+        !output.contains("[this.key]"),
+        "Did not expect [this.key] to appear as a named member (should go to index sig): {output}"
+    );
+}
+
+#[test]
+fn computed_symbol_access_key_emits_as_named_member() {
+    // `[Symbol.iterator]()` is a known unique-symbol access and must always
+    // appear as a named member regardless of the source-text path.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function make() {
+    return { [Symbol.iterator]() { return 1; } };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[Symbol.iterator]"),
+        "Expected [Symbol.iterator] computed method key to appear as a named member: {output}"
+    );
+}
+
 // Inferred object-literal return types must be indented relative to the
 // emitter's current `indent_level`. A class method (or a namespaced function)
 // nests its synthesized return shape one level deeper than a top-level

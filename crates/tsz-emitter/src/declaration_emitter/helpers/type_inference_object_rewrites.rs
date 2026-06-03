@@ -143,11 +143,6 @@ impl<'a> DeclarationEmitter<'a> {
                 .object_literal_member_name_text(name_idx)
                 .or_else(|| self.emittable_computed_property_name_text(name_idx))
                 .or_else(|| {
-                    (member_node.kind == syntax_kind_ext::METHOD_DECLARATION)
-                        .then(|| self.computed_identifier_or_access_name_text(name_idx))
-                        .flatten()
-                })
-                .or_else(|| {
                     // Fallback: when a getter and setter share the same computed
                     // property name source text but type info is unavailable, use
                     // the source text directly so the pair emits as one property.
