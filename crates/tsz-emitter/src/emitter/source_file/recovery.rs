@@ -2,6 +2,7 @@ use crate::emitter::Printer;
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::ScannerState;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn recovered_yield_call_statement_text(
@@ -182,62 +183,98 @@ impl<'a> Printer<'a> {
         if name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             return false;
         }
-        let Some((first_keyword, second_keyword, initializer_text)) =
-            self.recovered_reserved_array_binding_source_parts(node)
+        let Some((keywords, initializer_text)) = self.recovered_reserved_array_binding_parts(node)
         else {
             return false;
         };
+        if keywords.is_empty() || keywords.len() > 3 {
+            return false;
+        }
 
         if !self.writer.is_at_line_start() {
             self.write_line();
         }
         self.write("var [];");
         self.write_line();
-        self.write(first_keyword);
+        self.write(keywords[0]);
         self.write(";");
         self.write_line();
-        self.write(second_keyword);
+        match keywords.as_slice() {
+            [_] => {}
+            [_, second] => self.emit_recovered_reserved_array_binding_condition(second),
+            [_, second, third] => {
+                self.write(second);
+                self.write(" (, )");
+                self.write_line();
+                self.increase_indent();
+                self.emit_recovered_reserved_array_binding_condition(third);
+                self.decrease_indent();
+            }
+            _ => return false,
+        }
+        self.write(&initializer_text);
+        self.write_semicolon();
+        self.suppress_next_anonymous_enum_var_after_recovered_array_binding = true;
+        true
+    }
+
+    fn emit_recovered_reserved_array_binding_condition(&mut self, keyword: &str) {
+        self.write(keyword);
         self.write(" ()");
         self.write_line();
         self.increase_indent();
         self.write(";");
         self.write_line();
         self.decrease_indent();
-        self.write(&initializer_text);
-        self.write(";");
-        self.suppress_next_anonymous_enum_var_after_recovered_array_binding = true;
-        true
     }
 
-    fn recovered_reserved_array_binding_source_parts(
+    fn recovered_reserved_array_binding_parts(
         &self,
         node: &Node,
-    ) -> Option<(&'static str, &'static str, String)> {
+    ) -> Option<(Vec<&'static str>, String)> {
         let text = self.source_text?;
-        let line = self.source_line_from_node(node)?;
-        let open = line.find('[')?;
-        let close = line[open..].find(']')? + open;
-        let binding = &line[open + 1..close];
-        let mut parts = binding.split(',').map(str::trim);
-        let first = self.reserved_keyword_text(parts.next()?)?;
-        let second = self.reserved_keyword_text(parts.next()?)?;
-        if parts.next().is_some() {
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let source = text.get(start..)?;
+        let mut scanner = ScannerState::new(source.to_string(), true);
+        let mut keywords = Vec::new();
+        let mut in_array_binding = false;
+        let mut initializer_start = None;
+        let mut initializer_end = None;
+
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::EndOfFileToken {
+                break;
+            }
+            let token_start = scanner.get_token_start();
+            let token_end = scanner.get_token_end();
+            match token {
+                SyntaxKind::OpenBracketToken => in_array_binding = true,
+                SyntaxKind::CloseBracketToken if in_array_binding => in_array_binding = false,
+                SyntaxKind::EqualsToken => {
+                    initializer_start = Some(token_end);
+                }
+                SyntaxKind::SemicolonToken => {
+                    initializer_end = Some(token_start);
+                    break;
+                }
+                _ if in_array_binding && tsz_scanner::token_is_reserved_word(token) => {
+                    keywords.push(self.reserved_keyword_text(scanner.get_token_text_ref())?);
+                }
+                _ => {}
+            }
+        }
+
+        let initializer_start = initializer_start?;
+        let initializer_end = initializer_end.unwrap_or_else(|| scanner.get_pos());
+        let initializer_text = source
+            .get(initializer_start..initializer_end)?
+            .trim()
+            .to_string();
+        if initializer_text.is_empty() {
             return None;
         }
-        let equals = line[close..].find('=')? + close;
-        let initializer = line[equals + 1..].trim().trim_end_matches(';').trim();
-        if initializer.is_empty() {
-            return None;
-        }
-        let source_start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let absolute_initializer_start = text[source_start..].find(initializer)? + source_start;
-        let initializer_end = absolute_initializer_start + initializer.len();
-        let initializer_text =
-            crate::safe_slice::slice(text, absolute_initializer_start, initializer_end)
-                .ok()?
-                .trim()
-                .to_string();
-        Some((first, second, initializer_text))
+        Some((keywords, initializer_text))
     }
 
     pub(in crate::emitter) fn emit_recovered_reserved_import_equals_declaration_name(

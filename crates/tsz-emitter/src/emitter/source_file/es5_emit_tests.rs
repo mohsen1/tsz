@@ -2170,6 +2170,15 @@ fn reserved_array_binding_name_emits_recovered_keyword_statements() {
             "var [debugger, while] = value;",
             "var [];\ndebugger;\nwhile ()\n    ;\nvalue;",
         ),
+        ("var [debugger] = value;", "var [];\ndebugger;\nvalue;"),
+        (
+            "var [debugger,\n if] = value;",
+            "var [];\ndebugger;\nif ()\n    ;\nvalue;",
+        ),
+        (
+            "var [debugger, if, while] = value;",
+            "var [];\ndebugger;\nif (, )\n    while ()\n        ;\nvalue;",
+        ),
         (
             "var [debugger, if] = [1, 2];\nenum void {}",
             "var [];\ndebugger;\nif ()\n    ;\n[1, 2];\n(function () {\n})( || ( = {}));\nvoid {};",
