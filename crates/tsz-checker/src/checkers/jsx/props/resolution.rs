@@ -374,6 +374,7 @@ impl<'a> CheckerState<'a> {
                     {
                         expected_special_type = None;
                     }
+                    let has_usable_special_type = expected_special_type.is_some();
                     let value_node_idx =
                         if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                             if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
@@ -488,11 +489,11 @@ impl<'a> CheckerState<'a> {
                         );
                         outcome.has_prop_type_error = true;
                     }
-                    // `key`/`ref` are JSX special attributes, not ordinary
-                    // component props. If their special surface is unavailable,
-                    // keep their value for bookkeeping but do not fall through
-                    // into component-prop excess checks.
-                    if attr_name == "key" || attr_name == "ref" {
+                    // `key`/`ref` skip ordinary prop checks only when the JSX
+                    // namespace exposes a usable special-attribute surface. If
+                    // `key` has no such surface, tsc lets ordinary intrinsic
+                    // prop validation report it as an excess/mismatched prop.
+                    if has_usable_special_type || attr_name == "ref" {
                         continue;
                     }
                 }

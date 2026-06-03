@@ -1096,16 +1096,17 @@ impl<'a> CheckerState<'a> {
             } => Some(type_id),
             _ => None,
         };
-
         let intrinsic_key_type = if attr_name == "key" {
             self.get_intrinsic_attributes_type().and_then(|ia_type| {
                 let ia_type = self.normalize_jsx_required_props_target(ia_type);
+                let inherited =
+                    self.jsx_declared_interface_heritage_has_property(ia_type, attr_name);
                 get_property_type(self.resolve_property_access_with_env(ia_type, attr_name))
+                    .or_else(|| inherited.then_some(TypeId::ANY))
             })
         } else {
             None
         };
-
         if attr_name == "key" {
             return intrinsic_key_type;
         }

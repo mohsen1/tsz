@@ -1,4 +1,35 @@
 #[test]
+fn jsx_intrinsic_key_without_intrinsic_attributes_reports_excess() {
+    let source = r#"
+interface HTMLLIElement {}
+declare namespace React {
+    type DetailedHTMLProps<E, T> = E;
+    type ReactNode = string | number | boolean | null | undefined | ReactNodeArray;
+    interface ReactNodeArray extends Array<ReactNode> {}
+    interface HTMLAttributes<T> {
+        children?: ReactNode;
+    }
+}
+declare namespace JSX {
+    interface Element {}
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicElements {
+        li: React.DetailedHTMLProps<React.HTMLAttributes<HTMLLIElement>, HTMLLIElement>;
+    }
+}
+declare var React: any;
+const category = "Fruit";
+<li key={category}>{category}</li>;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for key without JSX.IntrinsicAttributes, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_intersection_props_no_excess_errors() {
     // When component props type is `T & { children?: ... }`, where T is a type
     // parameter from the enclosing scope, excess property checking should be
@@ -942,11 +973,13 @@ fn test_jsx_intrinsic_union_react16_fixture_accepts_shared_attributes() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
     };
-    let Some(source) =
+    let Some(mut source) =
         load_typescript_fixture("TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx")
     else {
         return;
     };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+    source.push_str("\ndeclare namespace JSX { interface IntrinsicAttributes { key?: any } }\n");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
         &react_types,
