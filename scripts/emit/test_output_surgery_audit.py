@@ -1,9 +1,12 @@
 import importlib.util
+import io
 import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -356,6 +359,80 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             self.audit.classify_allowlist_pressure(budget, ["dts-output-surgery"]),
             "blocked",
         )
+
+    def test_warning_failures_report_pressure_for_strict_mode(self):
+        file_summaries = [
+            {
+                "path": "a.rs",
+                "count": 1,
+                "category": "dts-output-surgery",
+                "max_count": 1,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            }
+        ]
+
+        self.assertEqual(
+            self.audit.warning_failures(file_summaries),
+            [
+                "allowlist pressure is blocked; exhausted categories: "
+                "dts-output-surgery"
+            ],
+        )
+
+    def test_warning_failures_allow_available_budget(self):
+        file_summaries = [
+            {
+                "path": "a.rs",
+                "count": 1,
+                "category": "dts-output-surgery",
+                "max_count": 2,
+                "reason": "existing debt",
+                "status": "allowlisted",
+            }
+        ]
+
+        self.assertEqual(self.audit.warning_failures(file_summaries), [])
+
+    def test_fail_on_warnings_returns_distinct_status(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("dts-output-surgery", 1, "existing debt"),
+        }
+
+        with (
+            patch.object(self.audit, "scan", return_value=findings),
+            patch.object(self.audit, "load_allowlist", return_value=allowlist),
+            redirect_stdout(io.StringIO()) as stdout,
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            status = self.audit.main(["--fail-on-warnings"])
+
+        self.assertEqual(status, 2)
+        self.assertIn("allowlist_pressure_status=blocked", stdout.getvalue())
+        self.assertIn("Output-surgery audit warnings failed", stderr.getvalue())
+
+    def test_default_mode_allows_warnings(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("dts-output-surgery", 1, "existing debt"),
+        }
+
+        with (
+            patch.object(self.audit, "scan", return_value=findings),
+            patch.object(self.audit, "load_allowlist", return_value=allowlist),
+            redirect_stdout(io.StringIO()) as stdout,
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            status = self.audit.main([])
+
+        self.assertEqual(status, 0)
+        self.assertIn("warning_status=warn", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
 
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
