@@ -210,6 +210,30 @@ withTempDir((dir) => {
 console.log("✅ --require-source-current fails on stale artifact source");
 
 // ---------------------------------------------------------------------------
+// Test: --require-source-current infers HEAD when no explicit expected commit
+// is supplied, so local release-truth checks cannot silently skip freshness.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, {
+    measurement_profile: SAMPLE_MEASUREMENT_PROFILE,
+    source_commit: "1111111111111111111111111111111111111111",
+  }));
+  const result = run(file, ["--json", "--require-source-current"]);
+  assert.equal(result.status, 1, "source-current gate should infer HEAD and fail stale artifacts");
+  const parsed = JSON.parse(result.stdout.trim());
+  const head = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).stdout.trim().toLowerCase();
+  assert.equal(parsed.source_freshness.expected_source_commit, head, "JSON should record inferred HEAD");
+  assert.equal(parsed.source_freshness.current, false, "JSON should mark inferred stale source not current");
+  assert.match(result.stderr, /source freshness failed/);
+});
+console.log("✅ --require-source-current infers HEAD when no expected source is passed");
+
+// ---------------------------------------------------------------------------
 // Test: modern artifact without measurement_profile still exits 0 but reports
 // the missing profile so dashboards can surface the metadata gap.
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@
  */
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import {
   REQUIRED_PROJECT_ROWS,
@@ -72,9 +73,23 @@ const {
   requireGreen,
   requireCleanMetadata,
   requireSourceCurrent,
-  expectedSourceCommit,
+  expectedSourceCommit: rawExpectedSourceCommit,
   filePath,
 } = parseArgs(args);
+
+function currentGitHead() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+const expectedSourceCommit =
+  rawExpectedSourceCommit ?? (requireSourceCurrent ? currentGitHead() : null);
 
 function loadArtifact() {
   if (!filePath) {
