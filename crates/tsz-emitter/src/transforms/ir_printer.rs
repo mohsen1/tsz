@@ -392,8 +392,7 @@ impl<'a> IRPrinter<'a> {
     }
 
     pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
-        self.pending_commonjs_class_export_name =
-            name.clone().map(|name| (name.clone(), vec![name]));
+        self.pending_commonjs_class_export_name = name.map(|name| (name.clone(), vec![name]));
     }
 
     pub fn set_pending_commonjs_class_export_bindings(
@@ -404,7 +403,7 @@ impl<'a> IRPrinter<'a> {
         self.pending_commonjs_class_export_name = Some((local_name, export_names));
     }
 
-    pub(super) fn take_pending_commonjs_class_export_name(
+    pub(super) const fn take_pending_commonjs_class_export_name(
         &mut self,
     ) -> Option<(String, Vec<String>)> {
         self.pending_commonjs_class_export_name.take()

@@ -140,8 +140,7 @@ impl<'a> ClassES5Emitter<'a> {
     /// Schedule a deferred CommonJS `exports.<name> = <name>;` assignment for a
     /// top-level `export class` lowered to an ES5 IIFE.
     pub fn set_pending_commonjs_class_export_name(&mut self, name: Option<String>) {
-        self.pending_commonjs_class_export_name =
-            name.clone().map(|name| (name.clone(), vec![name]));
+        self.pending_commonjs_class_export_name = name.map(|name| (name.clone(), vec![name]));
     }
 
     pub fn set_pending_commonjs_class_export_bindings(
