@@ -12,10 +12,11 @@
 # noUnusedLocals_writeOnly.ts was fixed in the write-only destructuring PR (#12243):
 # { x: x } = src did not emit TS6133 because is_window_and_global_this_declared_expression
 # called resolve_identifier_symbol on the write target, marking it as read.
+# interfaceExtendsObjectIntersectionErrors.ts is covered by the class heritage
+# TS2416 tests for construct-signature expression bases.
 # circularReference.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
 TypeScript/tests/cases/compiler/exportDefaultInterface.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
-TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts
 
 # Existing drift exposed by PR #12255 after resolving the previous #12247
 # accepted rows for coAndContraVariantInferences2/correlatedUnions; tracked in

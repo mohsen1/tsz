@@ -1723,6 +1723,10 @@ name = "class_expression_implements_display_tests"
 path = "tests/class_expression_implements_display_tests.rs"
 
 [[test]]
+name = "class_expression_heritage_ts2416_tests"
+path = "tests/class_expression_heritage_ts2416_tests.rs"
+
+[[test]]
 name = "predicate_alias_generic_inference_tests"
 path = "tests/predicate_alias_generic_inference_tests.rs"
 
