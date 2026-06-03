@@ -24,6 +24,9 @@ impl<'a> CheckerState<'a> {
                     let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
                         return false;
                     };
+                    if !self.type_reference_name_is_resolved_for_missing_name_coverage(node_idx) {
+                        return false;
+                    }
                     if let Some(args) = &type_ref.type_arguments {
                         stack.extend(args.nodes.iter().copied());
                     }
@@ -58,10 +61,79 @@ impl<'a> CheckerState<'a> {
                     stack.push(indexed.object_type);
                     stack.push(indexed.index_type);
                 }
+                k if k == syntax_kind_ext::TYPE_LITERAL => {
+                    let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
+                        return false;
+                    };
+                    for &member_idx in &type_lit.members.nodes {
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                            return false;
+                        };
+                        if prop.type_annotation.is_none() {
+                            return false;
+                        }
+                        stack.push(prop.type_annotation);
+                    }
+                }
                 _ => return false,
             }
         }
         true
+    }
+
+    fn type_reference_name_is_resolved_for_missing_name_coverage(
+        &self,
+        type_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if self.type_ref_is_bare_scoped_type_parameter(
+            type_ref.type_name,
+            type_ref.type_arguments.as_ref(),
+        ) {
+            return true;
+        }
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .is_some();
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .is_some();
+        };
+        let name = ident.escaped_text.as_str();
+        let shadows_managed_array = matches!(name, "Array" | "ReadonlyArray")
+            && self.ctx.file_local_type_shadow_for_lib_name(name);
+        let primitive_type = matches!(
+            name,
+            "any"
+                | "unknown"
+                | "never"
+                | "void"
+                | "undefined"
+                | "null"
+                | "boolean"
+                | "number"
+                | "bigint"
+                | "string"
+                | "symbol"
+                | "object"
+        );
+        if (tsz_solver::is_compiler_managed_type(name) || primitive_type) && !shadows_managed_array
+        {
+            return true;
+        }
+        self.resolve_type_symbol_for_lowering(type_ref.type_name)
+            .is_some()
     }
 
     pub(crate) fn check_type_alias_body_for_missing_names_after_type_node_check(
