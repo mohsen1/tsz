@@ -2048,3 +2048,7 @@ workspace = true
 [[test]]
 name = "type_only_import_value_use_attribution_tests"
 path = "tests/type_only_import_value_use_attribution_tests.rs"
+
+[[test]]
+name = "distributive_callable_branch_tests"
+path = "tests/distributive_callable_branch_tests.rs"
