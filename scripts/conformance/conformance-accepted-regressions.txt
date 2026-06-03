@@ -44,7 +44,7 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
 # intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
 # jsxIntrinsicUnions.tsx was RESOLVED in PR #12289 exact head 22f57bd4,
-# then REGRESSED again on PR #11837 exact head fb2d2a73bf. Tracked in #8432.
+# then REGRESSED again on PR #12380 exact head 4c00c5259f. Tracked in #8432.
 # jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
 # aggregate run on exact head 2dd802cf / run 26908103845, then reappeared on
 # PR #11890 ready-review heads below; tracked in #8432 while accepted here.
