@@ -218,6 +218,32 @@ after
             with self.subTest(state=state):
                 self.assertFalse(self.mod.emit_detail_is_current({"state": state}))
 
+    def test_committed_emit_detail_is_not_stale(self):
+        """Guard against the committed emit-detail.json silently drifting behind
+        the public README aggregate.
+
+        The 2026-05-19 -> 2026-06-03 drift left ``--families`` reporting ~413
+        phantom JS and ~55 phantom DTS failures that every lane then triaged.
+        When this fails, refresh ``scripts/emit/emit-detail.json`` and
+        ``scripts/emit/emit-snapshot.json`` from the CI ``emit-details`` artifact
+        (per-test ``ci-metrics/emit-detail-*.json``).
+        """
+        detail_summary = self.mod.emit_summary(self.mod.load_detail())
+        public_summary = self.mod.emit_summary_from_readme()
+        self.assertIsNotNone(
+            public_summary,
+            "README emit aggregate block missing; cannot evaluate freshness",
+        )
+        status = self.mod.emit_freshness_status(detail_summary, public_summary)
+        self.assertIn(
+            status["state"],
+            ("current", "detail-ahead"),
+            "committed scripts/emit/emit-detail.json is "
+            f"'{status['state']}' relative to the README emit aggregate "
+            f"({status}); refresh emit-detail.json + emit-snapshot.json from "
+            "the CI emit-details artifact before landing emit metric claims.",
+        )
+
     def test_stale_failure_family_heading_names_public_remaining_count(self):
         detail_summary = {
             "jsPass": 13094,
@@ -239,6 +265,73 @@ after
         self.assertIn("JavaScript STALE checked-detail triage: 436 failures/timeouts", heading)
         self.assertIn("public aggregate remaining: 71", heading)
         self.assertIn("detail aggregate remaining: 436", heading)
+
+    def test_stale_failure_families_are_suppressed_by_default(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Failure-family rows are suppressed", text)
+        self.assertIn("JavaScript: public aggregate remaining 71", text)
+        self.assertIn("Declaration: public aggregate remaining 25", text)
+        self.assertIn("--include-stale-detail", text)
+        self.assertNotIn("class/private/accessor/decorator lowering", text)
+        self.assertNotIn("generic/type-display declarations", text)
+
+    def test_stale_failure_families_can_be_included_explicitly(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data, include_stale_detail=True)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("historical checked-detail triage only", text)
+        self.assertIn("class/private/accessor/decorator lowering", text)
+        self.assertIn("generic/type-display declarations", text)
 
     def test_current_failure_family_heading_keeps_plain_count(self):
         summary = {

@@ -182,6 +182,64 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Follow re-export alias chains from `start_file_idx`/`export_name` until reaching
+    /// the original non-alias declaration.
+    ///
+    /// Named re-exports (`export type { X } from './impl'`) create an alias symbol in
+    /// `module_exports` of the barrel file. `resolve_export_in_file` stops at that alias
+    /// because it prioritises `module_exports` over the `reexports` table. This helper
+    /// advances hop-by-hop: when the resolved symbol has `import_module` set it is itself
+    /// a re-export alias, so we follow to the next target file/name until `import_module`
+    /// is `None`. Cycles are detected via a `(file_idx, sym_id)` guard; the chain is
+    /// bounded to 32 hops.
+    pub(crate) fn resolve_reexport_chain_to_declaration(
+        &self,
+        start_file_idx: usize,
+        export_name: &str,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let mut current_file = start_file_idx;
+        let mut current_name = export_name.to_owned();
+        let mut chain_visited: rustc_hash::FxHashSet<(usize, u32)> =
+            rustc_hash::FxHashSet::default();
+        for _ in 0..32 {
+            let mut visited = rustc_hash::FxHashSet::default();
+            let (sym_id, actual_file) =
+                self.resolve_export_in_file(current_file, &current_name, &mut visited)?;
+            if !chain_visited.insert((actual_file, sym_id.0)) {
+                return None;
+            }
+            let next_hop = self
+                .ctx
+                .get_binder_for_file(actual_file)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .and_then(|sym| {
+                    sym.import_module.as_ref().map(|m| {
+                        let next_name = sym
+                            .import_name
+                            .clone()
+                            .unwrap_or_else(|| current_name.clone());
+                        let decl_file = if sym.decl_file_idx == u32::MAX {
+                            actual_file
+                        } else {
+                            sym.decl_file_idx as usize
+                        };
+                        (m.clone(), next_name, decl_file)
+                    })
+                });
+            match next_hop {
+                None => return Some((sym_id, actual_file)),
+                Some((next_mod, next_name, decl_file)) => {
+                    let next_file = self
+                        .ctx
+                        .resolve_import_target_from_file(decl_file, &next_mod)?;
+                    current_file = next_file;
+                    current_name = next_name;
+                }
+            }
+        }
+        None
+    }
+
     /// Collect all symbols reachable through re-export chains into the given `SymbolTable`.
     pub(super) fn collect_reexported_symbols(
         &self,

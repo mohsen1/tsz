@@ -499,6 +499,10 @@ name = "tuple_arity_elaboration_tests"
 path = "tests/tuple_arity_elaboration_tests.rs"
 
 [[test]]
+name = "conditional_alias_source_display_tests"
+path = "tests/conditional_alias_source_display_tests.rs"
+
+[[test]]
 name = "readonly_tuple_to_array_constraint_tests"
 path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 
@@ -2068,3 +2072,15 @@ path = "tests/type_only_import_value_use_attribution_tests.rs"
 [[test]]
 name = "distributive_callable_branch_tests"
 path = "tests/distributive_callable_branch_tests.rs"
+
+[[test]]
+name = "ts2315_imported_generic_tests"
+path = "tests/ts2315_imported_generic_tests.rs"
+
+[[test]]
+name = "type_guard_mutable_field_probe_tests"
+path = "tests/type_guard_mutable_field_probe_tests.rs"
+
+[[test]]
+name = "index_signature_type_check_probe_tests"
+path = "tests/index_signature_type_check_probe_tests.rs"

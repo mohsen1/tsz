@@ -1551,6 +1551,23 @@ impl<'a> TypeFormatter<'a> {
                     ))
                 || (self.skip_application_alias_names
                     && self.display_alias_application_base_has_conditional_body(alias_origin))
+                // A conditional-bodied type alias loses its name in `tsc`
+                // diagnostics once the conditional reduces to a concrete type:
+                // `Tail<Src>` displays as the resolved `[number, string]`, not
+                // `Tail<Src>`, independent of whether the argument was spelled
+                // inline or via a named alias. A still-deferred result keeps the
+                // alias (e.g. an unreduced generic `Tail<T>` whose `key` is a
+                // `Conditional`/`IndexAccess`/`Mapped`). The provenance record
+                // is left intact so the conditional evaluator can still recover
+                // the application form (the `Equal<X, Y>` `any`-distinction
+                // trick depends on it); only this display read is gated.
+                || (self.display_alias_application_base_has_conditional_body(alias_origin)
+                    && !matches!(
+                        &key,
+                        TypeData::Conditional(_)
+                            | TypeData::IndexAccess(_, _)
+                            | TypeData::Mapped(_)
+                    ))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type
