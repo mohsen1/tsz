@@ -633,26 +633,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Find the arena that owns this alias's declarations. Prefer the
-            // per-symbol override if registered; otherwise resolve via the
-            // owning file index (cross-binder alias case).
-            let arena = self
-                .ctx
-                .binder
-                .symbol_arenas
-                .get(&alias_sym_id)
-                .map(|arc| &**arc)
-                .or_else(|| {
-                    self.ctx
-                        .resolve_symbol_file_index(alias_sym_id)
-                        .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
-                })
-                .unwrap_or(self.ctx.arena);
-
             for &decl in &symbol.declarations {
                 if decl.is_none() {
                     continue;
                 }
+                // Resolve the arena that owns *this* declaration of the alias —
+                // the file where the alias is declared, not the file its import
+                // resolves to — so the `type` marker walk reads the correct
+                // file's nodes (avoids cross-binder declaration-root collisions).
+                let arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(alias_sym_id, decl, self.ctx.arena);
                 if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
                     return Some(kind);
                 }
@@ -883,23 +875,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let arena = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(|arc| &**arc)
-            .or_else(|| {
-                self.ctx
-                    .resolve_symbol_file_index(sym_id)
-                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
-            })
-            .unwrap_or(self.ctx.arena);
-
         for &decl in &symbol.declarations {
             if decl.is_none() {
                 continue;
             }
+            // A symbol's declaration nodes index into the file where the symbol
+            // is *declared*, not the file an import alias resolves to. Resolve
+            // the owning arena per declaration so the `type` marker walk reads
+            // the importing file's `import type { … }` clause rather than an
+            // unrelated node in the alias-target file.
+            let arena = self
+                .ctx
+                .binder
+                .arena_for_declaration_or(sym_id, decl, self.ctx.arena);
             if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
                 return Some(kind);
             }
@@ -991,16 +979,15 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            let decl_arena = target_binder
-                .symbol_arenas
-                .get(&current_sym_id)
-                .map(|arc| &**arc)
-                .unwrap_or(target_arena);
-
             for &decl in &sym.declarations {
                 if decl.is_none() {
                     continue;
                 }
+                // Resolve the arena owning *this* declaration of the export
+                // symbol within the target module, not a symbol-wide default,
+                // so the marker walk reads the file that actually declares it.
+                let decl_arena =
+                    target_binder.arena_for_declaration_or(current_sym_id, decl, target_arena);
                 if let Some(kind) = Self::find_direct_type_only_marker(decl_arena, decl) {
                     return Some(kind);
                 }
