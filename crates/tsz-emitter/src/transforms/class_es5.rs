@@ -175,6 +175,7 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_module_kind(options.module);
         self.transformer
             .set_downlevel_iteration(options.downlevel_iteration);
+        self.transformer.set_target_es5(options.target.is_es5());
         self.printer_options = Some(options);
     }
 

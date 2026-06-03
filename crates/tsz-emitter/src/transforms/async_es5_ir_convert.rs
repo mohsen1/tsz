@@ -684,6 +684,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
             transformer.downlevel_iteration = self.downlevel_iteration;
             transformer.module_kind = self.module_kind;
+            transformer.target_es5 = self.target_es5;
             transformer.set_catch_binding_ordinals(self.catch_binding_ordinals.borrow().clone());
             let ir = transformer.transform_async_function_expression(idx);
             self.set_catch_binding_ordinals(transformer.take_catch_binding_ordinals());
@@ -701,6 +702,7 @@ impl<'a> AsyncES5Transformer<'a> {
             if let Some(text) = self.source_text {
                 transformer.set_source_text(text);
             }
+            transformer.target_es5 = self.target_es5;
             let inner = transformer.transform_async_generator_inner_function(
                 name.as_ref().map(|name| format!("{name}_1")),
                 &func.parameters.nodes,
@@ -836,6 +838,7 @@ impl<'a> AsyncES5Transformer<'a> {
             transformer.set_temp_var_counter(self.temp_var_counter());
             transformer.downlevel_iteration = self.downlevel_iteration;
             transformer.set_module_kind(self.module_kind);
+            transformer.set_target_es5(self.target_es5);
             transformer
                 .dynamic_import_promise_counter
                 .set(self.dynamic_import_promise_counter.get());
@@ -1204,14 +1207,26 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     fn dynamic_import_cjs_branch(&self, specifier: &str) -> String {
-        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
+        if self.target_es5 {
+            format!(
+                "Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})"
+            )
+        } else {
+            format!("Promise.resolve().then(() => __importStar(require({specifier})))")
+        }
     }
 
     fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
         let id = self.dynamic_import_promise_counter.get();
         self.dynamic_import_promise_counter.set(id + 1);
-        format!(
-            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
-        )
+        if self.target_es5 {
+            format!(
+                "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+            )
+        } else {
+            format!(
+                "new Promise((resolve_{id}, reject_{id}) => {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+            )
+        }
     }
 }

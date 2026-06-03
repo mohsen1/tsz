@@ -157,6 +157,9 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) class_super_is_static: bool,
     /// Module kind for dynamic `import()` lowering inside generator bodies.
     pub(super) module_kind: ModuleKind,
+    /// Whether the emit target is ES5. Controls arrow-vs-`function` form in
+    /// dynamic-import lowering inside async generator bodies.
+    pub(super) target_es5: bool,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
     pub(in crate::transforms) dynamic_import_promise_counter: Cell<u32>,
     /// Active async-lowered loop labels and the generator label that implements
@@ -202,6 +205,7 @@ impl<'a> AsyncES5Transformer<'a> {
             class_super_name: "_super".to_string(),
             class_super_is_static: false,
             module_kind: ModuleKind::None,
+            target_es5: false,
             dynamic_import_promise_counter: Cell::new(1),
             labeled_continue_targets: Vec::new(),
             labeled_break_targets: Vec::new(),
@@ -3549,6 +3553,8 @@ impl<'a> AsyncES5Transformer<'a> {
         current_statements: &mut Vec<IRNode>,
     ) -> bool {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_target_es5(self.target_es5);
         if let Some(source_text) = self.source_text {
             class_transformer.set_source_text(source_text);
         }
@@ -3627,6 +3633,8 @@ impl<'a> AsyncES5Transformer<'a> {
         class_name: &str,
     ) -> Option<ES5ClassFactoryParts> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_target_es5(self.target_es5);
         let class_ir =
             class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
@@ -3682,10 +3690,6 @@ impl<'a> AsyncES5Transformer<'a> {
             idx = paren.expression;
         }
     }
-
-    // =========================================================================
-    // Control flow statement processing for async state machine
-    // =========================================================================
 
     /// Process an if statement inside an async function body.
     ///

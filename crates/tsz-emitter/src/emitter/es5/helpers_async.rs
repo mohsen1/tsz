@@ -507,6 +507,7 @@ impl<'a> Printer<'a> {
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
             async_emitter.set_module_kind(self.ctx.outer_module_kind());
+            async_emitter.set_target_es5(self.ctx.target_es5);
             async_emitter.set_dynamic_import_promise_counter(self.next_dynamic_import_promise_id);
             async_emitter
                 .set_catch_binding_ordinals(std::mem::take(&mut self.next_catch_binding_ordinals));
@@ -938,6 +939,7 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        transformer.set_target_es5(self.ctx.target_es5);
         transformer.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         transformer

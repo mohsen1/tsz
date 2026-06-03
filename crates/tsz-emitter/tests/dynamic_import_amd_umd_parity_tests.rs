@@ -468,3 +468,252 @@ fn umd_template_specifier_captured_into_temp() {
         "UMD CJS branch must wrap require() with __importStar.\nOutput:\n{out}"
     );
 }
+
+// --- Async-lowered dynamic import: ES5 target uses function(), ES2015+ uses () => ------
+//
+// When an async function is lowered to a __awaiter/__generator state machine (at targets
+// below ES2017), dynamic import() calls inside the generator body must use target-aware
+// arrow-vs-function syntax: `function()` at ES5, `() =>` at ES2015+.
+//
+// Structural rule: `AsyncES5Transformer::dynamic_import_cjs_branch` /
+// `dynamic_import_amd_branch` must key on `target_es5` (propagated from
+// `Printer::ctx.target_es5` via `AsyncES5Emitter::set_target_es5`).
+
+#[test]
+fn async_lowered_cjs_es5_uses_function_form() {
+    // At ES5, async function is lowered to __awaiter+__generator. The CJS import branch
+    // must use `function ()` (not an arrow) because ES5 has no arrow functions.
+    let out = emit(
+        "export async function f() { const r = await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains(
+            "Promise.resolve().then(function () { return __importStar(require('./s')); })"
+        ),
+        "CJS ES5 async-lowered import must use function() form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("Promise.resolve().then(() =>"),
+        "CJS ES5 must not emit arrow form in async-lowered path.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_amd_es5_uses_function_form() {
+    // At ES5, the AMD import branch uses `function (resolve_N, reject_N)`.
+    let out = emit(
+        "export async function f() { await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_1, reject_1) { require(['./s'], resolve_1, reject_1); }).then(__importStar)"),
+        "AMD ES5 async-lowered import must use function() form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise((resolve_"),
+        "AMD ES5 must not emit arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_amd_es2015_uses_arrow_form() {
+    // At ES2015 the async function is still lowered (async is ES2017), but arrow
+    // functions exist. AMD import branch must use `() =>` (arrow) form.
+    let out = emit(
+        "export async function f() { await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_1, reject_1) => { require(['./s'], resolve_1, reject_1); }).then(__importStar)"),
+        "AMD ES2015 async-lowered import must use arrow form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise(function ("),
+        "AMD ES2015 must not emit function() form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_umd_es5_uses_function_form_in_both_branches() {
+    // UMD at ES5: both CJS and AMD branches in the conditional use function().
+    let out = emit(
+        "export async function f() { await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::UMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains(
+            "Promise.resolve().then(function () { return __importStar(require('./s')); })"
+        ),
+        "UMD ES5 CJS branch must use function() form.\nOutput:\n{out}"
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_1, reject_1) { require(['./s'], resolve_1, reject_1); }).then(__importStar)"),
+        "UMD ES5 AMD branch must use function() form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_umd_es2015_uses_arrow_form_in_both_branches() {
+    // UMD at ES2015: async is still lowered but arrows exist; both branches use () =>.
+    let out = emit(
+        "export async function f() { await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::UMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("Promise.resolve().then(() => __importStar(require('./s')))"),
+        "UMD ES2015 CJS branch must use arrow form.\nOutput:\n{out}"
+    );
+    assert!(
+        out.contains("new Promise((resolve_1, reject_1) => { require(['./s'], resolve_1, reject_1); }).then(__importStar)"),
+        "UMD ES2015 AMD branch must use arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_amd_es2016_uses_arrow_form() {
+    // ES2016 (ES7): async is still lowered, arrows exist. Identical rule to ES2015.
+    let out = emit(
+        "export async function f() { await import('./s'); }",
+        PrintOptions {
+            target: ScriptTarget::ES2016,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_1, reject_1) => { require(['./s'], resolve_1, reject_1); }).then(__importStar)"),
+        "AMD ES2016 async-lowered import must use arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn async_lowered_arrow_form_rule_is_structural_not_name_sensitive() {
+    // Renaming the binding must not change the arrow-vs-function decision.
+    let out = emit(
+        "export async function loader() { const modHandle = await import('./widgets'); }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_1, reject_1) => { require(['./widgets'], resolve_1, reject_1); }).then(__importStar)"),
+        "Renamed binding must not change arrow form at ES2015.\nOutput:\n{out}"
+    );
+}
+
+// --- Nested-class propagation: target_es5 must reach ES5ClassTransformer in embedded paths ---
+//
+// When a class with an async method lives *inside* an async function body or a namespace,
+// the `ES5ClassTransformer` is constructed by `AsyncES5Transformer::lower_class_declaration_to_assignment`,
+// `AsyncES5Transformer::es5_class_factory`, `AstToIr::convert_class_declaration`, or the
+// namespace transformer — all of which previously omitted `set_target_es5`. The structural rule
+// is identical to the top-level case: ES5 target → function() callbacks; ES2015+ → arrow callbacks.
+
+#[test]
+fn nested_class_async_method_amd_es5_uses_function_form() {
+    // Class declaration inside an async function body: the class transformer is created
+    // by AsyncES5Transformer::lower_class_declaration_to_assignment and must carry target_es5.
+    let out = emit(
+        "export async function outer() { class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_"),
+        "Nested class async method at ES5 must use function() form for AMD import.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise((resolve_"),
+        "Nested class async method at ES5 must not emit arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn nested_class_async_method_amd_es2015_uses_arrow_form() {
+    // Same shape as above but at ES2015 — arrows are available, import callback must use () =>.
+    let out = emit(
+        "export async function outer() { class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_"),
+        "Nested class async method at ES2015 must use arrow form for AMD import.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise(function (resolve_"),
+        "Nested class async method at ES2015 must not emit function() form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn namespace_class_async_method_amd_es5_uses_function_form() {
+    // Class inside a namespace: the class transformer is created by NamespaceES5Transformer
+    // and must carry target_es5 from the namespace transformer.
+    let out = emit(
+        "namespace N { export class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_"),
+        "Namespace class async method at ES5 must use function() form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise((resolve_"),
+        "Namespace class async method at ES5 must not emit arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn namespace_class_async_method_amd_es2015_uses_arrow_form() {
+    // Same namespace shape at ES2015 — must use arrow form.
+    let out = emit(
+        "namespace N { export class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_"),
+        "Namespace class async method at ES2015 must use arrow form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise(function (resolve_"),
+        "Namespace class async method at ES2015 must not emit function() form.\nOutput:\n{out}"
+    );
+}

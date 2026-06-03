@@ -198,6 +198,7 @@ pub struct ES5ClassTransformer<'a> {
     tslib_import_binding: String,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
+    target_es5: bool,
     downlevel_iteration: bool,
     dynamic_import_promise_counter: Cell<u32>,
     async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
@@ -262,6 +263,7 @@ impl<'a> ES5ClassTransformer<'a> {
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
+            target_es5: false,
             downlevel_iteration: false,
             dynamic_import_promise_counter: Cell::new(1),
             async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
@@ -332,6 +334,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
         self.module_kind = module_kind;
+    }
+
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.target_es5 = es5;
     }
 
     pub const fn set_downlevel_iteration(&mut self, downlevel_iteration: bool) {
@@ -827,6 +833,7 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_class_transformer_indent_base(self.indent_base + 2)
             .with_downlevel_iteration(self.downlevel_iteration)
             .with_module_kind(self.module_kind)
+            .with_target_es5(self.target_es5)
             .with_private_field_maps(&self.private_fields, &self.private_accessors);
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);

@@ -369,6 +369,7 @@ impl<'a> ES5ClassTransformer<'a> {
             async_transformer.set_source_text(source_text);
         }
         async_transformer.set_module_kind(self.module_kind);
+        async_transformer.set_target_es5(self.target_es5);
         async_transformer
             .dynamic_import_promise_counter
             .set(self.dynamic_import_promise_counter.get());

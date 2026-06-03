@@ -66,6 +66,7 @@ pub struct AstToIr<'a> {
     dynamic_import_promise_counter: Cell<u32>,
     /// Original module kind when this converter runs inside a module wrapper.
     module_kind: ModuleKind,
+    target_es5: bool,
     /// Static block recovery mode where bare `await` identifiers are emitted
     /// as recovered `yield` tokens, matching `tsc` downlevel emit.
     emit_await_as_yield: bool,
@@ -112,6 +113,7 @@ impl<'a> AstToIr<'a> {
             hoisted_temps: RefCell::new(Vec::new()),
             dynamic_import_promise_counter: Cell::new(1),
             module_kind: ModuleKind::None,
+            target_es5: false,
             emit_await_as_yield: false,
             trailing_comment_limit: Cell::new(None),
             disposable_env_counter: Cell::new(1),
@@ -219,6 +221,11 @@ impl<'a> AstToIr<'a> {
 
     pub const fn with_module_kind(mut self, module_kind: ModuleKind) -> Self {
         self.module_kind = module_kind;
+        self
+    }
+
+    pub const fn with_target_es5(mut self, es5: bool) -> Self {
+        self.target_es5 = es5;
         self
     }
 
@@ -817,6 +824,7 @@ impl<'a> AstToIr<'a> {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
             transformer.set_module_kind(self.module_kind);
+            transformer.set_target_es5(self.target_es5);
             transformer
                 .dynamic_import_promise_counter
                 .set(self.dynamic_import_promise_counter.get());
@@ -1645,6 +1653,7 @@ impl<'a> AstToIr<'a> {
         let mut transformer = AsyncES5Transformer::new(self.arena);
         transformer.set_temp_var_counter(self.temp_var_counter.get());
         transformer.set_module_kind(self.module_kind);
+        transformer.set_target_es5(self.target_es5);
         transformer
             .dynamic_import_promise_counter
             .set(self.dynamic_import_promise_counter.get());

@@ -120,6 +120,7 @@ impl<'a> ES5ClassTransformer<'a> {
             transformer.set_source_text(source_text);
         }
         transformer.set_module_kind(self.module_kind);
+        transformer.set_target_es5(self.target_es5);
         self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
@@ -148,6 +149,7 @@ impl<'a> ES5ClassTransformer<'a> {
             transformer.set_source_text(source_text);
         }
         transformer.set_module_kind(self.module_kind);
+        transformer.set_target_es5(self.target_es5);
         self.configure_async_disposable_context(&mut transformer);
         transformer.generator_mode = true;
         let has_yield = transformer.body_contains_await(body);
@@ -590,6 +592,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 async_transformer.set_source_text(source_text);
             }
             async_transformer.set_module_kind(self.module_kind);
+            async_transformer.set_target_es5(self.target_es5);
             async_transformer
                 .dynamic_import_promise_counter
                 .set(self.dynamic_import_promise_counter.get());
@@ -801,6 +804,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             async_transformer.set_source_text(source_text);
                         }
                         async_transformer.set_module_kind(self.module_kind);
+                        async_transformer.set_target_es5(self.target_es5);
                         async_transformer
                             .dynamic_import_promise_counter
                             .set(self.dynamic_import_promise_counter.get());
@@ -954,6 +958,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             async_transformer.set_source_text(source_text);
                         }
                         async_transformer.set_module_kind(self.module_kind);
+                        async_transformer.set_target_es5(self.target_es5);
                         async_transformer
                             .dynamic_import_promise_counter
                             .set(self.dynamic_import_promise_counter.get());
