@@ -15,9 +15,11 @@
 //   1. The resolved project file list (the recursive `include`/`exclude`
 //      directory walk done by TypeScript's `parseJsonConfigFileContent`).
 //      Invalidated by the tsconfig's own `(mtime_ns, size)` and by the
-//      `mtime_ns` of every directory that spans the resolved files, so a file
-//      added/removed/renamed anywhere in the tree re-triggers discovery while
-//      an unchanged tree skips loading TypeScript entirely.
+//      `mtime_ns` of every directory in the tree TypeScript watches for this
+//      config (its `wildcardDirectories`, expanded recursively), so a file
+//      added/removed/renamed anywhere in the watched tree — including under a
+//      previously empty included directory — re-triggers discovery, while an
+//      unchanged tree skips loading TypeScript and re-globbing entirely.
 //   2. Per-file line counts, invalidated per file by `(mtime_ns, size)`.
 
 import fs from "node:fs";
@@ -207,6 +209,19 @@ function loadTypeScript() {
   throw new Error("Unable to load the TypeScript package for tsconfig parsing");
 }
 
+// TypeScript's `WatchDirectoryFlags.Recursive`. `parseJsonConfigFileContent`
+// reports each `include`-derived wildcard directory with this flag set when the
+// glob descends into subdirectories (e.g. `"src"` or `"src/**"`); a flat glob
+// like `"src/*.ts"` reports the directory with no recursive flag.
+const TS_WATCH_DIRECTORY_RECURSIVE = 1;
+
+// Resolve the project file list AND the directories TypeScript watches for this
+// config. The watched directories (TypeScript's `wildcardDirectories`) are what
+// determine when the file list can change: a file added/removed under a watched
+// directory alters the result even when no currently resolved file lives there
+// (e.g. a previously empty included directory). Returning them lets the cache
+// invalidate correctly instead of inferring directories from resolved files
+// only.
 export function resolveTsconfigFiles(tsconfigAbsolutePath) {
   const ts = loadTypeScript();
   const config = ts.readConfigFile(tsconfigAbsolutePath, ts.sys.readFile);
@@ -220,10 +235,14 @@ export function resolveTsconfigFiles(tsconfigAbsolutePath) {
     {},
     tsconfigAbsolutePath,
   );
-  return [...new Set(parsed.fileNames)]
+  const files = [...new Set(parsed.fileNames)]
     .filter(isTypeScriptFile)
     .filter(isLocalProjectFile)
     .sort();
+  const watchDirectories = Object.entries(parsed.wildcardDirectories ?? {}).map(
+    ([dir, flag]) => ({ dir, recursive: flag === TS_WATCH_DIRECTORY_RECURSIVE }),
+  );
+  return { files, watchDirectories };
 }
 
 export function resolveCachePath(tsconfigAbsolutePath) {
@@ -232,40 +251,59 @@ export function resolveCachePath(tsconfigAbsolutePath) {
   return path.join(cacheDir, cacheKeyForTsconfig(tsconfigAbsolutePath) + ".json");
 }
 
-// True when `child` is `parent` itself or nested somewhere beneath it. Uses a
-// relative-path probe so it is robust to mixed separators and trailing
-// slashes without touching the filesystem.
-function isPathUnder(child, parent) {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+function isExcludedDirectory(dirPath) {
+  const normalized = dirPath.split(path.sep).join("/") + "/";
+  return EXCLUDED_PATH_SEGMENTS.some((segment) => normalized.includes(segment));
 }
 
-// The set of directories whose `mtime` governs whether the resolved file list
-// is still current: the parent directory of every file, plus — for files that
-// live under the tsconfig directory — every intermediate directory up to and
-// including the tsconfig directory. A file added, removed, or renamed in any
-// of these directories bumps that directory's `mtime`, which lets us detect a
-// stale file list without re-walking the tree. Returned sorted for stable
-// cache contents.
-export function contributingDirectories(files, rootDir) {
-  const root = path.resolve(rootDir);
+// Expand the resolver's watched directories into the full set of directories
+// whose `mtime` must be fingerprinted to detect a changed file list.
+//
+// A directory's `mtime` only advances when an entry is added, removed, or
+// renamed directly inside it — not when a descendant changes. So a recursive
+// watch (TypeScript descends into subdirectories) must contribute every
+// existing directory in its subtree, otherwise a file added under a previously
+// empty subdirectory would go unnoticed. A non-recursive watch contributes only
+// the watched directory itself. `node_modules`/`.next` subtrees are skipped to
+// match the project-file filter. Returned sorted for stable cache contents.
+export function expandWatchedDirectories(watchDirectories) {
   const dirs = new Set();
-  for (const file of files) {
-    let dir = path.dirname(path.resolve(file));
-    dirs.add(dir);
-    // Walk up to `root` for in-tree files; `root` itself is added by the loop
-    // when descending from a deeper file, or by the `dirs.add(dir)` above when
-    // the file sits directly in it.
-    if (isPathUnder(dir, root)) {
-      while (dir !== root) {
-        const parent = path.dirname(dir);
-        if (parent === dir) break; // reached the filesystem root
-        dir = parent;
-        dirs.add(dir);
+  for (const { dir, recursive } of watchDirectories ?? []) {
+    const root = path.resolve(dir);
+    if (!recursive) {
+      dirs.add(root);
+      continue;
+    }
+    const stack = [root];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (dirs.has(current)) continue;
+      let entries;
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        // A vanished/unreadable directory is simply not tracked; if it had been
+        // recorded previously its absence surfaces as a fingerprint mismatch.
+        continue;
+      }
+      dirs.add(current);
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const child = path.join(current, entry.name);
+        if (!isExcludedDirectory(child)) stack.push(child);
       }
     }
   }
   return [...dirs].sort();
+}
+
+function fingerprintsMatch(a, b) {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
 }
 
 // Stat every directory in `dirs` and return a `{ dir: mtimeNs }` map, or `null`
@@ -299,11 +337,18 @@ function tsconfigStatKey(tsconfigAbsolutePath) {
 
 // True when the cached file list is still valid: the tsconfig's own
 // `(mtimeNs, size)` is unchanged (catches `include`/`exclude`/config edits) and
-// every recorded directory `mtime` is unchanged (catches file additions,
-// removals, and renames anywhere the file list spans).
+// re-fingerprinting the recorded watched directories yields an identical map
+// (catches file additions, removals, renames, and new/removed subdirectories
+// anywhere the watched tree spans, including previously empty directories).
 export function fileListCacheValid(cache, tsconfigAbsolutePath) {
   const fileList = cache && cache.fileList;
-  if (!fileList || !fileList.tsconfig || !fileList.dirs || !Array.isArray(fileList.files)) {
+  if (
+    !fileList ||
+    !fileList.tsconfig ||
+    !fileList.dirs ||
+    !Array.isArray(fileList.files) ||
+    !Array.isArray(fileList.watch)
+  ) {
     return false;
   }
   const tsconfigStat = tsconfigStatKey(tsconfigAbsolutePath);
@@ -314,22 +359,20 @@ export function fileListCacheValid(cache, tsconfigAbsolutePath) {
   ) {
     return false;
   }
-  // Re-stat the recorded directories through the same helper used to build the
-  // fingerprint, so the stat-and-compare logic lives in exactly one place.
-  const current = directoryFingerprint(Object.keys(fileList.dirs));
-  if (current === null) return false;
-  for (const [dir, mtimeNs] of Object.entries(fileList.dirs)) {
-    if (current[dir] !== mtimeNs) return false;
-  }
-  return true;
+  // Re-expand and re-stat the watched directories. Expanding from the recorded
+  // watch roots rediscovers any newly created subdirectory; comparing the full
+  // map then catches both mtime changes and added/removed directories.
+  const current = directoryFingerprint(expandWatchedDirectories(fileList.watch));
+  return current !== null && fingerprintsMatch(fileList.dirs, current);
 }
 
 // Resolve the project file list, reusing a cached list when the tsconfig and
-// the directories spanning the project are unchanged. On a cache hit this
-// skips loading TypeScript and re-walking the source tree entirely; on a miss
-// it records a fresh fingerprint and sets `cache.fileListDirty` so the caller
-// persists the updated cache. `resolve` is injectable for tests so the file
-// discovery can be exercised without the TypeScript package installed.
+// the watched directory tree are unchanged. On a cache hit this skips loading
+// TypeScript and re-globbing the source tree (only a directory-only walk runs);
+// on a miss it records a fresh fingerprint and sets `cache.fileListDirty` so
+// the caller persists the updated cache. `resolve` is injectable for tests so
+// file discovery can be exercised without the TypeScript package installed; it
+// returns `{ files, watchDirectories }`.
 export function resolveTsconfigFilesCached(tsconfigAbsolutePath, { cache, resolve } = {}) {
   const resolveFiles = resolve ?? resolveTsconfigFiles;
   if (cache && fileListCacheValid(cache, tsconfigAbsolutePath)) {
@@ -337,15 +380,20 @@ export function resolveTsconfigFilesCached(tsconfigAbsolutePath, { cache, resolv
     return cache.fileList.files.slice();
   }
 
-  const files = resolveFiles(tsconfigAbsolutePath);
+  const { files, watchDirectories = [] } = resolveFiles(tsconfigAbsolutePath);
   if (cache) {
-    const rootDir = path.dirname(path.resolve(tsconfigAbsolutePath));
-    const dirFingerprint = directoryFingerprint(contributingDirectories(files, rootDir));
-    // Null when the tsconfig vanished mid-resolve; without it the list cannot
-    // be cached safely, so fall through to `delete cache.fileList`.
+    const dirFingerprint = directoryFingerprint(expandWatchedDirectories(watchDirectories));
+    // Null when a watched directory or the tsconfig vanished mid-resolve;
+    // without a complete fingerprint the list cannot be cached safely, so fall
+    // through to `delete cache.fileList`.
     const tsconfigStat = tsconfigStatKey(tsconfigAbsolutePath);
     if (dirFingerprint && tsconfigStat) {
-      cache.fileList = { tsconfig: tsconfigStat, dirs: dirFingerprint, files: files.slice() };
+      cache.fileList = {
+        tsconfig: tsconfigStat,
+        watch: watchDirectories,
+        dirs: dirFingerprint,
+        files: files.slice(),
+      };
     } else {
       delete cache.fileList;
     }

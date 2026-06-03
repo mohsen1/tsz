@@ -21,8 +21,8 @@ import {
   aggregateProjectStats,
   cacheKeyForTsconfig,
   computeProjectFileStats,
-  contributingDirectories,
   countNewlinesStream,
+  expandWatchedDirectories,
   isLocalProjectFile,
   isTypeScriptFile,
   loadStatsCache,
@@ -210,33 +210,36 @@ assert.equal(
 }
 
 // --------------------------------------------------------------------------
-// contributingDirectories: parent dirs plus ancestors up to the tsconfig dir.
+// expandWatchedDirectories: recursive watches contribute every existing
+// subdirectory (including empty ones); non-recursive watches contribute only
+// the watched directory; node_modules subtrees are skipped.
 
 {
-  const root = path.join(path.sep, "proj");
-  const dirs = contributingDirectories(
-    [
-      path.join(root, "src", "a.ts"),
-      path.join(root, "src", "nested", "deep", "b.ts"),
-      path.join(root, "lib", "c.ts"),
-    ],
-    root,
-  );
-  for (const expected of [
-    root,
-    path.join(root, "src"),
-    path.join(root, "src", "nested"),
-    path.join(root, "src", "nested", "deep"),
-    path.join(root, "lib"),
-  ]) {
-    assert.ok(dirs.includes(expected), `expected ${expected} in contributing dirs`);
-  }
+  const dir = makeTempDir("tsz-stats-watchdirs-");
+  try {
+    const srcDir = path.join(dir, "src");
+    writeFile(srcDir, "a.ts", "alpha\n");
+    fs.mkdirSync(path.join(srcDir, "empty"), { recursive: true });
+    writeFile(path.join(srcDir, "nested"), "b.ts", "beta\n");
+    writeFile(path.join(dir, "node_modules", "pkg"), "leak.ts", "leak\n");
 
-  // Files outside the tsconfig directory contribute their parent directory but
-  // do not pull in the (unrelated) tsconfig-dir ancestor chain.
-  const outsideDirs = contributingDirectories([path.join(path.sep, "other", "x.ts")], root);
-  assert.ok(outsideDirs.includes(path.join(path.sep, "other")));
-  assert.ok(!outsideDirs.includes(root), "out-of-tree files do not track the tsconfig dir");
+    const recursive = expandWatchedDirectories([{ dir: srcDir, recursive: true }]);
+    assert.ok(recursive.includes(srcDir));
+    assert.ok(
+      recursive.includes(path.join(srcDir, "empty")),
+      "recursive watch tracks a currently empty included directory",
+    );
+    assert.ok(recursive.includes(path.join(srcDir, "nested")));
+    assert.ok(
+      !recursive.some((d) => d.split(path.sep).join("/").includes("/node_modules/")),
+      "node_modules subtrees are excluded from the watched directory set",
+    );
+
+    const flat = expandWatchedDirectories([{ dir: srcDir, recursive: false }]);
+    assert.deepEqual(flat, [srcDir], "a non-recursive watch tracks only the watched directory");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -250,12 +253,13 @@ assert.equal(
     const fileA = writeFile(srcDir, "a.ts", "alpha\n");
     const fileB = writeFile(srcDir, "b.ts", "beta\n");
     const tsconfig = writeFile(dir, "tsconfig.json", JSON.stringify({ include: ["src"] }));
+    const watchDirectories = [{ dir: srcDir, recursive: true }];
 
     let resolveCalls = 0;
     let currentFiles = [fileA, fileB];
     const resolve = () => {
       resolveCalls += 1;
-      return currentFiles.slice().sort();
+      return { files: currentFiles.slice().sort(), watchDirectories };
     };
 
     const cache = { entries: {} };
@@ -289,11 +293,39 @@ assert.equal(
     resolveTsconfigFilesCached(tsconfig, { cache, resolve });
     assert.equal(resolveCalls, 2, "the refreshed file list is reused while the tree is stable");
 
+    // Regression (review #12277): a file added under a previously EMPTY included
+    // subdirectory must invalidate the cache even though no resolved file lived
+    // there. The recursive watch tracks `src/empty`, so writing into it bumps a
+    // fingerprinted directory.
+    const emptyDir = path.join(srcDir, "empty");
+    fs.mkdirSync(emptyDir, { recursive: true });
+    // Re-resolve so the (now-tracked) empty directory is part of the fingerprint.
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    const resolveCallsBeforeEmptyAdd = resolveCalls;
+    const beforeEmptyMtime = statFileEntry(emptyDir).mtimeNs;
+    let fileD;
+    let emptyCounter = 0;
+    do {
+      fileD = writeFile(emptyDir, `d${emptyCounter++}.ts`, "delta\n");
+    } while (statFileEntry(emptyDir).mtimeNs === beforeEmptyMtime);
+    currentFiles = [fileA, fileB, fileC, fileD];
+    resolveTsconfigFilesCached(tsconfig, { cache, resolve });
+    assert.equal(
+      resolveCalls,
+      resolveCallsBeforeEmptyAdd + 1,
+      "a file added under a previously empty included directory re-resolves the list",
+    );
+
     // Editing the tsconfig (its size changes here) re-resolves even when the
     // source tree is otherwise unchanged, since include/exclude may differ.
     fs.writeFileSync(tsconfig, JSON.stringify({ include: ["src", "lib"] }));
+    const resolveCallsBeforeTsconfigEdit = resolveCalls;
     resolveTsconfigFilesCached(tsconfig, { cache, resolve });
-    assert.equal(resolveCalls, 3, "editing the tsconfig re-resolves the file list");
+    assert.equal(
+      resolveCalls,
+      resolveCallsBeforeTsconfigEdit + 1,
+      "editing the tsconfig re-resolves the file list",
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -320,7 +352,7 @@ assert.equal(
     let resolveCalls = 0;
     const resolve = () => {
       resolveCalls += 1;
-      return [fileA, fileB];
+      return { files: [fileA, fileB], watchDirectories: [{ dir: srcDir, recursive: true }] };
     };
 
     const first = computeProjectFileStats(tsconfig, { resolve });
