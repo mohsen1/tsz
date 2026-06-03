@@ -2032,3 +2032,7 @@ path = "tests/import_meta_module_support_diagnostics_tests.rs"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "type_only_import_value_use_attribution_tests"
+path = "tests/type_only_import_value_use_attribution_tests.rs"
