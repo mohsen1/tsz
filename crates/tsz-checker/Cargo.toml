@@ -1991,6 +1991,10 @@ name = "type_literal_method_overload_tests"
 path = "tests/type_literal_method_overload_tests.rs"
 
 [[test]]
+name = "type_alias_signature_body_validation_tests"
+path = "tests/type_alias_signature_body_validation_tests.rs"
+
+[[test]]
 name = "overload_modifier_tests"
 path = "tests/overload_modifier_tests.rs"
 
