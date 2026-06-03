@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -49,7 +48,6 @@ use super::resolution::{
 };
 use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file, is_ts_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
-use rustc_hash::FxHasher;
 #[cfg(test)]
 use std::cell::RefCell;
 use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
@@ -1518,6 +1516,26 @@ fn compile_inner(
         &base_dir,
         resolved.printer.target,
     );
+
+    if let Some(result) =
+        config_deprecation::maybe_compile_no_emit_deprecation(NoEmitDeprecationInput {
+            args,
+            resolved: &resolved,
+            has_deprecation_diagnostics,
+            sources: &sources,
+            config_diagnostics: &config_diagnostics,
+            binary_file_diagnostics: &binary_file_diagnostics,
+            binary_file_names_to_suppress: &binary_file_names_to_suppress,
+            type_file_diagnostics: &type_file_diagnostics,
+            user_files_read: &user_files_read,
+            file_infos: &file_infos,
+            io_read_duration,
+            compile_start,
+            perf_log_phase: &perf_log_phase,
+        })
+    {
+        return Ok(result);
+    }
 
     if resolved.no_check && resolved.no_emit && !resolved.emit_declarations {
         let parse_start = Instant::now();
@@ -3111,13 +3129,6 @@ fn update_import_symbol_ids(
     cache.star_export_dependencies = star_export_dependencies;
 }
 
-fn hash_text_with_language_version(text: &str, language_version: ScriptTarget) -> u64 {
-    let mut hasher = FxHasher::default();
-    text.hash(&mut hasher);
-    language_version.ts_numeric_value().hash(&mut hasher);
-    hasher.finish()
-}
-
 #[path = "sources.rs"]
 mod sources;
 pub use sources::{FileReadResult, find_tsconfig, read_source_file};
@@ -3127,8 +3138,8 @@ pub(crate) use sources::{
 };
 use sources::{
     SourceEntry, SourceModuleResolution, SourceModuleResolutionKey, SourceReadResult,
-    build_discovery_options, collect_type_root_files, read_source_files,
-    sources_have_no_default_lib,
+    build_discovery_options, collect_type_root_files, hash_text_with_language_version,
+    read_source_files, sources_have_no_default_lib,
 };
 
 #[path = "check.rs"]
@@ -3141,6 +3152,10 @@ use check::{
     CollectDiagnosticsInput, collect_diagnostics_with_source_resolutions, load_checker_libs,
 };
 
+#[path = "config_deprecation.rs"]
+mod config_deprecation;
+use config_deprecation::NoEmitDeprecationInput;
+
 #[path = "plan.rs"]
 mod plan;
 pub use plan::apply_cli_overrides;
@@ -3152,17 +3167,17 @@ use plan::{
 };
 
 #[cfg(test)]
-#[path = "tests.rs"]
-mod tests;
-
+#[path = "config_deprecation_tests.rs"]
+mod config_deprecation_tests;
 #[cfg(test)]
 #[path = "cross_file_circular_alias_tests.rs"]
 mod cross_file_circular_alias_tests;
-
 #[cfg(test)]
 #[path = "explain_files_reason_tests.rs"]
 mod explain_files_reason_tests;
-
 #[cfg(test)]
 #[path = "core_merge_cache_tests.rs"]
 mod merge_cache_tests;
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

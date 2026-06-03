@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::fs::is_ts_file;
+use rustc_hash::FxHasher;
+use std::hash::{Hash, Hasher};
 
 /// Count how many `node_modules` segments appear in a file path.
 /// For example, `/a/node_modules/b/node_modules/c/index.js` has depth 2.
@@ -35,6 +37,13 @@ fn should_skip_js_in_node_modules(path: &Path, max_depth: u32) -> bool {
         return false;
     }
     depth > max_depth
+}
+
+pub(super) fn hash_text_with_language_version(text: &str, language_version: ScriptTarget) -> u64 {
+    let mut hasher = FxHasher::default();
+    text.hash(&mut hasher);
+    language_version.ts_numeric_value().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Result of reading a source file - either valid text or binary/unreadable
