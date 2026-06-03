@@ -248,6 +248,14 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 
+        // A conditional-bodied type alias loses its name once the conditional
+        // reduces to a concrete type (`Tail<Src>` -> `[number, string]`); render
+        // the structural form, leaving the provenance intact for the evaluator.
+        // See `reduced_conditional_alias_display_should_skip_application`.
+        if self.reduced_conditional_alias_display_should_skip_application(ty) {
+            return self.format_type_for_assignability_message_skip_application_alias(ty);
+        }
+
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias

@@ -373,4 +373,39 @@ impl<'a> CheckerState<'a> {
                 .collect(),
         )
     }
+
+    /// True when `ty` is a concrete (already-reduced) type whose display-alias
+    /// provenance points at a generic application of a conditional-bodied type
+    /// alias. `tsc` drops the alias name in this case (showing the resolved
+    /// structural form), but the provenance must stay in the interner because
+    /// the solver's conditional evaluator reads it (the `Equal<X, Y>`
+    /// `any`-distinction trick depends on it); so the caller suppresses only the
+    /// application-alias chase when rendering.
+    ///
+    /// A still-deferred `Conditional`/`IndexAccess`/`Mapped`/generic-application
+    /// `ty` is excluded: `tsc` keeps `Tail<T>` for an unreduced generic
+    /// conditional.
+    pub(in crate::error_reporter) fn reduced_conditional_alias_display_should_skip_application(
+        &self,
+        ty: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+        // Fast path: most formatted types carry no display alias, so this single
+        // map lookup short-circuits before the type-kind classification below.
+        let Some(alias) = self.ctx.types.get_display_alias(ty) else {
+            return false;
+        };
+        if common::is_conditional_type(self.ctx.types, ty)
+            || common::is_index_access_type(self.ctx.types, ty)
+            || common::is_mapped_type(self.ctx.types, ty)
+            || common::is_generic_application(self.ctx.types, ty)
+        {
+            return false;
+        }
+        crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            alias,
+        )
+    }
 }
