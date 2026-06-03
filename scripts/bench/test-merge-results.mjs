@@ -554,12 +554,7 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
   assert.equal(merged.validation.runner_signature_required, true);
-  assert.equal(merged.validation.runner_environment_warnings.length, 1);
-  assert.equal(merged.validation.runner_environment_warnings[0].file, "bench-results-b.json");
-  assert.deepEqual(
-    merged.validation.runner_environment_warnings[0].mismatched_fields,
-    ["total_memory_bytes"],
-  );
+  assert.deepEqual(merged.validation.runner_environment_warnings, []);
 });
 
 withTempDir((dir) => {
@@ -634,6 +629,47 @@ withTempDir((dir) => {
   assert.deepEqual(
     merged.validation.runner_environment_warnings[0].mismatched_fields,
     ["cpu_model"],
+  );
+});
+
+withTempDir((dir) => {
+  const localRunnerEnvironment = { ...SAMPLE_RUNNER_ENVIRONMENT };
+  delete localRunnerEnvironment.cloud_build;
+  const changedRunnerEnvironment = {
+    ...localRunnerEnvironment,
+    total_memory_bytes: 137438945280,
+  };
+  const first = writeInput(
+    dir,
+    "bench-results-a.json",
+    [projectRow("first")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: localRunnerEnvironment,
+      shard: { label: "first", filter: "first" },
+      filter: "first",
+    },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-b.json",
+    [projectRow("second")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: changedRunnerEnvironment,
+      shard: { label: "second", filter: "second" },
+      filter: "second",
+    },
+  );
+  const result = runMergeInputs(dir, [first, second], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.validation.runner_signature_required, true);
+  assert.equal(merged.validation.runner_environment_warnings.length, 1);
+  assert.equal(merged.validation.runner_environment_warnings[0].file, "bench-results-b.json");
+  assert.deepEqual(
+    merged.validation.runner_environment_warnings[0].mismatched_fields,
+    ["total_memory_bytes"],
   );
 });
 
