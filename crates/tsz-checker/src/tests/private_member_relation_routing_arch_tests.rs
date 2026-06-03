@@ -10,8 +10,15 @@ fn private_member_access_compatibility_uses_relation_outcome_boundary() {
     .expect("failed to read computed_helpers_private.rs");
 
     assert!(
-        source.matches("assign_relation_outcome(").count() >= 4,
-        "private member compatibility should route fallback relation checks through assign_relation_outcome"
+        source
+            .matches("private_member_access_relation_outcome(")
+            .count()
+            >= 4,
+        "private member compatibility should route fallback relation checks through private_member_access_relation_outcome"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome("),
+        "private member compatibility should not regress to generic assignment relation outcomes"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard("),

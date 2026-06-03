@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
             && !children_type_is_originally_compound
             && !self.type_requires_multiple_children(children_type)
             && !self
-                .assign_relation_outcome(synthesized_children_type, precise_children_type)
+                .jsx_children_relation_outcome(synthesized_children_type, precise_children_type)
                 .related
         {
             children_type = precise_children_type;
@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
                             self.raw_single_jsx_zero_param_callback_type(attributes_idx)
                         && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
                         && !self
-                            .assign_relation_outcome(raw_zero_param_child_type, children_type)
+                            .jsx_children_relation_outcome(raw_zero_param_child_type, children_type)
                             .related
                     {
                         self.check_jsx_single_child_assignable(
@@ -550,7 +550,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.assign_relation_outcome(actual_child_type, children_type)
+        self.jsx_children_relation_outcome(actual_child_type, children_type)
             .related
     }
 
@@ -1177,7 +1177,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
-        self.assign_relation_outcome(TypeId::STRING, children_type)
+        self.jsx_children_relation_outcome(TypeId::STRING, children_type)
             .related
     }
 
@@ -1228,7 +1228,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if self
-            .assign_relation_outcome(actual_children_type, children_type)
+            .jsx_children_relation_outcome(actual_children_type, children_type)
             .related
         {
             return;
@@ -1256,7 +1256,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self
-            .assign_relation_outcome(actual_child_type, children_type)
+            .jsx_children_relation_outcome(actual_child_type, children_type)
             .related
         {
             return;
@@ -1446,7 +1446,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self
-                .assign_relation_outcome(actual_child_type, expected_child_type)
+                .jsx_children_relation_outcome(actual_child_type, expected_child_type)
                 .related
             {
                 continue;
@@ -1456,7 +1456,7 @@ impl<'a> CheckerState<'a> {
             // cases where the children type is a union including non-array members like
             // `{}` (from ReactFragment) that subsume the child type.
             if self
-                .assign_relation_outcome(actual_child_type, original_children_type)
+                .jsx_children_relation_outcome(actual_child_type, original_children_type)
                 .related
             {
                 continue;
@@ -1550,10 +1550,10 @@ impl<'a> CheckerState<'a> {
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let resolved_instance = self.resolve_type_for_property_access(instance_type);
         if !(self
-            .assign_relation_outcome(resolved_instance, resolved_target)
+            .jsx_children_relation_outcome(resolved_instance, resolved_target)
             .related
             && self
-                .assign_relation_outcome(resolved_target, resolved_instance)
+                .jsx_children_relation_outcome(resolved_target, resolved_instance)
                 .related)
         {
             return false;
@@ -1747,7 +1747,7 @@ impl<'a> CheckerState<'a> {
         // because it's an interface extending Array rather than a direct Array type.
         let array_of_children = self.ctx.types.factory().array(type_id);
         if self
-            .assign_relation_outcome(array_of_children, type_id)
+            .jsx_children_relation_outcome(array_of_children, type_id)
             .related
         {
             return true;

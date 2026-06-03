@@ -22,8 +22,12 @@ fn contextual_new_argument_recovery_uses_relation_outcome_boundary() {
     let compact_helper: String = helper.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        compact_helper.contains("assign_relation_outcome(contextual_actual,expected).related"),
-        "contextual new argument recovery should route compatibility through relation outcome"
+        compact_helper.contains("call_arg_relation_outcome(contextual_actual,expected).related"),
+        "contextual new argument recovery should route argument compatibility through call-argument relation outcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(contextual_actual, expected)"),
+        "contextual new argument recovery should not regress to the generic assignment request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard"),
@@ -49,10 +53,10 @@ fn constructor_inference_constraint_checks_use_relation_outcome_boundary() {
     let applyable_helper = &source[applyable_start..applyable_end];
     assert_eq!(
         applyable_helper
-            .matches("assign_relation_outcome_with_env(")
+            .matches("constructor_inference_constraint_relation_outcome_with_env(")
             .count(),
         1,
-        "constructor type-argument applicability should route env-aware constraint checks through RelationOutcome"
+        "constructor type-argument applicability should route env-aware constraint checks through the constructor-inference RelationRequest"
     );
     assert!(
         applyable_helper.contains(".related"),
@@ -61,6 +65,10 @@ fn constructor_inference_constraint_checks_use_relation_outcome_boundary() {
     assert!(
         !applyable_helper.contains("is_assignable_to_with_env("),
         "constructor type-argument applicability should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !applyable_helper.contains("assign_relation_outcome_with_env("),
+        "constructor type-argument applicability should not use the generic assignment request"
     );
 
     let fallback_start = source
@@ -71,9 +79,18 @@ fn constructor_inference_constraint_checks_use_relation_outcome_boundary() {
             .find("\n    fn primitive_parts")
             .expect("find end of primitive constraint fallback helper");
     let fallback_helper = &source[fallback_start..fallback_end];
+    let compact_fallback: String = fallback_helper
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
     assert!(
-        fallback_helper.contains("assign_relation_outcome(part, constraint).related"),
-        "constructor primitive constraint fallback should route primitive-part checks through RelationOutcome"
+        compact_fallback
+            .contains("constructor_inference_constraint_relation_outcome(part,constraint).related"),
+        "constructor primitive constraint fallback should route primitive-part checks through the constructor-inference RelationRequest"
+    );
+    assert!(
+        !fallback_helper.contains("assign_relation_outcome("),
+        "constructor primitive constraint fallback should not use the generic assignment request"
     );
     assert!(
         !fallback_helper.contains("is_assignable_to(part, constraint)"),

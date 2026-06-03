@@ -234,12 +234,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let mut instance_scratch = self.scratch_object_type_body_emitter(instance_indent);
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
-        if let Some(constraint_idx) = base_constraint_idx
-            && let Some(base_members) = self
-                .constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
-        {
-            instance_scratch.write(&base_members);
-        }
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -252,6 +246,12 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
+        }
+        if let Some(constraint_idx) = base_constraint_idx
+            && let Some(base_members) = self
+                .constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
+        {
+            instance_scratch.write(&base_members);
         }
         let members = instance_scratch.writer.take_output();
         let members = Self::strip_abstract_member_modifiers(members.trim_end());

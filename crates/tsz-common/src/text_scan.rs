@@ -19,9 +19,10 @@
 //! That is a `tsc`-parity failure: `tsc` never panics on such input.
 //!
 //! [`leading_window`] is the single source of truth for that capped-prefix
-//! pattern. It floors the requested cap down to the nearest char boundary so
-//! the resulting slice is always valid, while never extending the window past
-//! the cap (a pragma a few bytes beyond the budget is out of scope anyway).
+//! pattern. It floors the requested cap down to the nearest char boundary using
+//! stable `str` APIs, so the resulting slice is always valid while never
+//! extending the window past the cap (a pragma a few bytes beyond the budget is
+//! out of scope anyway).
 
 /// Byte budget for leading JSX-pragma comment scans.
 ///
@@ -61,10 +62,10 @@ pub const JSX_PRAGMA_SCAN_BYTES: usize = 4096;
 #[inline]
 #[must_use]
 pub fn leading_window(text: &str, max_bytes: usize) -> &str {
-    // `floor_char_boundary` clamps `max_bytes` to `text.len()` and then walks
-    // backwards to the nearest char boundary, so the resulting index is always
-    // valid for slicing and never exceeds the requested cap.
-    let limit = text.floor_char_boundary(max_bytes);
+    let mut limit = max_bytes.min(text.len());
+    while !text.is_char_boundary(limit) {
+        limit -= 1;
+    }
     &text[..limit]
 }
 

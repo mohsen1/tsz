@@ -101,7 +101,10 @@ impl<'a> CheckerState<'a> {
                     && evaluated_constraint != TypeId::UNKNOWN
                     && evaluated_constraint != TypeId::ERROR
                     && !self
-                        .assign_relation_outcome_with_env(type_arg, evaluated_constraint)
+                        .constructor_inference_constraint_relation_outcome_with_env(
+                            type_arg,
+                            evaluated_constraint,
+                        )
                         .related
                 {
                     return false;
@@ -170,11 +173,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let constraint = self.evaluate_type_with_env(constraint);
-                if self
-                    .primitive_parts(actual)
-                    .into_iter()
-                    .any(|part| !self.assign_relation_outcome(part, constraint).related)
-                {
+                if self.primitive_parts(actual).into_iter().any(|part| {
+                    !self
+                        .constructor_inference_constraint_relation_outcome(part, constraint)
+                        .related
+                }) {
                     failed = true;
                 }
             }

@@ -1,5 +1,5 @@
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) use super::common::is_compiler_managed_type;
 
@@ -120,6 +120,58 @@ where
         &mut is_assignable,
         &mut Vec::new(),
     )
+}
+
+/// Outcome-shaped variant for type-node predicate validation.
+///
+/// `TypeNodeChecker` does not own a `CheckerState`, so it cannot call the full
+/// checker relation helper. Keep the legacy `TypeDatabase` relation decision
+/// inside this query boundary while exposing the same `.related` shape used by
+/// checker-state predicate validation.
+pub(crate) fn type_predicate_type_assignability_outcome(
+    db: &dyn QueryDatabase,
+    predicate_type: TypeId,
+    param_type: TypeId,
+) -> super::assignability::RelationOutcome {
+    let related = type_predicate_type_assignable_to_parameter_with(
+        db,
+        predicate_type,
+        param_type,
+        |source, target| type_predicate_relation_outcome(db, source, target).related,
+    );
+
+    super::assignability::RelationOutcome {
+        related,
+        depth_exceeded: false,
+        iteration_exceeded: false,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
+}
+
+fn type_predicate_relation_outcome(
+    db: &dyn QueryDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> super::assignability::RelationOutcome {
+    let result = tsz_solver::relations::relation_queries::query_relation(
+        db.as_type_database(),
+        source,
+        target,
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::unflagged_compatibility(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
+    );
+
+    super::assignability::RelationOutcome {
+        related: result.related,
+        depth_exceeded: result.depth_exceeded,
+        iteration_exceeded: result.iteration_exceeded,
+        failure: None,
+        weak_union_violation: false,
+        property_classification: None,
+    }
 }
 
 fn intersection_member_assignable_to_parameter<F>(

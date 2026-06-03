@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         contextual_actual != TypeId::ANY
             && contextual_actual != TypeId::ERROR
             && self
-                .assign_relation_outcome(contextual_actual, expected)
+                .call_arg_relation_outcome(contextual_actual, expected)
                 .related
     }
 

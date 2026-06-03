@@ -693,7 +693,9 @@ impl<'a> CheckerState<'a> {
                 if !crate::query_boundaries::common::is_template_literal_type(
                     self.ctx.types,
                     key_type,
-                ) || !self.assign_relation_outcome(tag_literal, key_type).related
+                ) || !self
+                    .jsx_props_relation_outcome(tag_literal, key_type)
+                    .related
                 {
                     continue;
                 }
@@ -715,10 +717,10 @@ impl<'a> CheckerState<'a> {
             while i < best_matches.len() {
                 let (best_key, _) = best_matches[i];
                 let candidate_more_specific = self
-                    .assign_relation_outcome(candidate_key, best_key)
+                    .jsx_props_relation_outcome(candidate_key, best_key)
                     .related
                     && !self
-                        .assign_relation_outcome(best_key, candidate_key)
+                        .jsx_props_relation_outcome(best_key, candidate_key)
                         .related;
                 if candidate_more_specific {
                     best_matches.swap_remove(i);
@@ -726,10 +728,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let best_more_specific = self
-                    .assign_relation_outcome(best_key, candidate_key)
+                    .jsx_props_relation_outcome(best_key, candidate_key)
                     .related
                     && !self
-                        .assign_relation_outcome(candidate_key, best_key)
+                        .jsx_props_relation_outcome(candidate_key, best_key)
                         .related;
                 if best_more_specific {
                     candidate_is_best = false;
@@ -903,7 +905,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let tag_type = self.ctx.types.literal_string(tag);
-        if self.assign_relation_outcome(tag_type, evaluated).related {
+        if self.jsx_props_relation_outcome(tag_type, evaluated).related {
             return;
         }
 

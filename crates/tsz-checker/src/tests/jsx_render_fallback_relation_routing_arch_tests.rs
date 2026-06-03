@@ -14,9 +14,15 @@ fn jsx_render_fallback_required_props_use_relation_outcome_boundary() {
     let function = &source[function_start..];
 
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("jsx_render_fallback_relation_outcome")
+            .count(),
         1,
-        "JSX render fallback required-prop compatibility should route through relation outcomes"
+        "JSX render fallback required-prop compatibility should route through its dedicated relation outcome"
+    );
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "JSX render fallback required-prop compatibility should not regress to generic assign relation outcomes"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),

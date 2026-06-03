@@ -13,9 +13,9 @@ fn jsx_generic_spread_assignability_uses_relation_outcome_boundary() {
     let function = &source[function_start..];
 
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function.matches("jsx_props_relation_outcome").count(),
         2,
-        "generic JSX spread assignability decisions should route through relation outcomes"
+        "generic JSX spread assignability decisions should route through JSX props relation outcomes"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),
@@ -37,15 +37,16 @@ fn jsx_generic_spread_validation_uses_relation_outcome_boundary() {
         .find("pub(in crate::checkers_domain::jsx) fn normalize_jsx_required_props_target")
         .expect("find next JSX validation helper");
     let function = &rest[..function_end];
+    let compact_function: String = function.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        function.contains("assign_relation_outcome(*attr_type, expected_type)")
+        function.contains("jsx_props_relation_outcome(*attr_type, expected_type)")
             && function.contains(".related"),
-        "generic JSX spread explicit attribute mismatch must use relation outcomes"
+        "generic JSX spread explicit attribute mismatch must use JSX props relation outcomes"
     );
     assert!(
-        function.contains("assign_relation_outcome(attrs_type, props_type).related"),
-        "generic JSX spread synthesized attrs compatibility must use relation outcomes"
+        compact_function.contains("jsx_props_relation_outcome(attrs_type,props_type).related"),
+        "generic JSX spread synthesized attrs compatibility must use JSX props relation outcomes"
     );
     assert!(
         !function.contains("diagnostic_relation_boolean_guard"),

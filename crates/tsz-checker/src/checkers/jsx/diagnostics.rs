@@ -1264,7 +1264,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if `string` is assignable to the children type.
         if self
-            .assign_relation_outcome(TypeId::STRING, children_type)
+            .jsx_children_relation_outcome(TypeId::STRING, children_type)
             .related
         {
             return;

@@ -9,8 +9,12 @@ fn namespace_merged_static_side_mismatch_uses_relation_outcome_boundary() {
     .expect("failed to read class_static_side_helpers.rs");
 
     assert!(
-        source.contains("assign_relation_outcome(derived_ctor_type, base_ctor_type)"),
-        "namespace-merged static-side diagnostics should route the relation through assign_relation_outcome"
+        source.contains("class_static_side_relation_outcome(derived_ctor_type, base_ctor_type)"),
+        "namespace-merged static-side diagnostics should route the relation through the class static-side request"
+    );
+    assert!(
+        !source.contains("assign_relation_outcome(derived_ctor_type, base_ctor_type)"),
+        "namespace-merged static-side diagnostics should not use generic assignment relation outcomes"
     );
     assert!(
         !source.contains("diagnostic_relation_boolean_guard(derived_ctor_type, base_ctor_type)"),

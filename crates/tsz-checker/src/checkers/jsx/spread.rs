@@ -110,7 +110,7 @@ impl<'a> CheckerState<'a> {
         // the apparent/object shape first.
         if !spread_has_type_params
             && self
-                .assign_relation_outcome(spread_type, props_type)
+                .jsx_props_relation_outcome(spread_type, props_type)
                 .related
         {
             return false;
@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if self
-                .assign_relation_outcome(spread_type, props_type)
+                .jsx_props_relation_outcome(spread_type, props_type)
                 .related
             {
                 return false;
@@ -371,7 +371,7 @@ impl<'a> CheckerState<'a> {
             };
 
             if !self
-                .assign_relation_outcome(source_type, expected_type)
+                .jsx_props_relation_outcome(source_type, expected_type)
                 .related
             {
                 // This property has a type mismatch.
@@ -415,7 +415,7 @@ impl<'a> CheckerState<'a> {
         if !has_type_mismatch
             && spread_has_type_params
             && !self
-                .assign_relation_outcome(resolved_spread, props_type)
+                .jsx_props_relation_outcome(resolved_spread, props_type)
                 .related
         {
             has_type_mismatch = true;
@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
         if has_type_mismatch
             && spread_has_type_params
             && self
-                .assign_relation_outcome(resolved_spread, props_type)
+                .jsx_props_relation_outcome(resolved_spread, props_type)
                 .related
         {
             has_type_mismatch = false;

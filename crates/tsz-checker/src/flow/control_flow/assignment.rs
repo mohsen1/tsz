@@ -27,6 +27,23 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    fn assignment_relation_outcome(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        strict_null_checks: bool,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let env = self.type_environment.map(std::cell::RefCell::borrow);
+        crate::query_boundaries::flow_analysis::flow_assignability_outcome(
+            self.interner,
+            env.as_deref(),
+            self.concrete_this_type,
+            source,
+            target,
+            strict_null_checks,
+        )
+    }
+
     pub(crate) fn is_unannotated_conditional_variable_initializer(
         &self,
         assignment_node: NodeIndex,
@@ -74,13 +91,17 @@ impl<'a> FlowAnalyzer<'a> {
 
         if let Some((read_type, write_type)) = self.access_reference_split_read_write_type(target) {
             if read_type.is_any_unknown_or_error()
-                || self.is_assignable_to_strict_null(assigned_type, read_type)
+                || self
+                    .assignment_relation_outcome(assigned_type, read_type, true)
+                    .related
             {
                 return Some(assigned_type);
             }
 
             if write_type.is_any_unknown_or_error()
-                || self.is_assignable_to_strict_null(assigned_type, write_type)
+                || self
+                    .assignment_relation_outcome(assigned_type, write_type, true)
+                    .related
             {
                 return None;
             }
@@ -93,7 +114,8 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
-        self.is_assignable_to(assigned_type, target_type)
+        self.assignment_relation_outcome(assigned_type, target_type, false)
+            .related
             .then_some(assigned_type)
     }
 
@@ -574,7 +596,9 @@ impl<'a> FlowAnalyzer<'a> {
                             .or_else(|| node_types.get(&bin.left.0).copied());
 
                         if let Some(lhs_type) = declared_target_type
-                            && !self.is_assignable_to(rhs_type, lhs_type)
+                            && !self
+                                .assignment_relation_outcome(rhs_type, lhs_type, false)
+                                .related
                         {
                             return None;
                         }
@@ -692,7 +716,10 @@ impl<'a> FlowAnalyzer<'a> {
         annotation_type: TypeId,
         nullish_type: TypeId,
     ) -> bool {
-        if self.is_assignable_to_strict_null(nullish_type, annotation_type) {
+        if self
+            .assignment_relation_outcome(nullish_type, annotation_type, true)
+            .related
+        {
             return true;
         }
         if matches!(

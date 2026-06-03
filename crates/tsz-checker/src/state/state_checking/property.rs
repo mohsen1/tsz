@@ -616,7 +616,7 @@ impl<'a> CheckerState<'a> {
                                 source_props.iter().any(|source_prop| {
                                     source_prop.name == target_prop.name
                                         && self
-                                            .assign_relation_outcome(
+                                            .union_excess_required_property_relation_outcome(
                                                 source_prop.type_id,
                                                 target_prop.type_id,
                                             )

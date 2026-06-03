@@ -11,8 +11,12 @@ fn assignability_display_type_check_uses_relation_outcome_boundary() {
     let helper = &source[function_start..];
 
     assert!(
-        helper.contains("self.assign_relation_outcome(source, target).related"),
-        "display-type assignability relation truth should route through relation outcomes"
+        helper.contains("assignability_reason_relation_outcome(source, target)"),
+        "display-type assignability relation truth should route through the assignability-reason RelationOutcome"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome(source, target).related"),
+        "display-type assignability should not use the generic assign request"
     );
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard(source, target)"),

@@ -102,8 +102,17 @@ mod assertion_overlap_object_primitive_tests;
 #[path = "../tests/assertion_overlap_template_literal_tests.rs"]
 mod assertion_overlap_template_literal_tests;
 #[cfg(test)]
+#[path = "tests/assignability_diagnostics_relation_routing_arch_tests.rs"]
+mod assignability_diagnostics_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/assignability_display_relation_routing_arch_tests.rs"]
 mod assignability_display_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/assignability_reporter_relation_routing_arch_tests.rs"]
+mod assignability_reporter_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/assignability_type_comparability_relation_routing_arch_tests.rs"]
+mod assignability_type_comparability_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
 mod assignment_ops_relation_routing_arch_tests;
@@ -113,6 +122,9 @@ mod async_imported_promise_tests;
 #[cfg(test)]
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
+#[cfg(test)]
+#[path = "tests/class_boundary_fallback_relation_routing_arch_tests.rs"]
+mod class_boundary_fallback_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/class_extends_generic_override_variance_tests.rs"]
 mod class_extends_generic_override_variance_tests;
@@ -134,6 +146,9 @@ mod class_property_typed_const_initializer_tests;
 #[cfg(test)]
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
+#[cfg(test)]
+#[path = "tests/contextual_new_relation_routing_arch_tests.rs"]
+mod contextual_new_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
@@ -168,6 +183,9 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
+mod flow_assignment_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/flow_guard_boundary_tests.rs"]
 mod flow_guard_boundary_tests;
 #[cfg(test)]
@@ -176,6 +194,12 @@ mod flow_inferred_predicate_boundary_tests;
 #[cfg(test)]
 #[path = "tests/flow_promise_identity_tests.rs"]
 mod flow_promise_identity_tests;
+#[cfg(test)]
+#[path = "tests/flow_usage_relation_routing_arch_tests.rs"]
+mod flow_usage_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/function_type_relation_routing_arch_tests.rs"]
+mod function_type_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/function_type_return_node_tests.rs"]
 mod function_type_return_node_tests;
@@ -492,11 +516,17 @@ mod architecture_contract_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
 #[cfg(test)]
+#[path = "tests/array_elaboration_relation_routing_arch_tests.rs"]
+mod array_elaboration_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/array_like_constraint_relation_routing_arch_tests.rs"]
 mod array_like_constraint_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/array_literal_relation_routing_arch_tests.rs"]
+mod array_literal_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/array_literal_spread_inference_widening_tests.rs"]
 mod array_literal_spread_inference_widening_tests;
@@ -516,11 +546,29 @@ mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_checker_diagnostic_relation_routing_arch_tests.rs"]
+mod call_checker_diagnostic_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_context_relation_routing_arch_tests.rs"]
 mod call_context_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/call_display_format_relation_routing_arch_tests.rs"]
+mod call_display_format_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_elaboration_mutual_relation_routing_arch_tests.rs"]
+mod call_elaboration_mutual_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_error_anchor_relation_routing_arch_tests.rs"]
+mod call_error_anchor_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_error_elaboration_relation_routing_arch_tests.rs"]
+mod call_error_elaboration_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_result_constraint_violation_gateway_arch_tests.rs"]
 mod call_result_constraint_violation_gateway_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_result_relation_routing_arch_tests.rs"]
+mod call_result_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
@@ -545,6 +593,9 @@ mod class_feature_target_gates_tests;
 #[cfg(test)]
 #[path = "tests/class_implements_jsdoc_heritage_relation_routing_arch_tests.rs"]
 mod class_implements_jsdoc_heritage_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/class_implements_whole_type_relation_routing_arch_tests.rs"]
+mod class_implements_whole_type_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
@@ -579,6 +630,9 @@ mod const_asserted_return_type_tests;
 #[path = "tests/constraint_position_nullable_access_tests.rs"]
 mod constraint_position_nullable_access_tests;
 #[cfg(test)]
+#[path = "tests/constraint_validation_relation_routing_arch_tests.rs"]
+mod constraint_validation_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
@@ -600,6 +654,9 @@ mod destructured_discriminant_source_narrowing_tests;
 #[path = "tests/destructuring_relation_routing_arch_tests.rs"]
 mod destructuring_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/diagnostic_source_relation_routing_arch_tests.rs"]
+mod diagnostic_source_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[cfg(test)]
@@ -611,6 +668,9 @@ mod do_while_exit_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/dom_fuel_exhaustion_ts2322_tests.rs"]
 mod dom_fuel_exhaustion_ts2322_tests;
+#[cfg(test)]
+#[path = "tests/duplicate_identifier_relation_routing_arch_tests.rs"]
+mod duplicate_identifier_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/dynamic_import_relation_routing_arch_tests.rs"]
 mod dynamic_import_relation_routing_arch_tests;
@@ -654,11 +714,17 @@ mod fresh_const_array_mutable_assignment_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
 #[cfg(test)]
+#[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
+mod generic_argument_suppression_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
 #[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
 mod generic_callback_sibling_arg_inference_tests;
+#[cfg(test)]
+#[path = "tests/generic_checker_mod_relation_routing_arch_tests.rs"]
+mod generic_checker_mod_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
@@ -684,6 +750,12 @@ mod generic_tests;
 #[path = "tests/generic_unknown_type_arg_tests.rs"]
 mod generic_unknown_type_arg_tests;
 #[cfg(test)]
+#[path = "tests/generics_relation_routing_arch_tests.rs"]
+mod generics_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/identifier_relation_routing_arch_tests.rs"]
+mod identifier_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
@@ -699,6 +771,12 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
+mod index_signature_check_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/index_signature_property_relation_routing_arch_tests.rs"]
+mod index_signature_property_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
 mod index_signature_value_relation_routing_arch_tests;
 #[cfg(test)]
@@ -708,8 +786,14 @@ mod indexed_access_constraint_relation_routing_arch_tests;
 #[path = "tests/infer_conditional_relation_routing_arch_tests.rs"]
 mod infer_conditional_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/initializer_relation_routing_arch_tests.rs"]
+mod initializer_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
+#[cfg(test)]
+#[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]
+mod interface_index_conflict_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/intersection_callable_constraint_ts2344_tests.rs"]
 mod intersection_callable_constraint_ts2344_tests;
@@ -774,26 +858,65 @@ mod jsdoc_typedef_distinct_alias_names_tests;
 #[path = "../tests/jsdoc_typedef_module_export_tests.rs"]
 mod jsdoc_typedef_module_export_tests;
 #[cfg(test)]
+#[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
+mod jsx_children_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_component_props_relation_routing_arch_tests.rs"]
+mod jsx_component_props_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_element_type_constraint_tests.rs"]
 mod jsx_element_type_constraint_tests;
 #[cfg(test)]
 #[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
 mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
+#[path = "tests/jsx_generic_spread_relation_routing_arch_tests.rs"]
+mod jsx_generic_spread_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_overload_relation_routing_arch_tests.rs"]
+mod jsx_overload_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_props_resolution_relation_routing_arch_tests.rs"]
+mod jsx_props_resolution_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_props_validation_relation_routing_arch_tests.rs"]
+mod jsx_props_validation_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_react_alias_relation_routing_arch_tests.rs"]
+mod jsx_react_alias_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
+#[cfg(test)]
+#[path = "tests/jsx_render_fallback_relation_routing_arch_tests.rs"]
+mod jsx_render_fallback_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_return_relation_routing_arch_tests.rs"]
+mod jsx_return_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/jsx_single_child_precise_relation_routing_arch_tests.rs"]
 mod jsx_single_child_precise_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsx_spread_assignability_relation_routing_arch_tests.rs"]
+mod jsx_spread_assignability_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_text_child_relation_routing_arch_tests.rs"]
+mod jsx_text_child_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "tests/jsx_union_props_relation_routing_arch_tests.rs"]
+mod jsx_union_props_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_function_type_is_never_tests.rs"]
 mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
+#[cfg(test)]
+#[path = "tests/keyof_suppression_relation_routing_arch_tests.rs"]
+mod keyof_suppression_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/libtype_structural_name_lookup_arch_tests.rs"]
 mod libtype_structural_name_lookup_arch_tests;
@@ -888,6 +1011,9 @@ mod overlap_relation_helper_routing_arch_tests;
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
+#[path = "tests/overload_param_relation_routing_arch_tests.rs"]
+mod overload_param_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
@@ -909,8 +1035,17 @@ mod private_optional_field_undefined_tests;
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
+#[path = "tests/promise_this_relation_routing_arch_tests.rs"]
+mod promise_this_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
+#[cfg(test)]
+#[path = "tests/property_index_key_relation_routing_arch_tests.rs"]
+mod property_index_key_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
+mod property_receiver_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
@@ -930,8 +1065,20 @@ mod ref_type_params_cache_tests;
 #[path = "tests/relation_flags_boundary_contract_tests.rs"]
 mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/relation_routing_residual_arch_tests.rs"]
+mod relation_routing_residual_arch_tests;
+#[cfg(test)]
+#[path = "tests/remapped_missing_property_relation_routing_arch_tests.rs"]
+mod remapped_missing_property_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/render_failure_relation_routing_arch_tests.rs"]
+mod render_failure_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
+#[cfg(test)]
+#[path = "tests/rest_parameter_relation_routing_arch_tests.rs"]
+mod rest_parameter_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/return_context_promise_identity_tests.rs"]
 mod return_context_promise_identity_tests;
@@ -942,8 +1089,14 @@ mod reverse_mapped_inference_tests;
 #[path = "tests/satisfies_callback_return_widening_tests.rs"]
 mod satisfies_callback_return_widening_tests;
 #[cfg(test)]
+#[path = "tests/satisfies_relation_routing_arch_tests.rs"]
+mod satisfies_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;
+#[cfg(test)]
+#[path = "tests/state_type_environment_relation_routing_arch_tests.rs"]
+mod state_type_environment_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/strict_callback_param_method_tests.rs"]
 mod strict_callback_param_method_tests;
@@ -1017,6 +1170,9 @@ mod type_alias_primitive_display_tests;
 #[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
 mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
+mod type_predicate_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/typeof_class_name_structural_lookup_arch_tests.rs"]
 mod typeof_class_name_structural_lookup_arch_tests;
 #[cfg(test)]
@@ -1025,6 +1181,12 @@ mod union_call_resolution_tests;
 #[cfg(test)]
 #[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
 mod union_constraint_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
+mod union_excess_property_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
+mod union_index_signature_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;

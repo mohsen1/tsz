@@ -63,10 +63,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -143,10 +143,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -193,10 +193,10 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted_evaluated, inst_constraint)
             .related
             || self
-                .assign_relation_outcome(restricted, inst_constraint)
+                .infer_result_constraint_relation_outcome(restricted, inst_constraint)
                 .related
     }
 
@@ -240,7 +240,7 @@ impl<'a> CheckerState<'a> {
             &substitution,
         );
         let restricted = self.resolve_lazy_type(restricted);
-        self.assign_relation_outcome(restricted, inst_constraint)
+        self.infer_result_constraint_relation_outcome(restricted, inst_constraint)
             .related
             || self.base_union_members_satisfy_constraint(restricted, inst_constraint)
     }
@@ -271,7 +271,8 @@ impl<'a> CheckerState<'a> {
         };
 
         candidates.into_iter().any(|candidate| {
-            self.diagnostic_relation_boolean_guard_no_weak_checks(candidate, inst_constraint)
+            self.infer_result_constraint_no_weak_relation_outcome(candidate, inst_constraint)
+                .related
                 || self.base_union_members_satisfy_constraint(candidate, inst_constraint)
                 || self.conditional_array_element_infer_satisfies_constraint(
                     candidate,
@@ -435,7 +436,8 @@ impl<'a> CheckerState<'a> {
             .filter_map(|candidate| self.array_like_element_type(candidate))
             .collect::<Vec<_>>();
         elements.into_iter().any(|element| {
-            self.diagnostic_relation_boolean_guard_no_weak_checks(element, inst_constraint)
+            self.infer_result_constraint_no_weak_relation_outcome(element, inst_constraint)
+                .related
                 || self.base_union_members_satisfy_constraint(element, inst_constraint)
         })
     }

@@ -20,10 +20,13 @@ fn indexed_access_constraint_uses_relation_outcome_boundary() {
         !function.contains("diagnostic_relation_boolean_guard"),
         "indexed-access key-space relation decisions must use the shared relation outcome boundary"
     );
-    assert_eq!(
-        function.matches("assign_relation_outcome").count(),
-        1,
-        "the keyed-object to object-keys relation should route through RelationOutcome"
+    assert!(
+        !function.contains("assign_relation_outcome"),
+        "indexed-access constraint key-space checks should route through named RelationRequests"
+    );
+    assert!(
+        function.contains("indexed_access_constraint_key_relation_outcome("),
+        "the keyed-object to object-keys relation should route through the indexed-access constraint request helper"
     );
 }
 
@@ -47,9 +50,15 @@ fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
         "indexed-access key-space diagnostics must use the shared relation outcome boundary"
     );
     assert_eq!(
-        function.matches("assign_relation_outcome").count(),
+        function
+            .matches("indexed_access_key_space_relation_outcome(")
+            .count(),
         3,
-        "string-index, constrained-keyof, and union-member key-space checks should route through RelationOutcome"
+        "string-index, constrained-keyof, and union-member key-space checks should route through the named RelationRequest"
+    );
+    assert!(
+        !function.contains("assign_relation_outcome("),
+        "indexed-access access-helper key-space checks must not regress to raw relation probes"
     );
 }
 
@@ -73,26 +82,64 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         !helpers.contains("diagnostic_relation_boolean_guard"),
         "indexed-access type-checking key-space helpers must use relation outcomes"
     );
+    assert_eq!(
+        helpers
+            .matches("indexed_access_key_space_relation_outcome(")
+            .count(),
+        10,
+        "indexed-access helper key-space probes should route through the named RelationRequest"
+    );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(index_for_check,value_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_for_check,value_keyof).related"
+        ),
         "type-literal member value checks should route index/keyof compatibility through RelationOutcome"
     );
     assert!(
-        compact_helpers
-            .contains("assign_relation_outcome(nested_index_for_check,nested_base_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(nested_index_for_check,nested_base_keyof).related"
+        ),
         "nested type-literal indexed access checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(member,keyof_object).related"),
+        compact_helpers
+            .contains("indexed_access_key_space_relation_outcome(member,keyof_object).related"),
         "union index member checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(index_type,template_keyof).related"),
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_type,template_keyof).related"
+        ),
         "mapped constraint value checks should route through RelationOutcome"
     );
     assert!(
-        compact_helpers.contains("assign_relation_outcome(candidate,string_or_number).related"),
+        compact_helpers
+            .contains("indexed_access_key_space_relation_outcome(index_type,values_keyof).related"),
+        "constraint value-keyof checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,constraint_eval).related"
+        ) && compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(constraint_eval,index_type_for_check,).related"
+        ),
+        "mapped own-key constraint checks should route mutual compatibility through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(candidate,string_or_number).related"
+        ),
         "string-index candidate checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains(
+            "indexed_access_key_space_relation_outcome(current_index_for_check,current_base_keyof).related"
+        ),
+        "deferred constraint-chain target checks should route through RelationOutcome"
+    );
+    assert!(
+        !helpers.contains("assign_relation_outcome("),
+        "indexed-access key-space helper probes should use named RelationRequests"
     );
 }
 
@@ -108,31 +155,43 @@ fn indexed_access_ts2536_key_space_checks_use_relation_outcome_boundary() {
         "indexed-access TS2536 key-space checks should not use raw diagnostic boolean relation guards"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(constraint_eval,keyof_object).related"),
+        !source.contains("assign_relation_outcome("),
+        "indexed-access TS2536 key-space checks should use named RelationRequests"
+    );
+    assert!(
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(constraint_eval,keyof_object).related"
+        ),
         "constraint/keyof acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(check_index_eval,keyof_type).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(check_index_eval,keyof_type).related"
+        ),
         "type-literal fast-path index/keyof acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(index_type_for_check,keyof_object).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,keyof_object).related"
+        ),
         "raw indexed-access key-space acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source.contains("assign_relation_outcome(next_evaluated,keyof_object).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(next_evaluated,keyof_object).related"
+        ),
         "transitive constraint-chain key-space acceptance should route through RelationOutcome"
     );
     assert!(
         compact_source.contains(
-            "assign_relation_outcome(nested_index_for_check,constrained_base_keyof).related"
+            "indexed_access_key_space_relation_outcome(nested_index_for_check,constrained_base_keyof,).related"
         ),
         "nested indexed-access key-space acceptance should route through RelationOutcome"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(index_type_for_check,keyof_values).related"),
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(index_type_for_check,keyof_values,).related"
+        ),
         "value-union keyof fallback checks should route through RelationOutcome"
     );
 }
@@ -148,8 +207,13 @@ fn indexed_access_computation_keyof_source_checks_use_relation_outcome_boundary(
         "indexed-access computation diagnostics should not use raw diagnostic boolean relation guards"
     );
     assert!(
-        compact_source
-            .contains("assign_relation_outcome(pre_resolution_object_type,key_source).related"),
-        "keyof-source type-parameter checks should route relation truth through RelationOutcome"
+        !source.contains("assign_relation_outcome("),
+        "indexed-access computation diagnostics should use named RelationRequests"
+    );
+    assert!(
+        compact_source.contains(
+            "indexed_access_key_space_relation_outcome(pre_resolution_object_type,key_source,).related"
+        ),
+        "keyof-source type-parameter checks should route relation truth through the indexed-access key-space request"
     );
 }

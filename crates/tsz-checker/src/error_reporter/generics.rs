@@ -574,10 +574,13 @@ impl<'a> CheckerState<'a> {
             let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
             let ready_type_arg_constraint =
                 self.evaluate_type_for_assignability(ready_type_arg_constraint);
-            if self.diagnostic_relation_boolean_guard_no_weak_checks(
-                ready_type_arg_constraint,
-                ready_constraint,
-            ) {
+            if self
+                .type_arg_constraint_no_weak_relation_outcome(
+                    ready_type_arg_constraint,
+                    ready_constraint,
+                )
+                .related
+            {
                 return;
             }
         }
@@ -748,14 +751,16 @@ impl<'a> CheckerState<'a> {
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
             if !self
-                .assign_relation_outcome(prop_value, resolved_constraint)
+                .generic_constraint_property_relation_outcome(prop_value, resolved_constraint)
                 .related
                 && !self
-                    .assign_relation_outcome(prop.type_id, constraint)
+                    .generic_constraint_property_relation_outcome(prop.type_id, constraint)
                     .related
-                && !self.assign_relation_outcome(prop_value, constraint).related
                 && !self
-                    .assign_relation_outcome(prop.type_id, resolved_constraint)
+                    .generic_constraint_property_relation_outcome(prop_value, constraint)
+                    .related
+                && !self
+                    .generic_constraint_property_relation_outcome(prop.type_id, resolved_constraint)
                     .related
             {
                 return false;

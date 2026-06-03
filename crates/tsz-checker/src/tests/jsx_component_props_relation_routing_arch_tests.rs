@@ -12,15 +12,23 @@ fn jsx_component_props_tag_relations_use_relation_outcome_boundary() {
         .expect("missing JSX element type validation helper")
         + start;
     let helpers = &source[start..end];
+    let compact_helpers: String = helpers.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert_eq!(
-        helpers.matches("assign_relation_outcome").count(),
+        helpers.matches("jsx_props_relation_outcome").count(),
         6,
-        "JSX component prop tag relation checks should route through assign_relation_outcome"
+        "JSX component prop tag relation checks should route through jsx_props_relation_outcome"
     );
     assert!(
         helpers.contains(".related"),
         "JSX component prop tag relation checks should use the relation outcome decision"
+    );
+    assert!(
+        !compact_helpers.contains("assign_relation_outcome(tag_literal,key_type)")
+            && !compact_helpers.contains("assign_relation_outcome(candidate_key,best_key)")
+            && !compact_helpers.contains("assign_relation_outcome(best_key,candidate_key)")
+            && !compact_helpers.contains("assign_relation_outcome(tag_type,evaluated)"),
+        "JSX component prop tag relation checks should not use the generic assignment request"
     );
     assert!(
         !helpers.contains("diagnostic_relation_boolean_guard"),

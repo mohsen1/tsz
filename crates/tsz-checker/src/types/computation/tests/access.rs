@@ -294,6 +294,41 @@ const value: number = dict[named.id];
 }
 
 #[test]
+fn wide_symbol_identifier_write_uses_symbol_index_signature_value_type() {
+    let diags = check_source_with_default_libs(
+        r#"
+declare let answerKey: symbol;
+declare let amount: number;
+declare let table: Record<symbol, number>;
+
+table[answerKey] = amount;
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "wide-symbol writes through a symbol index signature should accept the value type; got: {errors:?}"
+    );
+}
+
+#[test]
+fn renamed_wide_symbol_identifier_read_uses_symbol_index_signature_value_type() {
+    let diags = check_source_with_default_libs(
+        r#"
+declare let marker: symbol;
+declare let registry: Record<symbol, number>;
+
+let value: number = registry[marker];
+"#,
+    );
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "renamed wide-symbol reads through a symbol index signature should return the value type; got: {errors:?}"
+    );
+}
+
+#[test]
 fn element_access_optional_mapped_alias_index_keeps_optional_undefined() {
     // Negative guard: resolving the alias index must NOT mask legitimate
     // `| undefined` introduced by an optional member. tsc rejects assigning the

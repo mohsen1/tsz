@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
             outcome.spread_covers_all = true;
         } else if !ctx.skip_prop_checks
             && self
-                .assign_relation_outcome(spread_type, ctx.props_type)
+                .jsx_props_relation_outcome(spread_type, ctx.props_type)
                 .related
         {
             // The solver reports the spread is structurally assignable to the
@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
             if !self
-                .assign_relation_outcome(attrs_type, ctx.props_type)
+                .jsx_props_relation_outcome(attrs_type, ctx.props_type)
                 .related
             {
                 self.report_jsx_synthesized_props_assignability_error(
@@ -834,7 +834,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|&(spread_type, display_spread_type, _, _)| {
                     self
-                        .assign_relation_outcome(spread_type, ctx.props_type)
+                        .jsx_props_relation_outcome(spread_type, ctx.props_type)
                         .related
                         || crate::query_boundaries::checkers::jsx::spread_source_covers_readonly_wrapped_type_parameter(
                             self.ctx.types,
@@ -878,7 +878,7 @@ impl<'a> CheckerState<'a> {
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
             if !self
-                .assign_relation_outcome(attrs_type, ctx.props_type)
+                .jsx_props_relation_outcome(attrs_type, ctx.props_type)
                 .related
             {
                 // tsc uses just the type parameter name here (e.g. "P"), not
@@ -1019,7 +1019,7 @@ impl<'a> CheckerState<'a> {
         outcome: &JsxAttrComparisonOutcome,
     ) -> bool {
         let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
-        if !crate::query_boundaries::checkers::jsx::types_are_assignable(
+        if !crate::query_boundaries::checkers::jsx::props_are_assignable(
             self,
             attrs_type,
             ctx.raw_props_type,

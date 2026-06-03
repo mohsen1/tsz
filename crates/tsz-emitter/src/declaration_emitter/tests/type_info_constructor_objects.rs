@@ -136,6 +136,43 @@ export const BrandedThing = Branded(Thing);
 }
 
 #[test]
+fn test_anon_ctor_object_type_local_members_precede_base_constraint_members() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+interface BaseSurface {
+    foo(): void;
+    name?: string;
+}
+export function Tagged<T extends Constructor<BaseSurface>>(Base: T) {
+    return class extends Base {
+        static getTags(): void {}
+        tags(): void {}
+    };
+}
+class Item {
+    foo(): void {}
+    name?: string;
+}
+export const TaggedItem = Tagged(Item);
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "new (...args: any[]): {\n        tags(): void;\n        foo(): void;\n        name?: string;\n    };"
+        ),
+        "Expected constructor object instance body to emit local class members before base constraint members: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare function Tagged<T extends Constructor<BaseSurface>>(Base: T): {\n    new (...args: any[]): {\n        tags(): void;\n        foo(): void;\n        name?: string;\n    };"
+        ),
+        "Expected exported function return to emit local class members before base constraint members: {output}"
+    );
+}
+
+#[test]
 fn test_top_level_class_declaration_still_uses_eq_initializer_form() {
     // Negative case: regular class declarations (not inside an anonymous
     // constructor object type) must still emit `readonly name = value`

@@ -69,7 +69,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check assignability using the actual types (return types)
-        if self.assign_relation_outcome(source, target).related {
+        if self
+            .assignability_reason_relation_outcome(source, target)
+            .related
+        {
             return true;
         }
 

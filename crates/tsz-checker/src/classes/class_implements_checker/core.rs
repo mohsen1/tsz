@@ -39,7 +39,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if !self
-                .assign_relation_outcome(source_index.value_type, target_index.value_type)
+                .class_implements_index_value_relation_outcome(
+                    source_index.value_type,
+                    target_index.value_type,
+                )
                 .related
             {
                 return false;
@@ -51,7 +54,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if !self
-                .assign_relation_outcome(source_index.value_type, target_index.value_type)
+                .class_implements_index_value_relation_outcome(
+                    source_index.value_type,
+                    target_index.value_type,
+                )
                 .related
             {
                 return false;
@@ -1569,7 +1575,10 @@ impl<'a> CheckerState<'a> {
                             interface_type
                         };
                         if !self
-                            .assign_relation_outcome(class_instance_type, target_type)
+                            .class_implements_whole_type_relation_outcome(
+                                class_instance_type,
+                                target_type,
+                            )
                             .related
                         {
                             let analysis = self

@@ -13,13 +13,18 @@ fn await_thenable_this_validation_uses_relation_outcome_boundary() {
         .nth(1)
         .and_then(|rest| rest.split("let awaited_type =").next())
         .expect("failed to isolate thenable await helper");
+    let compact_helper: String = helper.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        helper.contains("assign_relation_outcome(type_id, expected_this).related"),
-        "await thenable this-type validation should route through assign_relation_outcome"
+        compact_helper.contains("call_arg_relation_outcome(type_id,expected_this).related"),
+        "await thenable this-type validation should route through call_arg_relation_outcome"
     );
     assert!(
-        !helper.contains("diagnostic_relation_boolean_guard(type_id, expected_this)"),
+        !compact_helper.contains("assign_relation_outcome(type_id,expected_this).related"),
+        "await thenable this-type validation should not use the generic assignment request"
+    );
+    assert!(
+        !compact_helper.contains("diagnostic_relation_boolean_guard(type_id,expected_this)"),
         "await thenable this-type validation should not use the raw boolean relation guard"
     );
 }

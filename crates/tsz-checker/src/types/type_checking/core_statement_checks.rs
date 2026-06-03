@@ -973,7 +973,7 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     )
                     .is_none_or(|constraint| {
-                        self.assign_relation_outcome(
+                        self.mapped_key_constraint_relation_outcome(
                             constraint,
                             self.ctx.types.evaluate_keyof(object_type),
                         )
@@ -997,7 +997,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|constraint| {
                         let keyof_object = self.ctx.types.evaluate_keyof(object_type);
                         !self
-                            .assign_relation_outcome(constraint, keyof_object)
+                            .mapped_key_constraint_relation_outcome(constraint, keyof_object)
                             .related
                     })
                 });

@@ -1053,7 +1053,10 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
-            if self.assign_relation_outcome(type_arg, constraint).related {
+            if self
+                .jsdoc_type_constraint_relation_outcome(type_arg, constraint)
+                .related
+            {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             }

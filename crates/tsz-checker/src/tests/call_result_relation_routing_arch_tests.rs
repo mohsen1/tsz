@@ -15,12 +15,16 @@ fn call_result_recovery_uses_relation_outcome_boundary() {
     let recovery_helper = &source[recovery_start..recovery_end];
 
     assert!(
-        recovery_helper.contains("assign_relation_outcome(actual, param_union).related"),
-        "correlated union call recovery should route assignability through RelationOutcome.related"
+        recovery_helper.contains("call_arg_relation_outcome(actual, param_union).related"),
+        "correlated union call recovery should route assignability through call-argument RelationOutcome.related"
     );
     assert!(
         !recovery_helper.contains("diagnostic_relation_boolean_guard"),
         "correlated union call recovery should not regress to the raw boolean relation guard"
+    );
+    assert!(
+        !recovery_helper.contains("assign_relation_outcome(actual, param_union)"),
+        "correlated union call recovery should not use generic assignment request routing"
     );
 
     let argument_start = source
@@ -33,12 +37,16 @@ fn call_result_recovery_uses_relation_outcome_boundary() {
     let argument_helper = &source[argument_start..argument_end];
 
     assert!(
-        argument_helper.contains("assign_relation_outcome(arg_types[2], target).related"),
-        "polymorphic-this argument diagnostics should route assignability through RelationOutcome.related"
+        argument_helper.contains("call_arg_relation_outcome(arg_types[2], target).related"),
+        "polymorphic-this argument diagnostics should route assignability through call-argument RelationOutcome.related"
     );
     assert!(
         !argument_helper.contains("diagnostic_relation_boolean_guard"),
         "polymorphic-this argument diagnostics should not regress to the raw boolean relation guard"
+    );
+    assert!(
+        !argument_helper.contains("assign_relation_outcome(arg_types[2], target)"),
+        "polymorphic-this argument diagnostics should not use generic assignment request routing"
     );
 }
 
@@ -56,9 +64,11 @@ fn call_tail_polymorphic_this_rest_target_uses_env_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         2,
-        "polymorphic-this rest-target compatibility should route env-aware relation probes through RelationOutcome"
+        "polymorphic-this rest-target compatibility should route env-aware relation probes through call-argument RelationOutcome"
     );
     assert!(
         helper.matches(".related").count() >= 2,
@@ -67,6 +77,10 @@ fn call_tail_polymorphic_this_rest_target_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "polymorphic-this rest-target compatibility should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "polymorphic-this rest-target compatibility should not use generic assignment request routing"
     );
 }
 
@@ -84,9 +98,9 @@ fn nominal_lib_object_callback_returns_use_env_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper.matches("return_relation_outcome_with_env(").count(),
         1,
-        "nominal lib object callback return diagnostics should route env-aware relation probes through RelationOutcome"
+        "nominal lib object callback return diagnostics should route env-aware relation probes through return RelationOutcome"
     );
     assert!(
         helper.contains(".related"),
@@ -95,6 +109,10 @@ fn nominal_lib_object_callback_returns_use_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "nominal lib object callback return diagnostics should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "nominal lib object callback return diagnostics should not use generic assignment request routing"
     );
 }
 
@@ -112,9 +130,11 @@ fn call_result_spread_rest_recovery_uses_env_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         1,
-        "spread rest recovery should route env-aware relation probes through RelationOutcome"
+        "spread rest recovery should route env-aware relation probes through call-argument RelationOutcome"
     );
     assert!(
         helper.contains(".related"),
@@ -123,6 +143,10 @@ fn call_result_spread_rest_recovery_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "spread rest recovery should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "spread rest recovery should not use generic assignment request routing"
     );
 }
 
@@ -140,9 +164,11 @@ fn call_finalize_aggregate_rest_recovery_uses_env_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         2,
-        "aggregate rest recovery should route both env-aware relation probes through RelationOutcome"
+        "aggregate rest recovery should route both env-aware relation probes through call-argument RelationOutcome"
     );
     assert!(
         helper.matches(".related").count() >= 2,
@@ -151,6 +177,10 @@ fn call_finalize_aggregate_rest_recovery_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("diagnostic_relation_boolean_guard_with_env("),
         "aggregate rest recovery should not regress to raw env boolean guards"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "aggregate rest recovery should not use generic assignment request routing"
     );
 }
 
@@ -168,9 +198,11 @@ fn call_finalize_fresh_arg_recovery_uses_env_relation_outcome_boundary() {
     let helper = &source[helper_start..helper_end];
 
     assert_eq!(
-        helper.matches("assign_relation_outcome_with_env(").count(),
+        helper
+            .matches("call_arg_relation_outcome_with_env(")
+            .count(),
         1,
-        "fresh call argument recovery should route env-aware relation probes through RelationOutcome"
+        "fresh call argument recovery should route env-aware relation probes through call-argument RelationOutcome"
     );
     assert!(
         helper.contains(".related"),
@@ -179,5 +211,9 @@ fn call_finalize_fresh_arg_recovery_uses_env_relation_outcome_boundary() {
     assert!(
         !helper.contains("is_assignable_to_with_env("),
         "fresh call argument recovery should not regress to raw env boolean assignability"
+    );
+    assert!(
+        !helper.contains("assign_relation_outcome_with_env("),
+        "fresh call argument recovery should not use generic assignment request routing"
     );
 }
