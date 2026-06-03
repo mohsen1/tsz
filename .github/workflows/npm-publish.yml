@@ -197,8 +197,6 @@ jobs:
 
       - name: Publish packages
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           publish_if_needed() {
