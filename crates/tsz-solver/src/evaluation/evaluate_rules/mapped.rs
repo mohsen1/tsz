@@ -95,40 +95,72 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Ok(Some(remapped))
     }
 
-    /// Helper to compute modifiers for a mapped type property.
+    /// Helper to compute modifiers for a mapped type *index signature*.
+    ///
+    /// A homomorphic mapped type (`{ [K in keyof T]: ... }`) inherits the source
+    /// `readonly` modifier. For named properties that source modifier lives on
+    /// the property symbol, but for an **index signature** it lives in the source
+    /// object's `string_index` / `number_index` slot — never in the named
+    /// property list. Reading it from the property list (the old behavior) always
+    /// returned `false`, so homomorphic maps silently dropped a source index
+    /// signature's `readonly` intent (e.g. `{ [K in keyof T]: T[K] }` over
+    /// `{ readonly [k: string]: V }` produced a writable index signature). We read
+    /// the modifier from the correct index slot instead.
+    ///
+    /// Index signatures are never optional in tsc, so the source-optional input
+    /// is always `false`; optionality on an index signature can only come from an
+    /// explicit `+?` / `-?` directive on the mapped type itself.
     fn get_mapped_modifiers(
         &mut self,
         mapped: &MappedType,
         inherits_modifiers: bool,
         source_object: Option<TypeId>,
-        key_name: Atom,
+        key_type: TypeId,
     ) -> (bool, bool) {
-        // NOTE: This helper is now only used for index signatures.
-        // Direct property modifiers are handled via the memoized map in evaluate_mapped.
-        let source_mods = if let Some(source_obj) = source_object {
-            match crate::objects::collect_properties_cached(
-                source_obj,
-                self.interner(),
-                self.resolver(),
-                self.query_db(),
-            ) {
-                PropertyCollectionResult::Properties { properties, .. } => properties
-                    .iter()
-                    .find(|p| p.name == key_name)
-                    .map_or((false, false), |p| (p.optional, p.readonly)),
-                _ => (false, false),
-            }
-        } else {
-            (false, false)
-        };
+        let source_readonly = source_object
+            .map(|source_obj| self.source_index_signature_readonly(source_obj, key_type))
+            .unwrap_or(false);
 
         // Delegate to centralized modifier computation in type_queries.
         crate::type_queries::compute_mapped_modifiers(
             mapped,
             inherits_modifiers,
-            source_mods.0,
-            source_mods.1,
+            false,
+            source_readonly,
         )
+    }
+
+    /// Read the `readonly` flag of the source object's index signature that
+    /// covers `key_type`. A numeric key is also serviced by a string index
+    /// signature, so when the source lacks a dedicated numeric index signature we
+    /// fall back to the string one (mirroring tsc, where a string index info
+    /// applies to number-like keys). The symmetric fallback keeps template-literal
+    /// remapped keys, which model as string-like index signatures, aligned with a
+    /// lone numeric source index signature.
+    fn source_index_signature_readonly(&self, source_object: TypeId, key_type: TypeId) -> bool {
+        match crate::objects::collect_properties_cached(
+            source_object,
+            self.interner(),
+            self.resolver(),
+            self.query_db(),
+        ) {
+            PropertyCollectionResult::Properties {
+                string_index,
+                number_index,
+                ..
+            } => {
+                // A numeric key is serviced by the numeric index signature when
+                // present, otherwise by the string one; string keys prefer the
+                // string slot with the symmetric fallback.
+                let (primary, fallback) = if key_type == TypeId::NUMBER {
+                    (number_index, string_index)
+                } else {
+                    (string_index, number_index)
+                };
+                primary.or(fallback).is_some_and(|idx| idx.readonly)
+            }
+            _ => false,
+        }
     }
 
     /// Strip the top-level `undefined` that an originally-optional property
@@ -484,14 +516,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 // ReadonlyArray: map the element type and preserve readonly
                 Some(TypeData::ObjectWithIndex(shape_id)) => {
-                    // Check if this is a ReadonlyArray (has readonly numeric index)
-                    // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
-                    // has methods like length, map, filter, etc. We only care about the index signature.
+                    // Only a genuine `ReadonlyArray<T>` / `readonly T[]` should map to a
+                    // readonly array. A readonly numeric index signature alone is NOT
+                    // enough: a plain object like `{ readonly [k: number]: V }` also has
+                    // one, and tsc maps it to an object with a readonly numeric index
+                    // signature — not to an array. We therefore require the array marker
+                    // methods (`slice` / `concat`), the same structural signal the
+                    // conditional `infer` array path uses, before taking the array
+                    // shortcut. Without this guard, mapping a bare numeric-index object
+                    // dropped its `readonly` modifier by reshaping it into an array.
                     let shape = self.interner().object_shape(shape_id);
                     let has_readonly_index = shape
                         .number_index
                         .as_ref()
-                        .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+                        .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER)
+                        && self.object_shape_has_readonly_array_markers(shape_id);
 
                     if has_readonly_index {
                         // This is ReadonlyArray<T> - map element type
@@ -794,8 +833,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             &mut properties,
         );
 
-        let empty_atom = self.interner().intern_string("");
-
         let string_index = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
@@ -807,7 +844,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         TypeId::STRING,
                         is_identity_homomorphic || is_homomorphic,
                         source_object,
-                        empty_atom,
                     ))
                 }
                 Ok(None) => None,
@@ -828,7 +864,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         TypeId::NUMBER,
                         is_identity_homomorphic || is_homomorphic,
                         source_object,
-                        empty_atom,
                     ))
                 }
                 Ok(None) => None,
@@ -846,7 +881,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 key_type,
                 is_identity_homomorphic || is_homomorphic,
                 source_object,
-                empty_atom,
             ))
         } else {
             string_index
@@ -871,13 +905,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         key_type: TypeId,
         inherits_modifiers: bool,
         source_object: Option<TypeId>,
-        empty_atom: Atom,
     ) -> IndexSignature {
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
         let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
         let mut value_type = self.evaluate(instantiated);
         let (idx_optional, idx_readonly) =
-            self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, empty_atom);
+            self.get_mapped_modifiers(&mapped, inherits_modifiers, source_object, key_type);
         if idx_optional {
             value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
         }

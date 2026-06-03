@@ -338,7 +338,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && self.object_shape_has_property(shape_id, "shift")
     }
 
-    fn object_shape_has_readonly_array_markers(&self, shape_id: ObjectShapeId) -> bool {
+    pub(crate) fn object_shape_has_readonly_array_markers(&self, shape_id: ObjectShapeId) -> bool {
         self.object_shape_has_property(shape_id, "slice")
             && self.object_shape_has_property(shape_id, "concat")
     }
