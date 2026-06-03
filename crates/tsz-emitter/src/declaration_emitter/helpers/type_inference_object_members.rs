@@ -253,8 +253,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if !is_unique_symbol_key && !is_usable_property_name {
                     return None;
                 }
-                self.get_source_slice(name_node.pos, name_node.end)
-                    .map(|text| text.trim().to_string())
+                self.computed_identifier_or_access_name_text(name_idx)
             }
             _ => None,
         }
