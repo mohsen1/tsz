@@ -306,6 +306,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         prop_name: Atom,
         optional: bool,
     ) -> InferPropertyResolution {
+        // A `readonly` wrapper does not change a property's value type, so strip
+        // it before dispatching; otherwise a `readonly [...]`/`ReadonlyArray`
+        // source would miss the tuple/object arms below and defer. The union and
+        // intersection arms unwrap their members the same way.
+        let source = crate::type_queries::data::unwrap_readonly(self.interner(), source);
+
         // Absent property: an optional pattern position contributes no candidate
         // (tsc skips it), while a required one fails the match. Shared by every
         // "property not found" arm below.
@@ -401,6 +407,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 absent
+            }
+            Some(TypeData::Tuple(elements_id)) => {
+                // A numeric-index pattern property (`{ 0: infer A }`) reads the
+                // tuple's element at that index, mirroring tsc's structural
+                // `inferFromProperties` over the apparent (tuple) type. `length`
+                // is already served above by `implicit_sequence_property_type`.
+                // The dedicated `query_db` path above covers this when a query
+                // database is connected; this arm keeps the behaviour correct in
+                // pure-evaluation contexts (e.g. type-alias conditional infer)
+                // where `query_db` is `None`, instead of falling through to a
+                // spurious `NoMatch`/false-branch.
+                let prop_name_str = self.interner().resolve_atom_ref(prop_name);
+                let Some(index) = crate::operations::sequence_property::parse_numeric_index(
+                    prop_name_str.as_ref(),
+                ) else {
+                    // A non-numeric key (e.g. an array-prototype method) is not a
+                    // guaranteed tuple property; tuples are closed shapes, so a
+                    // missing key fails the structural match (false branch).
+                    return InferPropertyResolution::NoMatch;
+                };
+                let elements = self.interner().tuple_list(elements_id);
+                match crate::operations::sequence_property::tuple_fixed_slot(
+                    self.interner(),
+                    &elements,
+                    index,
+                ) {
+                    // Guaranteed (non-optional) slot present: contributes the
+                    // element type as the inference candidate, with no
+                    // optionality-`undefined`.
+                    Some((element_type, false)) => InferPropertyResolution::Candidate(element_type),
+                    // Optional slot present: the property is not guaranteed, so a
+                    // required pattern position (`{ 0: infer A }`) takes the false
+                    // branch — `[number?]` is not assignable to `{ 0: unknown }`.
+                    // An optional pattern position (`{ 0?: infer A }`) still binds
+                    // the bare element type.
+                    Some((element_type, true)) => {
+                        if optional {
+                            InferPropertyResolution::Candidate(element_type)
+                        } else {
+                            InferPropertyResolution::NoMatch
+                        }
+                    }
+                    // Index beyond the tuple's fixed slots (or inside an unbounded
+                    // rest): the property is absent. A tuple is a closed shape, so
+                    // a missing numeric key fails the match for both required and
+                    // optional pattern positions (`[] extends { 0?: infer A }` is
+                    // tsc's false branch), unlike an open object literal.
+                    None => InferPropertyResolution::NoMatch,
+                }
             }
             _ => {
                 // Fallback: try evaluating the source further and recursing.
