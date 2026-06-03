@@ -18,7 +18,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Check the per-file cache first (set by CLI driver for multi-file mode)
         // This preserves the correct is_external_module value across sequential file bindings
         if let Some(ref map) = self.ctx.is_external_module_by_file
-            && let Some(&is_ext) = map.get(&self.ctx.file_name)
+            && let Some(is_ext) =
+                crate::context::lookup_is_external_module_in_map(map, &self.ctx.file_name)
         {
             return is_ext;
         }

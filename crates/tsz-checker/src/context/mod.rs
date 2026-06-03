@@ -31,7 +31,7 @@ pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
 mod file_format_lookup;
-pub(crate) use file_format_lookup::lookup_file_is_esm_in_map;
+pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
 mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;

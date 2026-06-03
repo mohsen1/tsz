@@ -91,7 +91,7 @@ impl CheckerContext<'_> {
     /// falling back to the binder's detection for single-file mode.
     pub(crate) fn is_external_module_file(&self) -> bool {
         if let Some(ref map) = self.is_external_module_by_file
-            && let Some(&is_ext) = map.get(&self.file_name)
+            && let Some(is_ext) = super::lookup_is_external_module_in_map(map, &self.file_name)
         {
             return is_ext;
         }

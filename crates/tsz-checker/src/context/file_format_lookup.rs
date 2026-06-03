@@ -44,6 +44,26 @@ pub(crate) fn lookup_file_is_esm_in_map(
     map: &FxHashMap<String, bool>,
     file_name: &str,
 ) -> Option<bool> {
+    lookup_per_file_bool(map, file_name)
+}
+
+/// Look up whether `file_name` is an external module in
+/// `is_external_module_by_file`.
+///
+/// Keys in the map are normalized to forward slashes at insertion; this
+/// function normalizes the query to the same form and returns the result of
+/// a single hash-map probe. Returns `None` when no key matches; callers
+/// should fall back to the binder's `is_external_module()` detection.
+pub(crate) fn lookup_is_external_module_in_map(
+    map: &FxHashMap<String, bool>,
+    file_name: &str,
+) -> Option<bool> {
+    lookup_per_file_bool(map, file_name)
+}
+
+/// Shared implementation for per-file `bool` map lookups with query-time
+/// forward-slash normalization.
+fn lookup_per_file_bool(map: &FxHashMap<String, bool>, file_name: &str) -> Option<bool> {
     if map.is_empty() {
         return None;
     }
@@ -117,5 +137,45 @@ mod tests {
         assert_eq!(normalize_path_key("C:\\proj\\foo.ts"), "C:/proj/foo.ts");
         assert_eq!(normalize_path_key("/proj/foo.ts"), "/proj/foo.ts");
         assert_eq!(normalize_path_key("mod.cts"), "mod.cts");
+    }
+
+    #[test]
+    fn lookup_is_external_module_forward_slash_hit() {
+        let map = map_of(&[("/proj/mod.ts", true), ("/proj/script.ts", false)]);
+        assert_eq!(
+            lookup_is_external_module_in_map(&map, "/proj/mod.ts"),
+            Some(true)
+        );
+        assert_eq!(
+            lookup_is_external_module_in_map(&map, "/proj/script.ts"),
+            Some(false)
+        );
+    }
+
+    /// When a file name is stored with forward slashes (driver normalizes at
+    /// insertion) but the query arrives with backslashes (Windows path), the
+    /// helper must still find the entry.
+    #[test]
+    fn lookup_is_external_module_backslash_query_hits_normalized_key() {
+        let map = map_of(&[("/proj/mod.ts", true)]);
+        assert_eq!(
+            lookup_is_external_module_in_map(&map, "\\proj\\mod.ts"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn lookup_is_external_module_missing_returns_none() {
+        let map = map_of(&[("/proj/mod.ts", true)]);
+        assert_eq!(
+            lookup_is_external_module_in_map(&map, "/proj/other.ts"),
+            None
+        );
+    }
+
+    #[test]
+    fn lookup_is_external_module_empty_map_returns_none() {
+        let map: FxHashMap<String, bool> = FxHashMap::default();
+        assert_eq!(lookup_is_external_module_in_map(&map, "/proj/mod.ts"), None);
     }
 }
