@@ -3,7 +3,6 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
-use tsz_solver::types::TypeData;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn conditional_result_branches_satisfy_constraint(
@@ -256,9 +255,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn unresolved_type_name_def_id(&self, type_id: TypeId) -> Option<tsz_solver::DefId> {
-        let TypeData::UnresolvedTypeName(name) = self.ctx.types.lookup(type_id)? else {
-            return None;
-        };
+        let name = crate::query_boundaries::spread::unresolved_type_name_atom(
+            self.ctx.types.as_type_database(),
+            type_id,
+        )?;
         let name = self.ctx.types.resolve_atom(name);
         self.ctx
             .resolve_unresolved_type_name_from_file(&name, self.ctx.current_file_idx)
