@@ -64,19 +64,34 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut setter_names = rustc_hash::FxHashSet::<String>::default();
         let mut getter_names = rustc_hash::FxHashSet::<String>::default();
+        // Computed accessor names that lack type info to resolve via emittable_computed_property_name_text.
+        // These are collected for getter/setter pair detection by source text matching.
+        let mut computed_setter_source_texts = rustc_hash::FxHashSet::<String>::default();
+        let mut computed_getter_source_texts = rustc_hash::FxHashSet::<String>::default();
         for &idx in &object.elements.nodes {
             if let Some(n) = self.arena.get(idx) {
                 if n.kind == syntax_kind_ext::SET_ACCESSOR {
-                    if let Some(acc) = self.arena.get_accessor(n)
-                        && let Some(name) = self.object_literal_member_name_text(acc.name)
-                    {
-                        setter_names.insert(name);
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.object_literal_member_name_text(acc.name) {
+                            setter_names.insert(name);
+                        } else if let Some(name_node) = self.arena.get(acc.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
+                        {
+                            computed_setter_source_texts.insert(src.trim().to_string());
+                        }
                     }
-                } else if n.kind == syntax_kind_ext::GET_ACCESSOR
-                    && let Some(acc) = self.arena.get_accessor(n)
-                    && let Some(name) = self.object_literal_member_name_text(acc.name)
-                {
-                    getter_names.insert(name);
+                } else if n.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.object_literal_member_name_text(acc.name) {
+                            getter_names.insert(name);
+                        } else if let Some(name_node) = self.arena.get(acc.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
+                        {
+                            computed_getter_source_texts.insert(src.trim().to_string());
+                        }
+                    }
                 }
             }
         }
@@ -127,6 +142,25 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(mut name_text) = self
                 .object_literal_member_name_text(name_idx)
                 .or_else(|| self.emittable_computed_property_name_text(name_idx))
+                .or_else(|| {
+                    // Fallback: when a getter and setter share the same computed
+                    // property name source text but type info is unavailable, use
+                    // the source text directly so the pair emits as one property.
+                    if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                        return None;
+                    }
+                    let src = self.get_source_slice(name_node.pos, name_node.end)?;
+                    let src = src.trim().to_string();
+                    let is_getter = member_node.kind == syntax_kind_ext::GET_ACCESSOR;
+                    let is_setter = member_node.kind == syntax_kind_ext::SET_ACCESSOR;
+                    if (is_getter && computed_setter_source_texts.contains(&src))
+                        || (is_setter && computed_getter_source_texts.contains(&src))
+                    {
+                        Some(src)
+                    } else {
+                        None
+                    }
+                })
             else {
                 if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     has_non_emittable_computed_members = true;
@@ -156,12 +190,16 @@ impl<'a> DeclarationEmitter<'a> {
                 name_text = source_name_text.trim().to_string();
             }
             concrete_member_names.push(name_text.clone());
+            let has_getter = getter_names.contains(&name_text)
+                || computed_getter_source_texts.contains(&name_text);
+            let has_setter = setter_names.contains(&name_text)
+                || computed_setter_source_texts.contains(&name_text);
             let Some(member_text) = self.infer_object_member_type_text_named_at(
                 member_idx,
                 &name_text,
                 self.indent_level + 1,
-                getter_names.contains(&name_text),
-                setter_names.contains(&name_text),
+                has_getter,
+                has_setter,
                 None,
             ) else {
                 continue;
@@ -203,8 +241,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let printed = self.print_type_id(type_id);
         let mut lines: Vec<String> = printed.lines().map(str::to_string).collect();
-        if lines.len() < 2 {
+        if lines.len() < 2 && computed_members.is_empty() && overridden_members.is_empty() {
             return Some(printed);
+        }
+        if lines.len() < 2 {
+            lines = vec!["{".to_string(), "}".to_string()];
         }
         let recovered_computed_index_signatures =
             self.rewrite_object_literal_computed_index_signatures(initializer, &mut lines);

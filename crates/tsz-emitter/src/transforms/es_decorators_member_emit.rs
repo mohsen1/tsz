@@ -171,7 +171,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                                     ),
                                 )
                             }
-                        } else if has_instance_method {
+                        } else if has_instance_method
+                            && self.any_instance_method_precedes_field(
+                                decorated_members,
+                                fi.member_var_index,
+                            )
+                        {
+                            // A method decorator comes before this field in source order,
+                            // so its extra initializers must run inline before this field's init.
                             if is_private_weakmap {
                                 (
                                     Some(format!(
@@ -531,6 +538,33 @@ impl<'a> TC39DecoratorEmitter<'a> {
             return false;
         };
         later.pos > earlier.pos
+    }
+
+    /// Returns `true` if any non-static method/getter/setter member appears
+    /// before `field_member_var_index` in source order. Used to decide whether
+    /// `_instanceExtraInitializers` should be chained before the first field's
+    /// initializer (method-before-field ordering) or emitted as a separate
+    /// statement after the last field (field-before-method ordering).
+    fn any_instance_method_precedes_field(
+        &self,
+        decorated_members: &[DecoratedMember],
+        field_member_var_index: usize,
+    ) -> bool {
+        let Some(field_member) = decorated_members.get(field_member_var_index) else {
+            return false;
+        };
+        let Some(field_node) = self.arena.get(field_member.member_idx) else {
+            return false;
+        };
+        let field_pos = field_node.pos;
+        decorated_members.iter().any(|m| {
+            !m.is_static
+                && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor)
+                && self
+                    .arena
+                    .get(m.member_idx)
+                    .is_some_and(|n| n.pos < field_pos)
+        })
     }
 
     pub(super) fn is_es2015_storage_setup_assignment(&self, assignment: &str) -> bool {
