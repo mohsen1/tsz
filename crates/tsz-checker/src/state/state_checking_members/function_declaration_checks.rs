@@ -941,6 +941,17 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // If the predicate type is a constrained type parameter, it is always considered
+        // assignable to its constraint, so skip the TS2677 check. This matches
+        // check_type_predicate_assignability in type_node.rs.
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, predicate_type)
+            && crate::query_boundaries::common::type_param_info(self.ctx.types, predicate_type)
+                .and_then(|info| info.constraint)
+                .is_some()
+        {
+            return;
+        }
+
         if !self.type_predicate_type_assignable_to_parameter(predicate_type, param_type)
             && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
         {

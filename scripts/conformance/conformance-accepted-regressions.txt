@@ -17,10 +17,6 @@ TypeScript/tests/cases/compiler/exportDefaultInterface.ts
 TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts
 
-# Existing drift exposed by PR #12255 after resolving the previous #12247
-# accepted rows for coAndContraVariantInferences2/correlatedUnions; tracked in
-# #12260.
-TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 
 # Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
 # Mapped/keyof family tracked in #8432; large-union intersections tracked in

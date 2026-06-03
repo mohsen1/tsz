@@ -1,5 +1,347 @@
 use super::super::core::*;
 
+/// Regression test for #12260: `V extends HTMLElementTagNameMap[T][P]` where
+/// `T extends keyof ElementTagNameMap` must emit TS2536.
+///
+/// `ElementTagNameMap` is wider than `HTMLElementTagNameMap` (adds SVG keys),
+/// so T (constrained to `keyof ElementTagNameMap`) may be an SVG-only key that
+/// does not exist in `HTMLElementTagNameMap`. Both inner (`HTMLElementTagNameMap[T]`)
+/// and outer (`HTMLElementTagNameMap[T][P]`) indexed accesses should emit TS2536.
+///
+/// The regression in all three cases: no-body single-function, with-body
+/// single-function, and full-3-function context (intersectionsOfLargeUnions.ts).
+#[test]
+fn test_ts2536_narrow_map_indexed_by_wide_map_key() {
+    // Mirror the real lib.dom.d.ts structure: ElementTagNameMap extends HTMLElementTagNameMap.
+    // The structural rule:
+    //   T extends keyof WideMap, WideMap extends NarrowMap (adds keys)
+    //   → NarrowMap[T] should emit TS2536 (T may be a wide-only key)
+    let source = r#"
+interface NarrowMap {
+    "a": { href: string };
+    "div": { id: string };
+}
+interface ExtraMap {
+    "circle": { cx: number };
+}
+interface WideMap extends NarrowMap, ExtraMap {}
+
+export function assertNodeProperty<
+    T extends keyof WideMap,
+    P extends keyof WideMap[T],
+    V extends NarrowMap[T][P]>(tagName: T, prop: P, value: V) {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for `NarrowMap[T]` where T extends keyof WideMap \
+         (WideMap is wider than NarrowMap). \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Same as above but with the full 3-function context from intersectionsOfLargeUnions.ts.
+/// The additional functions must not suppress the TS2536 diagnostic for the third function.
+#[test]
+fn test_ts2536_narrow_map_indexed_by_wide_map_key_full_context() {
+    let source = r#"
+interface NarrowMap {
+    "a": { href: string };
+    "div": { id: string };
+}
+interface ExtraMap {
+    "circle": { cx: number };
+}
+interface WideMap extends NarrowMap, ExtraMap {}
+declare class Node { nodeType: number; }
+declare class Element extends Node { tagName: string; }
+
+export function assertIsElement(node: Node | null): node is Element {
+    let nodeType = node === null ? null : node.nodeType;
+    return nodeType === 1;
+}
+export function assertNodeTagName<
+    T extends keyof WideMap,
+    U extends WideMap[T]>(node: Node | null, tagName: T): node is U {
+    if (assertIsElement(node)) {
+        return (node as Element).tagName.toLowerCase() === tagName;
+    }
+    return false;
+}
+export function assertNodeProperty<
+    T extends keyof WideMap,
+    P extends keyof WideMap[T],
+    V extends NarrowMap[T][P]>(node: Node | null, tagName: T, prop: P, value: V) {
+    if (assertNodeTagName(node, tagName)) {
+        (node as any)[prop];
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for `NarrowMap[T]` in full 3-function context (#12260 repro). \
+         The preceding functions must not suppress the TS2536 diagnostic. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Variant: WideMap is a TYPE ALIAS (not interface), mirroring the real lib.dom.d.ts
+/// where `type ElementTagNameMap = HTMLElementTagNameMap & Pick<SVGElementTagNameMap, ...>`.
+/// When the wider map is a type alias intersection, TS2536 must still be emitted.
+#[test]
+fn test_ts2536_narrow_map_indexed_by_wide_type_alias_key() {
+    let source = r#"
+interface NarrowMap {
+    "a": { href: string };
+    "div": { id: string };
+}
+interface ExtraMap {
+    "circle": { cx: number };
+}
+type WideMap = NarrowMap & Pick<ExtraMap, Exclude<keyof ExtraMap, keyof NarrowMap>>;
+
+export function assertNodeProperty<
+    T extends keyof WideMap,
+    P extends keyof WideMap[T],
+    V extends NarrowMap[T][P]>(tagName: T, prop: P, value: V) {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for `NarrowMap[T]` where WideMap is a type alias intersection \
+         (mirrors real lib.dom.d.ts ElementTagNameMap pattern). \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Full repro using real lib files (stripped dom.d.ts) with the actual
+/// ElementTagNameMap/HTMLElementTagNameMap types. This validates the diagnostic
+/// against the same type universe as the conformance runner.
+#[test]
+fn test_ts2536_intersections_of_large_unions_with_real_lib() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function assertIsElement(node: Node | null): node is Element {
+    let nodeType = node === null ? null : node.nodeType;
+    return nodeType === 1;
+}
+export function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]>(node: Node | null, tagName: T): node is U {
+    if (assertIsElement(node)) {
+        const nodeTagName = node.tagName.toLowerCase();
+        return nodeTagName === tagName;
+    }
+    return false;
+}
+export function assertNodeProperty<
+    T extends keyof ElementTagNameMap,
+    P extends keyof ElementTagNameMap[T],
+    V extends HTMLElementTagNameMap[T][P]>(node: Node | null, tagName: T, prop: P, value: V) {
+    if (assertNodeTagName(node, tagName)) {
+        node[prop];
+    }
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for `V extends HTMLElementTagNameMap[T][P]` (intersectionsOfLargeUnions.ts). \
+         Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2345_count == 0,
+        "Got unexpected TS2345 in intersectionsOfLargeUnions.ts context — \
+         should be only TS2536. Got: {diagnostics:#?}"
+    );
+}
+
+/// Minimal: just assertIsElement alone should not cause TS2677.
+#[test]
+fn test_no_ts2677_for_assert_is_element_alone() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function assertIsElement(node: Node | null): node is Element {
+    return node !== null && node.nodeType === 1;
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2677 = diagnostics.iter().filter(|(code, _)| *code == 2677).count();
+    assert!(
+        ts2677 == 0,
+        "Got unexpected TS2677 for `node is Element` — Element extends Node. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Isolation: assertIsElement with predicate + assertNodeTagName WITHOUT predicate.
+/// If TS2677 fires here, the TS2677 is from assertIsElement's `node is Element`.
+#[test]
+fn test_no_ts2677_assert_is_element_with_non_predicate_second() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function assertIsElement(node: Node | null): node is Element {
+    return node !== null && node.nodeType === 1;
+}
+export function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]>(node: Node | null, tagName: T): boolean {
+    return true;
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2677 = diagnostics.iter().filter(|(code, _)| *code == 2677).count();
+    assert!(
+        ts2677 == 0,
+        "TS2677 without assertNodeTagName predicate — possibly from assertIsElement. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Isolation: plain function + assertNodeTagName WITH predicate.
+/// If TS2677 fires here, the TS2677 is from assertNodeTagName's `node is U`.
+#[test]
+fn test_no_ts2677_plain_first_assertnodetagname_with_predicate() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function someOtherFunc(node: Node | null): boolean {
+    return node !== null && node.nodeType === 1;
+}
+export function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]>(node: Node | null, tagName: T): node is U {
+    return true;
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2677 = diagnostics.iter().filter(|(code, _)| *code == 2677).count();
+    assert!(
+        ts2677 == 0,
+        "TS2677 when plain function precedes assertNodeTagName predicate. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Minimal isolation test: just assertNodeTagName alone with real lib.
+/// Verifies TS2677 is NOT emitted for `node is U` where U extends ElementTagNameMap[T].
+#[test]
+fn test_no_ts2677_for_node_predicate_with_element_tag_name_map() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]>(node: Node | null, tagName: T): node is U {
+    return true;
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2677 = diagnostics.iter().filter(|(code, _)| *code == 2677).count();
+    assert!(
+        ts2677 == 0,
+        "Got unexpected TS2677 for `node is U` predicate in assertNodeTagName — \
+         U extends ElementTagNameMap[T] should be assignable to Node | null. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+/// Minimal isolation test: just assertNodeTagName+assertNodeProperty calls with real lib.
+/// Verifies TS2345 is NOT emitted at the call site assertNodeTagName(node, tagName).
+#[test]
+fn test_no_ts2345_for_generic_tag_name_call() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+export function assertIsElement(node: Node | null): node is Element {
+    return node !== null && node.nodeType === 1;
+}
+export function assertNodeTagName<
+    T extends keyof ElementTagNameMap,
+    U extends ElementTagNameMap[T]>(node: Node | null, tagName: T): node is U {
+    return true;
+}
+export function assertNodeProperty<
+    T extends keyof ElementTagNameMap,
+    P extends keyof ElementTagNameMap[T]>(node: Node | null, tagName: T, prop: P) {
+    if (assertNodeTagName(node, tagName)) {
+        // node is narrowed here
+    }
+}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ));
+    let ts2345 = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    assert!(
+        ts2345 == 0,
+        "Got unexpected TS2345 for assertNodeTagName(node, tagName) call — \
+         T extends keyof ElementTagNameMap should match parameter constraint. \
+         Got: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_ts2536_with_lib_mismatched_keyof_source() {
     // Matches intersectionsOfLargeUnions.ts: T extends keyof ElementTagNameMap
