@@ -10,8 +10,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeId,
-    Visibility,
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -957,12 +956,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // line, mirroring tsc which always drills into that member. Each
                 // arm below is a member-failure reason whose render composes
                 // under the union line:
-                //   * leaf relations and property summaries
-                //     (`MissingProperty`/`MissingProperties`), the readonly /
-                //     optional property modifiers, and the array-element reason
-                //     self-head — their rendered line already names the member
+                //   * leaf relations, property summaries
+                //     (`MissingProperty`/`MissingProperties`), and the
+                //     array-element and readonly-to-mutable reasons self-head —
+                //     their rendered line already names the member
                 //     (`Property 'a' is missing in type '{ b: 2; }' …`,
-                //     `Type 'number[]' is not assignable to type 'string[]' …`).
+                //     `Type 'number[]' is not assignable to type 'string[]' …`,
+                //     `The type 'readonly [number]' is 'readonly' …`).
                 //   * the tuple/property element-type mismatches are header-led;
                 //     the union-source renderer supplies the
                 //     `Type 'M' is not assignable to type 'T'.` member header
@@ -971,8 +971,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Without this the chain collapses to the bare union-to-target
                 // line and hides which member fails.
                 //
-                // Two families are deliberately excluded because their leaf
-                // render does not yet compose here:
+                // The set is intentionally limited to member-failure shapes whose
+                // render composes exactly with `tsc` here. Notably excluded:
                 //   * `TupleElementMismatch` (fixed-arity count mismatch) — its
                 //     nested `TS2618`/`TS2619` (`Source has N element(s) but
                 //     target requires/allows only M`) leaf render is owned
@@ -981,6 +981,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //   * `ReturnTypeMismatch`/`ParameterTypeMismatch` — the function
                 //     renderers self-head with the signature relation, so they
                 //     would double-state the member signature here.
+                //   * `OptionalPropertyRequired`/`ReadonlyPropertyMismatch` — `tsc`
+                //     leads these with the member header (and they only arise in
+                //     narrow `exactOptionalPropertyTypes` / readonly-index shapes),
+                //     so they need the header-led path, not this self-heading one.
                 let nested = self.explain_failure_guarded(member, target);
                 if let Some(nested) = nested
                     && matches!(
@@ -994,8 +998,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::PropertyTypeMismatch { .. }
                             | SubtypeFailureReason::ArrayElementMismatch { .. }
                             | SubtypeFailureReason::ReadonlyToMutableAssignment { .. }
-                            | SubtypeFailureReason::OptionalPropertyRequired { .. }
-                            | SubtypeFailureReason::ReadonlyPropertyMismatch { .. }
                     )
                 {
                     return Some(SubtypeFailureReason::UnionSourceMismatch {
@@ -1795,273 +1797,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return self.make_index_sig_reason("string", prop_type, string_idx.value_type);
                 }
-            }
-        }
-
-        None
-    }
-
-    /// Explain why a function type assignment failed.
-    /// Build a `TupleElementTypeMismatch` for a failing element pair, recursing
-    /// into the element failure so the rendered chain carries the inner reason
-    /// (matching tsc, which walks a tuple element exactly like a numerically
-    /// keyed object property).
-    fn tuple_element_type_mismatch(
-        &mut self,
-        index: usize,
-        source_element: TypeId,
-        target_element: TypeId,
-        multi_element: bool,
-    ) -> SubtypeFailureReason {
-        let nested_reason = self
-            .explain_failure(source_element, target_element)
-            .map(Box::new);
-        SubtypeFailureReason::TupleElementTypeMismatch {
-            index,
-            source_element,
-            target_element,
-            nested_reason,
-            multi_element,
-        }
-    }
-
-    /// Explain why a tuple type assignment failed.
-    fn explain_tuple_failure(
-        &mut self,
-        source: &[TupleElement],
-        target: &[TupleElement],
-    ) -> Option<SubtypeFailureReason> {
-        let source_required = crate::utils::required_element_count(source);
-        let target_required = crate::utils::required_element_count(target);
-
-        if source_required < target_required {
-            return Some(SubtypeFailureReason::TupleElementMismatch {
-                source_count: source.len(),
-                target_count: target.len(),
-            });
-        }
-
-        // When both source and target are closed tuples (no rest elements) and
-        // source has more elements than target allows, prefer the arity-mismatch
-        // reason over an element-level type mismatch. This matches tsc, which
-        // reports the outer "Source has N element(s) but target allows only M"
-        // diagnostic instead of drilling into a specific element when the
-        // length already disqualifies the relation.
-        let target_has_rest = target.iter().any(|e| e.rest);
-        let source_has_rest = source.iter().any(|e| e.rest);
-        if !target_has_rest && !source_has_rest && source.len() > target.len() {
-            return Some(SubtypeFailureReason::TupleElementMismatch {
-                source_count: source.len(),
-                target_count: target.len(),
-            });
-        }
-
-        for (i, t_elem) in target.iter().enumerate() {
-            if t_elem.rest {
-                let expansion = self.expand_tuple_rest(t_elem.type_id);
-                let outer_tail = &target[i + 1..];
-                // Combined suffix = expansion.tail + outer_tail
-                let combined_suffix: Vec<_> = expansion
-                    .tail
-                    .iter()
-                    .chain(outer_tail.iter())
-                    .cloned()
-                    .collect();
-
-                let mut source_end = source.len();
-                for tail_elem in combined_suffix.iter().rev() {
-                    if source_end <= i {
-                        if !tail_elem.optional {
-                            return Some(SubtypeFailureReason::TupleElementMismatch {
-                                source_count: source.len(),
-                                target_count: target.len(),
-                            });
-                        }
-                        break;
-                    }
-                    // Type parameter rest spread requires matching rest in source
-                    if tail_elem.rest && is_type_parameter(self.interner, tail_elem.type_id) {
-                        let s_elem = &source[source_end - 1];
-                        if s_elem.rest {
-                            let tp_array = self.interner.array(tail_elem.type_id);
-                            if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
-                                return Some(self.tuple_element_type_mismatch(
-                                    source_end - 1,
-                                    s_elem.type_id,
-                                    tail_elem.type_id,
-                                    // Rest/variadic tuples are multi-position;
-                                    // keep the positional disambiguation line.
-                                    true,
-                                ));
-                            }
-                            source_end -= 1;
-                            continue;
-                        }
-                        return Some(SubtypeFailureReason::TypeMismatch {
-                            source_type: source.first().map(|e| e.type_id).unwrap_or(TypeId::NEVER),
-                            target_type: tail_elem.type_id,
-                        });
-                    }
-                    let s_elem = &source[source_end - 1];
-                    if s_elem.rest {
-                        if !tail_elem.optional {
-                            return Some(SubtypeFailureReason::TupleElementMismatch {
-                                source_count: source.len(),
-                                target_count: target.len(),
-                            });
-                        }
-                        break;
-                    }
-                    let assignable = self
-                        .check_subtype(s_elem.type_id, tail_elem.type_id)
-                        .is_true();
-                    if tail_elem.optional && !assignable {
-                        break;
-                    }
-                    if !assignable {
-                        return Some(self.tuple_element_type_mismatch(
-                            source_end - 1,
-                            s_elem.type_id,
-                            tail_elem.type_id,
-                            true,
-                        ));
-                    }
-                    source_end -= 1;
-                }
-
-                let mut source_iter = source.iter().enumerate().take(source_end).skip(i);
-
-                for t_fixed in &expansion.fixed {
-                    match source_iter.next() {
-                        Some((j, s_elem)) => {
-                            if s_elem.rest {
-                                return Some(SubtypeFailureReason::TupleElementMismatch {
-                                    source_count: source.len(),
-                                    target_count: target.len(),
-                                });
-                            }
-                            if !self
-                                .check_subtype(s_elem.type_id, t_fixed.type_id)
-                                .is_true()
-                            {
-                                return Some(self.tuple_element_type_mismatch(
-                                    j,
-                                    s_elem.type_id,
-                                    t_fixed.type_id,
-                                    true,
-                                ));
-                            }
-                        }
-                        None => {
-                            if !t_fixed.optional {
-                                return Some(SubtypeFailureReason::TupleElementMismatch {
-                                    source_count: source.len(),
-                                    target_count: target.len(),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                if let Some(variadic) = expansion.variadic {
-                    let variadic_is_type_param = is_type_parameter(self.interner, variadic);
-                    let variadic_array = self.interner.array(variadic);
-                    for (j, s_elem) in source_iter {
-                        if s_elem.rest {
-                            if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
-                                return Some(self.tuple_element_type_mismatch(
-                                    j,
-                                    s_elem.type_id,
-                                    variadic_array,
-                                    true,
-                                ));
-                            }
-                        } else if variadic_is_type_param {
-                            return Some(SubtypeFailureReason::TypeMismatch {
-                                source_type: s_elem.type_id,
-                                target_type: variadic,
-                            });
-                        } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
-                            return Some(self.tuple_element_type_mismatch(
-                                j,
-                                s_elem.type_id,
-                                variadic,
-                                true,
-                            ));
-                        }
-                    }
-                    return None;
-                }
-
-                if source_iter.next().is_some() {
-                    return Some(SubtypeFailureReason::TupleElementMismatch {
-                        source_count: source.len(),
-                        target_count: target.len(),
-                    });
-                }
-                return None;
-            }
-
-            if let Some(s_elem) = source.get(i) {
-                if s_elem.rest {
-                    // Source has rest but target expects fixed element
-                    return Some(SubtypeFailureReason::TupleElementMismatch {
-                        source_count: source.len(), // Approximate "infinity"
-                        target_count: target.len(),
-                    });
-                }
-
-                if !self.check_subtype(s_elem.type_id, t_elem.type_id).is_true() {
-                    // Drill into the nested failure: if the element mismatch is due to a
-                    // missing property (e.g., {} vs {a: string}), return MissingProperty
-                    // to produce TS2741 instead of generic TS2322. This matches tsc behavior
-                    // for tuple literals where elements have missing properties.
-                    // Reuse the single `explain_failure` walk both to detect the
-                    // missing-property short-circuit and as the element's nested
-                    // reason, avoiding a second recursive type walk.
-                    let nested = self.explain_failure(s_elem.type_id, t_elem.type_id);
-                    if matches!(
-                        nested,
-                        Some(
-                            SubtypeFailureReason::MissingProperty { .. }
-                                | SubtypeFailureReason::MissingProperties { .. }
-                        )
-                    ) {
-                        return nested;
-                    }
-                    return Some(SubtypeFailureReason::TupleElementTypeMismatch {
-                        index: i,
-                        source_element: s_elem.type_id,
-                        target_element: t_elem.type_id,
-                        nested_reason: nested.map(Box::new),
-                        // Single-element tuples have no position to disambiguate,
-                        // so tsc omits the TS2626 positional line and relates the
-                        // element types directly.
-                        multi_element: target.len() > 1,
-                    });
-                }
-            } else if !t_elem.optional {
-                return Some(SubtypeFailureReason::TupleElementMismatch {
-                    source_count: source.len(),
-                    target_count: target.len(),
-                });
-            }
-        }
-
-        // Target is closed. Check for extra elements in source.
-        if source.len() > target.len() {
-            return Some(SubtypeFailureReason::TupleElementMismatch {
-                source_count: source.len(),
-                target_count: target.len(),
-            });
-        }
-
-        for s_elem in source {
-            if s_elem.rest {
-                return Some(SubtypeFailureReason::TupleElementMismatch {
-                    source_count: source.len(), // implies open
-                    target_count: target.len(),
-                });
             }
         }
 
