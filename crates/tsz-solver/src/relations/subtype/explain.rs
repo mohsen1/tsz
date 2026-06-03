@@ -828,18 +828,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     continue;
                 }
                 // Elaborate the first failing member beneath the union-to-target
-                // line, mirroring tsc which always drills into that member. Only
-                // *self-heading* reasons are surfaced: leaf relations
-                // (`undefined`/literal/intrinsic mismatch) and the property
-                // reasons (`MissingProperty`/`MissingProperties`), whose rendered
-                // message already names the member type (`Property 'a' is missing
-                // in type '{ b: 2; }' …` / `Type '{ c: 3; }' is missing the
-                // following properties …`). They need no extra `Type 'M' is not
-                // assignable …` header, so `UnionSourceMismatch` reproduces tsc's
-                // chain exactly. Richer structural reasons (property-type/tuple
-                // element mismatches) do require that header, which the renderer
-                // does not emit on this path, so they fall through to the bare
-                // union line rather than a mis-indented chain.
+                // line, mirroring tsc which always drills into that member. Two
+                // shapes are surfaced:
+                //
+                // * *Self-heading* reasons — leaf relations
+                //   (`undefined`/literal/intrinsic mismatch) and the property
+                //   reasons (`MissingProperty`/`MissingProperties`), whose
+                //   rendered message already names the member type
+                //   (`Property 'a' is missing in type '{ b: 2; }' …` /
+                //   `Type '{ c: 3; }' is missing the following properties …`).
+                //   They need no extra `Type 'M' is not assignable …` header.
+                //
+                // * *Header-led* structural reasons — tuple element type
+                //   mismatches and object property-type mismatches. tsc leads
+                //   their elaboration with an explicit
+                //   `Type 'M' is not assignable to type 'T'.` member header and
+                //   then drills (`Type at position 0 …` / `Types of property
+                //   'p' …`). The union-source renderer emits that header so the
+                //   chain stays correctly indented instead of collapsing to the
+                //   bare union line.
                 let nested = self.explain_failure_guarded(member, target);
                 if let Some(nested) = nested
                     && matches!(
@@ -849,6 +856,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             | SubtypeFailureReason::LiteralTypeMismatch { .. }
                             | SubtypeFailureReason::MissingProperty { .. }
                             | SubtypeFailureReason::MissingProperties { .. }
+                            | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::PropertyTypeMismatch { .. }
                     )
                 {
                     return Some(SubtypeFailureReason::UnionSourceMismatch {
