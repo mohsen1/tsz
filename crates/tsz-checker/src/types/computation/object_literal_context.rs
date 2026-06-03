@@ -380,19 +380,19 @@ impl<'a> CheckerState<'a> {
             .or_else(|| common::union_members(self.ctx.types, evaluated))
             .or_else(
                 || match classify_for_excess_properties(self.ctx.types, type_id) {
-                    ExcessPropertiesKind::Union(members) => Some(members),
+                    ExcessPropertiesKind::Union(members) => Some(members.into()),
                     _ => None,
                 },
             )
             .or_else(
                 || match classify_for_excess_properties(self.ctx.types, resolved) {
-                    ExcessPropertiesKind::Union(members) => Some(members),
+                    ExcessPropertiesKind::Union(members) => Some(members.into()),
                     _ => None,
                 },
             )
             .or_else(
                 || match classify_for_excess_properties(self.ctx.types, evaluated) {
-                    ExcessPropertiesKind::Union(members) => Some(members),
+                    ExcessPropertiesKind::Union(members) => Some(members.into()),
                     _ => None,
                 },
             );
@@ -776,7 +776,7 @@ impl<'a> CheckerState<'a> {
                 ) {
                     crate::query_boundaries::assignability::ExcessPropertiesKind::Union(
                         members,
-                    ) => Some(members),
+                    ) => Some(members.into()),
                     _ => None,
                 }
             })?;

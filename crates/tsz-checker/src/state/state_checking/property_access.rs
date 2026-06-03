@@ -66,8 +66,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
         let name_type = mapped.name_type?;
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let source_members =
-            query::union_members(self.ctx.types, constraint).unwrap_or_else(|| vec![constraint]);
+        let source_members = query::union_members(self.ctx.types, constraint)
+            .unwrap_or_else(|| vec![constraint].into());
         if source_members.is_empty() {
             return None;
         }

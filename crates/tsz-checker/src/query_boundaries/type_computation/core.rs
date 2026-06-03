@@ -312,7 +312,9 @@ mod tests {
     }
 
     fn union_members(db: &TypeInterner, ty: TypeId) -> Vec<TypeId> {
-        tsz_solver::type_queries::get_union_members(db, ty).unwrap_or_else(|| vec![ty])
+        tsz_solver::type_queries::get_union_members(db, ty)
+            .map(|m| m.to_vec())
+            .unwrap_or_else(|| vec![ty])
     }
 
     fn tuple(db: &TypeInterner, type_id: TypeId) -> TypeId {

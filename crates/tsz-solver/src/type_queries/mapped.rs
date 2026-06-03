@@ -753,7 +753,7 @@ pub fn get_finite_mapped_property_display_type(
             .and_then(|(object_type, index_type)| {
                 let prop_atom = crate::visitor::literal_string(db, index_type)?;
                 let object_members = crate::type_queries::get_intersection_members(db, object_type)
-                    .unwrap_or_else(|| vec![object_type]);
+                    .unwrap_or_else(|| vec![object_type].into());
                 Some(object_members.into_iter().any(|member| {
                     crate::type_queries::find_property_in_object(db, member, prop_atom)
                         .is_some_and(|prop| prop.optional)

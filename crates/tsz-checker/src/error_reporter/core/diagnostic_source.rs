@@ -1827,7 +1827,7 @@ impl<'a> CheckerState<'a> {
         }
         let narrowed_members =
             crate::query_boundaries::common::union_members(self.ctx.types, narrowed)
-                .unwrap_or_else(|| vec![narrowed]);
+                .unwrap_or_else(|| vec![narrowed].into());
         if narrowed_members.is_empty() || narrowed_members.len() >= declared_members.len() {
             return false;
         }
@@ -1866,7 +1866,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut ordered = source_members;
+        let mut ordered = source_members.to_vec();
         ordered.sort_by_key(|member| {
             std::cmp::Reverse(
                 declared_members

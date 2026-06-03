@@ -459,7 +459,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// literal regardless of where the indexed access appears syntactically.
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
         use crate::query_boundaries::common::{string_literal_value, union_members};
-        let members = union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type]);
+        let members =
+            union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type].into());
         let keys: Vec<String> = members
             .iter()
             .filter_map(|&member| string_literal_value(self.ctx.types, member))

@@ -405,7 +405,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| {
                     crate::query_boundaries::common::union_members(self.ctx.types, key_type)
                 })
-                .unwrap_or_else(|| vec![evaluated_key_type]);
+                .unwrap_or_else(|| vec![evaluated_key_type].into());
         if keys.len() != shape.properties.len() {
             return None;
         }

@@ -358,8 +358,8 @@ impl<'a> FlowAnalyzer<'a> {
             .collect();
 
         // Get union members of the argument type (or treat as single-member)
-        let arg_members =
-            union_members_for_type(self.interner, arg_type).unwrap_or_else(|| vec![arg_type]);
+        let arg_members = union_members_for_type(self.interner, arg_type)
+            .unwrap_or_else(|| vec![arg_type].into());
 
         // Subtract the fixed members from the argument type
         let remaining: Vec<TypeId> = arg_members

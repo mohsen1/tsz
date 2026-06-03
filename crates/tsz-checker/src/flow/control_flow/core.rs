@@ -1029,7 +1029,7 @@ impl<'a> FlowAnalyzer<'a> {
             return narrowed_type;
         }
 
-        let mut remaining_members = source_members.clone();
+        let mut remaining_members = source_members.to_vec();
         let original_member_count = remaining_members.len();
 
         for (sib_sym, sib_info) in siblings {

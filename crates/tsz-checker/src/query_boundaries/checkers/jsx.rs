@@ -164,7 +164,10 @@ pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) 
     crate::query_boundaries::common::type_parameter_constraint(db, type_id)
 }
 
-pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+pub(crate) fn union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::query_boundaries::common::TypeIdList> {
     crate::query_boundaries::common::union_members(db, type_id)
 }
 
@@ -190,7 +193,7 @@ pub(crate) fn element_type_allows_intrinsic_tag(
     tag: &str,
 ) -> bool {
     let members = crate::query_boundaries::common::union_members(db, element_type)
-        .unwrap_or_else(|| vec![element_type]);
+        .unwrap_or_else(|| vec![element_type].into());
     members.into_iter().any(|member| {
         if crate::query_boundaries::common::is_string_type(db, member) {
             return true;

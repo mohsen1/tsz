@@ -755,7 +755,7 @@ fn union_member_has_branch_only_keys(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 
     let mut first_keys: Option<FxHashSet<_>> = None;
-    for branch in &union_members {
+    for branch in union_members.iter() {
         let Some(shape) = get_object_shape(db, *branch) else {
             return false;
         };
@@ -783,7 +783,7 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
     };
 
     let mut candidate_names = FxHashSet::default();
-    for &member in &members {
+    for &member in members.iter() {
         if get_union_members(db, member).is_some() {
             continue;
         }
@@ -812,7 +812,7 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
 
         candidate_names.iter().copied().any(|prop_name| {
             let mut seen = FxHashSet::default();
-            for branch in &union_members {
+            for branch in union_members.iter() {
                 let Some(shape) = get_object_shape(db, *branch) else {
                     return false;
                 };
@@ -1046,7 +1046,7 @@ fn unpack_union_of_prefix_tuples(
     // Collect each member's tuple elements; bail on any non-tuple or any tuple
     // containing a rest/spread element (variadic shape can't be flattened).
     let mut tuples: Vec<Vec<crate::types::TupleElement>> = Vec::with_capacity(members.len());
-    for &m in &members {
+    for &m in members.iter() {
         let elems = get_tuple_elements(db, m)?;
         if elems.iter().any(|e| e.rest) {
             return None;
@@ -1219,12 +1219,12 @@ pub fn numeric_literal_index_valid_for_object(
     // Collect union members; treat a non-union as a single-element slice.
     let members = match get_union_members(db, index_type) {
         Some(ms) => ms,
-        None => vec![index_type],
+        None => vec![index_type].into(),
     };
     if members.is_empty() {
         return false;
     }
-    for &member in &members {
+    for &member in members.iter() {
         // Each member must be a numeric literal. Intrinsics that resolve to
         // Literal (BOOLEAN_TRUE/FALSE) are Boolean, never Number — skip lookup.
         if member.is_intrinsic() {

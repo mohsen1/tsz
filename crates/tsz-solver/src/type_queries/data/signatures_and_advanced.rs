@@ -284,7 +284,7 @@ pub fn get_call_signatures(
     // For intersection types, collect call signatures from all members
     if let Some(members) = get_intersection_members(db, type_id) {
         let mut all_sigs = Vec::new();
-        for member in &members {
+        for member in members.iter() {
             if let Some(shape) = get_callable_shape(db, *member) {
                 all_sigs.extend(shape.call_signatures.iter().cloned());
             }
@@ -311,7 +311,7 @@ pub fn get_construct_signatures(
     // For intersection types, collect construct signatures from all members
     if let Some(members) = get_intersection_members(db, type_id) {
         let mut all_sigs = Vec::new();
-        for member in &members {
+        for member in members.iter() {
             if let Some(shape) = get_callable_shape(db, *member) {
                 all_sigs.extend(shape.construct_signatures.iter().cloned());
             }

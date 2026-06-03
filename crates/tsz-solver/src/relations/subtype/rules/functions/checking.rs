@@ -961,7 +961,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
                 let require_all_variants = !is_method;
                 let mut matched_any_variant = false;
-                for member_type_id in &union_members {
+                for member_type_id in union_members.iter() {
                     // When the union member is a readonly tuple and the source has
                     // individual (non-rest) parameters (forming a mutable tuple),
                     // the readonly tuple cannot be assigned to the mutable param tuple

@@ -911,7 +911,7 @@ mod tests {
         let Some(domain) = typeof_switch_domain(&db, None, operand) else {
             panic!("expected typeof domain for string | number");
         };
-        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain].into());
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
@@ -933,7 +933,7 @@ mod tests {
         let union = db.union(vec![enum_member, TypeId::NUMBER]);
 
         let domain = enum_member_union_domain(&db, union);
-        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain].into());
 
         assert_eq!(members.len(), 2);
         assert!(members.contains(&literal));
@@ -1018,7 +1018,7 @@ mod tests {
         let Some(domain) = nullish_coalescing_switch_domain(&db, left, TypeId::STRING) else {
             panic!("expected switch domain for number | null ?? string");
         };
-        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain].into());
         assert_eq!(members.len(), 2);
         assert!(members.contains(&TypeId::NUMBER));
         assert!(members.contains(&TypeId::STRING));

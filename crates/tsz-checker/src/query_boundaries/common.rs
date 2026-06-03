@@ -14,8 +14,9 @@ pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
 pub(crate) use tsz_solver::relations::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 pub(crate) use tsz_solver::type_queries::{
-    RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,
-    is_remapped_mapped_index_access, remapped_mapped_index_access_result,
+    RemappedMappedIndexAccessResult, TypeIdList, TypeTraversalKind,
+    constraint_allows_mutable_array_like, is_remapped_mapped_index_access,
+    remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
     FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
@@ -101,7 +102,14 @@ pub(crate) fn has_function_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     tsz_solver::type_queries::get_function_shape(db, type_id).is_some()
 }
 
-pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+/// Members of a union type, or `None` if `type_id` is not a union.
+///
+/// Returns a [`TypeIdList`] — a zero-copy shared view over the interned
+/// member list (an O(1) refcount bump) rather than copying into a fresh
+/// `Vec` on every call. `TypeIdList` is a drop-in for `Vec<TypeId>` in
+/// read-only contexts; the rare caller that needs an owned, mutable buffer
+/// calls `.to_vec()`.
+pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeIdList> {
     tsz_solver::type_queries::get_union_members(db, type_id)
 }
 
@@ -338,7 +346,10 @@ pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
     tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
 
-pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+/// Members of an intersection type, or `None` if `type_id` is not an
+/// intersection. Returns a zero-copy [`TypeIdList`]; see `union_members`
+/// for the allocation rationale.
+pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeIdList> {
     tsz_solver::type_queries::get_intersection_members(db, type_id)
 }
 

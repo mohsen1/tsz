@@ -303,7 +303,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
             let mut all_same_enum = true;
             let mut has_non_enum = false;
-            for &member in &union_members {
+            for &member in union_members.iter() {
                 if let Some((member_def, _)) = visitor::enum_components(self.interner, member) {
                     // Check if this member belongs to the target enum.
                     // Members have their own DefIds (different from parent enum's DefId),
