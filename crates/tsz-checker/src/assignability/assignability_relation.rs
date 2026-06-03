@@ -1428,6 +1428,38 @@ impl<'a> CheckerState<'a> {
     /// Follows the same pattern as `is_assignable_to` but calls `is_assignable_to_bivariant_callback`
     /// which disables `strict_function_types` for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to_bivariant_with_extra_flags(source, target, 0)
+    }
+
+    /// Bivariant assignability that additionally keeps method-local generic
+    /// type parameters opaque (`NO_ERASE_GENERICS`).
+    ///
+    /// Class method overrides are bivariant in their parameters, but the base
+    /// method's universal quantification must still be preserved: a concrete
+    /// `(x: string) => string` is not a valid override of a generic
+    /// `<T extends string>(x: T) => T`, because a caller could instantiate `T`
+    /// with a proper subtype of `string` and expect that subtype back. Erasing
+    /// the base type parameter to its constraint (the default bivariant path)
+    /// hides this `TS2416`. Mirrors the `no_erase_generics` relation used by the
+    /// `implements` member-override path while retaining bivariant parameters.
+    pub fn is_assignable_to_bivariant_no_erase_generics(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_bivariant_with_extra_flags(
+            source,
+            target,
+            crate::query_boundaries::assignability::RelationFlags::NO_ERASE_GENERICS,
+        )
+    }
+
+    fn is_assignable_to_bivariant_with_extra_flags(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        extra_flags: u16,
+    ) -> bool {
         if source == target {
             return true;
         }
@@ -1446,8 +1478,11 @@ impl<'a> CheckerState<'a> {
 
         // For bivariant checks, we strip the strict_function_types flag
         // so the cache key is distinct from regular assignability checks.
-        let flags = self.ctx.pack_relation_flags()
-            & !crate::query_boundaries::assignability::RelationFlags::STRICT_FUNCTION_TYPES;
+        // `extra_flags` lets callers force additional policy (e.g.
+        // `NO_ERASE_GENERICS`) while keeping the bivariant parameter behavior.
+        let flags = (self.ctx.pack_relation_flags()
+            & !crate::query_boundaries::assignability::RelationFlags::STRICT_FUNCTION_TYPES)
+            | extra_flags;
 
         if is_cacheable {
             // Note: For assignability checks, we use AnyPropagationMode::All (0)
