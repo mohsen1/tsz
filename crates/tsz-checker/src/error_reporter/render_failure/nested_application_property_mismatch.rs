@@ -866,16 +866,21 @@ impl<'a> CheckerState<'a> {
 
     /// Whether a failing union member's nested reason leads its elaboration
     /// with a specialized line (`Type at position 0 …`, `Types of property
-    /// 'p' …`) instead of self-heading with `Type 'M' is not assignable to
-    /// type 'T'.`. Such reasons need an explicit member-type header emitted
-    /// before the structural drill; self-heading reasons (the property
-    /// `MissingProperty`/`MissingProperties` summaries) and plain leaf
-    /// relations already carry the member line themselves.
+    /// 'p' …`, `'string' index signatures are incompatible.`, or — for a
+    /// function-return mismatch — the bare return-relation leaf) instead of
+    /// self-heading with `Type 'M' is not assignable to type 'T'.`. Such
+    /// reasons need an explicit member-type header emitted before the
+    /// structural drill; self-heading reasons (the property
+    /// `MissingProperty`/`MissingProperties` summaries, `ParameterTypeMismatch`
+    /// — whose own first line is the signature relation — and plain leaf
+    /// relations) already carry the member line themselves.
     const fn union_member_nested_needs_header(reason: &tsz_solver::SubtypeFailureReason) -> bool {
         matches!(
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }
         )
     }
 
@@ -979,6 +984,50 @@ impl<'a> CheckerState<'a> {
             code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             depth: header_depth.min(u8::MAX as u32) as u8,
         });
+
+        // A union member that is a function failing on its *return* type drills
+        // straight into the return relation beneath the member header, with no
+        // intermediate `Return type 'X' is not assignable to 'Y'.` frame — `tsc`
+        // relates the return types directly:
+        //
+        // ```text
+        //   Type '(x: string) => string' is not assignable to type 'Target'.
+        //     Type 'string' is not assignable to type 'number'.
+        // ```
+        //
+        // Rendering the `ReturnTypeMismatch` reason itself would emit the
+        // `Return type …` frame (a non-`tsc` line at depth >= 1), so recurse into
+        // the carried return relation instead.
+        if let tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
+            source_return,
+            target_return,
+            nested_reason: inner,
+        } = nested_reason
+        {
+            // When the return relation has no structured sub-reason, drill it as
+            // a plain leaf so both arms render the return types through the same
+            // path (`render_failure_reason` → `render_type_mismatch`).
+            let leaf;
+            let return_reason = match inner.as_deref() {
+                Some(inner) => inner,
+                None => {
+                    leaf = tsz_solver::SubtypeFailureReason::TypeMismatch {
+                        source_type: *source_return,
+                        target_type: *target_return,
+                    };
+                    &leaf
+                }
+            };
+            let return_diag = self.render_failure_reason(
+                return_reason,
+                *source_return,
+                *target_return,
+                ctx.idx,
+                drill_depth,
+            );
+            Self::push_nested_chain(&mut diag, return_diag, drill_depth);
+            return diag;
+        }
 
         let nested_diag = self.render_failure_reason(
             nested_reason,
