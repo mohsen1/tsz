@@ -242,7 +242,9 @@ impl<'a> CheckerState<'a> {
                 // or sibling reads would observe under-resolved results. Writes
                 // are reserved for the authoritative full-resolver second pass.
                 None,
-                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(seed_persist),
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    seed_persist,
+                ),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;

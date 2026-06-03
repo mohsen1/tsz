@@ -150,16 +150,20 @@ fn test_env_eval_threads_seed_persist_to_cache_entry_collection() {
         .expect("failed to read type_environment query boundary");
     assert!(
         boundary.contains("enum CacheEntryCollection")
-            && boundary.contains("CacheEntryCollection::Collect"),
+            && boundary.contains("CacheEntryCollection::Collect")
+            && boundary.contains(
+                "matches!(cache_entry_collection, CacheEntryCollection::Collect)"
+            ),
         "evaluate_type_with_cache must expose a cache-entry collection gate"
     );
 
     let lazy = fs::read_to_string("src/state/type_environment/lazy.rs")
         .expect("failed to read lazy type environment");
+    let collection_gate_count = lazy.matches("CacheEntryCollection::when_enabled").count();
     assert!(
-        lazy.contains("CacheEntryCollection::when_enabled(seed_persist)")
+        collection_gate_count >= 2
+            && lazy.contains("seed_persist")
             && lazy.contains("let second_pass_seed_persist")
-            && lazy.contains("CacheEntryCollection::when_enabled")
             && lazy.contains("second_pass_seed_persist"),
         "env-eval first pass must pass seed_persist and second pass must \
          recompute the gate before cache-entry collection"

@@ -403,7 +403,7 @@ pub(crate) struct EvalWithCacheResult {
     pub silent_depth_bailed: bool,
     /// Cache entries produced by the evaluator (key -> evaluated value).
     ///
-    /// Empty when the caller disables cache-entry collection. The top-level
+    /// Empty when `CacheEntryCollection::Skip` is selected. The top-level
     /// `result` and depth flags are still authoritative; these entries are only
     /// the speed-only intermediate memo used by env-eval seed/persist.
     pub cache_entries: Vec<(TypeId, TypeId)>,
@@ -424,6 +424,7 @@ pub(crate) enum CacheEntryCollection {
 }
 
 impl CacheEntryCollection {
+    #[inline]
     pub(crate) fn when_enabled(enabled: bool) -> Self {
         if enabled { Self::Collect } else { Self::Skip }
     }
