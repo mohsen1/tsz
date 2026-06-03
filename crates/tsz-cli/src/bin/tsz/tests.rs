@@ -2,6 +2,7 @@ use super::*;
 
 fn preprocess_strs(args: &[&str]) -> Vec<String> {
     preprocess_args(args.iter().map(OsString::from).collect())
+        .into_continue()
         .into_iter()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect()
@@ -102,7 +103,7 @@ fn preprocess_case_insensitive_noemit() {
         OsString::from("--NoEmit"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--noEmit"));
 }
 
@@ -113,7 +114,7 @@ fn preprocess_case_insensitive_all_caps() {
         OsString::from("--STRICT"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--strict"));
 }
 
@@ -125,7 +126,7 @@ fn preprocess_case_insensitive_with_value() {
         OsString::from("ES2020"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--target"));
     // Value should be preserved as-is
     assert!(result.iter().any(|a| a == "ES2020"));
@@ -138,7 +139,7 @@ fn preprocess_case_insensitive_equals_form() {
         OsString::from("--Target=ES2020"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--target=ES2020"));
 }
 
@@ -151,7 +152,7 @@ fn preprocess_canonicalizes_kebab_case_aliases() {
         OsString::from("5.7"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--noEmit"));
     assert!(result.iter().any(|a| a == "--typesVersions"));
 }
@@ -165,7 +166,7 @@ fn preprocess_canonicalizes_cli_only_aliases() {
         OsString::from("--trace-dependencies"),
         OsString::from("--batch"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--build"));
     assert!(result.iter().any(|a| a == "--build-verbose"));
     assert!(result.iter().any(|a| a == "--traceDependencies"));
@@ -179,7 +180,7 @@ fn preprocess_file_paths_not_lowercased() {
         OsString::from("--noEmit"),
         OsString::from("MyFile.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "MyFile.ts"));
 }
 
@@ -193,7 +194,7 @@ fn preprocess_duplicate_boolean_flags() {
         OsString::from("--strict"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     let strict_count = result.iter().filter(|a| *a == "--strict").count();
     assert_eq!(strict_count, 1, "duplicate --strict should be deduplicated");
 }
@@ -208,7 +209,7 @@ fn preprocess_duplicate_valued_flags_last_wins() {
         OsString::from("ES2022"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     let target_count = result.iter().filter(|a| *a == "--target").count();
     assert_eq!(target_count, 1, "duplicate --target should be deduplicated");
     // Last value wins
@@ -226,7 +227,7 @@ fn preprocess_strict_false_forwards_explicit_disable() {
         OsString::from("false"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     // The bare `--strict` flag is dropped (clap's `bool` arg cannot represent
     // an explicit `false`).
     assert!(
@@ -258,7 +259,7 @@ fn preprocess_strict_true_keeps_flag() {
         OsString::from("true"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(
         result.iter().any(|a| a == "--strict"),
         "--strict true should keep the flag"
@@ -278,7 +279,7 @@ fn preprocess_noemit_false_forwards_explicit_disable() {
         OsString::from("false"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(
         !result.iter().any(|a| a == "--noEmit"),
         "--noEmit false should remove the bare flag"
@@ -327,7 +328,7 @@ fn preprocess_non_boolean_false_not_consumed() {
         OsString::from("false"),
         OsString::from("file.ts"),
     ];
-    let result = preprocess_args(args);
+    let result = preprocess_args(args).into_continue();
     assert!(result.iter().any(|a| a == "--outDir"));
     assert!(result.iter().any(|a| a == "false"));
 }
@@ -498,7 +499,7 @@ fn build_clean_removes_explicit_tsbuildinfo_file() {
 fn parse_args_for_init(extra: &[&str]) -> CliArgs {
     let mut argv: Vec<OsString> = vec![OsString::from("tsz"), OsString::from("--init")];
     argv.extend(extra.iter().map(OsString::from));
-    let preprocessed = preprocess_args(argv);
+    let preprocessed = preprocess_args(argv).into_continue();
     CliArgs::try_parse_from(&preprocessed).expect("clap should accept --init args")
 }
 

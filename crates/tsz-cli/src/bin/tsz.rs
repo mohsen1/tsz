@@ -15,7 +15,7 @@ use tsz_cli::help::{self, TSC_VERSION};
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-use arg_preprocess::{check_build_position, preprocess_args};
+use arg_preprocess::{EarlyExit, PreprocessOutcome, preprocess_args};
 use clap_errors::handle_clap_error;
 use diagnostics_report::print_diagnostics;
 
@@ -43,13 +43,16 @@ fn main() -> Result<()> {
     // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
     tsz_cli::tracing_config::init_tracing();
 
-    let preprocessed = preprocess_args(std::env::args_os().collect());
-
-    // Check for TS6369: --build must be the first argument
-    if let Some(msg) = check_build_position(&preprocessed) {
-        print!("{msg}");
-        std::process::exit(1);
-    }
+    // Preprocessing is side-effect free: it either hands back normalized args
+    // or an early-exit directive (help/version/--all/TS5023/TS6369) whose I/O
+    // we own here. The entrypoint adds the trailing newline.
+    let preprocessed = match preprocess_args(std::env::args_os().collect()) {
+        PreprocessOutcome::Continue(args) => args,
+        PreprocessOutcome::EarlyExit(EarlyExit { message, code }) => {
+            println!("{message}");
+            std::process::exit(code);
+        }
+    };
 
     let args = match CliArgs::try_parse_from(&preprocessed) {
         Ok(args) => args,
