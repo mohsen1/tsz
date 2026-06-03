@@ -54,7 +54,7 @@ fn cjs_es5_tc39_named_export_in_using_no_extra_indent() {
     );
 }
 
-/// ESNext + ES5: `C = function ()` at the correct one-level indent.
+/// `ESNext` + ES5: `C = function ()` at the correct one-level indent.
 #[test]
 fn esnext_es5_tc39_named_export_in_using_correct_indent() {
     let out = emit(SRC_NAMED, ModuleKind::ESNext, ScriptTarget::ES5);
