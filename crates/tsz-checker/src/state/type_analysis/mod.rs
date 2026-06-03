@@ -22,6 +22,8 @@ mod cross_file_direct_alias_chain;
 #[cfg(test)]
 mod cross_file_direct_alias_chain_concrete_tests;
 #[cfg(test)]
+mod cross_file_direct_alias_chain_globals_tests;
+#[cfg(test)]
 mod cross_file_direct_alias_chain_tests;
 mod cross_file_direct_declaration_alias;
 mod cross_file_direct_functions;
