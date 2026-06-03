@@ -584,10 +584,26 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && ident.escaped_text.is_empty()
                 {
+                    if self.parameter_starts_with_hard_reserved_keyword(param_node)
+                        && !self.parameter_starts_with_literal_reserved_keyword(param_node)
+                    {
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                        continue;
+                    }
                     let Some(recovered_name) = self.recovered_parameter_name_from_type_only(param)
                     else {
                         continue;
                     };
+                    if self.parameter_starts_with_literal_reserved_keyword(param_node) {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write(", ");
+                        self.write(&recovered_name);
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                        continue;
+                    }
                     if !first {
                         self.write(", ");
                     }
@@ -864,6 +880,35 @@ impl<'a> Printer<'a> {
                         .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
                 })
             })
+    }
+
+    fn parameter_starts_with_hard_reserved_keyword(&self, node: &Node) -> bool {
+        self.parameter_start_keyword(node)
+            .is_some_and(tsz_scanner::token_is_reserved_word)
+    }
+
+    fn parameter_starts_with_literal_reserved_keyword(&self, node: &Node) -> bool {
+        matches!(
+            self.parameter_start_keyword(node),
+            Some(
+                tsz_scanner::SyntaxKind::NullKeyword
+                    | tsz_scanner::SyntaxKind::TrueKeyword
+                    | tsz_scanner::SyntaxKind::FalseKeyword
+            )
+        )
+    }
+
+    fn parameter_start_keyword(&self, node: &Node) -> Option<tsz_scanner::SyntaxKind> {
+        let source = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = source.as_bytes();
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+            end += 1;
+        }
+        let raw = crate::safe_slice::slice(source, start, end).ok()?.trim();
+        let token = tsz_scanner::string_to_token(raw);
+        tsz_scanner::token_is_keyword(token).then_some(token)
     }
 
     fn emit_native_parameter_decorators(&mut self, modifiers: Option<&NodeList>) {

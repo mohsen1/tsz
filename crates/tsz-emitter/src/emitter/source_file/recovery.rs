@@ -1,7 +1,8 @@
 use crate::emitter::Printer;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::ScannerState;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn recovered_yield_call_statement_text(
@@ -94,6 +95,361 @@ impl<'a> Printer<'a> {
             self.write(&statement);
             self.write_line();
         }
+        true
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_variable_declaration_name_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        let [decl_list_idx] = var_stmt.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(*decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        let [decl_idx] = decl_list.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(*decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(name_node) = self.arena.get(decl.name) else {
+            return false;
+        };
+        if self.arena.get_identifier(name_node).is_none() {
+            return false;
+        }
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(keyword) = self.reserved_keyword_text_at_declaration_start(decl_node) else {
+            return false;
+        };
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("var ;");
+        self.write_line();
+        self.write(keyword);
+        self.write(" ;");
+        self.write_line();
+        self.emit_expression(decl.initializer);
+        self.write_semicolon();
+        true
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_array_binding_variable_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        let [decl_list_idx] = var_stmt.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(*decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        let [decl_idx] = decl_list.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(*decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(decl.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some((keywords, initializer_text)) = self.recovered_reserved_array_binding_parts(node)
+        else {
+            return false;
+        };
+        if keywords.is_empty() || keywords.len() > 3 {
+            return false;
+        }
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("var [];");
+        self.write_line();
+        self.write(keywords[0]);
+        self.write(";");
+        self.write_line();
+        match keywords.as_slice() {
+            [_] => {}
+            [_, second] => self.emit_recovered_reserved_array_binding_condition(second),
+            [_, second, third] => {
+                self.write(second);
+                self.write(" (, )");
+                self.write_line();
+                self.increase_indent();
+                self.emit_recovered_reserved_array_binding_condition(third);
+                self.decrease_indent();
+            }
+            _ => return false,
+        }
+        self.write(&initializer_text);
+        self.write_semicolon();
+        self.suppress_next_anonymous_enum_var_after_recovered_array_binding = true;
+        true
+    }
+
+    fn emit_recovered_reserved_array_binding_condition(&mut self, keyword: &str) {
+        self.write(keyword);
+        self.write(" ()");
+        self.write_line();
+        self.increase_indent();
+        self.write(";");
+        self.write_line();
+        self.decrease_indent();
+    }
+
+    fn recovered_reserved_array_binding_parts(
+        &self,
+        node: &Node,
+    ) -> Option<(Vec<&'static str>, String)> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let source = text.get(start..)?;
+        let mut scanner = ScannerState::new(source.to_string(), true);
+        let mut keywords = Vec::new();
+        let mut in_array_binding = false;
+        let mut initializer_start = None;
+        let mut initializer_end = None;
+
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::EndOfFileToken {
+                break;
+            }
+            let token_start = scanner.get_token_start();
+            let token_end = scanner.get_token_end();
+            match token {
+                SyntaxKind::OpenBracketToken => in_array_binding = true,
+                SyntaxKind::CloseBracketToken if in_array_binding => in_array_binding = false,
+                SyntaxKind::EqualsToken => {
+                    initializer_start = Some(token_end);
+                }
+                SyntaxKind::SemicolonToken => {
+                    initializer_end = Some(token_start);
+                    break;
+                }
+                _ if in_array_binding && tsz_scanner::token_is_reserved_word(token) => {
+                    keywords.push(self.reserved_keyword_text(scanner.get_token_text_ref())?);
+                }
+                _ => {}
+            }
+        }
+
+        let initializer_start = initializer_start?;
+        let initializer_end = initializer_end.unwrap_or_else(|| scanner.get_pos());
+        let initializer_text = source
+            .get(initializer_start..initializer_end)?
+            .trim()
+            .to_string();
+        if initializer_text.is_empty() {
+            return None;
+        }
+        Some((keywords, initializer_text))
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_import_equals_declaration_name(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return false;
+        };
+        if import.module_specifier.is_some() {
+            return false;
+        }
+        let Some(name_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(keyword) = self.reserved_keyword_text_from_source_span(name_node) else {
+            return false;
+        };
+        let Some(require_text) = self.recovered_import_equals_require_call_text(node) else {
+            return false;
+        };
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("require();");
+        self.write_line();
+        self.write(keyword);
+        self.write(" ( = ");
+        self.write(&require_text);
+        self.write(")");
+        self.write_line();
+        self.increase_indent();
+        self.write(";");
+        self.decrease_indent();
+        self.write_line();
+        true
+    }
+
+    fn recovered_import_equals_require_call_text(&self, node: &Node) -> Option<String> {
+        let line = self.source_line_from_node(node)?;
+        let equals = line.find('=')?;
+        let tail = line[equals + 1..].trim().trim_end_matches(';').trim();
+        if !tail.starts_with("require") {
+            return None;
+        }
+        Some(tail.to_string())
+    }
+
+    fn reserved_keyword_text_at_declaration_start(&self, node: &Node) -> Option<&'static str> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = text.as_bytes();
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+            end += 1;
+        }
+        let keyword = crate::safe_slice::slice(text, start, end).ok()?;
+        self.reserved_keyword_text(keyword)
+    }
+
+    fn reserved_keyword_text(&self, keyword: &str) -> Option<&'static str> {
+        let token = tsz_scanner::string_to_token(keyword);
+        tsz_scanner::token_is_reserved_word(token)
+            .then(|| tsz_scanner::keyword_to_text_static(token))?
+    }
+
+    fn source_line_from_node(&self, node: &Node) -> Option<&str> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = text.as_bytes();
+        let mut end = start;
+        while end < bytes.len() && !matches!(bytes[end], b'\n' | b'\r') {
+            end += 1;
+        }
+        crate::safe_slice::slice(text, start, end).ok()
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_function_declaration_name(
+        &mut self,
+        node: &Node,
+        func: &FunctionData,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(func.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(keyword) = self.reserved_keyword_text_from_source_span(name_node) else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if !self
+            .arena
+            .get_block(body_node)
+            .is_some_and(|block| block.statements.nodes.is_empty())
+        {
+            return false;
+        }
+
+        self.write("function ");
+        self.write("(");
+        let search_start = func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        self.function_scope_depth += 1;
+        self.emit_function_parameters_with_trailing_comments(
+            &func.parameters.nodes,
+            name_node.end,
+            search_start,
+            body_node.pos,
+        );
+        self.function_scope_depth -= 1;
+        self.write(") { }");
+        self.write_line();
+        self.write(keyword);
+        self.write(" () => { };");
+        true
+    }
+
+    fn reserved_keyword_text_from_source_span(&self, node: &Node) -> Option<&'static str> {
+        let text = self.source_text?;
+        let keyword = crate::safe_slice::slice(text, node.pos as usize, node.end as usize)
+            .ok()?
+            .trim();
+        let token = tsz_scanner::string_to_token(keyword);
+        tsz_scanner::token_is_reserved_word(token)
+            .then(|| tsz_scanner::keyword_to_text_static(token))?
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_namespace_declaration_name(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(module) = self.arena.get_module(node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(module.name) else {
+            return false;
+        };
+        let Some(keyword) = self.reserved_keyword_text_from_source_span(name_node) else {
+            return false;
+        };
+        if module.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        if !self.arena.get_module_block(body_node).is_some_and(|block| {
+            block
+                .statements
+                .as_ref()
+                .is_none_or(|stmts| stmts.nodes.is_empty())
+        }) {
+            return false;
+        }
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("namespace;");
+        self.write_line();
+        self.write(keyword);
+        self.write(" {};");
+        self.write_line();
         true
     }
 

@@ -42,6 +42,9 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
             return;
         }
+        if self.emit_recovered_reserved_function_declaration_name(node, func) {
+            return;
+        }
 
         let emit_invalid_namespace_static =
             self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
@@ -577,6 +580,13 @@ impl<'a> Printer<'a> {
             } else {
                 String::new()
             };
+            if enum_name.is_empty()
+                && std::mem::take(
+                    &mut self.suppress_next_anonymous_enum_var_after_recovered_array_binding,
+                )
+            {
+                transformer.set_emit_var_declaration(false);
+            }
             let mut folded_export_name = None;
             if !enum_name.is_empty() {
                 if self.declared_namespace_names.contains(&enum_name) {

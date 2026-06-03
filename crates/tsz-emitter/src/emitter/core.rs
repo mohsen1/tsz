@@ -788,6 +788,11 @@ pub struct Printer<'a> {
     /// the previous variable statement's emitted initializer.
     pub(crate) consumed_recovered_expression_statement_span: Option<(u32, u32, String)>,
 
+    /// A recovered reserved-word array binding can leave the following anonymous
+    /// enum on tsc's no-hoist path. Cleared by the source-file statement loop if
+    /// the next statement is not that enum.
+    pub(crate) suppress_next_anonymous_enum_var_after_recovered_array_binding: bool,
+
     /// Pending `super` capture declarations for lowered async arrows in a method body.
     pub(crate) pending_lowered_async_arrow_super_capture: Option<(
         crate::transforms::emit_utils::AsyncMethodSuperCapture,

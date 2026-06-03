@@ -1586,6 +1586,11 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if self.suppress_next_anonymous_enum_var_after_recovered_array_binding
+                && stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION
+            {
+                self.suppress_next_anonymous_enum_var_after_recovered_array_binding = false;
+            }
             if stmt_i < cjs_pre_preamble_prologue_count {
                 continue;
             }
@@ -1764,37 +1769,8 @@ impl<'a> Printer<'a> {
             // "runtime module syntax" AFTER emit, because the emit step may decide
             // to erase it (e.g., text heuristic determines all imported names are
             // type-only and drops the import).
-            let is_module_indicating_stmt = if !is_erased {
-                let k = stmt_node.kind;
-                if k == syntax_kind_ext::IMPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                {
-                    true
-                } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                    // External module imports (`import x = require("mod")`) and
-                    // exported aliases count as runtime module syntax. Plain
-                    // namespace aliases (`import x = M.A`) are erased and should
-                    // not suppress deferred `export {};` emission.
-                    self.arena
-                        .get_import_decl(stmt_node)
-                        .is_some_and(|import_data| {
-                            self.arena
-                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
-                                || self.arena.get(import_data.module_specifier).is_some_and(
-                                    |spec_node| {
-                                        spec_node.is_string_literal()
-                                            || spec_node.kind
-                                                == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
-                                    },
-                                )
-                        })
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            let is_module_indicating_stmt =
+                self.is_runtime_module_indicating_statement(stmt_node, is_erased);
 
             // Find the actual start of the statement's first token by
             // scanning forward from node.pos past ALL trivia (whitespace AND
@@ -1812,6 +1788,10 @@ impl<'a> Printer<'a> {
                 last_erased_was_shorthand_module = false;
                 continue;
             }
+            if self.emit_recovered_reserved_import_equals_declaration_name(stmt_node) {
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
             if is_erased {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
@@ -1824,6 +1804,10 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if self.emit_recovered_reserved_namespace_declaration_name(stmt_node) {
+                        last_erased_was_shorthand_module = false;
+                        continue;
+                    }
                     let scan_end = next_stmt_node
                         .map_or_else(|| self.source_text_end_or(stmt_node.end), |n| n.pos);
                     self.emit_recovered_template_module_declaration(stmt_node, scan_end);

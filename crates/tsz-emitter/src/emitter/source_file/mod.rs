@@ -7,6 +7,7 @@ mod import_helpers_class_scan;
 mod import_helpers_class_scan_tests;
 #[cfg(test)]
 mod invalid_numeric_declaration_recovery_tests;
+mod module_syntax;
 #[cfg(test)]
 mod parser_recovery_tests;
 mod recovery;
