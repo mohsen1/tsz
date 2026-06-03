@@ -91,6 +91,10 @@ name = "homomorphic_mapped_index_display_tests"
 path = "tests/homomorphic_mapped_index_display_tests.rs"
 
 [[test]]
+name = "intersection_modifier_merge_tests"
+path = "tests/intersection_modifier_merge_tests.rs"
+
+[[test]]
 name = "array_declaration_display_summary_tests"
 path = "tests/array_declaration_display_summary_tests.rs"
 
