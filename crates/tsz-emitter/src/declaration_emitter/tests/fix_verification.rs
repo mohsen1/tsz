@@ -1613,6 +1613,45 @@ const result = getInterfaceFromString({ type: "two" }, "three");
 }
 
 #[test]
+fn fix_generic_call_callback_alias_does_not_trigger_conflicting_site() {
+    // `Callback<T>` is a TypeReference alias — its type annotation text does not
+    // contain `=>`, but it is NOT a direct object-property inference site either.
+    // The structural walk must recognise this and preserve the literal from `a`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Callback<T> = (x: T) => void;
+declare function f<T extends string>(a: T, b: Callback<T>): T;
+
+const result = f("hello", (_x) => {});
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const result = "hello";"#),
+        "expected callback-alias parameter not to trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_method_signature_does_not_trigger_conflicting_site() {
+    // `{ cb(x: T): void }` is a MethodSignature member — indirect inference, not a
+    // direct object-property site.  The structural walk must skip it and preserve
+    // the literal from `a`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, b: { cb(x: T): void }): T;
+
+const result = f("hello", { cb(_x: string) {} });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const result = "hello";"#),
+        "expected method-signature callback not to trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"

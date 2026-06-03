@@ -1,6 +1,7 @@
 //! Source-call type-parameter substitution helpers for declaration emit.
 
 use super::super::DeclarationEmitter;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -328,10 +329,13 @@ impl<'a> DeclarationEmitter<'a> {
             if param_type_text.trim() != type_param_name {
                 continue;
             }
-            // When another parameter contains the type parameter in a non-callback
-            // position (e.g. `{ type?: T }` rather than `(x: T) => R`), there are
+            // When another parameter contains the type parameter in a direct
+            // object-property inference position (e.g. `{ type?: T }`), there are
             // multiple inference sites that may produce conflicting literals.  Don't
             // lock in the direct literal — the caller falls back to the constraint.
+            // Callback positions (`(x: T) => R`, method signatures `{ cb(x: T): void }`,
+            // and generic aliases `Callback<T>`) are excluded: they are indirect inference
+            // sites and do not conflict with a direct-position literal.
             let has_conflicting_site = func
                 .parameters
                 .nodes
@@ -342,21 +346,13 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena
                         .get(other_idx)
                         .and_then(|node| source_arena.get_parameter(node))
-                        .and_then(|other_param| {
-                            self.emit_type_node_text_from_arena(
+                        .is_some_and(|other_param| {
+                            type_node_has_object_property_site_for(
                                 source_arena,
                                 other_param.type_annotation,
+                                type_param_name,
+                                0,
                             )
-                            .or_else(|| {
-                                self.source_slice_from_arena(
-                                    source_arena,
-                                    other_param.type_annotation,
-                                )
-                            })
-                        })
-                        .is_some_and(|other_text| {
-                            Self::contains_whole_word_in_text(&other_text, type_param_name)
-                                && !other_text.contains("=>")
                         })
                 });
             if has_conflicting_site {
@@ -805,5 +801,158 @@ impl<'a> DeclarationEmitter<'a> {
                 || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'');
         }
         false
+    }
+}
+
+/// Returns `true` when `type_idx` (the annotation of a parameter other than the
+/// candidate direct-literal parameter) carries the given type parameter in a
+/// **direct object-property inference position** — specifically as the type of a
+/// `PropertySignature` inside a type literal.
+///
+/// Excluded (returns `false`):
+/// - `MethodSignature` members — indirect callback-style inference.
+/// - `FunctionType` / `ConstructorType` nodes — explicit callback annotations.
+/// - Plain `TypeReference` wrappers like `Callback<T>` — generic alias, not a
+///   type-literal property.
+///
+/// Recurses through `UnionType`, `IntersectionType`, `ParenthesizedType`, and
+/// `OptionalType` wrappers so that `{ type?: T } | undefined` is still detected.
+fn type_node_has_object_property_site_for(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+    type_param_name: &str,
+    depth: u8,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    let Some(type_node) = source_arena.get(type_idx) else {
+        return false;
+    };
+    match type_node.kind {
+        k if k == syntax_kind_ext::TYPE_LITERAL => {
+            source_arena.get_type_literal(type_node).is_some_and(|lit| {
+                lit.members.nodes.iter().copied().any(|member_idx| {
+                    let Some(member_node) = source_arena.get(member_idx) else {
+                        return false;
+                    };
+                    // Only PropertySignature is a direct inference position.
+                    // MethodSignature (and CallSignature) are callback-like.
+                    if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                        return false;
+                    }
+                    source_arena.get_signature(member_node).is_some_and(|sig| {
+                        type_annotation_is_or_contains_type_param(
+                            source_arena,
+                            sig.type_annotation,
+                            type_param_name,
+                            depth + 1,
+                        )
+                    })
+                })
+            })
+        }
+        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+            source_arena
+                .get_composite_type(type_node)
+                .is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().any(|part_idx| {
+                        type_node_has_object_property_site_for(
+                            source_arena,
+                            part_idx,
+                            type_param_name,
+                            depth + 1,
+                        )
+                    })
+                })
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+            || k == syntax_kind_ext::OPTIONAL_TYPE
+            || k == syntax_kind_ext::REST_TYPE =>
+        {
+            source_arena
+                .get_wrapped_type(type_node)
+                .is_some_and(|wrapped| {
+                    type_node_has_object_property_site_for(
+                        source_arena,
+                        wrapped.type_node,
+                        type_param_name,
+                        depth + 1,
+                    )
+                })
+        }
+        // FunctionType, ConstructorType, TypeReference (e.g. Callback<T>), and all
+        // other forms are not direct object-property inference positions.
+        _ => false,
+    }
+}
+
+/// Returns `true` when `type_idx` is, or recursively contains, a bare reference
+/// to `type_param_name`.  Used to check a `PropertySignature`'s type annotation.
+///
+/// Recognises:
+/// - A plain `Identifier` node equal to the name (uncommon but possible in some
+///   serialised trees).
+/// - A `TypeReference` with no type arguments whose name equals `type_param_name`
+///   (the normal case for `T` in `{ prop: T }`).
+/// - `UnionType` / `IntersectionType` / `ParenthesizedType` / `OptionalType`
+///   wrappers (e.g. `T | undefined`, `(T)`).
+///
+/// Does NOT recurse into `FunctionType` parameters or return types.
+fn type_annotation_is_or_contains_type_param(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+    type_param_name: &str,
+    depth: u8,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    let Some(type_node) = source_arena.get(type_idx) else {
+        return false;
+    };
+    match type_node.kind {
+        k if k == SyntaxKind::Identifier as u16 => source_arena
+            .get_identifier(type_node)
+            .is_some_and(|ident| ident.escaped_text == type_param_name),
+        k if k == syntax_kind_ext::TYPE_REFERENCE => {
+            let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                return false;
+            };
+            // `Foo<T>` has type arguments — not a bare type-param reference.
+            type_ref.type_arguments.is_none()
+                && source_arena
+                    .get(type_ref.type_name)
+                    .and_then(|n| source_arena.get_identifier(n))
+                    .is_some_and(|ident| ident.escaped_text == type_param_name)
+        }
+        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+            source_arena
+                .get_composite_type(type_node)
+                .is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().any(|part_idx| {
+                        type_annotation_is_or_contains_type_param(
+                            source_arena,
+                            part_idx,
+                            type_param_name,
+                            depth + 1,
+                        )
+                    })
+                })
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE || k == syntax_kind_ext::OPTIONAL_TYPE => {
+            source_arena
+                .get_wrapped_type(type_node)
+                .is_some_and(|wrapped| {
+                    type_annotation_is_or_contains_type_param(
+                        source_arena,
+                        wrapped.type_node,
+                        type_param_name,
+                        depth + 1,
+                    )
+                })
+        }
+        // FunctionType and everything else — not a direct type-param reference.
+        _ => false,
     }
 }
