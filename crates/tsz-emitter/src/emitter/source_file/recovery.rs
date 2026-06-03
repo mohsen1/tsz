@@ -151,6 +151,145 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn emit_recovered_reserved_array_binding_variable_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        let [decl_list_idx] = var_stmt.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(*decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        let [decl_idx] = decl_list.declarations.nodes.as_slice() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(*decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(decl.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some((first_keyword, second_keyword, initializer_text)) =
+            self.recovered_reserved_array_binding_source_parts(node)
+        else {
+            return false;
+        };
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("var [];");
+        self.write_line();
+        self.write(first_keyword);
+        self.write(";");
+        self.write_line();
+        self.write(second_keyword);
+        self.write(" ()");
+        self.write_line();
+        self.increase_indent();
+        self.write(";");
+        self.write_line();
+        self.decrease_indent();
+        self.write(&initializer_text);
+        self.write(";");
+        self.suppress_next_anonymous_enum_var_after_recovered_array_binding = true;
+        true
+    }
+
+    fn recovered_reserved_array_binding_source_parts(
+        &self,
+        node: &Node,
+    ) -> Option<(&'static str, &'static str, String)> {
+        let text = self.source_text?;
+        let line = self.source_line_from_node(node)?;
+        let open = line.find('[')?;
+        let close = line[open..].find(']')? + open;
+        let binding = &line[open + 1..close];
+        let mut parts = binding.split(',').map(str::trim);
+        let first = self.reserved_keyword_text(parts.next()?)?;
+        let second = self.reserved_keyword_text(parts.next()?)?;
+        if parts.next().is_some() {
+            return None;
+        }
+        let equals = line[close..].find('=')? + close;
+        let initializer = line[equals + 1..].trim().trim_end_matches(';').trim();
+        if initializer.is_empty() {
+            return None;
+        }
+        let source_start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let absolute_initializer_start = text[source_start..].find(initializer)? + source_start;
+        let initializer_end = absolute_initializer_start + initializer.len();
+        let initializer_text =
+            crate::safe_slice::slice(text, absolute_initializer_start, initializer_end)
+                .ok()?
+                .trim()
+                .to_string();
+        Some((first, second, initializer_text))
+    }
+
+    pub(in crate::emitter) fn emit_recovered_reserved_import_equals_declaration_name(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return false;
+        };
+        if import.module_specifier.is_some() {
+            return false;
+        }
+        let Some(name_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(keyword) = self.reserved_keyword_text_from_source_span(name_node) else {
+            return false;
+        };
+        let Some(require_text) = self.recovered_import_equals_require_call_text(node) else {
+            return false;
+        };
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        self.write("require();");
+        self.write_line();
+        self.write(keyword);
+        self.write(" ( = ");
+        self.write(&require_text);
+        self.write(")");
+        self.write_line();
+        self.increase_indent();
+        self.write(";");
+        self.decrease_indent();
+        self.write_line();
+        true
+    }
+
+    fn recovered_import_equals_require_call_text(&self, node: &Node) -> Option<String> {
+        let line = self.source_line_from_node(node)?;
+        let equals = line.find('=')?;
+        let tail = line[equals + 1..].trim().trim_end_matches(';').trim();
+        if !tail.starts_with("require") {
+            return None;
+        }
+        Some(tail.to_string())
+    }
+
     fn reserved_keyword_text_at_declaration_start(&self, node: &Node) -> Option<&'static str> {
         let text = self.source_text?;
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
@@ -160,9 +299,24 @@ impl<'a> Printer<'a> {
             end += 1;
         }
         let keyword = crate::safe_slice::slice(text, start, end).ok()?;
+        self.reserved_keyword_text(keyword)
+    }
+
+    fn reserved_keyword_text(&self, keyword: &str) -> Option<&'static str> {
         let token = tsz_scanner::string_to_token(keyword);
         tsz_scanner::token_is_reserved_word(token)
             .then(|| tsz_scanner::keyword_to_text_static(token))?
+    }
+
+    fn source_line_from_node(&self, node: &Node) -> Option<&str> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = text.as_bytes();
+        let mut end = start;
+        while end < bytes.len() && !matches!(bytes[end], b'\n' | b'\r') {
+            end += 1;
+        }
+        crate::safe_slice::slice(text, start, end).ok()
     }
 
     pub(in crate::emitter) fn emit_recovered_reserved_function_declaration_name(

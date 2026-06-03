@@ -894,6 +894,9 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_template_property_name_variable_statement(node) {
             return;
         }
+        if self.emit_recovered_reserved_array_binding_variable_statement(node) {
+            return;
+        }
         if self.emit_recovered_reserved_variable_declaration_name_statement(node) {
             return;
         }

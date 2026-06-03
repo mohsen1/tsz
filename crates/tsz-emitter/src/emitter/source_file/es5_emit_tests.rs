@@ -2124,6 +2124,79 @@ fn reserved_variable_name_emits_empty_decl_keyword_and_initializer_statements() 
 }
 
 #[test]
+fn reserved_import_equals_name_emits_recovered_require_and_keyword_loop() {
+    for (source, expected_tail) in [
+        (
+            "import while = require(\"dfdf\");",
+            "require();\nwhile ( = require(\"dfdf\"))\n    ;",
+        ),
+        (
+            "import for = require(\"dfdf\");",
+            "require();\nfor ( = require(\"dfdf\"))\n    ;",
+        ),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                module: ModuleKind::CommonJS,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!(
+                "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", {{ value: true }});\n{expected_tail}"
+            ),
+            "{source}: reserved import-equals recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn reserved_array_binding_name_emits_recovered_keyword_statements() {
+    for (source, expected_tail) in [
+        (
+            "var [debugger, if] = [1, 2];",
+            "var [];\ndebugger;\nif ()\n    ;\n[1, 2];",
+        ),
+        (
+            "var [debugger, while] = value;",
+            "var [];\ndebugger;\nwhile ()\n    ;\nvalue;",
+        ),
+        (
+            "var [debugger, if] = [1, 2];\nenum void {}",
+            "var [];\ndebugger;\nif ()\n    ;\n[1, 2];\n(function () {\n})( || ( = {}));\nvoid {};",
+        ),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: reserved array-binding recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn reserved_function_name_emits_anonymous_function_and_keyword_arrow_tail() {
     for (source, expected_tail) in [
         ("function throw() {}", "function () { }\nthrow () => { };"),
@@ -2176,6 +2249,36 @@ fn reserved_namespace_name_emits_keyword_and_recovered_body_statement() {
             output.trim_end(),
             format!("\"use strict\";\n{expected_tail}"),
             "{source}: reserved namespace-name recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn reserved_parameter_names_recover_without_semantic_type_proxy() {
+    for (source, expected_tail) in [
+        ("function f(default: number) {}", "function f() { }"),
+        (
+            "class C { m(null: string) {} }",
+            "class C {\n    m(, string) { }\n}",
+        ),
+    ] {
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.trim_end(),
+            format!("\"use strict\";\n{expected_tail}"),
+            "{source}: reserved parameter recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
         );
     }
 }

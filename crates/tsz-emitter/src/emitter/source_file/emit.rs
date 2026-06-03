@@ -1586,6 +1586,11 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if self.suppress_next_anonymous_enum_var_after_recovered_array_binding
+                && stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION
+            {
+                self.suppress_next_anonymous_enum_var_after_recovered_array_binding = false;
+            }
             if stmt_i < cjs_pre_preamble_prologue_count {
                 continue;
             }
@@ -1809,6 +1814,10 @@ impl<'a> Printer<'a> {
                 .get(stmt_i + 1)
                 .and_then(|&next_idx| self.arena.get(next_idx));
             if self.emit_recovered_invalid_numeric_declaration_name_statement(stmt_node) {
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
+            if self.emit_recovered_reserved_import_equals_declaration_name(stmt_node) {
                 last_erased_was_shorthand_module = false;
                 continue;
             }
