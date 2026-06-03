@@ -199,6 +199,108 @@ f = g;
     );
 }
 
+/// A function passed as a *call argument* (TS2345 surface) whose parameter is
+/// contravariantly incompatible must surface the same `Types of parameters`
+/// frame and contravariant leaf that the direct-assignment (TS2322) surface
+/// already renders. Previously the call-argument path dropped the entire chain
+/// and stopped at the bare `Argument of type … is not assignable …` headline.
+#[test]
+fn call_argument_function_parameter_mismatch_elaborates_parameter_chain() {
+    let text = elaboration(
+        r#"
+declare function take(cb: (value: number) => void): void;
+take((value: string) => {});
+"#,
+        2345,
+    );
+    assert!(
+        text.contains("Types of parameters 'value' and 'value' are incompatible."),
+        "Expected the parameter-incompatibility frame under TS2345. Got: {text:?}"
+    );
+    // Parameters are contravariant: the leaf compares the target parameter
+    // (`number`) against the source parameter (`string`).
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the contravariant parameter leaf under TS2345. Got: {text:?}"
+    );
+}
+
+/// The offending parameter index is reported on the call-argument surface too,
+/// and identifiers are taken from the signatures (not hard-coded), proving the
+/// rule is structural.
+#[test]
+fn call_argument_second_parameter_mismatch_names_the_correct_parameter() {
+    let text = elaboration(
+        r#"
+declare function reg(handler: (a: string, b: number) => void): void;
+reg((a: string, b: string) => {});
+"#,
+        2345,
+    );
+    assert!(
+        text.contains("Types of parameters 'b' and 'b' are incompatible."),
+        "Expected the second parameter to be named under TS2345. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the contravariant leaf for the second parameter. Got: {text:?}"
+    );
+}
+
+/// A callback argument to an interface *method* elaborates the same chain,
+/// proving the rule does not depend on the callee being a free function.
+#[test]
+fn call_argument_interface_method_callback_parameter_mismatch_elaborates_chain() {
+    let text = elaboration(
+        r#"
+interface Emitter { listen(cb: (payload: number) => void): void; }
+declare const em: Emitter;
+em.listen((payload: string) => {});
+"#,
+        2345,
+    );
+    assert!(
+        text.contains("Types of parameters 'payload' and 'payload' are incompatible."),
+        "Expected the parameter frame for a method callback argument. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type 'string'."),
+        "Expected the contravariant parameter leaf. Got: {text:?}"
+    );
+}
+
+/// The architectural invariant: for the *same* function-parameter mismatch the
+/// call-argument (TS2345) and direct-assignment (TS2322) surfaces must render
+/// the same elaboration chain (the renderer routes both through the shared
+/// `render_failure_reason` source of truth). Only the headline code differs.
+#[test]
+fn call_argument_and_assignment_render_identical_parameter_chain() {
+    let argument_chain = elaboration(
+        r#"
+declare function take(cb: (value: number) => void): void;
+take((value: string) => {});
+"#,
+        2345,
+    );
+    let assignment_chain = elaboration(
+        r#"
+let target: (value: number) => void;
+let source: (value: string) => void;
+target = source;
+"#,
+        2322,
+    );
+    // Drop each headline (first line); the related-information chain beneath it
+    // must be identical across the two surfaces.
+    let related = |text: &str| text.split('\n').skip(1).collect::<Vec<_>>().join("\n");
+    assert_eq!(
+        related(&argument_chain),
+        related(&assignment_chain),
+        "TS2345 and TS2322 must elaborate the same parameter chain. \
+         argument={argument_chain:?} assignment={assignment_chain:?}"
+    );
+}
+
 #[test]
 fn class_method_with_fewer_params_implements_interface_with_more_params() {
     // TypeScript allows a class method to implement an interface method with
