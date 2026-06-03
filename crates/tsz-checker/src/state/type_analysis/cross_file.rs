@@ -288,10 +288,38 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let target_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(target_sym_id)
+            .or_else(|| {
+                self.ctx
+                    .resolve_import_target_from_file(alias_source_file_idx, &module_name)
+            });
+        if let Some(file_idx) = target_file_idx {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
         let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
-            let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
-            self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
-                .unwrap_or_else(|| self.type_reference_symbol_type_with_params(target_sym_id))
+            target_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .cached_cross_file_symbol_type(target_sym_id, file_idx as u32)
+                })
+                .or_else(|| {
+                    self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
+                })
+                .unwrap_or_else(|| {
+                    let resolved = self.type_reference_symbol_type_with_params(target_sym_id);
+                    if let Some(file_idx) = target_file_idx {
+                        self.ctx.cache_cross_file_symbol_type(
+                            target_sym_id,
+                            file_idx as u32,
+                            resolved.0,
+                            resolved.1.clone(),
+                        );
+                    }
+                    resolved
+                })
         } else {
             (self.get_type_of_symbol(target_sym_id), Vec::new())
         };
