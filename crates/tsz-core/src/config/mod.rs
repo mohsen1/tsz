@@ -9,7 +9,6 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
 use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
-
 mod deprecation_helpers;
 mod extends;
 mod lib_resolution;
