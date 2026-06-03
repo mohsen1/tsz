@@ -579,11 +579,10 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
-            // Pattern 4: Import/Export specifier brace mismatch cascading error suppression
-            // If we encounter 'from' keyword in the specifier list, it likely means we have:
-            // export { a from "module"  (missing closing brace)
-            // In this case, break the loop to avoid parsing 'from' as an identifier
-            if self.is_token(SyntaxKind::FromKeyword) {
+            // `from` here is an exported name (e.g. `export { from } from "m"`)
+            // unless the following token shows it is the from-clause keyword.
+            if self.is_token(SyntaxKind::FromKeyword) && !self.next_token_continues_specifier_name()
+            {
                 break;
             }
 
