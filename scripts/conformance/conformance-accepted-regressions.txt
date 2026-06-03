@@ -41,11 +41,18 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
 # intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
-# jsxIntrinsicUnions.tsx was RESOLVED in PR #12289 exact head 22f57bd4,
-# then REGRESSED again on PR #12380 exact head 4c00c5259f. Tracked in #8432.
-# jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
-# aggregate run on exact head 2dd802cf / run 26908103845, then reappeared on
-# PR #11890 ready-review heads below; tracked in #8432 while accepted here.
+# jsxIntrinsicUnions.tsx was RESOLVED in PR #12289 exact head 22f57bd4, then
+# REGRESSED again on PR #12380 exact head 4c00c5259f. It reappeared on PR
+# #12385 exact head db11a150d0 / merge head 7b90bd11 (CI run 26915616256):
+# all six conformance shards passed, aggregate strictness was 12569/12585
+# observed vs 12585/12585 expected with this one newly unlisted JSX-family
+# drift fixture. Re-accepted below and tracked by #8432.
+# jsxJsxsCjsTransformNestedSelfClosingChild.tsx was temporarily absent in PR
+# #12385 exact head db11a150d0 / merge head 7b90bd11 (CI run 26915616256),
+# then reappeared on exact head 561b03c609 / merge head 080e533f (CI run
+# 26916530564). This followed a RESOLVED PR #12367 aggregate run on exact head
+# 2dd802cf / run 26908103845; keep accepted under #8432 while this JSX drift
+# oscillates.
 # jsxImportForSideEffectsNonExtantNoError.tsx: accepted after REGRESSED in
 # the same PR #12367 aggregate run. Tracked in #12376.
 # inferentialTypingWithFunctionTypeZip.ts then reappeared on PR #11890 exact

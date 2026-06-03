@@ -13,6 +13,21 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tc39Es5ClassBindingMode {
+    Declare,
+    Assign,
+}
+
+impl Tc39Es5ClassBindingMode {
+    const fn declaration_prefix(self) -> &'static str {
+        match self {
+            Self::Declare => "var ",
+            Self::Assign => "",
+        }
+    }
+}
+
 impl<'a> Printer<'a> {
     /// Emit a class declaration.
     pub(in crate::emitter) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
@@ -481,6 +496,39 @@ impl<'a> Printer<'a> {
         binding_name: &str,
         display_name: &str,
     ) -> Option<String> {
+        self.render_simple_tc39_decorated_class_es5_with_binding_mode(
+            node,
+            idx,
+            binding_name,
+            display_name,
+            Tc39Es5ClassBindingMode::Declare,
+        )
+    }
+
+    pub(in crate::emitter) fn render_simple_tc39_decorated_class_es5_assignment(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+        binding_name: &str,
+        display_name: &str,
+    ) -> Option<String> {
+        self.render_simple_tc39_decorated_class_es5_with_binding_mode(
+            node,
+            idx,
+            binding_name,
+            display_name,
+            Tc39Es5ClassBindingMode::Assign,
+        )
+    }
+
+    fn render_simple_tc39_decorated_class_es5_with_binding_mode(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+        binding_name: &str,
+        display_name: &str,
+        binding_mode: Tc39Es5ClassBindingMode,
+    ) -> Option<String> {
         if !self.can_render_simple_tc39_decorated_class_es5(node) {
             return None;
         }
@@ -547,6 +595,9 @@ impl<'a> Printer<'a> {
         inner_output = inner_output.trim_end_matches('\n').to_string();
 
         if has_member_decorators {
+            if binding_mode == Tc39Es5ClassBindingMode::Assign {
+                return None;
+            }
             return es5_emitter.wrap_tc39_es5_class_decorated_output(
                 idx,
                 &inner_name,
@@ -566,14 +617,15 @@ impl<'a> Printer<'a> {
 
         let inner_prefix = format!("var {inner_name} = ");
         let indented_inner_prefix = format!("{body_indent}{inner_prefix}");
+        let binding_prefix = format!("var {binding_name} = ");
         if inner_output.starts_with(&inner_prefix) {
             inner_output = format!(
-                "{body_indent}var {binding_name} = _classThis = {}",
+                "{body_indent}{binding_prefix}_classThis = {}",
                 &inner_output[inner_prefix.len()..]
             );
         } else if inner_output.starts_with(&indented_inner_prefix) {
             inner_output = format!(
-                "{body_indent}var {binding_name} = _classThis = {}",
+                "{body_indent}{binding_prefix}_classThis = {}",
                 &inner_output[indented_inner_prefix.len()..]
             );
         } else if !inner_output.starts_with(&body_indent) {
@@ -598,7 +650,8 @@ impl<'a> Printer<'a> {
         };
 
         Some(format!(
-            "{base_indent}var {binding_name} = function () {{\n{body_indent}var _classDecorators = [{}];\n{body_indent}var _classDescriptor;\n{body_indent}var _classExtraInitializers = [];\n{body_indent}var _classThis;\n{inner_output}\n{body_indent}__setFunctionName(_classThis, \"{display_name}\");\n{body_indent}(function () {{\n{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n{decorator_indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n{decorator_indent}{binding_name} = _classThis = _classDescriptor.value;\n{decorator_indent}if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n{decorator_tail}{body_indent}}})();\n{after_decorator_initializers}{body_indent}return {binding_name} = _classThis;\n{base_indent}}}();",
+            "{base_indent}{}{binding_name} = function () {{\n{body_indent}var _classDecorators = [{}];\n{body_indent}var _classDescriptor;\n{body_indent}var _classExtraInitializers = [];\n{body_indent}var _classThis;\n{inner_output}\n{body_indent}__setFunctionName(_classThis, \"{display_name}\");\n{body_indent}(function () {{\n{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n{decorator_indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n{decorator_indent}{binding_name} = _classThis = _classDescriptor.value;\n{decorator_indent}if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n{decorator_tail}{body_indent}}})();\n{after_decorator_initializers}{body_indent}return {binding_name} = _classThis;\n{base_indent}}}();",
+            binding_mode.declaration_prefix(),
             decorator_exprs.join(", "),
         ))
     }
