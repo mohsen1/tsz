@@ -1309,6 +1309,18 @@ impl ParserState {
     pub(crate) fn parse_type_literal_rest(&mut self, start_pos: u32) -> NodeIndex {
         let saved_type_member_depth = self.type_member_container_depth;
         self.type_member_container_depth += 1;
+
+        // A `{ ... }` type literal opens a fresh, braced sub-type scope. Clear the
+        // scope-barrier flags so member types may contain conditional types even when
+        // the literal appears in an outer `extends` position (e.g.
+        // `T extends { a: A extends B ? C : D } ? 1 : 2`), and a postfix `?` on a member
+        // type is not mis-reserved for a tuple-level optional when the literal is nested
+        // in a tuple element. Matches tsc, where members are parsed by a fresh `parseType`
+        // so the one-level `noConditionalTypes` block does not leak past the brace.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !(crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES
+            | crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT);
+
         let mut members = Vec::new();
 
         while !self.is_token(SyntaxKind::CloseBraceToken)
@@ -1320,6 +1332,7 @@ impl ParserState {
             {
                 let mapped_type = self.parse_mapped_type_with_members(start_pos, members);
                 self.type_member_container_depth = saved_type_member_depth;
+                self.context_flags = saved_flags;
                 return mapped_type;
             }
 
@@ -1344,6 +1357,7 @@ impl ParserState {
 
         let end_pos = self.finish_type_member_container_close_brace();
         self.type_member_container_depth = saved_type_member_depth;
+        self.context_flags = saved_flags;
 
         self.arena.add_type_literal(
             syntax_kind_ext::TYPE_LITERAL,
@@ -1411,7 +1425,19 @@ impl ParserState {
 
     fn parse_type_argument_in_type_arguments(&mut self) -> NodeIndex {
         if !self.is_token(SyntaxKind::QuestionToken) {
-            return self.parse_type();
+            // Each type argument is a fresh, complete type-expression scope. Clear the
+            // scope-barrier flags so a conditional type is permitted even when the
+            // reference appears in an outer `extends` position (e.g.
+            // `T extends Foo<A extends B ? C : D> ? 1 : 2`), and a postfix `?` is not
+            // mis-reserved for a tuple-level optional when the reference is nested in a
+            // tuple element. Matches tsc, where every type argument is parsed by a fresh
+            // `parseType`, so the one-level `noConditionalTypes` block does not leak in.
+            let saved_flags = self.context_flags;
+            self.context_flags &= !(crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES
+                | crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT);
+            let type_node = self.parse_type();
+            self.context_flags = saved_flags;
+            return type_node;
         }
 
         use tsz_common::diagnostics::diagnostic_codes;

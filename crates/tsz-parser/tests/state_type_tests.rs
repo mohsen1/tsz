@@ -1264,3 +1264,56 @@ fn test_issue_10937_three_rest_elements_in_tuple() {
         "...A",
     );
 }
+
+/// Regression: a conditional type used as a type argument (or inside an object-type
+/// member / tuple element) must parse even when the enclosing type reference sits in
+/// the `extends` position of an outer conditional type. The `extends`-position block on
+/// top-level conditionals is one level deep in tsc (`noConditionalTypes`), so it must
+/// not leak past a `<...>`, `{...}`, or `[...]` boundary. Previously tsz threaded this as
+/// a persistent context flag that leaked into type arguments and type-literal members,
+/// producing spurious `TS1005` diagnostics (e.g. `'>' expected.`).
+#[test]
+fn parse_conditional_type_in_delimited_context_within_extends_position() {
+    let cases: &[&str] = &[
+        "type R1<T> = T extends Foo<A extends B ? C : D> ? 1 : 2;",
+        "type R2<Src> = Src extends Container<Lhs extends Rhs ? Yes : No> ? 1 : 2;",
+        "type R3<T> = T extends Wrap<P extends Q ? X : Y, M extends N ? U : V> ? 1 : 2;",
+        "type R4<T> = T extends Outer<Inner<P extends Q ? X : Y>> ? 1 : 2;",
+        "type R5<T> = T extends Box<P extends Q ? R extends S ? X : Y : Z> ? 1 : 2;",
+        "type R6<T> = T extends Box<P extends infer U ? U : never> ? 1 : 2;",
+        "type R7<T> = T extends { value: P extends Q ? X : Y } ? 1 : 2;",
+        "type R8<T> = T extends [P extends Q ? X : Y] ? 1 : 2;",
+        "type R9<T> = T extends Box<{ [K in keyof Src]: Src[K] } & (Src extends Q ? X : Y)> ? 1 : 2;",
+        "type R10<T> = T extends { [K in keyof T]: Box<T[K] extends object ? 1 : 0> } ? 1 : 2;",
+    ];
+    for src in cases {
+        let (parser, _root) = parse_source(src);
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "expected no parse diagnostics for {src:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+/// Structural lock: the inner `A extends B ? C : D` must materialize as a real
+/// `CONDITIONAL_TYPE` node nested inside the type argument, not be truncated to its
+/// check type with the `extends` left dangling.
+#[test]
+fn conditional_type_argument_in_extends_position_builds_nested_conditional_node() {
+    assert_span(
+        "type R<T> = T extends Foo<A extends B ? C : D> ? 1 : 2;",
+        syntax_kind_ext::CONDITIONAL_TYPE,
+        "A extends B ? C : D",
+    );
+}
+
+/// Regression guard: clearing the conditional block for delimited contexts must not
+/// disturb the `infer U extends X ? ...` disambiguation. In an `extends` position the
+/// `extends number` is the infer constraint and the `? 1 : 0` belongs to the outer
+/// conditional, so the whole type still parses cleanly.
+#[test]
+fn infer_constraint_disambiguation_unaffected_by_delimited_context_fix() {
+    assert_no_errors("type R<T> = T extends infer U extends number ? 1 : 0;");
+    assert_no_errors("type R<T> = T extends infer U extends Foo<A extends B ? C : D> ? U : never;");
+}
