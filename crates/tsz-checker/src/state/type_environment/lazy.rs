@@ -14,6 +14,11 @@ use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
+pub(crate) use super::lazy_fuel::{
+    global_resolution_fuel_exhausted, global_resolution_fuel_value,
+    increment_global_resolution_fuel, reset_global_resolution_fuel, restore_global_resolution_fuel,
+};
+
 // Thread-local counters survive cross-arena child `CheckerContext`s, where
 // per-context counters would reset and defeat these recursion/fuel guards.
 thread_local! {
@@ -26,41 +31,6 @@ thread_local! {
     static REFS_RESOLUTION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     // Depth counter for recursive `evaluate_type_with_env_impl` calls.
     static EVAL_ENV_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Accumulating fuel that does not reset between top-level relation-input calls.
-    static GLOBAL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-// Maximum global resolution fuel across all top-level calls per thread. This
-// still allows large expression-heavy files while capping DOM/module explosions.
-const MAX_GLOBAL_RESOLUTION_FUEL: u32 = 50_000;
-
-/// Check if global resolution fuel is exhausted.
-pub(crate) fn global_resolution_fuel_exhausted() -> bool {
-    GLOBAL_RESOLUTION_FUEL.get() >= MAX_GLOBAL_RESOLUTION_FUEL
-}
-
-/// Increment the global resolution fuel counter.
-pub(crate) fn increment_global_resolution_fuel() {
-    GLOBAL_RESOLUTION_FUEL.set(GLOBAL_RESOLUTION_FUEL.get() + 1);
-}
-
-/// Reset global resolution fuel (call at the start of each file's type-checking).
-pub(crate) fn reset_global_resolution_fuel() {
-    GLOBAL_RESOLUTION_FUEL.set(0);
-}
-
-/// Read the current global resolution fuel counter (for snapshot/restore).
-pub(crate) fn global_resolution_fuel_value() -> u32 {
-    GLOBAL_RESOLUTION_FUEL.get()
-}
-
-/// Restore the global resolution fuel counter to a previously captured value.
-///
-/// Used by speculative sites (return-type inference) that should not bill
-/// their work against the global fuel budget when the speculation is rolled
-/// back — the work will be redone in the non-speculative pass.
-pub(crate) fn restore_global_resolution_fuel(value: u32) {
-    GLOBAL_RESOLUTION_FUEL.set(value);
 }
 
 /// Reset ALL thread-local state in the lazy resolution module.
@@ -71,7 +41,7 @@ pub(crate) fn reset_all_thread_local_state() {
     REFS_RESOLUTION_FUEL.set(0);
     REFS_RESOLUTION_ACTIVE.set(false);
     EVAL_ENV_DEPTH.set(0);
-    GLOBAL_RESOLUTION_FUEL.set(0);
+    reset_global_resolution_fuel();
 }
 
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
