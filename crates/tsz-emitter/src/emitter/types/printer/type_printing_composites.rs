@@ -1,6 +1,7 @@
 use super::{TypeId, TypePrinter, TypeSubstitution, instantiate_type_cached, visitor};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
+use tsz_solver::types::IntrinsicKind;
 
 impl<'a> TypePrinter<'a> {
     pub(crate) fn print_union(
@@ -170,7 +171,17 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn print_intersection(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
-        let types = self.interner.type_list(type_list_id);
+        let original_types = self.interner.type_list(type_list_id);
+        let mut filtered_types = Vec::new();
+        let types =
+            if self.intersection_should_drop_global_object(&original_types) {
+                filtered_types.extend(original_types.iter().copied().filter(|&member| {
+                    !self.is_registered_boxed_type(member, IntrinsicKind::Object)
+                }));
+                filtered_types.as_slice()
+            } else {
+                original_types.as_ref()
+            };
         if types.is_empty() {
             return "unknown".to_string(); // Intersection of 0 types is unknown
         }
@@ -238,6 +249,40 @@ impl<'a> TypePrinter<'a> {
             .map(|(_, text)| text)
             .collect::<Vec<_>>()
             .join(" & ")
+    }
+
+    fn intersection_should_drop_global_object(&self, types: &[TypeId]) -> bool {
+        let has_global_object = types
+            .iter()
+            .copied()
+            .any(|member| self.is_registered_boxed_type(member, IntrinsicKind::Object));
+        if !has_global_object {
+            return false;
+        }
+
+        types
+            .iter()
+            .copied()
+            .any(|member| self.has_primitive_declaration_surface(member))
+    }
+
+    fn is_registered_boxed_type(&self, type_id: TypeId, kind: IntrinsicKind) -> bool {
+        self.interner.get_boxed_type(kind) == Some(type_id)
+            || visitor::lazy_def_id(self.interner, type_id)
+                .is_some_and(|def_id| self.interner.is_boxed_def_id(def_id, kind))
+    }
+
+    fn has_primitive_declaration_surface(&self, type_id: TypeId) -> bool {
+        matches!(
+            visitor::apparent_intrinsic_kind(self.interner, type_id),
+            Some(
+                IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol
+            )
+        )
     }
 
     pub(crate) fn print_recursive_expansion_limit(&self, return_type: TypeId) -> String {
