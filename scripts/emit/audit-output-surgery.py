@@ -416,6 +416,20 @@ def format_warning_metrics(file_summaries: list[dict[str, object]]) -> str:
     return f"warning_count={warning_count}, warning_status={warning_status}"
 
 
+def warning_failures(file_summaries: list[dict[str, object]]) -> list[str]:
+    warnings: list[str] = []
+    budget = summarize_budget(file_summaries)
+    exhausted_categories = exhausted_category_names(file_summaries)
+    pressure_status = classify_allowlist_pressure(budget, exhausted_categories)
+    if pressure_status not in {"available", "no_allowlist"}:
+        warnings.append(
+            "allowlist pressure is "
+            f"{pressure_status}; exhausted categories: "
+            f"{';'.join(exhausted_categories) if exhausted_categories else 'none'}"
+        )
+    return warnings
+
+
 def format_allowlist_pressure_metrics(file_summaries: list[dict[str, object]]) -> str:
     budget = summarize_budget(file_summaries)
     exhausted_categories = exhausted_category_names(file_summaries)
@@ -535,6 +549,14 @@ def main(argv: list[str] | None = None) -> int:
         type=pathlib.Path,
         help="write a machine-readable report before exiting",
     )
+    parser.add_argument(
+        "--fail-on-warnings",
+        action="store_true",
+        help=(
+            "return a non-zero status when the audit passes but warning metrics "
+            "show exhausted output-surgery budget pressure"
+        ),
+    )
     args = parser.parse_args(argv)
 
     findings = scan()
@@ -569,7 +591,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    print(format_pass_summary(findings, failures, allowlist))
+    pass_summary = format_pass_summary(findings, failures, allowlist)
+    print(pass_summary)
+    file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
+    warnings = warning_failures(file_summaries)
+    if args.fail_on_warnings and warnings:
+        print("\nOutput-surgery audit warnings failed by --fail-on-warnings:", file=sys.stderr)
+        for warning in warnings:
+            print(f"  - {warning}", file=sys.stderr)
+        return 2
     return 0
 
 

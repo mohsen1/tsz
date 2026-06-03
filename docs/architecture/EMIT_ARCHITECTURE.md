@@ -280,13 +280,17 @@ strings. Existing semantic output surgery is migration debt tracked by:
 ```bash
 python3 scripts/emit/audit-output-surgery.py
 python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json
+python3 scripts/emit/audit-output-surgery.py --fail-on-warnings
 ```
 
 The audit ratchets current debt by file and category. New semantic
 `replace`/`replacen`/`replace_range` usage must either remove existing debt or
 be explicitly categorized with a removal reason in the allowlist. Use the JSON
 report when CI or agent handoffs need machine-readable counts for
-unallowlisted, over-allowlist, and stale-allowlist failures.
+unallowlisted, over-allowlist, and stale-allowlist failures. Use
+`--fail-on-warnings` in debt-removal PRs or focused gates that need exhausted
+category/global budget pressure to fail even when every call is still
+allowlisted.
 
 ### 7.1 SourceWriter
 
