@@ -11,167 +11,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn check_class_index_signature_compatibility(
-        &mut self,
-        derived_class: &tsz_parser::parser::node::ClassData,
-        base_class: &tsz_parser::parser::node::ClassData,
-        derived_class_name: &str,
-        base_class_name: &str,
-        substitution: &TypeSubstitution,
-        mut class_extends_error_reported: bool,
-    ) {
-        use crate::query_boundaries::common::instantiate_type;
-        use tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE;
-
-        // Collect derived class index signatures
-        let mut derived_string_index: Option<(TypeId, NodeIndex)> = None;
-        let mut derived_number_index: Option<(TypeId, NodeIndex)> = None;
-
-        for &member_idx in &derived_class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != INDEX_SIGNATURE {
-                continue;
-            }
-            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
-                continue;
-            };
-            if self.has_static_modifier(&index_sig.modifiers) {
-                continue;
-            }
-
-            let param_idx = index_sig
-                .parameters
-                .nodes
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE);
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let key_type = if param.type_annotation.is_none() {
-                TypeId::ANY
-            } else {
-                self.get_type_from_type_node(param.type_annotation)
-            };
-
-            let value_type = if index_sig.type_annotation.is_none() {
-                TypeId::ANY
-            } else {
-                self.get_type_from_type_node(index_sig.type_annotation)
-            };
-
-            if key_type == TypeId::NUMBER {
-                derived_number_index = Some((value_type, member_idx));
-            } else {
-                derived_string_index = Some((value_type, member_idx));
-            }
-        }
-
-        // Collect base class index signatures
-        let mut base_string_index: Option<TypeId> = None;
-        let mut base_number_index: Option<TypeId> = None;
-
-        for &member_idx in &base_class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != INDEX_SIGNATURE {
-                continue;
-            }
-            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
-                continue;
-            };
-            if self.has_static_modifier(&index_sig.modifiers) {
-                continue;
-            }
-
-            let param_idx = index_sig
-                .parameters
-                .nodes
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE);
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let key_type = if param.type_annotation.is_none() {
-                TypeId::ANY
-            } else {
-                self.get_type_from_type_node(param.type_annotation)
-            };
-
-            let value_type = if index_sig.type_annotation.is_none() {
-                TypeId::ANY
-            } else {
-                self.get_type_from_type_node(index_sig.type_annotation)
-            };
-
-            if key_type == TypeId::NUMBER {
-                base_number_index = Some(value_type);
-            } else {
-                base_string_index = Some(value_type);
-            }
-        }
-
-        // Check string index signature compatibility
-        if let (Some((derived_type, _derived_idx)), Some(base_type)) =
-            (derived_string_index, base_string_index)
-        {
-            let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
-            if !self
-                .assign_relation_outcome(derived_type, base_type_instantiated)
-                .related
-                && !class_extends_error_reported
-            {
-                let derived_type_str = self.format_type(derived_type);
-                let base_type_str = self.format_type(base_type_instantiated);
-                self.error_at_node(
-                        derived_class.name,
-                        &format!(
-                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'string' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
-                        ),
-                        crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
-                    );
-                class_extends_error_reported = true;
-            }
-        }
-
-        // Check number index signature compatibility
-        if let (Some((derived_type, _derived_idx)), Some(base_type)) =
-            (derived_number_index, base_number_index)
-        {
-            let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
-            if !self
-                .assign_relation_outcome(derived_type, base_type_instantiated)
-                .related
-                && !class_extends_error_reported
-            {
-                let derived_type_str = self.format_type(derived_type);
-                let base_type_str = self.format_type(base_type_instantiated);
-                self.error_at_node(
-                        derived_class.name,
-                        &format!(
-                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'number' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
-                        ),
-                        crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
-                    );
-            }
-        }
-    }
-
     /// Check that interface correctly extends its base interfaces (error 2430).
     /// For each member in the derived interface, checks if the same member in a base interface
     /// has an incompatible type.
@@ -381,6 +222,24 @@ impl<'a> CheckerState<'a> {
                     lazy_type
                 }
             });
+
+        // Preserve the original derived member types (with polymorphic `this` left
+        // raw) BEFORE the concrete-self substitution below. The substitution rewrites
+        // `this` to the derived interface's concrete self type, which is required for
+        // parameter-position cases (see the `Vnode<A, this>` example below) but loses
+        // the distinction between a method that returns the polymorphic `this`
+        // (`m(): this`) and one that returns the concrete self type by name
+        // (`m(): B`). tsc accepts the former as a covariant override and rejects the
+        // latter. The raw-`this` types let the override comparison consult the
+        // solver's polymorphic `this` relation, which models that distinction. Keyed
+        // by member node index; only members that actually mention `this` are stored.
+        let mut derived_raw_this_member_types: rustc_hash::FxHashMap<NodeIndex, TypeId> =
+            rustc_hash::FxHashMap::default();
+        for member in &derived_members {
+            if crate::query_boundaries::common::contains_this_type(self.ctx.types, member.1) {
+                derived_raw_this_member_types.insert(member.2, member.1);
+            }
+        }
 
         // Substitute `ThisType` in derived member types with the interface's self type.
         // In tsc, `this` in an interface refers to the interface's declared type. When
@@ -900,27 +759,38 @@ impl<'a> CheckerState<'a> {
                                     base_prop_type,
                                 ));
 
+                        // A derived member that mentions the polymorphic `this` may be a
+                        // valid covariant override that the concrete-self substitution
+                        // would otherwise mask (e.g. `m(): this` re-declared in a derived
+                        // interface, or `this` nested in `m(): this[]`). Consult the raw
+                        // derived member type so the solver's `this` relation decides.
+                        let this_poly_ok = self.this_member_override_is_polymorphic(
+                            &derived_raw_this_member_types,
+                            *derived_member_idx,
+                            &member_key,
+                            base_prop_type,
+                        );
                         let type_mismatch = if callable_property_pair {
                             should_report_property_type_mismatch(
                                 self,
                                 derived_prop_type,
                                 base_prop_type,
                                 *derived_member_idx,
-                            )
+                            ) && !this_poly_ok
                         } else {
                             // After substitution, source and target share the same outer TypeParam;
                             // the callable-outer-type-param heuristic would silence genuine mismatches.
                             self.ctx.skip_callable_type_param_suppression.set(true);
-                            let mismatch = should_report_member_type_mismatch(
-                                self,
-                                derived_prop_type,
-                                base_prop_type,
-                                *derived_member_idx,
-                            ) && !self
-                                .generic_method_override_is_valid_specialization(
+                            let mismatch =
+                                should_report_member_type_mismatch(
+                                    self,
                                     derived_prop_type,
                                     base_prop_type,
-                                );
+                                    *derived_member_idx,
+                                ) && !self.generic_method_override_is_valid_specialization(
+                                    derived_prop_type,
+                                    base_prop_type,
+                                ) && !this_poly_ok;
                             self.ctx.skip_callable_type_param_suppression.set(false);
                             mismatch
                         };
@@ -1792,12 +1662,22 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .map(|p| p.type_id)
                                 .unwrap_or(base_type);
+                            // A property typed as the polymorphic `this` (`p: this`)
+                            // re-declared in a derived interface is a valid override;
+                            // honor the raw `this` relation that the concrete-self
+                            // substitution would otherwise mask.
+                            let this_poly_ok = self.this_member_override_is_polymorphic(
+                                &derived_raw_this_member_types,
+                                *derived_member_idx,
+                                member_name,
+                                this_check_base_type,
+                            );
                             should_report_property_type_mismatch(
                                 self,
                                 *member_type,
                                 base_type,
                                 *derived_member_idx,
-                            )
+                            ) && !this_poly_ok
                         } else if *derived_kind == METHOD_SIGNATURE
                             && base_member_node.kind == METHOD_SIGNATURE
                         {
@@ -1819,6 +1699,14 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(base_type);
                             this_check_derived_type = derived_method_type;
                             this_check_base_type = base_method_type;
+                            // Honor the polymorphic `this` relation for `this`-returning
+                            // overrides that the concrete-self substitution would mask.
+                            let this_poly_ok = self.this_member_override_is_polymorphic(
+                                &derived_raw_this_member_types,
+                                *derived_member_idx,
+                                member_name,
+                                base_method_type,
+                            );
                             should_report_member_type_mismatch(
                                 self,
                                 derived_method_type,
@@ -1827,7 +1715,7 @@ impl<'a> CheckerState<'a> {
                             ) && !self.generic_method_override_is_valid_specialization(
                                 derived_method_type,
                                 base_method_type,
-                            )
+                            ) && !this_poly_ok
                         } else {
                             should_report_member_type_mismatch(
                                 self,

@@ -1060,3 +1060,107 @@ interface Broken extends Base {
         "Return type `number` is not assignable to `string`; must still error. Got: {diags:?}"
     );
 }
+
+// =========================================================================
+// Polymorphic `this` in interface heritage overrides
+//
+// When a derived interface re-declares an inherited member that uses the
+// polymorphic `this` type, tsc treats `this` as a covariant type variable:
+// `this` is assignable to a base `this` (directly and through positions such
+// as `this[]`), but a concrete self type written by name (`m(): B`) is NOT
+// assignable to a target `this`. The interface heritage check substitutes
+// `this` with the derived concrete self type for parameter-position needs,
+// which previously masked this distinction and produced false TS2430 for
+// valid `this`-returning overrides. These tests pin the structural rule and
+// vary binder names so the behavior cannot depend on identifier spelling.
+// =========================================================================
+
+#[test]
+fn test_this_return_method_override_no_false_ts2430() {
+    for (base, derived, method) in [("A", "B", "m"), ("Widget", "Button", "clone")] {
+        let source = format!(
+            r#"
+interface {base} {{ {method}(): this; }}
+interface {derived} extends {base} {{ {method}(): this; }}
+"#
+        );
+        assert!(
+            !has_error_with_code(&source, 2430),
+            "Re-declaring a `this`-returning method must not emit TS2430 (base={base})"
+        );
+    }
+}
+
+#[test]
+fn test_this_return_method_override_generic_chain_no_false_ts2430() {
+    // Multi-level generic chain re-declaring a `this`-returning method.
+    let source = r#"
+interface Seq<T> { self(): this; value: T; }
+interface Mid<T> extends Seq<T[]> { self(): this; }
+interface Leaf extends Mid<number> { self(): this; }
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "`this`-returning override across a generic chain must not emit TS2430"
+    );
+}
+
+#[test]
+fn test_this_nested_in_array_return_override_no_false_ts2430() {
+    // `this` nested inside an array return position is still covariant.
+    let source = r#"
+interface Node { children(): this[]; }
+interface Branch extends Node { children(): this[]; }
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "`this[]` override must not emit TS2430"
+    );
+}
+
+#[test]
+fn test_this_typed_property_override_no_false_ts2430() {
+    // A property typed as the polymorphic `this` re-declared in the derived
+    // interface is a valid override.
+    let source = r#"
+interface Cell { neighbor: this; }
+interface Corner extends Cell { neighbor: this; }
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "`this`-typed property override must not emit TS2430"
+    );
+}
+
+#[test]
+fn test_concrete_self_return_instead_of_this_still_ts2430() {
+    // Negative: returning the derived type by name is NOT the polymorphic
+    // `this` and must still error, because a value of the concrete type is not
+    // guaranteed to be the eventual `this` type. tsc reports TS2430 here.
+    for (base, derived, method) in [("A", "B", "m"), ("Shape", "Circle", "dup")] {
+        let source = format!(
+            r#"
+interface {base} {{ {method}(): this; }}
+interface {derived} extends {base} {{ {method}(): {derived}; }}
+"#
+        );
+        assert!(
+            has_error_with_code(&source, 2430),
+            "Returning the concrete self type by name must still emit TS2430 (derived={derived})"
+        );
+    }
+}
+
+#[test]
+fn test_this_union_widened_return_still_ts2430() {
+    // Negative: `this | number` is wider than the base `this` return; the extra
+    // `number` member is not assignable to a target `this`, so TS2430 stands.
+    let source = r#"
+interface A { m(): this; }
+interface B extends A { m(): this | number; }
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Widening a `this` return with an extra member must still emit TS2430"
+    );
+}
