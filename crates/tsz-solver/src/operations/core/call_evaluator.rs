@@ -398,10 +398,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // T extends C trivially satisfies constraint C (same TypeId).
         // Avoids an is_assignable_to call that may hit the env-eval depth guard
         // when C is a complex type like `keyof ElementTagNameMap`.
-        if let Some(crate::types::TypeData::TypeParameter(tp)) = self.interner.lookup(arg_type) {
-            if tp.constraint == Some(constraint) {
-                return true;
-            }
+        if let Some(crate::types::TypeData::TypeParameter(tp)) = self.interner.lookup(arg_type)
+            && tp.constraint == Some(constraint)
+        {
+            return true;
         }
         let non_fresh = crate::relations::freshness::widen_freshness(self.interner, arg_type);
         if self.checker.is_assignable_to(non_fresh, constraint) {
