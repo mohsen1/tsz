@@ -382,6 +382,24 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
+        // Preserve the original derived member types (with polymorphic `this` left
+        // raw) BEFORE the concrete-self substitution below. The substitution rewrites
+        // `this` to the derived interface's concrete self type, which is required for
+        // parameter-position cases (see the `Vnode<A, this>` example below) but loses
+        // the distinction between a method that returns the polymorphic `this`
+        // (`m(): this`) and one that returns the concrete self type by name
+        // (`m(): B`). tsc accepts the former as a covariant override and rejects the
+        // latter. The raw-`this` types let the override comparison consult the
+        // solver's polymorphic `this` relation, which models that distinction. Keyed
+        // by member node index; only members that actually mention `this` are stored.
+        let mut derived_raw_this_member_types: rustc_hash::FxHashMap<NodeIndex, TypeId> =
+            rustc_hash::FxHashMap::default();
+        for member in &derived_members {
+            if crate::query_boundaries::common::contains_this_type(self.ctx.types, member.1) {
+                derived_raw_this_member_types.insert(member.2, member.1);
+            }
+        }
+
         // Substitute `ThisType` in derived member types with the interface's self type.
         // In tsc, `this` in an interface refers to the interface's declared type. When
         // checking interface extension compatibility, derived member types containing
@@ -900,27 +918,38 @@ impl<'a> CheckerState<'a> {
                                     base_prop_type,
                                 ));
 
+                        // A derived member that mentions the polymorphic `this` may be a
+                        // valid covariant override that the concrete-self substitution
+                        // would otherwise mask (e.g. `m(): this` re-declared in a derived
+                        // interface, or `this` nested in `m(): this[]`). Consult the raw
+                        // derived member type so the solver's `this` relation decides.
+                        let this_poly_ok = self.this_member_override_is_polymorphic(
+                            &derived_raw_this_member_types,
+                            *derived_member_idx,
+                            &member_key,
+                            base_prop_type,
+                        );
                         let type_mismatch = if callable_property_pair {
                             should_report_property_type_mismatch(
                                 self,
                                 derived_prop_type,
                                 base_prop_type,
                                 *derived_member_idx,
-                            )
+                            ) && !this_poly_ok
                         } else {
                             // After substitution, source and target share the same outer TypeParam;
                             // the callable-outer-type-param heuristic would silence genuine mismatches.
                             self.ctx.skip_callable_type_param_suppression.set(true);
-                            let mismatch = should_report_member_type_mismatch(
-                                self,
-                                derived_prop_type,
-                                base_prop_type,
-                                *derived_member_idx,
-                            ) && !self
-                                .generic_method_override_is_valid_specialization(
+                            let mismatch =
+                                should_report_member_type_mismatch(
+                                    self,
                                     derived_prop_type,
                                     base_prop_type,
-                                );
+                                    *derived_member_idx,
+                                ) && !self.generic_method_override_is_valid_specialization(
+                                    derived_prop_type,
+                                    base_prop_type,
+                                ) && !this_poly_ok;
                             self.ctx.skip_callable_type_param_suppression.set(false);
                             mismatch
                         };
@@ -1792,12 +1821,22 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .map(|p| p.type_id)
                                 .unwrap_or(base_type);
+                            // A property typed as the polymorphic `this` (`p: this`)
+                            // re-declared in a derived interface is a valid override;
+                            // honor the raw `this` relation that the concrete-self
+                            // substitution would otherwise mask.
+                            let this_poly_ok = self.this_member_override_is_polymorphic(
+                                &derived_raw_this_member_types,
+                                *derived_member_idx,
+                                member_name,
+                                this_check_base_type,
+                            );
                             should_report_property_type_mismatch(
                                 self,
                                 *member_type,
                                 base_type,
                                 *derived_member_idx,
-                            )
+                            ) && !this_poly_ok
                         } else if *derived_kind == METHOD_SIGNATURE
                             && base_member_node.kind == METHOD_SIGNATURE
                         {
@@ -1819,6 +1858,14 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(base_type);
                             this_check_derived_type = derived_method_type;
                             this_check_base_type = base_method_type;
+                            // Honor the polymorphic `this` relation for `this`-returning
+                            // overrides that the concrete-self substitution would mask.
+                            let this_poly_ok = self.this_member_override_is_polymorphic(
+                                &derived_raw_this_member_types,
+                                *derived_member_idx,
+                                member_name,
+                                base_method_type,
+                            );
                             should_report_member_type_mismatch(
                                 self,
                                 derived_method_type,
@@ -1827,7 +1874,7 @@ impl<'a> CheckerState<'a> {
                             ) && !self.generic_method_override_is_valid_specialization(
                                 derived_method_type,
                                 base_method_type,
-                            )
+                            ) && !this_poly_ok
                         } else {
                             should_report_member_type_mismatch(
                                 self,

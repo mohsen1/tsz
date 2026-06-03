@@ -159,6 +159,47 @@ impl<'a> CheckerState<'a> {
         self.diagnostic_relation_boolean_guard(derived, base)
     }
 
+    /// True when a derived interface member that mentions the polymorphic `this`
+    /// type is a valid override of the base member under tsc's `this`-type
+    /// relation.
+    ///
+    /// Interface heritage checking rewrites `this` in derived members to the
+    /// derived interface's concrete self type (needed for parameter-position
+    /// cases). That substitution makes a method returning the polymorphic `this`
+    /// (`m(): this`) indistinguishable from one returning the self type by name
+    /// (`m(): B`). tsc accepts the former as a covariant override and rejects the
+    /// latter. This consults the *raw* (un-substituted) derived member type so
+    /// the solver's polymorphic `this` relation governs the decision: `this` is
+    /// assignable to a base `this` (covariantly, and through positions such as
+    /// `this[]`), while a concrete type is not assignable to a target `this`.
+    ///
+    /// `raw_this_members` maps a derived member node index to its un-substituted
+    /// member object shape (only members that mention `this` are present);
+    /// `base_member` is the (already extracted) base member type. Returns `false`
+    /// when the derived member does not mention `this`, so the normal mismatch
+    /// decision stands. Keyed on the structural presence of `this`, not on any
+    /// identifier, so renaming members or type parameters does not change the
+    /// outcome.
+    pub(super) fn this_member_override_is_polymorphic(
+        &mut self,
+        raw_this_members: &rustc_hash::FxHashMap<NodeIndex, TypeId>,
+        derived_member_idx: NodeIndex,
+        member_key: &str,
+        base_member: TypeId,
+    ) -> bool {
+        let Some(raw_derived_member) = raw_this_members.get(&derived_member_idx).copied() else {
+            return false;
+        };
+        let derived = crate::query_boundaries::common::find_property_by_str(
+            self.ctx.types,
+            raw_derived_member,
+            member_key,
+        )
+        .map(|p| p.type_id)
+        .unwrap_or(raw_derived_member);
+        self.is_assignable_to_no_erase_generics(derived, base_member)
+    }
+
     pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
         crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).or_else(|| {
             let app_id = crate::query_boundaries::common::application_id(self.ctx.types, type_id)?;
