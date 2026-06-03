@@ -623,3 +623,97 @@ fn async_lowered_arrow_form_rule_is_structural_not_name_sensitive() {
         "Renamed binding must not change arrow form at ES2015.\nOutput:\n{out}"
     );
 }
+
+// --- Nested-class propagation: target_es5 must reach ES5ClassTransformer in embedded paths ---
+//
+// When a class with an async method lives *inside* an async function body or a namespace,
+// the `ES5ClassTransformer` is constructed by `AsyncES5Transformer::lower_class_declaration_to_assignment`,
+// `AsyncES5Transformer::es5_class_factory`, `AstToIr::convert_class_declaration`, or the
+// namespace transformer — all of which previously omitted `set_target_es5`. The structural rule
+// is identical to the top-level case: ES5 target → function() callbacks; ES2015+ → arrow callbacks.
+
+#[test]
+fn nested_class_async_method_amd_es5_uses_function_form() {
+    // Class declaration inside an async function body: the class transformer is created
+    // by AsyncES5Transformer::lower_class_declaration_to_assignment and must carry target_es5.
+    let out = emit(
+        "export async function outer() { class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_"),
+        "Nested class async method at ES5 must use function() form for AMD import.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise((resolve_"),
+        "Nested class async method at ES5 must not emit arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn nested_class_async_method_amd_es2015_uses_arrow_form() {
+    // Same shape as above but at ES2015 — arrows are available, import callback must use () =>.
+    let out = emit(
+        "export async function outer() { class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_"),
+        "Nested class async method at ES2015 must use arrow form for AMD import.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise(function (resolve_"),
+        "Nested class async method at ES2015 must not emit function() form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn namespace_class_async_method_amd_es5_uses_function_form() {
+    // Class inside a namespace: the class transformer is created by NamespaceES5Transformer
+    // and must carry target_es5 from the namespace transformer.
+    let out = emit(
+        "namespace N { export class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise(function (resolve_"),
+        "Namespace class async method at ES5 must use function() form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise((resolve_"),
+        "Namespace class async method at ES5 must not emit arrow form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn namespace_class_async_method_amd_es2015_uses_arrow_form() {
+    // Same namespace shape at ES2015 — must use arrow form.
+    let out = emit(
+        "namespace N { export class C { async m() { return await import('./s'); } } }",
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    );
+    assert!(
+        out.contains("new Promise((resolve_"),
+        "Namespace class async method at ES2015 must use arrow form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("new Promise(function (resolve_"),
+        "Namespace class async method at ES2015 must not emit function() form.\nOutput:\n{out}"
+    );
+}

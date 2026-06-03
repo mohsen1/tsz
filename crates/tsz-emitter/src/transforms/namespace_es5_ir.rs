@@ -1457,6 +1457,8 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_target_es5(self.target_es5);
         // Classes in namespace are nested one level deeper than top-level
         class_transformer.set_indent_base(1);
         // Forward `--emitDecoratorMetadata` so namespace-scoped decorated
