@@ -628,13 +628,12 @@ impl TypeInterner {
                             existing.optional = existing.optional && prop.optional;
                             // Intersection: readonly only if ALL are readonly (writable wins)
                             existing.readonly = existing.readonly && prop.readonly;
-                            // Write type: if writable, use read type to avoid NONE sentinels
-                            if !existing.readonly {
-                                existing.write_type = existing.type_id;
-                            } else {
-                                existing.write_type =
-                                    self.intersect_types_raw2(existing.write_type, prop.write_type);
-                            }
+                            existing.write_type = self.merged_property_write_type(
+                                existing.readonly,
+                                existing.type_id,
+                                existing.write_type,
+                                prop.write_type,
+                            );
                         } else {
                             properties.push(prop.clone());
                         }
@@ -758,22 +757,14 @@ impl TypeInterner {
                     // { readonly a: number } & { a: number } = { a: number } (writable)
                     // This matches tsc: if any member says writable, the intersection is writable
                     existing.readonly = existing.readonly && prop.readonly;
-                    // Write type: handle readonly vs writable merging and divergent accessors.
-                    // - NONE sentinel means "readonly, no setter". Skip it when merging.
-                    // - If both have real write_types, intersect them for divergent accessor support.
-                    // - Use normalizing `intersection2` to distribute over unions and reduce subtypes.
-                    if existing.write_type != prop.write_type {
-                        if prop.write_type == TypeId::NONE {
-                            // prop is readonly, keep existing.write_type unchanged
-                        } else if existing.write_type == TypeId::NONE {
-                            // existing was readonly, use prop's write_type
-                            existing.write_type = prop.write_type;
-                        } else {
-                            // Both have real write_types, intersect them
-                            existing.write_type =
-                                self.intersection2(existing.write_type, prop.write_type);
-                        }
-                    }
+                    // Write type tracks read type for writable properties so the
+                    // merge is never mistaken for a split accessor (issue #11323).
+                    existing.write_type = self.merged_property_write_type(
+                        existing.readonly,
+                        existing.type_id,
+                        existing.write_type,
+                        prop.write_type,
+                    );
                     // Private remains inaccessible, all-protected remains protected,
                     // and any public constituent makes the merged intersection
                     // property public.

@@ -1342,6 +1342,17 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.intersect_types_raw2(left, right)
     }
 
+    fn merged_property_write_type(
+        &self,
+        readonly: bool,
+        read_type: TypeId,
+        existing_write: TypeId,
+        prop_write: TypeId,
+    ) -> TypeId {
+        self.interner
+            .merged_property_write_type(readonly, read_type, existing_write, prop_write)
+    }
+
     fn array(&self, element: TypeId) -> TypeId {
         self.interner.array(element)
     }
