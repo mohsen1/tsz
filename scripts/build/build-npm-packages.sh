@@ -521,6 +521,12 @@ for entry in "${PLATFORMS[@]}"; do
   cp "$PROJECT_ROOT/LICENSE.txt" "$try_platform_pkg/LICENSE.txt"
 done
 
+# GitHub artifact upload/download does not preserve executable bits reliably.
+# Restore them during package assembly so npm packs native binaries as runnable.
+if [ "$WASM_ONLY" -ne 1 ]; then
+  find "$NPM_DIR/@mohsen-azimi" -path "*/bin/*" -type f -exec chmod +x {} +
+fi
+
 echo ""
 echo "==> Build complete!"
 echo "    Main package: $MAIN_PKG"
