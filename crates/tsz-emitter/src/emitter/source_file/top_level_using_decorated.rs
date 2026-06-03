@@ -2,6 +2,31 @@ use super::super::Printer;
 use crate::emitter::syntax_kind_ext;
 use tsz_parser::parser::NodeIndex;
 
+pub(in crate::emitter::source_file) fn strip_decorate_export_prefix(
+    emitted: &str,
+    export_prefix: &str,
+    binding_name: &str,
+) -> String {
+    let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+    let local_decorate = format!("{binding_name} = __decorate(");
+    let mut lines = Vec::new();
+    for line in emitted.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(&exported_decorate) {
+            let leading_len = line.len() - trimmed.len();
+            let (leading, _) = line.split_at(leading_len);
+            lines.push(format!("{leading}{local_decorate}{rest}"));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut stripped = lines.join("\n");
+    if emitted.ends_with('\n') {
+        stripped.push('\n');
+    }
+    stripped
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter::source_file) fn emit_top_level_using_initializer(
         &mut self,
