@@ -622,6 +622,53 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Rebuild a mapped type so its homomorphic source is resolved through the
+    /// full resolver, returning the new `MappedTypeId` when resolution made the
+    /// source concrete.
+    ///
+    /// The source of a homomorphic mapped type appears twice: as the operand of
+    /// the `keyof` constraint and as the object of the `source[K]` template. When
+    /// that source is a semantic ref the resolver-less solver queries cannot
+    /// expand (notably an anonymous intersection of `Lazy(DefId)` members passed
+    /// as a generic argument), both the key set and per-property modifiers are
+    /// lost. Resolving the source and substituting it into both positions lets
+    /// the existing finite-key queries operate on a concrete object. Returns
+    /// `None` when the source cannot be located or resolution leaves it
+    /// unchanged, so callers fall back to the original mapped id.
+    fn rebuild_mapped_over_resolved_source(
+        &mut self,
+        mapped: &tsz_solver::MappedType,
+    ) -> Option<tsz_solver::MappedTypeId> {
+        let source =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, mapped.constraint)?;
+        let resolved_source = self.evaluate_type_with_resolution(source);
+        if resolved_source == source {
+            return None;
+        }
+        // Rewrite a `source[K]` template to `resolved_source[K]`; leave other
+        // template shapes untouched (the constraint rewrite alone still recovers
+        // the key set for them).
+        let new_template = match crate::query_boundaries::common::index_access_types(
+            self.ctx.types,
+            mapped.template,
+        ) {
+            Some((object, index)) if object == source => {
+                self.ctx.types.index_access(resolved_source, index)
+            }
+            _ => mapped.template,
+        };
+        let rebuilt = tsz_solver::MappedType {
+            type_param: mapped.type_param,
+            constraint: self.ctx.types.keyof(resolved_source),
+            name_type: mapped.name_type,
+            template: new_template,
+            readonly_modifier: mapped.readonly_modifier,
+            optional_modifier: mapped.optional_modifier,
+        };
+        let rebuilt_type = self.ctx.types.mapped(rebuilt);
+        crate::query_boundaries::common::mapped_type_id(self.ctx.types, rebuilt_type)
+    }
+
     /// Resolve a single mapped-type property with environment-aware key/template
     /// evaluation, without expanding the whole mapped object.
     ///
@@ -668,6 +715,21 @@ impl<'a> CheckerState<'a> {
         let keyof_target = query::keyof_target(self.ctx.types, mapped.constraint)
             .or_else(|| query::keyof_target(self.ctx.types, constraint));
 
+        // The solver's finite-key queries below (`get_finite_mapped_property_type`,
+        // `collect_finite_mapped_property_names`) run with a resolver-less
+        // evaluator. When the mapped type's source is a semantic ref the
+        // resolver-less path cannot expand — e.g. `{ [K in keyof T as ...]: T[K] }`
+        // instantiated with an anonymous intersection argument `A & B`, whose
+        // `keyof` operand and `T[K]` template still hold `Lazy(DefId)` members —
+        // they extract no keys and report the property as missing, silently
+        // dropping its optional/readonly modifiers. Rebuild the mapped over the
+        // resolver-resolved source (in both the `keyof` constraint and the
+        // `source[K]` template) so the finite-key queries observe a concrete
+        // object. Named sources resolve unchanged, so this is a no-op for them.
+        let resolved_mapped_id = self
+            .rebuild_mapped_over_resolved_source(&mapped)
+            .unwrap_or(mapped_id);
+
         if prop_name.parse::<usize>().is_err()
             && let Some(keyof_target) = keyof_target
             && matches!(
@@ -702,7 +764,7 @@ impl<'a> CheckerState<'a> {
         if let Some(property_type) =
             crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                 self.ctx.types,
-                mapped_id,
+                resolved_mapped_id,
                 prop_name,
             )
         {
@@ -730,7 +792,7 @@ impl<'a> CheckerState<'a> {
         if let Some(names) =
             crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
                 self.ctx.types,
-                mapped_id,
+                resolved_mapped_id,
             )
         {
             if !names.contains(&prop_atom) {

@@ -945,11 +945,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 vec![evaluated_constraint]
             };
 
-        // Verify all members are concrete (no type parameters)
+        // This path handles `{ [Item in (ObjA | ObjB) as Item[...]]: ... }`,
+        // substituting each concrete constraint member for the iteration
+        // parameter. Bail when a member is not such a concrete type: type
+        // parameters/infer placeholders are still generic, and `KeyOf`/`Lazy`
+        // members mean the constraint is an unresolved `keyof <ref>` (e.g. an
+        // anonymous intersection argument the resolver-less evaluator cannot
+        // expand) rather than a union of objects. Returning an (empty) object
+        // for those would erase the mapped type's real keys; deferring instead
+        // lets a resolver-aware caller expand it correctly.
         for &member in &members {
             if matches!(
                 self.interner().lookup(member),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                Some(
+                    TypeData::TypeParameter(_)
+                        | TypeData::Infer(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::Lazy(_)
+                )
             ) {
                 return None;
             }

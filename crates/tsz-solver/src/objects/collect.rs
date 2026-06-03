@@ -236,7 +236,35 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     self.merge_shape(&shape);
                 }
                 Some(TypeData::Mapped(mapped_id)) => {
-                    self.collect_finite_mapped_properties(mapped_id);
+                    // A deferred mapped type whose key constraint references
+                    // semantic refs (e.g. `keyof (A & B)` where `A`/`B` are
+                    // `Lazy(DefId)` members of an intersection passed as a
+                    // generic argument) cannot be expanded by the resolver-less
+                    // `collect_finite_mapped_properties` path: it reaches a
+                    // `keyof` over unresolved `Lazy` members and yields no keys,
+                    // silently dropping every property (and its optional/readonly
+                    // modifiers). For those, re-evaluate the mapped type with the
+                    // resolver available to this collector first — mirroring the
+                    // `Application` arm below — so the member refs resolve and the
+                    // mapped expands to a concrete object. Concrete mapped types
+                    // carry no such refs, so they keep using the cheaper
+                    // finite-key path directly. Fall back to it too when the
+                    // resolver-aware evaluation makes no progress (genuinely
+                    // deferred, e.g. still type-parameter generic).
+                    let evaluated =
+                        crate::type_queries::contains_lazy_or_recursive_db(self.interner, resolved)
+                            .then(|| self.spawn_evaluator().evaluate(resolved))
+                            .filter(|&evaluated| {
+                                evaluated != resolved
+                                    && !matches!(
+                                        self.interner.lookup(evaluated),
+                                        Some(TypeData::Mapped(_))
+                                    )
+                            });
+                    match evaluated {
+                        Some(evaluated) => stack.push(evaluated),
+                        None => self.collect_finite_mapped_properties(mapped_id),
+                    }
                 }
                 // Any type in intersection makes everything Any (commutative)
                 Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
@@ -249,14 +277,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     }
                 }
                 Some(TypeData::Application(_)) => {
-                    let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
-                        self.interner,
-                        self.resolver,
-                    );
-                    if let Some(db) = self.query_db {
-                        evaluator = evaluator.with_query_db(db);
-                    }
-                    let evaluated = evaluator.evaluate(resolved);
+                    let evaluated = self.spawn_evaluator().evaluate(resolved);
                     if evaluated != resolved {
                         stack.push(evaluated);
                     } else if let Some(expanded) = self.expand_application_with_resolver(resolved)
@@ -294,6 +315,18 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 }
             }
         }
+    }
+
+    /// Build a `TypeEvaluator` wired to this collector's resolver and query
+    /// cache, used to expand `Application`/`Mapped` members that the
+    /// resolver-less collection path cannot.
+    fn spawn_evaluator(&self) -> crate::evaluation::evaluate::TypeEvaluator<'a, R> {
+        let mut evaluator =
+            crate::evaluation::evaluate::TypeEvaluator::with_resolver(self.interner, self.resolver);
+        if let Some(db) = self.query_db {
+            evaluator = evaluator.with_query_db(db);
+        }
+        evaluator
     }
 
     fn expand_application_with_resolver(&self, type_id: TypeId) -> Option<TypeId> {

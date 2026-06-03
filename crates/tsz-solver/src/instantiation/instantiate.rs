@@ -1922,6 +1922,28 @@ impl<'a> TypeInstantiator<'a> {
                 ) {
                     return self.interner.keyof(inst_operand);
                 }
+                // Union/intersection operands whose members are semantic refs
+                // (`Lazy(DefId)`), generic applications, or recursive aliases
+                // cannot be flattened to a finite key set by the resolver-less
+                // `evaluate_keyof` reached from this instantiation path: the
+                // member refs stay unresolved, so the keyof collapses to a
+                // deferred, structurally-detached form that loses the source's
+                // properties (and their optional/readonly modifiers) when the
+                // mapped type later expands. Keep the keyof deferred over the
+                // instantiated operand so the resolver-aware key extraction in
+                // `extract_mapped_keys`/`collect_properties` can resolve the
+                // member refs and recover the full key set. Fully concrete
+                // unions/intersections (e.g. `keyof ({ a: 1 } & { b: 2 })`)
+                // have no such refs and continue to evaluate eagerly below.
+                if matches!(
+                    self.interner.lookup(inst_operand),
+                    Some(TypeData::Union(_) | TypeData::Intersection(_))
+                ) && crate::type_queries::contains_lazy_or_recursive_db(
+                    self.interner,
+                    inst_operand,
+                ) {
+                    return self.interner.keyof(inst_operand);
+                }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
                 let result =
                     crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand);
