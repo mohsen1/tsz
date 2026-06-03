@@ -376,11 +376,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             type_id,
         );
+        let declaring_file_idx = self.unresolved_application_declaring_file_idx(type_id);
         for name in names {
-            let Some(def_id) = TypeResolver::resolve_unresolved_type_name(&self.ctx, name.as_str())
+            let Some(def_id) = declaring_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .resolve_unresolved_type_name_from_file(name.as_str(), file_idx)
+                })
+                .or_else(|| TypeResolver::resolve_unresolved_type_name(&self.ctx, name.as_str()))
             else {
                 continue;
             };
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.insert_unresolved_resolution(name.clone(), def_id);
+            }
             if self.ctx.definition_store.get_body(def_id).is_some() {
                 continue;
             }
@@ -398,6 +407,19 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .register_def_auto_params_in_envs(def_id, body, params);
         }
+    }
+
+    fn unresolved_application_declaring_file_idx(&self, type_id: TypeId) -> Option<usize> {
+        let owner_def_id =
+            crate::query_boundaries::spread::application_or_display_alias_lazy_def_id(
+                self.ctx.types,
+                type_id,
+            )?;
+        self.ctx
+            .definition_store
+            .get(owner_def_id)
+            .and_then(|info| info.file_id)
+            .map(|file_idx| file_idx as usize)
     }
 
     /// Persist evaluator cache entries to the shared `env_eval_cache`.

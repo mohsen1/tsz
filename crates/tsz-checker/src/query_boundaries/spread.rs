@@ -59,3 +59,15 @@ pub(crate) fn collect_unresolved_application_names(
     });
     names
 }
+
+/// Return the lazy definition at the base of an application, following the
+/// display alias once when evaluation rewrote an alias application to a branch.
+pub(crate) fn application_or_display_alias_lazy_def_id(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<DefId> {
+    tsz_solver::type_queries::get_application_lazy_def_id(types, type_id).or_else(|| {
+        let alias = types.get_display_alias(type_id)?;
+        tsz_solver::type_queries::get_application_lazy_def_id(types, alias)
+    })
+}
