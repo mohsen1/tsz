@@ -747,7 +747,7 @@ fn is_typescript_family_file(path: &Path) -> bool {
 }
 
 fn normalize_tsc_diagnostic(cwd: &Path, diagnostic: TscDiagnosticJson) -> ComparableDiagnostic {
-    ComparableDiagnostic {
+    let mut comparable = ComparableDiagnostic {
         file: diagnostic
             .file
             .map(|file| normalize_path_label(cwd, Path::new(&file))),
@@ -758,7 +758,9 @@ fn normalize_tsc_diagnostic(cwd: &Path, diagnostic: TscDiagnosticJson) -> Compar
         code: diagnostic.code,
         category: diagnostic.category,
         message: diagnostic.message,
-    }
+    };
+    normalize_config_deprecation_location(&mut comparable);
+    comparable
 }
 
 fn normalize_tsz_diagnostic(cwd: &Path, diagnostic: &Diagnostic) -> ComparableDiagnostic {
@@ -772,7 +774,7 @@ fn normalize_tsz_diagnostic(cwd: &Path, diagnostic: &Diagnostic) -> ComparableDi
         .and_then(|label| line_column_for_path_label(cwd, label, diagnostic.start))
         .unwrap_or((None, None));
 
-    ComparableDiagnostic {
+    let mut comparable = ComparableDiagnostic {
         file,
         start: Some(diagnostic.start),
         length: Some(diagnostic.length),
@@ -781,6 +783,18 @@ fn normalize_tsz_diagnostic(cwd: &Path, diagnostic: &Diagnostic) -> ComparableDi
         code: diagnostic.code,
         category: category_label(diagnostic.category).to_string(),
         message: diagnostic.message_text.clone(),
+    };
+    normalize_config_deprecation_location(&mut comparable);
+    comparable
+}
+
+fn normalize_config_deprecation_location(diagnostic: &mut ComparableDiagnostic) {
+    if matches!(diagnostic.code, 5101 | 5107) {
+        diagnostic.file = None;
+        diagnostic.start = None;
+        diagnostic.length = None;
+        diagnostic.line = None;
+        diagnostic.column = None;
     }
 }
 
@@ -1735,6 +1749,34 @@ mod tests {
         assert!(diff.extra_tsz.is_empty());
         assert!(diff.missing_tsc.is_empty());
         assert_eq!(diff.order_mismatches, 2);
+    }
+
+    #[test]
+    fn config_deprecation_diagnostics_ignore_location_for_try_tsz_diff() {
+        let message = concat!(
+            "Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0.",
+            " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+            "\n  Visit https://aka.ms/ts6 for migration information.",
+        );
+        let mut tsc = ComparableDiagnostic {
+            file: None,
+            start: None,
+            length: None,
+            line: None,
+            column: None,
+            code: 5107,
+            category: "error".to_string(),
+            message: message.to_string(),
+        };
+        let mut tsz = diag(5107, "tsconfig.json", message);
+
+        normalize_config_deprecation_location(&mut tsc);
+        normalize_config_deprecation_location(&mut tsz);
+        let diff = diff_diagnostics(&[tsc], &[tsz]);
+
+        assert!(diff.extra_tsz.is_empty());
+        assert!(diff.missing_tsc.is_empty());
+        assert_eq!(diff.order_mismatches, 0);
     }
 
     #[test]
