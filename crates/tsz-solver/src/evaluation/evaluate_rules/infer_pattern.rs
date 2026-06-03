@@ -1068,6 +1068,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Validate one fixed (non-rest) tuple slot pair and, when valid, push its
+    /// `(source, pattern)` types onto `pairs` for co-located merge matching.
+    ///
+    /// Returns `false` when the source element cannot fill the pattern slot —
+    /// either side carrying a `rest` flag (a fixed slot must align with a fixed
+    /// slot), or an optional source against a required pattern slot. An optional
+    /// source widens with `undefined` so the slot can still bind `T | undefined`.
+    /// Shared by every fixed-slot collection loop (prefix, suffix, and the
+    /// non-rest pairwise zip) so the shape rules stay in one place.
+    fn push_fixed_tuple_pair(
+        &self,
+        source_elem: &TupleElement,
+        pattern_elem: &TupleElement,
+        pairs: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        if source_elem.rest || pattern_elem.rest {
+            return false;
+        }
+        if source_elem.optional && !pattern_elem.optional {
+            return false;
+        }
+        let source_type = if source_elem.optional {
+            self.interner()
+                .union2(source_elem.type_id, TypeId::UNDEFINED)
+        } else {
+            source_elem.type_id
+        };
+        pairs.push((source_type, pattern_elem.type_id));
+        true
+    }
+
     /// Match tuple elements against a pattern, extracting infer bindings.
     pub(crate) fn match_tuple_elements(
         &self,
@@ -1104,63 +1135,62 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return false;
             }
 
-            // Match prefix elements (before rest) from start of source
+            let rest_source_end = source_len - suffix_len;
+
+            // Collect the fixed prefix and suffix `(source, pattern)` pairs.
+            // These are all co-located *covariant* tuple positions: when the
+            // same `infer T` name appears in more than one of them (whether two
+            // prefix slots, two suffix slots, or one of each across the rest),
+            // tsc unions the per-slot candidates instead of failing the second
+            // slot's mutual-subtype check. Route them through the same
+            // co-located union merge the non-rest path uses so, e.g.,
+            // `[infer A, ...unknown[], infer A]` against `[1, 2, 3]` binds
+            // `A = 1 | 3` (true branch) rather than collapsing to the false
+            // branch. The fixed-slot validity checks (no nested rest, optional
+            // source cannot fill a required slot) stay eager so an invalid
+            // shape rejects before any inference work.
+            let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_count);
             for i in 0..prefix_len {
-                let source_elem = &source_elems[i];
-                let pattern_elem = &pattern_elems[i];
-                if source_elem.rest || pattern_elem.rest {
-                    return false;
-                }
-                // Optional source cannot fill a required pattern slot.
-                if source_elem.optional && !pattern_elem.optional {
-                    return false;
-                }
-                let source_type = if source_elem.optional {
-                    self.interner()
-                        .union2(source_elem.type_id, TypeId::UNDEFINED)
-                } else {
-                    source_elem.type_id
-                };
-                if !self.match_infer_pattern(
-                    source_type,
-                    pattern_elem.type_id,
-                    bindings,
-                    visited,
-                    checker,
+                if !self.push_fixed_tuple_pair(
+                    &source_elems[i],
+                    &pattern_elems[i],
+                    &mut fixed_pairs,
                 ) {
                     return false;
                 }
             }
-
-            // Match suffix elements (after rest) from end of source
-            let rest_source_end = source_len - suffix_len;
             for i in 0..suffix_len {
-                let source_elem = &source_elems[rest_source_end + i];
-                let pattern_elem = &pattern_elems[rest_index + 1 + i];
-                if source_elem.rest || pattern_elem.rest {
-                    return false;
-                }
-                if source_elem.optional && !pattern_elem.optional {
-                    return false;
-                }
-                let source_type = if source_elem.optional {
-                    self.interner()
-                        .union2(source_elem.type_id, TypeId::UNDEFINED)
-                } else {
-                    source_elem.type_id
-                };
-                if !self.match_infer_pattern(
-                    source_type,
-                    pattern_elem.type_id,
-                    bindings,
-                    visited,
-                    checker,
+                if !self.push_fixed_tuple_pair(
+                    &source_elems[rest_source_end + i],
+                    &pattern_elems[rest_index + 1 + i],
+                    &mut fixed_pairs,
                 ) {
                     return false;
                 }
+            }
+            // A purely `[...rest]` pattern has no fixed slots; skip the merge
+            // (which would otherwise clone `bindings` twice for an empty pair
+            // set) and fall straight through to the residual match.
+            if !fixed_pairs.is_empty()
+                && !self.match_co_located_with_merge(
+                    &fixed_pairs,
+                    bindings,
+                    visited,
+                    checker,
+                    CoLocatedMerge::Union,
+                )
+            {
+                return false;
             }
 
             // Match the residual source slice against the pattern's rest slot.
+            // This runs *after* the merged prefix/suffix bindings so a name
+            // shared between a fixed position and the rest slot (e.g.
+            // `[infer A, ...infer A]`) is still rejected: the residual's
+            // `bind_infer` mutual-subtype check sees the element-level
+            // candidate already bound and fails against the array/tuple-level
+            // one, taking the false branch exactly as tsc does (tsc reaches the
+            // same outcome via its post-inference structural re-check).
             // The residual may itself contain rest elements (when the source is
             // a variadic tuple like `[a, ...b[]]`), so the helpers preserve
             // each source element's `rest`/`optional` flags and structurally
@@ -1189,21 +1219,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let shared = std::cmp::min(source_len, pattern_len);
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(pattern_len);
         for i in 0..shared {
-            let source_elem = &source_elems[i];
-            let pattern_elem = &pattern_elems[i];
-            if source_elem.rest || pattern_elem.rest {
+            if !self.push_fixed_tuple_pair(&source_elems[i], &pattern_elems[i], &mut pairs) {
                 return false;
             }
-            if source_elem.optional && !pattern_elem.optional {
-                return false;
-            }
-            let source_type = if source_elem.optional {
-                self.interner()
-                    .union2(source_elem.type_id, TypeId::UNDEFINED)
-            } else {
-                source_elem.type_id
-            };
-            pairs.push((source_type, pattern_elem.type_id));
         }
 
         if source_len < pattern_len {
