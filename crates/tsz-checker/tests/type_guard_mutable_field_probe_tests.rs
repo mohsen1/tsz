@@ -26,7 +26,7 @@ function test(x: A | B) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -46,7 +46,7 @@ function use(w: Widget) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -66,7 +66,7 @@ function test(x: Box) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -87,7 +87,7 @@ function test(x: Base) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -107,7 +107,7 @@ function test(x: HasName | NoName) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -128,7 +128,7 @@ function use(f: Foo) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -148,7 +148,7 @@ function test(x: Foo | Bar) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
 
 #[test]
@@ -169,5 +169,5 @@ function process(c: Container) {
 }
 "#,
     );
-    assert!(c.is_empty(), "expected no errors, got: {:?}", c);
+    assert!(c.is_empty(), "expected no errors, got: {c:?}");
 }
