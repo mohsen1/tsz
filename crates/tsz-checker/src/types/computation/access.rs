@@ -1429,6 +1429,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A wide `symbol` index made through a symbol-typed identifier may carry
+        // a binding-identity key for exact computed-member lookup. Once that
+        // exact lookup misses, a receiver with a broad symbol index signature
+        // should resolve through `receiver[symbol]`, not through the binding key.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && index_type_for_access != index_type
+        {
+            let symbol_index_result =
+                self.get_element_access_type(object_type_for_access, TypeId::SYMBOL, None);
+            if symbol_index_result != TypeId::UNDEFINED && symbol_index_result != TypeId::ERROR {
+                result_type = Some(symbol_index_result);
+                use_index_signature_check = false;
+            }
+        }
+
         // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
