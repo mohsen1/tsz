@@ -868,22 +868,6 @@ impl<'a> CheckerState<'a> {
                         });
                     }
                 }
-                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
-                    // Constraint violation from callback return - overload matched
-                    // but with constraint error. If there are more overloads to try,
-                    // continue to the next one (e.g., Object.freeze overload 0 is
-                    // `T extends Function` which is violated for object args — we
-                    // must try overload 1 `T extends {[idx:string]:U}`).
-                    if signatures.len() > 1 {
-                        continue;
-                    }
-                    self.ctx.node_types.merge(&temp_node_types);
-                    return Some(OverloadResolution {
-                        arg_types: arg_types.clone(),
-                        result: CallResult::Success(return_type),
-                        selected_type_predicate,
-                    });
-                }
                 _ => {}
             }
         }
@@ -907,10 +891,6 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         let mut failures = Vec::new();
-        // When a signature returns TypeParameterConstraintViolation and there are more
-        // overloads to try, store it as a fallback and continue. Used for Object.freeze
-        // where overload 0 (T extends Function) is violated but overload 1 works.
-        let _constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();
@@ -929,11 +909,6 @@ impl<'a> CheckerState<'a> {
         // as an overload mismatch. When no overload resolves cleanly we commit to
         // this candidate and surface its diagnostics instead of silently recovering.
         let mut callback_body_only_success: Option<BestTypeMismatch> = None;
-        // When an overload returns TypeParameterConstraintViolation and there are
-        // more overloads to try, we store it as a fallback and continue. If no
-        // later overload succeeds, we use this fallback (e.g., for single-overload
-        // constraint violations that must still resolve to a return type).
-        let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         for (idx, original_sig) in signatures.iter().enumerate() {
             let sig = self.overload_signature_for_inference(
                 original_sig,
@@ -1457,9 +1432,7 @@ impl<'a> CheckerState<'a> {
                     selected_type_predicate = retry_predicate;
                 }
                 match retry_result {
-                    CallResult::Success(_)
-                    | CallResult::ArgumentTypeMismatch { .. }
-                    | CallResult::TypeParameterConstraintViolation { .. } => {
+                    CallResult::Success(_) | CallResult::ArgumentTypeMismatch { .. } => {
                         sig_arg_types = refreshed_arg_types;
                         result = retry_result;
                     }
@@ -1782,41 +1755,6 @@ impl<'a> CheckerState<'a> {
                         actual,
                     ));
                 }
-                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
-                    // If more overloads remain, store this as a fallback and try next.
-                    // This handles cases like Object.freeze where overload 0
-                    // (T extends Function) is violated for object args but overload 1
-                    // (T extends {[idx:string]:U}) should be tried next.
-                    if signatures.len() > 1 && constraint_violation_fallback.is_none() {
-                        constraint_violation_fallback = Some((return_type, sig_arg_types.clone()));
-                        self.ctx
-                            .rollback_diagnostics_filtered(&candidate_snap, |diag| {
-                                Self::should_preserve_speculative_call_diagnostic(diag)
-                            });
-                        continue;
-                    }
-                    let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
-                        args,
-                        &overload_snap.diag,
-                        &candidate_snap,
-                    );
-                    let kept_candidate_diags =
-                        self.ctx.take_speculative_diagnostics(&candidate_snap);
-                    let mut merged =
-                        self.preserved_speculative_call_diagnostics(&overload_snap.diag);
-                    self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
-                    self.extend_unique_diagnostics(&mut merged, kept_candidate_diags);
-                    self.ctx
-                        .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
-                    let sig_node_types = std::mem::take(&mut self.ctx.node_types);
-                    self.ctx.node_types = std::mem::take(&mut original_node_types);
-                    self.ctx.node_types.merge_owned(sig_node_types);
-                    return Some(OverloadResolution {
-                        arg_types: sig_arg_types,
-                        result: CallResult::Success(return_type),
-                        selected_type_predicate,
-                    });
-                }
                 _ => {
                     all_arg_count_mismatches = false;
                     has_non_count_non_type_failure = true;
@@ -1852,23 +1790,6 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types = std::mem::take(&mut original_node_types);
             self.ctx.node_types.merge_owned(sig_node_types);
             return Some(best_type_mismatch);
-        }
-
-        // If we encountered a TypeParameterConstraintViolation while trying overloads
-        // but no later overload succeeded cleanly, use the constraint-violation result
-        // as a successful resolution (the return type is still valid; only the
-        // constraint check itself failed, which is reported separately).
-        if let Some((fallback_return_type, fallback_arg_types)) = constraint_violation_fallback {
-            self.ctx
-                .rollback_diagnostics_filtered(&overload_snap.diag, |diag| {
-                    Self::should_preserve_speculative_call_diagnostic(diag)
-                });
-            self.ctx.node_types = original_node_types;
-            return Some(OverloadResolution {
-                arg_types: fallback_arg_types,
-                result: CallResult::Success(fallback_return_type),
-                selected_type_predicate: None,
-            });
         }
 
         // No overload resolved cleanly, but at least one matched at the signature
