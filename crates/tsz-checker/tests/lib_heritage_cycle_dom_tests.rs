@@ -19,8 +19,9 @@
 
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_multi_file_with_libs, diagnostic_codes, load_compiled_lib_files,
+    check_multi_file_with_libs, diagnostic_code_messages, diagnostic_codes, load_compiled_lib_files,
 };
+use tsz_common::common::{ModuleKind, ScriptTarget};
 
 /// A target-ESNext-ish lib bundle that includes the DOM definitions.
 const LIBS: &[&str] = &[
@@ -45,8 +46,29 @@ const LIBS: &[&str] = &[
     "lib.dom.iterable.d.ts",
 ];
 
+const ES5_DOM_LIBS: &[&str] = &["lib.es5.d.ts", "lib.dom.d.ts"];
+
 fn dom_codes(source: &str) -> Vec<u32> {
-    let libs = load_compiled_lib_files(LIBS);
+    dom_codes_with_libs(source, LIBS)
+}
+
+fn es5_dom_messages(source: &str) -> Vec<(u32, String)> {
+    let libs = load_compiled_lib_files(ES5_DOM_LIBS);
+    let diags = check_multi_file_with_libs(
+        &[("main.ts", source)],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    diagnostic_code_messages(diags)
+}
+
+fn dom_codes_with_libs(source: &str, lib_names: &[&str]) -> Vec<u32> {
+    let libs = load_compiled_lib_files(lib_names);
     // Guard: if the compiled DOM lib is not present in any probed root, the
     // ordering under test cannot be exercised. Treat that as a skip rather than
     // a spurious pass/failure.
@@ -117,6 +139,155 @@ fn document_body_append_child_no_ts2339() {
     assert!(
         !codes.contains(&2339),
         "document.body.appendChild must resolve (HTMLElement inherits Node.appendChild): {codes:?}"
+    );
+}
+
+#[test]
+fn es5_dom_document_body_append_child_no_ts2339() {
+    // The `importMeta.ts` conformance fixture requests exactly `es5,dom`; keep
+    // that narrower lib-set from dropping inherited `Node.appendChild`.
+    let messages = es5_dom_messages(
+        "(async () => {\n\
+         const response = await fetch(new URL(\"../hamsters.jpg\", import.meta.url).toString());\n\
+         const blob = await response.blob();\n\
+         const size = import.meta.scriptElement.dataset.size || 300;\n\
+         const image = new Image();\n\
+         image.src = URL.createObjectURL(blob);\n\
+         image.width = image.height = size;\n\
+         document.body.appendChild(image);\n\
+         })();\n",
+    );
+    assert!(
+        !messages.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("appendChild") && message.contains("HTMLElement")
+        }),
+        "document.body.appendChild must resolve with only es5,dom libs: {messages:?}"
+    );
+}
+
+#[test]
+fn es5_dom_import_meta_fixture_append_child_no_extra_ts2339() {
+    let libs = load_compiled_lib_files(ES5_DOM_LIBS);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "example.ts",
+                r#"
+(async () => {
+  const response = await fetch(new URL("../hamsters.jpg", import.meta.url).toString());
+  const blob = await response.blob();
+
+  const size = import.meta.scriptElement.dataset.size || 300;
+
+  const image = new Image();
+  image.src = URL.createObjectURL(blob);
+  image.width = image.height = size;
+
+  document.body.appendChild(image);
+})();
+"#,
+            ),
+            (
+                "moduleLookingFile01.ts",
+                r#"
+export let x = import.meta;
+export let y = import.metal;
+export let z = import.import.import.malkovich;
+"#,
+            ),
+            (
+                "scriptLookingFile01.ts",
+                r#"
+let globalA = import.meta;
+let globalB = import.metal;
+let globalC = import.import.import.malkovich;
+"#,
+            ),
+            (
+                "assignmentTargets.ts",
+                r#"
+export const foo: ImportMeta = import.meta.blah = import.meta.blue = import.meta;
+import.meta = foo;
+"#,
+            ),
+            (
+                "augmentations.ts",
+                r#"
+declare global {
+  interface ImportMeta {
+    wellKnownProperty: { a: number, b: string, c: boolean };
+  }
+}
+
+const { a, b, c } = import.meta.wellKnownProperty;
+"#,
+            ),
+        ],
+        "example.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let messages = diagnostic_code_messages(diagnostics);
+    assert!(
+        !messages.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("appendChild") && message.contains("HTMLElement")
+        }),
+        "importMeta fixture should not add appendChild/HTMLElement TS2339: {messages:?}"
+    );
+}
+
+#[test]
+fn es5_dom_import_meta_global_augmentation_keeps_image_assignable_to_node() {
+    let libs = load_compiled_lib_files(ES5_DOM_LIBS);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "example.ts",
+                r#"
+(async () => {
+  const response = await fetch(new URL("../hamsters.jpg", import.meta.url).toString());
+  const blob = await response.blob();
+  const size = import.meta.scriptElement.dataset.size || 300;
+  const image = new Image();
+  image.src = URL.createObjectURL(blob);
+  image.width = image.height = size;
+  document.body.appendChild(image);
+})();
+"#,
+            ),
+            (
+                "augmentations.ts",
+                r#"
+declare global {
+  interface ImportMeta {
+    wellKnownProperty: { a: number, b: string, c: boolean };
+  }
+}
+const { a, b, c } = import.meta.wellKnownProperty;
+"#,
+            ),
+        ],
+        "example.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let messages = diagnostic_code_messages(diagnostics);
+    assert!(
+        !messages.iter().any(|(code, message)| {
+            (*code == 2339 && message.contains("appendChild"))
+                || (*code == 2345
+                    && message.contains("HTMLImageElement")
+                    && message.contains("Node"))
+        }),
+        "global augmentation must not drop DOM heritage for chained appendChild: {messages:?}"
     );
 }
 
