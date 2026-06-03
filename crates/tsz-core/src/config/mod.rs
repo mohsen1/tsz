@@ -1621,9 +1621,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 {
                     let start = find_value_offset_in_source(&stripped, key);
                     let value_len = estimate_json_value_len(value);
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
-                        &[key, display_value, "7.0", "6.0"],
+                    let msg = format!(
+                        "{}\n  {}",
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
+                            &[key, display_value, "7.0", "6.0"],
+                        ),
+                        diagnostic_messages::VISIT_HTTPS_AKA_MS_TS6_FOR_MIGRATION_INFORMATION,
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,
@@ -1651,9 +1655,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         .map(|p| (compiler_opts_pos + p) as u32)
                         .unwrap_or(0);
                     let key_len = key.len() as u32 + 2; // include quotes
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
-                        &[key, "7.0", "6.0"],
+                    let msg = format!(
+                        "{}\n  {}",
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
+                            &[key, "7.0", "6.0"],
+                        ),
+                        diagnostic_messages::VISIT_HTTPS_AKA_MS_TS6_FOR_MIGRATION_INFORMATION,
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,

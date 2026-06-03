@@ -1156,3 +1156,50 @@ fn ts6046_silent_for_valid_watch_file_value() {
         "valid watchFile value must not emit TS6046, got {diags:?}"
     );
 }
+
+// TS5107 and TS5101 must append the TS5111 migration URL via `flattenDiagnosticMessageText`
+// semantics ("\n  " separator) so `try-tsz` project comparisons match tsc output.
+
+#[test]
+fn ts5107_message_includes_ts5111_migration_url() {
+    let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5107)
+        .expect("expected TS5107 for alwaysStrict=false");
+    assert!(
+        diag.message_text
+            .contains("Visit https://aka.ms/ts6 for migration information."),
+        "TS5107 message must include the TS5111 migration URL suffix.\nGot: {}",
+        diag.message_text
+    );
+    assert!(
+        diag.message_text.contains("\n  Visit"),
+        "TS5111 suffix must be separated by '\\n  ' (flattenDiagnosticMessageText convention).\nGot: {}",
+        diag.message_text
+    );
+}
+
+#[test]
+fn ts5101_message_includes_ts5111_migration_url() {
+    let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5101)
+        .expect("expected TS5101 for baseUrl");
+    assert!(
+        diag.message_text
+            .contains("Visit https://aka.ms/ts6 for migration information."),
+        "TS5101 message must include the TS5111 migration URL suffix.\nGot: {}",
+        diag.message_text
+    );
+    assert!(
+        diag.message_text.contains("\n  Visit"),
+        "TS5111 suffix must be separated by '\\n  ' (flattenDiagnosticMessageText convention).\nGot: {}",
+        diag.message_text
+    );
+}
