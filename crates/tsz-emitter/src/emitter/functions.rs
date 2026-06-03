@@ -903,7 +903,7 @@ impl<'a> Printer<'a> {
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
         let bytes = source.as_bytes();
         let mut end = start;
-        while end < bytes.len() && matches!(bytes[end], b'a'..=b'z' | b'A'..=b'Z') {
+        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
             end += 1;
         }
         let raw = crate::safe_slice::slice(source, start, end).ok()?.trim();
