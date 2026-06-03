@@ -56,6 +56,11 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # origin/main 85a6e79034 (CI run 26904672750): all six conformance shards
 # passed, aggregate strictness was 12570/12585 observed vs 12582/12585
 # expected with two newly unlisted JSX-family drift fixtures accepted here.
+# PR #11890 exact head a5b89da5f4 after rebasing onto origin/main 85a6e79034
+# (CI run 26905754464): all six conformance shards passed, aggregate strictness
+# was 12571/12585 observed vs 12582/12585 expected. The compiler JSX drift
+# entries from run 26904672750 resolved on this head; one JSXS conformance
+# fixture newly drifted and remains accepted under #8432.
 # intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
@@ -75,7 +80,6 @@ TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosing
 # them visible here until the owning parity fixes remove them.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
-TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
