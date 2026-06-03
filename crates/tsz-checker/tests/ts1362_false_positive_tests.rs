@@ -381,3 +381,57 @@ const _n: number = Config.count;
         "Should not emit TS2339 for .count access when VALUE provides 'count' (types-first barrel). Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }
+
+/// `export type *` makes even value-bearing declarations type-only along that
+/// path. A later value wildcard source with the same name must win in value
+/// context.
+#[test]
+fn no_ts1362_for_type_only_wildcard_value_source_before_value_source() {
+    let classes_file = r#"
+export class Config {}
+"#;
+    let values_file = r#"
+export const Config = { count: 42 };
+"#;
+    let barrel = r#"
+export type * from "./classes";
+export * from "./values";
+"#;
+    let usage = r#"
+import { Config } from "./barrel";
+const _n: number = Config.count;
+"#;
+    let diagnostics = compile_module_files(
+        &[
+            ("./classes.ts", classes_file),
+            ("./values.ts", values_file),
+            ("./barrel.ts", barrel),
+            ("./usage.ts", usage),
+        ],
+        3,
+    );
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1362)
+        .collect::<Vec<_>>();
+    assert!(
+        ts1362.is_empty(),
+        "Should not emit TS1362 when an earlier type-only wildcard path points at a value-bearing declaration. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+    let ts2308 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2308)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2308.is_empty(),
+        "Should not emit TS2308 for type-only wildcard plus later value wildcard source. Got: {ts2308:?}. All: {diagnostics:?}"
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 for .count access when the later VALUE export provides 'count'. Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}

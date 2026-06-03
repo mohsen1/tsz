@@ -108,15 +108,30 @@ impl<'a> CheckerState<'a> {
             })
         {
             let source_modules = source_modules.clone();
+            let type_only_flags = self
+                .ctx
+                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name)
+                .or_else(|| {
+                    module_key.and_then(|key| {
+                        self.ctx
+                            .wildcard_reexports_type_only_for_file(target_binder, key)
+                    })
+                })
+                .cloned();
 
             // When multiple wildcard sources provide the same name, prefer a VALUE
-            // export over a pure TYPE declaration (TYPE_ALIAS/INTERFACE with no
-            // value flags). TypeScript resolves type and value namespaces
-            // independently; a value export from one `export *` source must not be
-            // shadowed by a type-only declaration from an earlier source in the list.
+            // export over type-only paths, including pure TYPE declarations and
+            // value-bearing declarations reached through `export type *`.
+            // TypeScript resolves type and value namespaces independently; a value
+            // export from one `export *` source must not be shadowed by an earlier
+            // type-only path in the list.
             let mut type_only_fallback: Option<(tsz_binder::SymbolId, usize)> = None;
 
-            for source_module in &source_modules {
+            for (i, source_module) in source_modules.iter().enumerate() {
+                let source_is_type_only = type_only_flags
+                    .as_ref()
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
@@ -132,7 +147,7 @@ impl<'a> CheckerState<'a> {
                         .get_binder_for_file(source_idx)
                         .and_then(|b| b.get_symbol(result.0))
                         .is_some_and(|s| s.is_pure_type());
-                    if is_pure_type && type_only_fallback.is_none() {
+                    if (source_is_type_only || is_pure_type) && type_only_fallback.is_none() {
                         type_only_fallback = Some(result);
                         continue;
                     }
