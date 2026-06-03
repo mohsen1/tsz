@@ -34,7 +34,10 @@ pub(crate) fn type_param_info(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     super::common::type_param_info(db, type_id)
 }
 
-pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+pub(crate) fn union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<super::common::TypeIdList> {
     super::common::union_members(db, type_id)
 }
 

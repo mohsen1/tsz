@@ -1313,7 +1313,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         object_type,
                     )
-                    .unwrap_or_else(|| vec![object_type]);
+                    .unwrap_or_else(|| vec![object_type].into());
                     Some(object_members.into_iter().any(|member| {
                         crate::query_boundaries::common::find_property_in_object(
                             self.ctx.types,

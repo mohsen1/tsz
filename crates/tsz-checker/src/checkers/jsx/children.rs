@@ -1513,7 +1513,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
-            members
+            members.to_vec()
         } else {
             return type_id;
         };

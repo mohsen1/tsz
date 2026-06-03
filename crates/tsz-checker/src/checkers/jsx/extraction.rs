@@ -467,7 +467,7 @@ impl<'a> CheckerState<'a> {
         {
             (members, true)
         } else {
-            (vec![component_type], false)
+            (vec![component_type].into(), false)
         };
 
         let has_signatures = types_to_check.iter().any(|&ty| {

@@ -53,7 +53,7 @@ fn exposes_state_checking_boundary_queries() {
     assert_eq!(tuple_elements(&types, tuple).map(|v| v.len()), Some(2));
     assert_eq!(unwrap_readonly_deep(&types, readonly_array), array);
     assert_eq!(
-        union_members(&types, union),
+        union_members(&types, union).map(|m| m.to_vec()),
         Some(vec![TypeId::STRING, TypeId::NUMBER])
     );
     assert!(is_type_parameter_like(&types, type_param));

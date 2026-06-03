@@ -29,7 +29,7 @@ fn classifies_and_extracts_environment_resolution_shapes() {
         Some((TypeId::STRING, vec![TypeId::NUMBER]))
     );
     assert_eq!(
-        tsz_solver::type_queries::get_union_members(&types, union),
+        tsz_solver::type_queries::get_union_members(&types, union).map(|m| m.to_vec()),
         Some(vec![TypeId::STRING, TypeId::NUMBER])
     );
     assert_eq!(

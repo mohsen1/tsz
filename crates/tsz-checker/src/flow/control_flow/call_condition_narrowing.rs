@@ -176,7 +176,7 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             let members = flow_query::union_members_for_type(self.interner, type_id)
-                .unwrap_or_else(|| vec![type_id]);
+                .unwrap_or_else(|| vec![type_id].into());
             let excluded_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .copied()

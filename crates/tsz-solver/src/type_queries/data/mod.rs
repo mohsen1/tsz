@@ -9,7 +9,9 @@ mod content_predicates;
 mod signatures_and_advanced;
 #[cfg(test)]
 mod tests;
+mod type_id_list;
 
 pub use accessors::*;
 pub use content_predicates::*;
 pub use signatures_and_advanced::*;
+pub use type_id_list::{TypeIdList, TypeIdListIter};

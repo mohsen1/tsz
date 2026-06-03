@@ -194,7 +194,7 @@ impl<'a> CheckerState<'a> {
         let mut missing: Vec<String> = Vec::new();
         let type_ids_to_check =
             crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
-                .unwrap_or_else(|| vec![instance_type]);
+                .unwrap_or_else(|| vec![instance_type].into());
 
         for type_id in type_ids_to_check {
             let Some(shape) =

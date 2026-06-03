@@ -1488,7 +1488,7 @@ impl<'a> CheckerState<'a> {
         let component_type = self.evaluate_type_with_env(component_type);
         let members =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
-                .unwrap_or_else(|| vec![component_type]);
+                .unwrap_or_else(|| vec![component_type].into());
 
         let mut has_construct = false;
         let mut has_call = false;
@@ -1539,7 +1539,7 @@ impl<'a> CheckerState<'a> {
         let component_type = self.evaluate_type_with_env(component_type);
         let members =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
-                .unwrap_or_else(|| vec![component_type]);
+                .unwrap_or_else(|| vec![component_type].into());
 
         !members.into_iter().any(|member| {
             let member = self.resolve_type_for_property_access(member);

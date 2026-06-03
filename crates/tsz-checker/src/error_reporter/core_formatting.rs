@@ -1975,9 +1975,8 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        let extends_members: Vec<TypeId> =
-            crate::query_boundaries::common::union_members(db, cond.extends_type)
-                .unwrap_or_else(|| vec![cond.extends_type]);
+        let extends_members = crate::query_boundaries::common::union_members(db, cond.extends_type)
+            .unwrap_or_else(|| vec![cond.extends_type].into());
         let has_overlap = extends_members.iter().any(|&m| {
             crate::query_boundaries::assignability::is_fresh_subtype_of(db, m, constraint)
         });

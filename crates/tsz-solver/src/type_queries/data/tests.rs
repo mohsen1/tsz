@@ -1366,3 +1366,104 @@ fn contains_type_parameters_db_is_name_agnostic_and_cache_stable() {
         assert!(!contains_type_parameters_db(&interner, concrete));
     }
 }
+
+/// `get_union_members` hands back a zero-copy view of the interned member
+/// list: the returned `Arc` must point at the *same* allocation that
+/// `db.type_list` returns, not a fresh `to_vec()` copy. This is the
+/// allocation-churn fix's core invariant.
+#[test]
+fn union_members_returns_zero_copy_view_of_interned_list() {
+    let interner = TypeInterner::new();
+    let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+
+    let list_id = match interner.lookup(union) {
+        Some(crate::types::TypeData::Union(id)) => id,
+        other => panic!("expected union, got {other:?}"),
+    };
+    let interned = interner.type_list(list_id);
+
+    let members = get_union_members(&interner, union).expect("union has members");
+
+    // Same backing allocation — a refcount bump, not a copy.
+    assert!(
+        std::sync::Arc::ptr_eq(members.as_arc(), &interned),
+        "union_members must reuse the interned Arc, not allocate a fresh Vec",
+    );
+    // A second query also reuses the same allocation.
+    let members2 = get_union_members(&interner, union).expect("union has members");
+    assert!(std::sync::Arc::ptr_eq(members.as_arc(), members2.as_arc()));
+}
+
+/// `TypeIdList` must behave like the `Vec<TypeId>` it replaced for all the
+/// read patterns callers rely on: slice deref, by-value and by-reference
+/// iteration, double-ended iteration (`.rev()`), and `==` against a `Vec`.
+#[test]
+fn type_id_list_is_a_drop_in_for_vec_read_patterns() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let c = interner.literal_string("c");
+    let union = interner.union(vec![a, b, c]);
+    let expected = vec![a, b, c];
+
+    let members = get_union_members(&interner, union).expect("union has members");
+
+    // Deref-to-slice surface.
+    assert_eq!(members.len(), 3);
+    assert!(!members.is_empty());
+    assert_eq!(members[0], a);
+    assert!(members.contains(&b));
+    assert_eq!(members.first(), Some(&a));
+    assert_eq!(members.last(), Some(&c));
+    assert_eq!(members.to_vec(), expected);
+
+    // Equality with `Vec<TypeId>` works from both sides.
+    assert_eq!(members, expected);
+    assert_eq!(expected, members);
+
+    // By-reference iteration yields `&TypeId` (like `&Vec`).
+    let by_ref: Vec<TypeId> = (&members).into_iter().copied().collect();
+    assert_eq!(by_ref, expected);
+    let by_iter: Vec<TypeId> = members.iter().copied().collect();
+    assert_eq!(by_iter, expected);
+
+    // Forward by-value iteration yields owned `TypeId` (like `Vec::into_iter`).
+    let forward: Vec<TypeId> = members.clone().into_iter().collect();
+    assert_eq!(forward, expected);
+
+    // Double-ended iteration matches `Vec`'s `.rev()`.
+    let reversed: Vec<TypeId> = members.clone().into_iter().rev().collect();
+    assert_eq!(reversed, vec![c, b, a]);
+
+    // Mixed front/back consumption drains every element exactly once.
+    let mut it = members.into_iter();
+    assert_eq!(it.next(), Some(a));
+    assert_eq!(it.next_back(), Some(c));
+    assert_eq!(it.next(), Some(b));
+    assert_eq!(it.next(), None);
+    assert_eq!(it.next_back(), None);
+}
+
+/// `ExactSizeIterator::len` and `size_hint` stay accurate as the iterator
+/// is consumed from both ends — relied on by callers that pre-size buffers.
+#[test]
+fn type_id_list_iter_reports_exact_remaining_len() {
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![
+        interner.literal_string("x"),
+        interner.literal_string("y"),
+        interner.literal_string("z"),
+    ]);
+    let members = get_union_members(&interner, union).expect("union has members");
+
+    let mut it = members.into_iter();
+    assert_eq!(it.len(), 3);
+    assert_eq!(it.size_hint(), (3, Some(3)));
+    it.next();
+    assert_eq!(it.len(), 2);
+    it.next_back();
+    assert_eq!(it.len(), 1);
+    assert_eq!(it.size_hint(), (1, Some(1)));
+    it.next();
+    assert_eq!(it.len(), 0);
+}

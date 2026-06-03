@@ -985,7 +985,7 @@ impl<'a> CheckerState<'a> {
                 );
         if string_keys.is_empty() && allow_concrete_remapped_fallback {
             let source_members =
-                query::union_members(self.ctx.types, keys).unwrap_or_else(|| vec![keys]);
+                query::union_members(self.ctx.types, keys).unwrap_or_else(|| vec![keys].into());
             let mut properties = Vec::new();
             for source_member in source_members {
                 if matches!(

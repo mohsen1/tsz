@@ -232,7 +232,7 @@ fn test_mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
 
     let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
     let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
-        .unwrap_or_else(|| vec![keyof_intersection]);
+        .unwrap_or_else(|| vec![keyof_intersection].into());
 
     assert!(
         keyof_members.contains(&interner.literal_string("v")),
@@ -324,7 +324,7 @@ fn test_mapped_keyof_intersection_prunes_impossible_enum_discriminant_branch() {
 
     let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
     let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
-        .unwrap_or_else(|| vec![keyof_intersection]);
+        .unwrap_or_else(|| vec![keyof_intersection].into());
 
     assert!(
         keyof_members.contains(&interner.literal_string("v")),
@@ -442,19 +442,19 @@ fn test_mapped_keyof_intersection_prunes_impossible_distinct_enum_member_branch(
     assert_eq!(narrowed, branch_a);
     let branch_a_keyof = evaluate_type(&interner, interner.keyof(branch_a));
     let branch_a_keys = crate::type_queries::get_union_members(&interner, branch_a_keyof)
-        .unwrap_or_else(|| vec![branch_a_keyof]);
+        .unwrap_or_else(|| vec![branch_a_keyof].into());
     assert!(branch_a_keys.contains(&interner.literal_string("v")));
     assert!(branch_a_keys.contains(&interner.literal_string("a")));
     let fixed_keyof = evaluate_type(&interner, interner.keyof(fixed_v_a));
     let merged_keyof = interner.union(vec![fixed_keyof, branch_a_keyof]);
     let merged_keys = crate::type_queries::get_union_members(&interner, merged_keyof)
-        .unwrap_or_else(|| vec![merged_keyof]);
+        .unwrap_or_else(|| vec![merged_keyof].into());
     assert!(merged_keys.contains(&interner.literal_string("v")));
     assert!(merged_keys.contains(&interner.literal_string("a")));
 
     let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
     let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
-        .unwrap_or_else(|| vec![keyof_intersection]);
+        .unwrap_or_else(|| vec![keyof_intersection].into());
 
     assert!(
         keyof_members.contains(&interner.literal_string("v")),
@@ -531,7 +531,7 @@ fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_ke
     );
     let keyof_instantiated = evaluate_type(&interner, interner.keyof(instantiated));
     let keys = crate::type_queries::get_union_members(&interner, keyof_instantiated)
-        .unwrap_or_else(|| vec![keyof_instantiated]);
+        .unwrap_or_else(|| vec![keyof_instantiated].into());
 
     assert!(
         keys.contains(&interner.literal_string("v")),
@@ -599,7 +599,7 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
     );
     let keyof_instantiated = evaluate_type(&interner, interner.keyof(instantiated));
     let keys = crate::type_queries::get_union_members(&interner, keyof_instantiated)
-        .unwrap_or_else(|| vec![keyof_instantiated]);
+        .unwrap_or_else(|| vec![keyof_instantiated].into());
 
     assert!(
         keys.contains(&interner.literal_string("v")),
@@ -824,8 +824,8 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
     let foo_ty =
         get_finite_mapped_property_type(&interner, mapped_id, "FOO").expect("expected FOO type");
     let foo_ty = evaluate_type(&interner, foo_ty);
-    let foo_members =
-        crate::type_queries::get_union_members(&interner, foo_ty).unwrap_or_else(|| vec![foo_ty]);
+    let foo_members = crate::type_queries::get_union_members(&interner, foo_ty)
+        .unwrap_or_else(|| vec![foo_ty].into());
     assert_eq!(foo_members, vec![foo_event]);
 
     assert!(
@@ -970,7 +970,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
         get_finite_mapped_property_type(&interner, mapped_id, "A").expect("expected A property");
     let a_type = evaluate_type(&interner, a_type);
     let function_type = crate::type_queries::get_union_members(&interner, a_type)
-        .unwrap_or_else(|| vec![a_type])
+        .unwrap_or_else(|| vec![a_type].into())
         .into_iter()
         .find(|&member| member != TypeId::UNDEFINED)
         .expect("expected callable member");
@@ -986,7 +986,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
     let param_type = interner.function_shape(shape_id).params[0].type_id;
     let param_type = evaluate_type(&interner, param_type);
     let members = crate::type_queries::get_union_members(&interner, param_type)
-        .unwrap_or_else(|| vec![param_type]);
+        .unwrap_or_else(|| vec![param_type].into());
     assert_eq!(members, vec![a_value]);
 }
 
@@ -1210,8 +1210,8 @@ fn assert_union_members(
     expected: &[TypeId],
     context: &str,
 ) {
-    let members =
-        crate::type_queries::get_union_members(interner, actual).unwrap_or_else(|| vec![actual]);
+    let members = crate::type_queries::get_union_members(interner, actual)
+        .unwrap_or_else(|| vec![actual].into());
     assert_eq!(
         members.len(),
         expected.len(),

@@ -3,6 +3,7 @@
 //! Contains `contains_*`, `is_*` predicates, union/intersection member access,
 //! array/tuple extraction, and compound member mapping.
 
+use super::type_id_list::TypeIdList;
 use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
@@ -1119,16 +1120,14 @@ pub fn contains_conditional_with_application_extends(
 
 /// Get the members of a union type.
 ///
-/// Returns None if the type is not a union.
-pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+/// Returns None if the type is not a union. See [`TypeIdList`] for why this
+/// returns a shared, zero-copy view rather than an owned `Vec<TypeId>`.
+pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeIdList> {
     if type_id.is_intrinsic() {
         return None;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Union(list_id)) => {
-            let members = db.type_list(list_id);
-            Some(members.to_vec())
-        }
+        Some(TypeData::Union(list_id)) => Some(TypeIdList::new(db.type_list(list_id))),
         _ => None,
     }
 }
@@ -1197,15 +1196,15 @@ pub fn is_literal_or_literal_union_type(db: &dyn TypeDatabase, type_id: TypeId) 
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.
-pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeIdList> {
     if type_id.is_intrinsic() {
         return None;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Intersection(list_id)) => {
-            let members = db.type_list(list_id);
-            Some(members.to_vec())
-        }
+        // See `get_union_members` / `TypeIdList`: return a zero-copy view of
+        // the interned member list to avoid a per-call allocation + copy on
+        // a hot checker-boundary query.
+        Some(TypeData::Intersection(list_id)) => Some(TypeIdList::new(db.type_list(list_id))),
         _ => None,
     }
 }

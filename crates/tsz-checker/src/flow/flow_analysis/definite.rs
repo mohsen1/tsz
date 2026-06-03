@@ -422,7 +422,7 @@ impl<'a> CheckerState<'a> {
 
         let union_members = union_members_for_type(self.ctx.types, declared_type)?;
         let initial_count = union_members.len();
-        let mut remaining = union_members;
+        let mut remaining = union_members.to_vec();
 
         for (binding_sym, prop_name) in &bound_from_source {
             // tsc only correlates top-level single-property destructuring.
@@ -788,7 +788,7 @@ impl<'a> CheckerState<'a> {
 
         // Start with the full source type members
         let source_member_count = source_members.len();
-        let mut remaining_members = source_members;
+        let mut remaining_members = source_members.to_vec();
         let member_binding_type = |member: TypeId,
                                    binding: &crate::context::DestructuredBindingInfo|
          -> Option<TypeId> {

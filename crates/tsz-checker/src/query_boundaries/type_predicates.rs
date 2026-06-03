@@ -47,7 +47,7 @@ const PRIMITIVE_INDEX_KEYS: [TypeId; 3] = [TypeId::STRING, TypeId::NUMBER, TypeI
 /// `string | number`. Operating on `TypeId` structure keeps the decision
 /// per-key and independent of how a type is spelled or aliased.
 pub(crate) fn present_primitive_index_keys(db: &dyn TypeDatabase, forms: &[TypeId]) -> Vec<TypeId> {
-    let form_members: Vec<Option<Vec<TypeId>>> = forms
+    let form_members: Vec<Option<tsz_solver::type_queries::TypeIdList>> = forms
         .iter()
         .map(|&form| tsz_solver::type_queries::get_union_members(db, form))
         .collect();
