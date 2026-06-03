@@ -28,6 +28,57 @@ struct ComputedObjectIndexMember {
     value_type: String,
 }
 
+struct ObjectIndexSignatureLine<'a> {
+    prefix: &'a str,
+    suffix: &'a str,
+}
+
+impl<'a> ObjectIndexSignatureLine<'a> {
+    fn parse(line: &'a str) -> Option<Self> {
+        let trimmed = line.trim_start();
+        let without_readonly = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        if !(without_readonly.starts_with("[x: string]:")
+            || without_readonly.starts_with("[x: number]:")
+            || without_readonly.starts_with("[x: symbol]:"))
+        {
+            return None;
+        }
+
+        let signature_start = line.len() - without_readonly.len();
+        let bracket_end = without_readonly.find(']')?;
+        let colon_relative = without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1;
+        let after_colon = signature_start + colon_relative + 1;
+        let value_tail = &line[after_colon..];
+        let value_leading_len = value_tail.len() - value_tail.trim_start().len();
+        let value_start = after_colon + value_leading_len;
+        let value_and_suffix = &line[value_start..];
+        let trimmed_value_len = value_and_suffix.trim_end().len();
+        let suffix_start = if value_and_suffix[..trimmed_value_len].ends_with(';') {
+            trimmed_value_len.saturating_sub(1)
+        } else {
+            trimmed_value_len
+        };
+
+        Some(Self {
+            prefix: &line[..value_start],
+            suffix: &value_and_suffix[suffix_start..],
+        })
+    }
+
+    fn render_with_value_type(&self, value_type: &str) -> String {
+        let value_type = value_type.trim();
+        let mut rendered =
+            String::with_capacity(self.prefix.len() + value_type.len() + self.suffix.len());
+        rendered.push_str(self.prefix);
+        rendered.push_str(value_type);
+        rendered.push_str(self.suffix);
+        rendered
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn object_literal_prefers_syntax_type_text(
         &self,
@@ -1268,44 +1319,8 @@ impl<'a> DeclarationEmitter<'a> {
         line: &str,
         replacement_value_type: &str,
     ) -> Option<String> {
-        // OUTPUT_SURGERY_DEBT: rebuilds a DTS index-signature line after type
-        // printing; migrate to structured declaration member facts.
-        let trimmed = line.trim_start();
-        let without_readonly = trimmed
-            .strip_prefix("readonly ")
-            .unwrap_or(trimmed)
-            .trim_start();
-        if !(without_readonly.starts_with("[x: string]:")
-            || without_readonly.starts_with("[x: number]:")
-            || without_readonly.starts_with("[x: symbol]:"))
-        {
-            return None;
-        }
-
-        let signature_start = line.len() - without_readonly.len();
-        let bracket_end = without_readonly.find(']')?;
-        let colon_relative = without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1;
-        let after_colon = signature_start + colon_relative + 1;
-        let value_tail = &line[after_colon..];
-        let value_leading_len = value_tail.len() - value_tail.trim_start().len();
-        let value_start = after_colon + value_leading_len;
-        let value_and_suffix = &line[value_start..];
-        let trimmed_value_len = value_and_suffix.trim_end().len();
-        let suffix_start = if value_and_suffix[..trimmed_value_len].ends_with(';') {
-            trimmed_value_len.saturating_sub(1)
-        } else {
-            trimmed_value_len
-        };
-
-        let prefix = &line[..value_start];
-        let suffix = &value_and_suffix[suffix_start..];
-        let replacement_value_type = replacement_value_type.trim();
-        let mut rewritten =
-            String::with_capacity(prefix.len() + replacement_value_type.len() + suffix.len());
-        rewritten.push_str(prefix);
-        rewritten.push_str(replacement_value_type);
-        rewritten.push_str(suffix);
-        Some(rewritten)
+        ObjectIndexSignatureLine::parse(line)
+            .map(|signature| signature.render_with_value_type(replacement_value_type))
     }
 
     pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(
