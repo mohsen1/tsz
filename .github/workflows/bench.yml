@@ -1669,10 +1669,10 @@ jobs:
             sleep 60
           done
 
-          if [[ "$(gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json jobs --jq '[.jobs[] | select(.name == "bench-publish" and .conclusion == "success")] | length')" -gt 0 ]]; then
-            echo "Active Bench run ${ACTIVE_RUN_ID} published benchmark data; skipping catch-up dispatch."
-            exit 0
-          fi
+          active_published="$(
+            gh run view "${ACTIVE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json jobs \
+              --jq '[.jobs[] | select(.name == "bench-publish" and .conclusion == "success")] | length'
+          )"
 
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
           if [[ -z "${main_sha}" ]]; then
@@ -1682,6 +1682,13 @@ jobs:
           if [[ "${target_sha}" != "${main_sha}" ]]; then
             echo "Skipped Bench target ${target_sha} is behind current main ${main_sha}; a newer main Bench event owns catch-up."
             exit 0
+          fi
+          if [[ "${active_published}" -gt 0 && "${ACTIVE_RUN_SHA}" == "${target_sha}" ]]; then
+            echo "Active Bench run ${ACTIVE_RUN_ID} published benchmark data for ${target_sha}; skipping catch-up dispatch."
+            exit 0
+          fi
+          if [[ "${active_published}" -gt 0 ]]; then
+            echo "Active Bench run ${ACTIVE_RUN_ID} published ${ACTIVE_RUN_SHA}, but skipped target ${target_sha} is still current main; dispatching catch-up."
           fi
 
           active_dispatches="$(

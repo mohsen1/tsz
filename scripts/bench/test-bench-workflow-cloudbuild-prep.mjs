@@ -230,14 +230,20 @@ assert.match(
 
 assert.match(
   workflow,
-  /select\(\.name == "bench-publish" and \.conclusion == "success"\)[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published benchmark data; skipping catch-up dispatch\./,
-  "active-run catch-up should stand down when the blocking Bench run published data",
+  /active_published="\$\([\s\S]+select\(\.name == "bench-publish" and \.conclusion == "success"\)[\s\S]+if \[\[ "\$\{active_published\}" -gt 0 && "\$\{ACTIVE_RUN_SHA\}" == "\$\{target_sha\}" \]\]; then[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published benchmark data for \$\{target_sha\}; skipping catch-up dispatch\./,
+  "active-run catch-up should stand down when the blocking Bench run published the skipped target",
 );
 
 assert.match(
   workflow,
   /if \[\[ "\$\{target_sha\}" != "\$\{main_sha\}" \]\]; then[\s\S]+Skipped Bench target \$\{target_sha\} is behind current main \$\{main_sha\}; a newer main Bench event owns catch-up\./,
   "active-run catch-up should only dispatch from the skipped duplicate that still represents current main",
+);
+
+assert.match(
+  workflow,
+  /if \[\[ "\$\{active_published\}" -gt 0 \]\]; then[\s\S]+Active Bench run \$\{ACTIVE_RUN_ID\} published \$\{ACTIVE_RUN_SHA\}, but skipped target \$\{target_sha\} is still current main; dispatching catch-up\./,
+  "active-run catch-up should not let an older active publish suppress a current-main catch-up",
 );
 
 assert.match(
