@@ -1065,6 +1065,19 @@ impl<'a> CheckerState<'a> {
                     depth: child_depth.min(u8::MAX as u32) as u8,
                 });
             } else {
+                // The nested reason is rendered at `child_depth.max(1)` (a
+                // structural renderer needs depth >= 1 to format its child lines
+                // structurally rather than as a top-level primary), but its
+                // *primary* line lands at `child_depth`. When `child_depth == 0`
+                // the two differ by one, so a multi-line nested reason (e.g. an
+                // array-element mismatch, whose own header doubles as the member
+                // line and which then drills into the element relation) would
+                // keep its drill lines one indent too deep. Rebase the whole
+                // sub-chain from its render depth down to `child_depth` so the
+                // drill lines sit directly beneath the member line. For
+                // `child_depth >= 1` the render depth already equals
+                // `child_depth`, so this is a no-op and deeper chains are
+                // unchanged.
                 let nested_diag = self.render_failure_reason(
                     nested_reason,
                     nested_source,
@@ -1072,7 +1085,12 @@ impl<'a> CheckerState<'a> {
                     idx,
                     child_depth.max(1),
                 );
-                Self::push_nested_chain(&mut diag, nested_diag, child_depth);
+                Self::push_rebased_subdiagnostic(
+                    &mut diag,
+                    nested_diag,
+                    child_depth.max(1),
+                    child_depth,
+                );
             }
         }
 
