@@ -978,6 +978,29 @@ impl<'a> AstToIr<'a> {
         }
     }
 
+    pub(super) fn convert_type_assertion(&self, idx: NodeIndex) -> IRNode {
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
+        // Both TYPE_ASSERTION and AS_EXPRESSION use TypeAssertionData
+        if let Some(assertion) = self.arena.get_type_assertion(node) {
+            let expression = self.convert_expression(assertion.expression);
+            if let Some(comment) = self.leading_block_comment_before_node(node).or_else(|| {
+                self.leading_block_comments_before_expression(node, assertion.expression)
+            }) {
+                IRNode::LeadingCommentExpr {
+                    comment: comment.into(),
+                    expression: Box::new(expression),
+                }
+            } else {
+                expression
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
     /// True when a parenthesized expression directly wraps a type assertion
     /// (`as`/`<T>`/satisfies) whose underlying expression, after erasing the
     /// assertion, is a simple primary that does not require the parentheses.
