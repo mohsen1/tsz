@@ -824,3 +824,125 @@ fn ts2345_property_chain_is_stable_across_repeated_checks() {
     let second = chain(&check_source_diagnostics(source));
     assert_eq!(first, second, "chain drifted between independent runs");
 }
+
+// =========================================================================
+// TS2741 / TS2739 — missing property through an intersection SOURCE
+//
+// Regression for #10962: an intersection source (written directly, via an
+// alias such as `Tagged<T> = T & { kind }`, or via a generic application whose
+// base resolves to an intersection) must NOT downgrade a genuine missing
+// required named property to a bare generic TS2322. tsc reports the
+// property-level miss (TS2741 single / TS2739 multiple) and displays the
+// source as-written. Binder names vary across cases so the behavior is keyed
+// to type structure, not identifiers.
+// =========================================================================
+
+#[test]
+fn missing_property_through_mapped_application_intersection_source_is_ts2741() {
+    // `Wrap<{ alpha }> & { beta }` is missing the required `gamma`. The mapped
+    // application member forces the source to stay an intersection at render
+    // time — the case that previously collapsed to generic TS2322.
+    let source = r#"
+type Wrap<T> = { [K in keyof T]: T[K] };
+declare const boxed: Wrap<{ alpha: number }> & { beta: string };
+const sink: { alpha: number; gamma: boolean } = boxed;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let missing = diagnostics
+        .iter()
+        .find(|d| d.code == 2741)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2741 for missing property through intersection source, got: {:?}",
+                diagnostics
+                    .iter()
+                    .map(|d| (d.code, d.message_text.clone()))
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        missing.message_text.contains("'gamma'") && missing.message_text.contains("is missing"),
+        "TS2741 should name the missing property, got: {}",
+        missing.message_text
+    );
+    // The source must be shown as the as-written intersection, not collapsed.
+    assert!(
+        missing
+            .message_text
+            .contains("Wrap<{ alpha: number; }> & { beta: string; }"),
+        "TS2741 should display the intersection source as-written, got: {}",
+        missing.message_text
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "intersection-source missing property must not also emit generic TS2322, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn missing_property_through_alias_intersection_source_is_ts2741() {
+    // `Tagged<T> = T & { kind }` — an alias whose body is an intersection.
+    let source = r#"
+type Tagged<T> = T & { kind: "x" };
+declare const flagged: Tagged<{ epsilon: number }>;
+const drain: { epsilon: number; zeta: boolean } = flagged;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let missing = diagnostics
+        .iter()
+        .find(|d| d.code == 2741)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2741 for missing property through alias-intersection source, got: {:?}",
+                diagnostics
+                    .iter()
+                    .map(|d| (d.code, d.message_text.clone()))
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        missing.message_text.contains("'zeta'")
+            && missing
+                .message_text
+                .contains("Tagged<{ epsilon: number; }>"),
+        "TS2741 should name the missing property and display the alias source, got: {}",
+        missing.message_text
+    );
+}
+
+#[test]
+fn multiple_missing_properties_through_intersection_source_is_ts2739() {
+    // Two missing required properties routes through the plural path (TS2739),
+    // which must likewise display the intersection source as-written.
+    let source = r#"
+type Shape<T> = { [K in keyof T]: T[K] };
+declare const parcel: Shape<{ mu: number }> & { nu: string };
+const consumer: { mu: number; xi: boolean; omicron: number } = parcel;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let missing = diagnostics
+        .iter()
+        .find(|d| d.code == 2739)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2739 for multiple missing properties through intersection source, got: {:?}",
+                diagnostics
+                    .iter()
+                    .map(|d| (d.code, d.message_text.clone()))
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        missing.message_text.contains("xi") && missing.message_text.contains("omicron"),
+        "TS2739 should list the missing properties, got: {}",
+        missing.message_text
+    );
+    assert!(
+        missing
+            .message_text
+            .contains("Shape<{ mu: number; }> & { nu: string; }"),
+        "TS2739 should display the intersection source as-written, got: {}",
+        missing.message_text
+    );
+}

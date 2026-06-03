@@ -255,15 +255,20 @@ const bad: M = { a: 1 };
 // ── Intersection-with-indexed-access source vs. mapped-type target ───────────
 //
 // When source is `T[K] & { a: string }` and target is a structural type (mapped,
-// intersection, conditional, or string intrinsic), the checker must
-// not suppress TS2322 — the solver checks property membership directly.
+// intersection, conditional, or string intrinsic), the checker must not suppress
+// the assignability error — the solver checks property membership directly.
 // Structural rule: `T[K] & { a: string } <: { [P in "a" | "b"]: string }` must
-// emit TS2322 because "b" is guaranteed absent from the source.
+// report that "b" is missing. `tsc` reports this as the missing-property
+// diagnostic (TS2741), NOT a bare generic TS2322 — an intersection source does
+// not downgrade a genuine missing required property to TS2322.
 
 /// Primary repro: indexed-access intersection against a two-key mapped type.
-/// tsc emits TS2322; tsz was incorrectly suppressing it.
+/// "b" is guaranteed absent from the source, so `tsc` reports it as a missing
+/// property (TS2741). tsz previously suppressed the error entirely, then
+/// over-corrected to a bare TS2322 for intersection sources; it must match
+/// `tsc`'s TS2741.
 #[test]
-fn intersection_indexed_access_vs_mapped_type_emits_ts2322() {
+fn intersection_indexed_access_vs_mapped_type_emits_ts2741() {
     let diagnostics = strict_diagnostics_for(
         r#"
 function test<T extends { a: string }, K extends keyof T>(x: T[K] & { a: string }): void {
@@ -271,16 +276,25 @@ function test<T extends { a: string }, K extends keyof T>(x: T[K] & { a: string 
 }
 "#,
     );
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2741)
+        .unwrap_or_else(|| panic!("expected TS2741 for the missing 'b' key; got: {diagnostics:?}"));
     assert!(
-        diagnostics.iter().any(|d| d.code == 2322),
-        "intersection with indexed-access source vs two-key mapped target must emit TS2322; got: {diagnostics:?}"
+        diag.message_text.contains("'b'"),
+        "TS2741 should name the missing 'b' key, got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "intersection source must not collapse to a bare TS2322; got: {diagnostics:?}"
     );
 }
 
 /// Anti-hardcoding: renamed type parameters (`U`/`I` instead of `T`/`K`).
-/// Confirms the fix is keyed on structural semantics, not parameter names.
+/// Confirms the behavior is keyed on structural semantics, not parameter names.
 #[test]
-fn intersection_indexed_access_vs_mapped_type_renamed_params_emits_ts2322() {
+fn intersection_indexed_access_vs_mapped_type_renamed_params_emits_ts2741() {
     let diagnostics = strict_diagnostics_for(
         r#"
 function test<U extends { a: string }, I extends keyof U>(x: U[I] & { a: string }): void {
@@ -288,9 +302,20 @@ function test<U extends { a: string }, I extends keyof U>(x: U[I] & { a: string 
 }
 "#,
     );
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2741)
+        .unwrap_or_else(|| {
+            panic!("renamed-param variant should emit TS2741; got: {diagnostics:?}")
+        });
     assert!(
-        diagnostics.iter().any(|d| d.code == 2322),
-        "renamed-param variant must also emit TS2322; got: {diagnostics:?}"
+        diag.message_text.contains("'b'"),
+        "TS2741 should name the missing 'b' key, got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "renamed-param intersection source must not collapse to a bare TS2322; got: {diagnostics:?}"
     );
 }
 
