@@ -11,8 +11,8 @@
 use crate::caches::db::TypeDatabase;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    ConditionalType, FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo,
-    TemplateSpan, TupleElement, TypeData, TypeId,
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, ObjectShape,
+    ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
 };
 use rustc_hash::FxHashMap;
 
@@ -65,6 +65,52 @@ fn substitute_index_signature_db(
     let value_type = substitute_exact_type_db(db, idx.value_type, from, to, memo);
     let changed = value_type != idx.value_type;
     (IndexSignature { value_type, ..*idx }, changed)
+}
+
+/// Rewrite `from -> to` inside a single call/construct signature's parameter
+/// types, this-type, return type, and type-predicate payload. Returns the
+/// rebuilt signature and whether any type changed.
+fn substitute_call_signature_db(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    from: TypeId,
+    to: TypeId,
+    memo: &mut FxHashMap<TypeId, TypeId>,
+) -> (CallSignature, bool) {
+    let mut changed = false;
+    let params = sig
+        .params
+        .iter()
+        .map(|param| {
+            let type_id = substitute_exact_type_db(db, param.type_id, from, to, memo);
+            changed |= type_id != param.type_id;
+            ParamInfo { type_id, ..*param }
+        })
+        .collect();
+    let this_type = sig.this_type.map(|this| {
+        let substituted = substitute_exact_type_db(db, this, from, to, memo);
+        changed |= substituted != this;
+        substituted
+    });
+    let return_type = substitute_exact_type_db(db, sig.return_type, from, to, memo);
+    changed |= return_type != sig.return_type;
+    let type_predicate = sig.type_predicate.map(|mut predicate| {
+        if let Some(predicate_type) = predicate.type_id {
+            let substituted = substitute_exact_type_db(db, predicate_type, from, to, memo);
+            changed |= substituted != predicate_type;
+            predicate.type_id = Some(substituted);
+        }
+        predicate
+    });
+    let rebuilt = CallSignature {
+        type_params: sig.type_params.clone(),
+        params,
+        this_type,
+        return_type,
+        type_predicate,
+        is_method: sig.is_method,
+    };
+    (rebuilt, changed)
 }
 
 /// Free-function form of [`TypeEvaluator::substitute_exact_type`] that walks
@@ -287,6 +333,63 @@ pub(crate) fn substitute_exact_type_db(
                 type_id
             }
         }
+        // Callable object types in distributive-conditional branches — e.g.
+        // `T extends string ? { (arg: T): T } : never` — carry the distribution
+        // variable in call/construct signature parameter/return types and in
+        // any attached properties.  Without this arm every union member that
+        // hits this branch returns the same (unsubstituted) Callable TypeId,
+        // collapsing the distribution into a single widened shape instead of a
+        // per-member union.
+        Some(TypeData::Callable(cs_id)) => {
+            let shape = db.callable_shape(cs_id);
+            let mut changed = false;
+            let call_signatures: Vec<CallSignature> = shape
+                .call_signatures
+                .iter()
+                .map(|sig| {
+                    let (rebuilt, sig_changed) =
+                        substitute_call_signature_db(db, sig, from, to, memo);
+                    changed |= sig_changed;
+                    rebuilt
+                })
+                .collect();
+            let construct_signatures: Vec<CallSignature> = shape
+                .construct_signatures
+                .iter()
+                .map(|sig| {
+                    let (rebuilt, sig_changed) =
+                        substitute_call_signature_db(db, sig, from, to, memo);
+                    changed |= sig_changed;
+                    rebuilt
+                })
+                .collect();
+            let (properties, props_changed) =
+                substitute_properties_db(db, &shape.properties, from, to, memo);
+            changed |= props_changed;
+            let string_index = shape.string_index.as_ref().map(|idx| {
+                let (sig, sig_changed) = substitute_index_signature_db(db, idx, from, to, memo);
+                changed |= sig_changed;
+                sig
+            });
+            let number_index = shape.number_index.as_ref().map(|idx| {
+                let (sig, sig_changed) = substitute_index_signature_db(db, idx, from, to, memo);
+                changed |= sig_changed;
+                sig
+            });
+            if changed {
+                db.callable(CallableShape {
+                    call_signatures,
+                    construct_signatures,
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: shape.symbol,
+                    is_abstract: shape.is_abstract,
+                })
+            } else {
+                type_id
+            }
+        }
         // Object literals reached as a distributive-conditional branch carry
         // the distribution variable in their property/index value types — e.g.
         // `T extends ... ? { kind: 'x'; value: T } : ...`. When the check side
@@ -329,9 +432,11 @@ pub(crate) fn substitute_exact_type_db(
                 type_id
             }
         }
-        // Callable/Mapped/etc. — substitution does not reach into these; the
-        // distributive-conditional and mapped callers only place object,
-        // tuple, function, union, and intersection shapes in branch position.
+        // Mapped, TypeParameter, Lazy, Recursive, Enum, etc. — substitution
+        // does not reach into these structural leaf or deferred nodes.  Mapped
+        // types own their own substitution pass; Lazy/Recursive/TypeParameter
+        // are already handled by the `type_id == from` guard above when they
+        // ARE the target variable.
         _ => type_id,
     };
 
@@ -538,6 +643,74 @@ mod tests {
         assert_ne!(
             result, branch,
             "pre-fix behaviour left object property types unsubstituted, widening the branch"
+        );
+    }
+
+    /// Callable branch types carry the distribution variable in their call
+    /// signatures. When a distributive conditional's true/false branch is a
+    /// type literal with call signatures (`{ (arg: T): T }`), the solver
+    /// represents it as `TypeData::Callable`. Without the `Callable` arm in
+    /// `substitute_exact_type_db` every union member would collapse to the
+    /// same hash-consed Callable (T still free) instead of a per-member union.
+    #[test]
+    fn test_substitute_exact_type_reaches_callable_call_signature() {
+        let interner = TypeInterner::new();
+
+        let t_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let arg_atom = interner.intern_string("arg");
+
+        // `{ (arg: T): T }` — call signature with T in param and return.
+        let callable = interner.callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo::required(arg_atom, t_param)],
+                this_type: None,
+                return_type: t_param,
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        let mut evaluator =
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+        let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+        let result = evaluator.substitute_exact_type(callable, t_param, TypeId::STRING, &mut memo);
+
+        // The substituted Callable should have `(arg: string): string`.
+        let expected = interner.callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo::required(arg_atom, TypeId::STRING)],
+                this_type: None,
+                return_type: TypeId::STRING,
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        assert_eq!(
+            result, expected,
+            "Callable call-signature param/return types must be substituted"
+        );
+        assert_ne!(
+            result, callable,
+            "pre-fix: Callable was returned unchanged with T still free"
         );
     }
 
