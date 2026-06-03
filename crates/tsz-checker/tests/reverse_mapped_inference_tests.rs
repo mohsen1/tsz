@@ -764,3 +764,98 @@ const bad: string = r.a;
         "Project<T> with number value assigned to string must produce TS2322. Got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fresh-literal widening of reverse-mapped (homomorphic) inference results.
+//
+// tsc's `getCovariantInference` closes with an unconditional `getWidenedType`,
+// so a type parameter reverse-inferred from a *fresh* object literal through a
+// pure homomorphic mapped type widens its fresh literal property types:
+//
+//   declare function unbox<T>(b: { [K in keyof T]: { value: T[K] } }): T;
+//   const u = unbox({ c: { value: false } });   // tsc: u: { c: boolean }
+//
+// Before the fix tsz preserved `{ c: false }`, so a narrowing assignment to
+// `{ c: false }` was wrongly accepted. These are structural (binder names are
+// varied) and cover the positive widening, the negative narrowing guard, the
+// non-fresh source (no widening), and the intersection-keyspace constraint
+// (literals preserved — `reverseMappedTypeLimitedConstraint.ts` family).
+// ---------------------------------------------------------------------------
+
+/// A fresh boolean-literal property reverse-inferred through a homomorphic
+/// mapped type must widen `false` -> `boolean`, so assigning to the literal
+/// `{ c: false }` is rejected (TS2322).
+#[test]
+fn reverse_mapped_fresh_boolean_literal_widens_rejecting_literal_target() {
+    let code = r#"
+declare function unbox<T>(boxified: { [K in keyof T]: { value: T[K] } }): T;
+const u = unbox({ c: { value: false } });
+const narrow: { c: false } = u;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        codes.contains(&2322),
+        "reverse-mapped fresh `false` must widen to `boolean`, rejecting `{{ c: false }}`. Got: {codes:?}"
+    );
+}
+
+/// The widened result is still assignable to the widened shape (no false
+/// positive). Renamed binders prove the rule is structural, not name-keyed.
+#[test]
+fn reverse_mapped_fresh_literal_widening_assignable_to_widened_shape() {
+    let code = r#"
+declare function rebuild<Shape>(boxed: { [Key in keyof Shape]: { value: Shape[Key] } }): Shape;
+const built = rebuild({ flag: { value: true }, count: { value: 7 } });
+const wide: { flag: boolean; count: number } = built;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "widened `{{ flag: boolean; count: number }}` must accept the inferred result. Got: {codes:?}"
+    );
+}
+
+/// A non-fresh source (a typed variable, not a literal expression) must NOT be
+/// widened — mirroring tsc's `RequiresWidening` gate. The literal `true` flows
+/// from the annotated type, so the result keeps `{ on: true }`.
+#[test]
+fn reverse_mapped_non_fresh_source_preserves_literal() {
+    let code = r#"
+declare function unbox<T>(boxified: { [K in keyof T]: { value: T[K] } }): T;
+const src: { on: { value: true } } = { on: { value: true } };
+const u = unbox(src);
+const keepLiteral: { on: true } = u;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "non-fresh annotated source must preserve the literal `true`. Got: {codes:?}"
+    );
+}
+
+/// Guard against over-widening: an intersection-keyspace mapped type
+/// (`{ [K in keyof U & keyof T]: U[K] }`) reconstructs a constraint-checking
+/// contextual target whose literal property types tsc preserves in the
+/// excess-property elaboration. The literal `"y"` must survive (no widening).
+#[test]
+fn reverse_mapped_intersection_keyspace_preserves_literal_in_ts2353() {
+    let code = r#"
+const checkShape = <T>() => <U extends T>(value: { [K in keyof U & keyof T]: U[K] }) => value;
+const checked = checkShape<{ x: number; y: string }>()({
+  x: 1 as number,
+  y: "y",
+  z: "z",
+});
+"#;
+    let diags = check_source_diagnostics(code);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert!(
+        !ts2353.is_empty(),
+        "expected TS2353 excess-property diagnostic for `z`, got: {diags:#?}"
+    );
+    assert!(
+        ts2353[0].message_text.contains("y: \"y\""),
+        "intersection-keyspace mapped type must preserve literal `\"y\"`, got: {}",
+        ts2353[0].message_text
+    );
+}

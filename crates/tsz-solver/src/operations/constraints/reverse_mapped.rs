@@ -8,8 +8,8 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData,
-    TypeId, TypeListId, Visibility,
+    IntrinsicKind, LiteralValue, MappedModifier, ObjectFlags, ObjectShape, PropertyInfo,
+    TupleElement, TypeData, TypeId, TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -475,14 +475,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Build the reverse mapped object and constrain it against the placeholder T
         // using HomomorphicMappedType priority (lower than direct NakedTypeVariable inference).
+        //
+        // Propagate the source's freshness: when T is reverse-inferred from a
+        // *fresh* object literal argument through a pure homomorphic mapped type
+        // (`{ [K in keyof T]: ... }`), the reconstructed property types carry the
+        // widening obligation tsc applies via `getCovariantInference`'s closing
+        // `getWidenedType` — e.g. `unbox({ c: { value: false } })` infers
+        // `T = { c: boolean }`, not `{ c: false }`. Marking the candidate
+        // `FRESH_LITERAL` routes it through the resolver's fresh-literal-guarded
+        // deep-widen step (which still records literal display provenance for
+        // diagnostics). A non-fresh source (a typed variable / annotation) stays
+        // unwidened, matching tsc's `RequiresWidening` gate.
+        //
+        // The widening is restricted to a *bare* `keyof T` iteration constraint.
+        // An intersection/union keyspace such as `{ [K in keyof U & keyof T]: U[K] }`
+        // (`reverseMappedTypeLimitedConstraint.ts`) reconstructs the inferred type
+        // as a constraint-checking contextual target whose literal property types
+        // tsc preserves in the excess-property (TS2353) elaboration, so those must
+        // not be widened here.
+        let source_is_fresh = source_obj.flags.contains(ObjectFlags::FRESH_LITERAL)
+            && matches!(
+                self.interner.lookup(mapped.constraint),
+                Some(TypeData::KeyOf(inner)) if inner == target_placeholder
+            );
         let reverse_object = if reverse_string_index.is_some() || reverse_number_index.is_some() {
+            let flags = if source_is_fresh {
+                ObjectFlags::FRESH_LITERAL
+            } else {
+                ObjectFlags::empty()
+            };
             self.interner.object_with_index(ObjectShape {
-                flags: crate::types::ObjectFlags::empty(),
+                flags,
                 properties: reverse_properties,
                 string_index: reverse_string_index,
                 number_index: reverse_number_index,
                 symbol: None,
             })
+        } else if source_is_fresh {
+            self.interner.object_fresh(reverse_properties)
         } else {
             self.interner.object(reverse_properties)
         };
