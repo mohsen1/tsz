@@ -1,13 +1,23 @@
 //! Parity tests for downlevel dynamic `import()` emit under CommonJS / AMD / UMD / System.
 //!
-//! Structural rules matched to tsc:
-//! - **`TemplateExpression`** specifiers (`` `./s/${id}` ``) evaluate to a string
-//!   and are emitted directly in `Promise.resolve(<template>).then(s => ...)` for
-//!   CJS/AMD/System — no extra `` `${…}` `` coercion wrapper is added.
-//! - **`Identifier`** specifiers are coerced via `` `${id}` `` in the CJS/UMD CJS branch.
+//! Structural rules matched to tsc (verified against `tsc` 5.8.3):
+//! - **CJS / UMD-CJS branch** wrap every *non-string-literal* specifier in a
+//!   `` `${…}` `` template coercion so the specifier is evaluated eagerly, then
+//!   pass the resolved string to `require`:
+//!   `Promise.resolve(`${spec}`).then(s => __importStar(require(s)))`. This applies
+//!   uniformly to identifiers, property accesses, conditionals **and**
+//!   `TemplateExpression` specifiers. A template specifier is therefore *nested*
+//!   inside the coercion wrapper — `` `./s/${id}` `` emits as
+//!   `` Promise.resolve(`${`./s/${id}`}`) ``. tsc does not special-case templates
+//!   here; the wrapper is added unconditionally for non-inlineable arguments.
+//! - **String-literal** (and no-substitution-template) specifiers stay lazy:
+//!   `Promise.resolve().then(() => __importStar(require("mod")))` — no coercion.
+//! - **AMD** and **System** always inline the specifier verbatim without a temp
+//!   (`require([`./s/${id}`], …)` / `context_1.import(`./s/${id}`)`).
 //! - **UMD** captures non-string, non-identifier specifiers (including template
-//!   expressions) into a temp so both branches share the evaluated value.
-//! - **AMD** and **System** always inline the specifier without a temp.
+//!   expressions) into a temp so both branches share the evaluated value; the
+//!   captured temp then uses the lazy `Promise.resolve().then(() => require(_a))`
+//!   form in the sync branch.
 //! - **UMD conditional** parenthesization follows parent-expression binding, not a
 //!   fixed rule — verified against `tsc` 6.x.
 //!
@@ -295,66 +305,124 @@ fn system_dynamic_import_inlines_identifier_specifier() {
     );
 }
 
-// --- Template expression specifier: no double-wrapping ----------------------
+// --- Non-string-literal CJS specifiers: eager `${…}` coercion wrapper --------
 //
-// Rule: a TemplateExpression (`` `./s/${id}` ``) already evaluates to a string.
-// tsc emits it directly in Promise.resolve() for CJS — no extra `${…}` wrapper.
-// For identifiers, tsc adds the `${…}` coercion; for templates it does not.
+// Rule (verified against tsc 5.8.3): for CommonJS downlevel emit, tsc wraps every
+// non-string-literal `import()` specifier in a `` `${arg}` `` template so the
+// argument is evaluated eagerly, then resolves through `require(s)`:
+//
+//   import(p)              -> Promise.resolve(`${p}`).then(s => __importStar(require(s)))
+//   import(`./w/${id}`)    -> Promise.resolve(`${`./w/${id}`}`).then(s => __importStar(require(s)))
+//
+// The wrapper is added unconditionally for non-inlineable arguments; tsc does NOT
+// special-case `TemplateExpression` specifiers, so a template is *nested* inside
+// the coercion wrapper (a `` `${`…`}` `` shape). Only string literals (and
+// no-substitution templates) skip the wrapper and use the lazy form.
 
 #[test]
-fn cjs_template_specifier_emits_directly_in_promise_resolve() {
-    // Structural rule: Promise.resolve(`./widgets/${id}`) — not Promise.resolve(`${`./widgets/${id}`}`)
+fn cjs_template_specifier_is_nested_in_coercion_wrapper() {
+    // tsc 5.8.3: Promise.resolve(`${`./widgets/${id}`}`).then(s => __importStar(require(s)))
     let out = cjs("async function load(id: string) { return await import(`./widgets/${id}`); }");
     assert!(
-        out.contains("Promise.resolve(`./widgets/${id}`).then(s => "),
-        "template specifier must be emitted directly in Promise.resolve() without an extra wrapper.\nOutput:\n{out}"
+        out.contains("Promise.resolve(`${`./widgets/${id}`}`).then(s => "),
+        "template specifier must be nested inside the `${{…}}` coercion wrapper.\nOutput:\n{out}"
     );
     assert!(
         out.contains("__importStar(require(s))"),
-        "template specifier path must still wrap require() with __importStar.\nOutput:\n{out}"
-    );
-    assert!(
-        !out.contains("Promise.resolve(`${`"),
-        "template specifier must not be double-wrapped in another template literal.\nOutput:\n{out}"
+        "template specifier path must wrap require() with __importStar.\nOutput:\n{out}"
     );
 }
 
 #[test]
-fn cjs_template_specifier_multi_span_emits_directly() {
+fn cjs_template_specifier_multi_span_is_nested_in_wrapper() {
     // Two substitutions: rule holds regardless of the number of template spans.
+    // tsc 5.8.3: Promise.resolve(`${`${prefix}/${id}.js`}`).then(s => ...)
     let out = cjs(
         "async function load(prefix: string, id: string) { return await import(`${prefix}/${id}.js`); }",
     );
     assert!(
-        out.contains("Promise.resolve(`${prefix}/${id}.js`).then(s => "),
-        "multi-span template must be emitted directly in Promise.resolve().\nOutput:\n{out}"
-    );
-    assert!(
-        !out.contains("Promise.resolve(`${`"),
-        "multi-span template must not be double-wrapped.\nOutput:\n{out}"
+        out.contains("Promise.resolve(`${`${prefix}/${id}.js`}`).then(s => "),
+        "multi-span template must be nested inside the coercion wrapper.\nOutput:\n{out}"
     );
 }
 
 #[test]
 fn cjs_template_specifier_rule_is_independent_of_variable_name() {
-    // The fix is structural (TemplateExpression kind), not name-specific.
+    // The rule is structural (non-string-literal kind), not name-specific.
+    // tsc 5.8.3: Promise.resolve(`${`./routes/${routeSegment}/page`}`).then(s => ...)
     let out = cjs(
         "async function load(routeSegment: string) { return await import(`./routes/${routeSegment}/page`); }",
     );
     assert!(
-        out.contains("Promise.resolve(`./routes/${routeSegment}/page`).then(s => "),
+        out.contains("Promise.resolve(`${`./routes/${routeSegment}/page`}`).then(s => "),
         "template form must not depend on the bound variable name.\nOutput:\n{out}"
     );
 }
 
 #[test]
-fn cjs_identifier_specifier_still_uses_coercion_wrapper() {
-    // Identifier specifiers are NOT templates and still need the `${…}` coercion.
-    // This is the existing behaviour — verify it is unchanged by the template fix.
+fn cjs_identifier_specifier_uses_coercion_wrapper() {
+    // Identifier specifiers use the `${…}` coercion (eager evaluation) form.
+    // tsc 5.8.3: Promise.resolve(`${p}`).then(s => __importStar(require(s)))
     let out = cjs("async function load(p: string) { return await import(p); }");
     assert!(
-        out.contains("Promise.resolve(`${p}`).then(s => "),
-        "identifier specifier must still use the backtick-coercion form.\nOutput:\n{out}"
+        out.contains("Promise.resolve(`${p}`).then(s => __importStar(require(s)))"),
+        "identifier specifier must use the backtick-coercion form.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_property_access_specifier_uses_coercion_wrapper() {
+    // Property-access specifiers are non-string-literal -> coercion wrapper.
+    // tsc 5.8.3: Promise.resolve(`${o.path}`).then(s => __importStar(require(s)))
+    let out = cjs("async function load(o: { path: string }) { return await import(o.path); }");
+    assert!(
+        out.contains("Promise.resolve(`${o.path}`).then(s => __importStar(require(s)))"),
+        "property-access specifier must use the `${{…}}` coercion wrapper.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_conditional_specifier_uses_coercion_wrapper() {
+    // Conditional specifiers are non-string-literal -> coercion wrapper.
+    // tsc 5.8.3: Promise.resolve(`${b ? "./a" : "./b"}`).then(s => __importStar(require(s)))
+    let out =
+        cjs("async function load(b: boolean) { return await import(b ? \"./a\" : \"./b\"); }");
+    assert!(
+        out.contains(
+            "Promise.resolve(`${b ? \"./a\" : \"./b\"}`).then(s => __importStar(require(s)))"
+        ),
+        "conditional specifier must use the `${{…}}` coercion wrapper.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_string_literal_specifier_stays_lazy() {
+    // String literals skip the coercion wrapper and use the lazy then(() => …) form.
+    // tsc 5.8.3: Promise.resolve().then(() => __importStar(require("./mod")))
+    let out = cjs("async function load() { return await import(\"./mod\"); }");
+    assert!(
+        out.contains("Promise.resolve().then(() => __importStar(require(\"./mod\")))"),
+        "string-literal specifier must use the lazy Promise.resolve().then() form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("Promise.resolve(`"),
+        "string-literal specifier must not be wrapped in a coercion template.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_no_substitution_template_specifier_stays_lazy() {
+    // A NoSubstitutionTemplateLiteral is string-like, so it follows the lazy form
+    // with the specifier inlined verbatim — no `${…}` coercion wrapper.
+    // tsc 5.8.3: Promise.resolve().then(() => __importStar(require(`./mod`)))
+    let out = cjs("async function load() { return await import(`./mod`); }");
+    assert!(
+        out.contains("Promise.resolve().then(() => __importStar(require(`./mod`)))"),
+        "no-substitution template specifier must use the lazy form with the specifier inlined.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("Promise.resolve(`${"),
+        "no-substitution template specifier must not be wrapped in a `${{…}}` coercion.\nOutput:\n{out}"
     );
 }
 
