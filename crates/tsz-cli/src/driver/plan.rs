@@ -290,13 +290,21 @@ pub(super) fn apply_cli_overrides_with_config_options(
     // this default in `resolve_compiler_options`; mirror it here so the CLI-only
     // path (no tsconfig) matches tsc instead of falling back to the historical
     // `false`. An explicit `--esModuleInterop false` (recorded in
-    // `explicitly_disabled_bool_flags`) or a tsconfig value opts back out.
+    // `explicitly_disabled_bool_flags`), a tsconfig value, or a TS5024-invalid
+    // tsconfig value opts back out.
     let es_module_interop_disabled = args
         .explicitly_disabled_bool_flags
         .iter()
         .any(|name| name == "esModuleInterop");
+    let es_module_interop_invalidated = config_options.is_some_and(|config| {
+        config
+            .invalidated_options
+            .iter()
+            .any(|name| name == "esModuleInterop")
+    });
     if args.es_module_interop
         || (!es_module_interop_disabled
+            && !es_module_interop_invalidated
             && config_options.is_none_or(|config| config.es_module_interop.is_none()))
     {
         options.es_module_interop = true;

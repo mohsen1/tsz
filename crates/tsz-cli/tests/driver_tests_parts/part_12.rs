@@ -903,10 +903,80 @@ fn cli_only_explicit_es_module_interop_false_keeps_classic_default_import() {
     args.explicitly_disabled_bool_flags
         .push("esModuleInterop".to_string());
 
-    let result = compile(&args, base).expect("compile should succeed");
+    let _result = compile(&args, base).expect("compile should succeed");
     let a_js = std::fs::read_to_string(base.join("out/a.js")).expect("read out/a.js");
     assert!(
         !a_js.contains("__importDefault"),
         "explicit --esModuleInterop false must not emit the interop helper, got:\n{a_js}"
+    );
+}
+
+#[test]
+fn invalid_config_es_module_interop_keeps_cli_file_emit_classic_unless_cli_enables() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "esModuleInterop": "invalid",
+            "module": "commonjs",
+            "target": "es2020"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("dep.ts"),
+        "export default { version: \"1.0.0\" };\n",
+    );
+    write_file(
+        &base.join("a.ts"),
+        "import dep from './dep';\nexport const v = dep.version;\n",
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--module",
+        "commonjs",
+        "--target",
+        "es2020",
+        "--outDir",
+        "out-invalid",
+        "a.ts",
+    ]);
+
+    let result = compile(&args, base).expect("compile should recover through TS5024");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5024), "expected TS5024, got: {codes:?}");
+
+    let a_js = std::fs::read_to_string(base.join("out-invalid/a.js"))
+        .expect("read out-invalid/a.js");
+    assert!(
+        !a_js.contains("__importDefault"),
+        "invalid tsconfig esModuleInterop must suppress the tsc 6.0 default \
+         during CLI file emit recovery, got:\n{a_js}"
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--esModuleInterop",
+        "--module",
+        "commonjs",
+        "--target",
+        "es2020",
+        "--outDir",
+        "out-cli",
+        "a.ts",
+    ]);
+
+    let result = compile(&args, base).expect("compile should recover through TS5024");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5024), "expected TS5024, got: {codes:?}");
+
+    let a_js = std::fs::read_to_string(base.join("out-cli/a.js")).expect("read out-cli/a.js");
+    assert!(
+        a_js.contains("__importDefault"),
+        "explicit --esModuleInterop must still enable the interop helper, got:\n{a_js}"
     );
 }
