@@ -30,6 +30,65 @@ pub(crate) const fn no_value_resolver(_: NodeIndex) -> Option<u32> {
     None
 }
 
+/// Per-name lib-resolution marker used to fix lib-interface heritage drops under
+/// resolution cycles (#12299).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibResolutionMark {
+    /// `resolve_lib_type_by_name` for this name is currently on the stack.
+    InProgress,
+    /// The most recent resolution dropped an in-progress heritage base (directly
+    /// or transitively), so the produced type is incomplete and was not cached.
+    Incomplete,
+}
+
+thread_local! {
+    /// Lib-resolution markers, scoped to the active thread. This is transient
+    /// resolution-stack state (like the `ASSIGNABILITY_EVAL_VISITING` guard), so
+    /// it lives in a thread-local rather than growing `CheckerContext`. Entries
+    /// self-clear: `InProgress` is push/pop balanced by `resolve_lib_type_by_name`,
+    /// and an `Incomplete` mark is removed the next time the name resolves
+    /// completely — which always happens (the cache slot was dropped) before a
+    /// derived interface reads it as a heritage base.
+    static LIB_RESOLUTION_MARKS: std::cell::RefCell<FxHashMap<String, LibResolutionMark>> =
+        std::cell::RefCell::new(FxHashMap::default());
+}
+
+/// Look up a lib type `name`'s resolution marker, trying the same normalizations
+/// the resolver caches under: the raw name, the `globalThis.` strip, and the
+/// qualified tail after the last `.`.
+fn lib_resolution_mark(name: &str) -> Option<LibResolutionMark> {
+    LIB_RESOLUTION_MARKS.with(|marks| {
+        let marks = marks.borrow();
+        if let Some(&mark) = marks.get(name) {
+            return Some(mark);
+        }
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        if normalized != name
+            && let Some(&mark) = marks.get(normalized)
+        {
+            return Some(mark);
+        }
+        match normalized.rsplit('.').next() {
+            Some(tail) if tail != normalized => marks.get(tail).copied(),
+            _ => None,
+        }
+    })
+}
+
+/// Record `name`'s lib-resolution marker.
+fn set_lib_resolution_mark(name: &str, mark: LibResolutionMark) {
+    LIB_RESOLUTION_MARKS.with(|marks| {
+        marks.borrow_mut().insert(name.to_string(), mark);
+    });
+}
+
+/// Clear `name`'s lib-resolution marker (it resolved completely).
+fn clear_lib_resolution_mark(name: &str) {
+    LIB_RESOLUTION_MARKS.with(|marks| {
+        marks.borrow_mut().remove(name);
+    });
+}
+
 /// Map a keyword `SyntaxKind` to its built-in `TypeId`.
 pub(crate) const fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
     match kind {
@@ -431,6 +490,19 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether `name`'s `resolve_lib_type_by_name` call is currently on the stack
+    /// (an in-progress base) rather than already resolved. Matches the same
+    /// `globalThis.`/qualified-tail normalization the resolver caches under (#12299).
+    pub(crate) fn lib_name_resolution_in_progress(&self, name: &str) -> bool {
+        lib_resolution_mark(name) == Some(LibResolutionMark::InProgress)
+    }
+
+    /// Whether `name`'s most recent resolution was incomplete because a heritage
+    /// base was dropped mid-cycle (used to propagate the taint to derived types).
+    pub(crate) fn lib_name_heritage_incomplete(&self, name: &str) -> bool {
+        lib_resolution_mark(name) == Some(LibResolutionMark::Incomplete)
+    }
+
     /// Resolve a library type by name from lib.d.ts and other library contexts.
     ///
     /// This function resolves types from library definition files like lib.d.ts,
@@ -532,7 +604,14 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), None);
+        // Record that `name`'s resolution is on the stack so a heritage merge of
+        // a derived interface reached transitively from here can tell this
+        // in-progress base apart from a genuinely-missing one (#12299). A nested
+        // resolve for the same name is short-circuited by the sentinel cache hit
+        // above, so this marker is only installed by the outermost call.
+        set_lib_resolution_mark(name, LibResolutionMark::InProgress);
         let mut lib_type_id: Option<TypeId> = None;
+        let mut heritage_incomplete = false;
         let factory = self.ctx.types.factory();
         let mut symbol_has_interface = false;
 
@@ -807,10 +886,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Relation-input readiness is intentionally deferred until after the
-        // final cache write below (see that call site); running it here, while
-        // `name`'s cache slot still holds the in-progress sentinel, dropped
-        // heritage bases mid-cycle. Issue #12299.
+        for ty in lib_types.iter().copied() {
+            if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_some() {
+                continue;
+            }
+            self.ensure_relation_input_ready(ty);
+        }
 
         // Merge repeated lib interface declarations using interface-merge
         // semantics instead of a raw intersection. Constructor interfaces like
@@ -835,7 +916,9 @@ impl<'a> CheckerState<'a> {
         // Merge heritage (extends) from lib interface declarations.
         // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
         if let Some(ty) = lib_type_id {
-            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+            let (merged, incomplete) = self.merge_lib_interface_heritage(ty, name);
+            lib_type_id = Some(merged);
+            heritage_incomplete = incomplete;
         }
 
         // Merge global augmentations (declare global { interface X { ... } }).
@@ -981,6 +1064,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if heritage_incomplete {
+            // A heritage base was dropped while it was itself mid-resolution
+            // (directly, or transitively through another incomplete base), so
+            // `lib_type_id` is missing inherited members. Mark `name` incomplete
+            // and do NOT persist the type: remove the local slot and skip the
+            // shared cache so the next request recomputes once the base has
+            // completed. The def body / `symbol_types` entries written above are
+            // overwritten by that recompute (`register_finalized_lib_body`
+            // rewires the body and clears eval caches). See #12299.
+            set_lib_resolution_mark(name, LibResolutionMark::Incomplete);
+            self.ctx.lib_type_resolution_cache.remove(name);
+            return lib_type_id;
+        }
+
+        // `name` resolved completely; clear any in-progress / stale incomplete marker.
+        clear_lib_resolution_mark(name);
+
         // Generic lib interfaces had their type params cached above.
         self.ctx
             .lib_type_resolution_cache
@@ -989,23 +1089,6 @@ impl<'a> CheckerState<'a> {
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
         {
             shared.insert(name.to_string(), lib_type_id);
-        }
-
-        // Now that `name` is fully resolved and cached, prepare its relation
-        // inputs (resolve `Lazy` refs / application symbols). Doing this here
-        // rather than mid-resolution is load-bearing: readying a type walks its
-        // member refs and can transitively resolve a *derived* interface (e.g.
-        // readying `Node` pulls `HTMLElement` -> `Element`). If `name`'s cache
-        // slot still held the in-progress `None` sentinel, that derived
-        // interface's `extends name` clause would resolve to `None` and be
-        // silently dropped, caching an incomplete type (false TS2339 on
-        // inherited methods like `appendChild`, false TS2740). Running after the
-        // cache write means nested resolutions observe the completed `name`.
-        // Issue #12299. Lazy alias bodies are left alone — they expand on demand.
-        if let Some(ty) = lib_type_id
-            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_none()
-        {
-            self.ensure_relation_input_ready(ty);
         }
 
         lib_type_id
