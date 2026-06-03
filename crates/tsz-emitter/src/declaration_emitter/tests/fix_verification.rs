@@ -1652,6 +1652,36 @@ const result = f("hello", { cb(_x: string) {} });
 }
 
 #[test]
+fn fix_generic_call_object_property_guard_requires_concrete_argument() {
+    // The conflicting-site guard must be call-site-aware: an optional
+    // `options?: { type?: T }` parameter that is omitted, receives `{}`,
+    // or receives `undefined` supplies no concrete object-property inference
+    // for T.  The direct literal from `a: T` should be preserved in all three.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const onlyA    = f("hello");
+const emptyObj = f("hello", {});
+const undef    = f("hello", undefined);
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const onlyA = "hello";"#),
+        "omitted optional parameter must not trigger conflicting-site guard: {output}"
+    );
+    assert!(
+        output.contains(r#"declare const emptyObj = "hello";"#),
+        "empty-object argument must not trigger conflicting-site guard: {output}"
+    );
+    assert!(
+        output.contains(r#"declare const undef = "hello";"#),
+        "undefined argument must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"

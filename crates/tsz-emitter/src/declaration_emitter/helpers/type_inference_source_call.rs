@@ -317,7 +317,11 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_name: &str,
     ) -> Option<String> {
         let args = call.arguments.as_ref()?;
-        for (&param_idx, &arg_idx) in func.parameters.nodes.iter().zip(args.nodes.iter()) {
+        let params = &func.parameters.nodes;
+        let args_nodes = &args.nodes;
+        for (candidate_pos, (&param_idx, &arg_idx)) in
+            params.iter().zip(args_nodes.iter()).enumerate()
+        {
             let param_node = source_arena.get(param_idx)?;
             let param = source_arena.get_parameter(param_node)?;
             if param.dot_dot_dot_token {
@@ -329,22 +333,27 @@ impl<'a> DeclarationEmitter<'a> {
             if param_type_text.trim() != type_param_name {
                 continue;
             }
-            // When another parameter contains the type parameter in a direct
-            // object-property inference position (e.g. `{ type?: T }`), there are
-            // multiple inference sites that may produce conflicting literals.  Don't
-            // lock in the direct literal — the caller falls back to the constraint.
-            // Callback positions (`(x: T) => R`, method signatures `{ cb(x: T): void }`,
-            // and generic aliases `Callback<T>`) are excluded: they are indirect inference
-            // sites and do not conflict with a direct-position literal.
-            let has_conflicting_site = func
-                .parameters
-                .nodes
+            // A conflicting inference site requires TWO conditions, both at the
+            // call site:
+            //
+            // (1) Another parameter's type annotation has T in a direct
+            //     object-property position (e.g. `options: { type?: T }`), and
+            // (2) The corresponding call argument actually supplies a non-empty
+            //     object literal — `{}`, `undefined`, and omitted optional
+            //     arguments supply no inference through the property path and
+            //     therefore do not conflict.
+            //
+            // Callback positions (`(x: T) => R`, method signatures, and generic
+            // aliases `Callback<T>`) are excluded by the structural walk.
+            let has_conflicting_site = params
                 .iter()
                 .copied()
-                .filter(|&p| p != param_idx)
-                .any(|other_idx| {
+                .enumerate()
+                .filter(|&(i, _)| i != candidate_pos)
+                .any(|(i, other_param_idx)| {
+                    let other_arg = args_nodes.get(i).copied();
                     source_arena
-                        .get(other_idx)
+                        .get(other_param_idx)
                         .and_then(|node| source_arena.get_parameter(node))
                         .is_some_and(|other_param| {
                             type_node_has_object_property_site_for(
@@ -352,7 +361,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 other_param.type_annotation,
                                 type_param_name,
                                 0,
-                            )
+                            ) && other_arg.is_some_and(|other_arg_idx| {
+                                argument_has_object_property_values(source_arena, other_arg_idx)
+                            })
                         })
                 });
             if has_conflicting_site {
@@ -955,4 +966,23 @@ fn type_annotation_is_or_contains_type_param(
         // FunctionType and everything else — not a direct type-param reference.
         _ => false,
     }
+}
+
+/// Returns `true` when `arg_idx` is an object-literal expression that contains
+/// at least one element (property assignment, shorthand, spread, etc.) — i.e.
+/// it can contribute a concrete inference through an object-property inference
+/// site.
+///
+/// `{}` (empty object literal), `undefined`, and absent (omitted optional)
+/// arguments all return `false`.
+fn argument_has_object_property_values(source_arena: &NodeArena, arg_idx: NodeIndex) -> bool {
+    let Some(arg_node) = source_arena.get(arg_idx) else {
+        return false;
+    };
+    if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+        return false;
+    }
+    source_arena
+        .get_literal_expr(arg_node)
+        .is_some_and(|obj| !obj.elements.nodes.is_empty())
 }
