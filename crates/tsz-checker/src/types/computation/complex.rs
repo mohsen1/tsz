@@ -1901,21 +1901,6 @@ impl<'a> CheckerState<'a> {
                     TypeId::ERROR
                 }
             }
-            CallResult::TypeParameterConstraintViolation {
-                inferred_type,
-                constraint_type,
-                return_type,
-            } => {
-                // Type parameter constraint violations are argument-level
-                // mismatches. tsc reports TS2345 at the argument.
-                let anchor = args.first().copied().unwrap_or(idx);
-                let _ = self.check_argument_assignable_or_report(
-                    inferred_type,
-                    constraint_type,
-                    anchor,
-                );
-                return_type
-            }
             CallResult::NoOverloadMatch {
                 failures,
                 fallback_return,

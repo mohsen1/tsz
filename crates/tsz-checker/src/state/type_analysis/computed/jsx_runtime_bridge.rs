@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_common::checker_options::JsxMode;
+use tsz_common::text_scan::{JSX_PRAGMA_SCAN_BYTES, leading_window};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -132,8 +133,7 @@ impl<'a> CheckerState<'a> {
 }
 
 fn parse_jsx_import_source_pragma_for_bridge(text: &str) -> Option<String> {
-    let scan_limit = text.len().min(4096);
-    let scan_text = &text[..scan_limit];
+    let scan_text = leading_window(text, JSX_PRAGMA_SCAN_BYTES);
     let bytes = scan_text.as_bytes();
     let mut pos = 0;
     while pos < bytes.len() {

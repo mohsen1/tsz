@@ -168,19 +168,6 @@ pub enum CallResult {
     /// legitimately return `any` from construct signatures.
     VoidFunctionCalledWithNew,
 
-    /// Type parameter constraint violation (TS2322, not TS2345).
-    /// Used when inference from callback return types produces a type that
-    /// violates the type parameter's constraint. tsc reports TS2322 on the
-    /// return expression, not TS2345 on the whole callback argument.
-    TypeParameterConstraintViolation {
-        /// The inferred type that violated the constraint
-        inferred_type: TypeId,
-        /// The constraint type that was violated
-        constraint_type: TypeId,
-        /// The return type of the call (for type computation to continue)
-        return_type: TypeId,
-    },
-
     /// No overload matched (for overloaded functions)
     NoOverloadMatch {
         func_type: TypeId,

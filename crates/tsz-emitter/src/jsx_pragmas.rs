@@ -1,3 +1,5 @@
+use tsz_common::text_scan::{JSX_PRAGMA_SCAN_BYTES, leading_window};
+
 /// Extract a `@<tag> <factory>` pragma from the leading comments, returning
 /// the factory expression such as `h` or `React.createElement`.
 ///
@@ -5,8 +7,7 @@
 /// scanned, the tag must be followed by a pragma boundary, and the value is a
 /// dot-separated identifier chain.
 fn extract_jsx_factory_like_pragma(source: &str, tag: &str) -> Option<String> {
-    let scan_limit = source.len().min(4096);
-    let text = &source[..scan_limit];
+    let text = leading_window(source, JSX_PRAGMA_SCAN_BYTES);
     let bytes = text.as_bytes();
     let mut pos = 0;
     while pos < bytes.len() {

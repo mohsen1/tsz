@@ -43,13 +43,14 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
 # intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
-# JSX intrinsic prop drift cluster:
-#   - jsxIntrinsicUnions.tsx and jsxJsxsCjsTransformNestedSelfClosingChild.tsx
-#     accepted after REGRESSED on PR #12368 exact head 9ee797b6 / run 26906037226.
-#   - contextuallyTypedJsxChildren2.tsx and
-#     jsxImportForSideEffectsNonExtantNoError.tsx also reproduce on current main
-#     58ab729e59b88f168dd51719c6b58cfa1c68ea93 with extra TS2739/TS2740.
-# Tracked in #12376.
+# jsxIntrinsicUnions.tsx: accepted after REGRESSED on PR #12368 exact head
+# 9ee797b6 / run 26906037226. Tracked in #12376.
+# jsxJsxsCjsTransformNestedSelfClosingChild.tsx: RESOLVED in PR #12367
+# aggregate run on exact head 2dd802cf / run 26908103845; removed.
+# jsxImportForSideEffectsNonExtantNoError.tsx: accepted after REGRESSED in
+# the same PR #12367 aggregate run. Tracked in #12376.
+# contextuallyTypedJsxChildren2.tsx: reproduces on current main
+# 58ab729e59b88f168dd51719c6b58cfa1c68ea93 with extra TS2739. Tracked in #12376.
 # intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
@@ -61,4 +62,3 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
-TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx
