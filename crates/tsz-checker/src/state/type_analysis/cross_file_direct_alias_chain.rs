@@ -505,18 +505,15 @@ impl<'a> CheckerState<'a> {
                 if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
                     return false;
                 }
-                let disallowed = symbol_flags::VALUE
-                    | symbol_flags::CLASS
+                let disallowed = symbol_flags::CLASS
                     | symbol_flags::VALUE_MODULE
                     | symbol_flags::NAMESPACE_MODULE;
-                if symbol.flags & disallowed != 0 || symbol.declarations.len() != 1 {
+                if symbol.flags & disallowed != 0 {
                     return false;
                 }
-                let decl_idx = symbol.declarations[0];
-                let Some(decl_node) = resolved.arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(type_alias) = resolved.arena.get_type_alias(decl_node) else {
+                let Some(type_alias) =
+                    Self::source_file_single_type_alias_declaration(resolved.arena, symbol)
+                else {
                     return false;
                 };
                 let resolved_proof = proof.for_file(resolved.file_idx);
@@ -545,6 +542,12 @@ impl<'a> CheckerState<'a> {
                     )
                 }) {
                     return false;
+                }
+                if resolved.file_idx.is_some()
+                    && resolved.file_idx != proof.current_file_idx
+                    && args.nodes.len() == target_param_names.len()
+                {
+                    return true;
                 }
                 if Self::source_file_type_node_contains_disallowed_type_query(
                     resolved.arena,
@@ -924,18 +927,15 @@ impl<'a> CheckerState<'a> {
                 if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
                     return false;
                 }
-                let disallowed = symbol_flags::VALUE
-                    | symbol_flags::CLASS
+                let disallowed = symbol_flags::CLASS
                     | symbol_flags::VALUE_MODULE
                     | symbol_flags::NAMESPACE_MODULE;
-                if symbol.flags & disallowed != 0 || symbol.declarations.len() != 1 {
+                if symbol.flags & disallowed != 0 {
                     return false;
                 }
-                let decl_idx = symbol.declarations[0];
-                let Some(decl_node) = resolved.arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(type_alias) = resolved.arena.get_type_alias(decl_node) else {
+                let Some(type_alias) =
+                    Self::source_file_single_type_alias_declaration(resolved.arena, symbol)
+                else {
                     return false;
                 };
                 let resolved_proof = proof.for_file(resolved.file_idx);
@@ -1273,6 +1273,28 @@ impl<'a> CheckerState<'a> {
                     || decl.kind == syntax_kind_ext::ENUM_DECLARATION
             })
         })
+    }
+
+    fn source_file_single_type_alias_declaration<'b>(
+        arena: &'b NodeArena,
+        symbol: &Symbol,
+    ) -> Option<&'b TypeAliasData> {
+        let mut found = None;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(type_alias) = arena.get_type_alias(decl_node) else {
+                continue;
+            };
+            if found.replace(type_alias).is_some() {
+                return None;
+            }
+        }
+        found
     }
 
     fn source_file_local_interface_application_is_lowerable(

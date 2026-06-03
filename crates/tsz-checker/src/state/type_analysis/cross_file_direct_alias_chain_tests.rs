@@ -371,6 +371,41 @@ fn direct_source_file_type_alias_lowers_imported_mapped_options_alias_chain() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_imported_keyset_range_leaf() {
+    with_program_state_with_libs(
+        &[
+            ("list.ts", "export type List = readonly unknown[];"),
+            (
+                "union-of.ts",
+                "import { List } from './list';\nexport type UnionOf<L extends List> = L[number];",
+            ),
+            ("internal.ts", "export type Way = '->' | '<-';"),
+            (
+                "range.ts",
+                "import { Way } from './internal';\nexport const Range = null as never;\ntype Step<From extends number, To extends number, Mode extends Way> = Step<From, To, Mode> | From | To | Mode;\nexport type Range<From extends number, To extends number, Mode extends Way = '->'> = From extends unknown ? To extends unknown ? Step<From, To, Mode>[] : never : never;",
+            ),
+            (
+                "key-set.ts",
+                "import { Range } from './range';\nimport { UnionOf } from './union-of';\nexport type KeySet<From extends number, To extends number> = UnionOf<Range<From, To, '->'>>;",
+            ),
+            ("requester.ts", "import { KeySet } from './key-set';"),
+        ],
+        "requester.ts",
+        "key-set.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let keyset_sym = target_binder.file_locals.get("KeySet").expect("KeySet");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keyset_sym, Some(target_idx), true)
+                .expect("imported range alias applications can remain lazy leaves");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "KeySet should expose From and To");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_single_hop_local_alias_chain() {
     with_two_file_state(
         "type Leaf = string | number;\nexport type Alias = Leaf;",
