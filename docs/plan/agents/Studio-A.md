@@ -7,10 +7,12 @@ GitHub label: `agent:Studio-A`
 
 ## Mission
 
-Make release metric truth authoritative. This lane owns project-corpus
-artifact truth and keeps conformance strictness, emit counts, bug-family
-ownership, and performance target artifacts coherent before other lanes make
-claims from them.
+Make release metric truth authoritative. This lane owns project-corpus artifact
+truth and keeps test, benchmark, conformance, emit, bug, and performance
+metrics coherent before other lanes make claims from them.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next Studio-A release-gate item.
 
 ## Start Every Cycle
 
@@ -26,14 +28,15 @@ node scripts/bench/project-row-summary.mjs --markdown
 
 ## Current Assignment
 
-- Primary gate: project corpus and public release metrics.
+- Primary gates: all project rows have trustworthy status, all public release
+  metrics cite current artifacts, and blockers are routed to the right owner.
 - Bug or metric families: project-row green/yellow/red status, first blocker
-  family, diagnostic deltas, emit/DTS snapshot counts, accepted-regression
-  count, issue-cluster ownership, benchmark artifact freshness, and project-row
-  metadata consistency.
+  family, diagnostic deltas, JS/DTS emit counts, accepted-regression count,
+  bug-cluster ownership, benchmark artifact freshness, and project-row metadata
+  consistency.
 - Architecture cleanup metric: row definitions should stay centralized in
-  `scripts/bench/project-rows.mjs`; dashboard and guard surfaces should not
-  drift.
+  `scripts/bench/project-rows.mjs`; dashboard, website, README, and guard
+  surfaces should not drift.
 - First live command: run the cheap dashboard commands above and record which
   artifact is current enough to cite.
 - Next concrete step: if a metric is stale or contradictory, fix the reporting
@@ -42,6 +45,7 @@ node scripts/bench/project-row-summary.mjs --markdown
 
 ## Existing Work To Inspect First
 
+- Live `agent:Studio-A` PRs.
 - `scripts/bench/project-rows.mjs`, `scripts/bench/project-rows.md`, and
   `scripts/bench/validate-project-metadata.mjs`.
 - Latest benchmark, compile-guard, conformance, and emit artifacts.
@@ -63,4 +67,6 @@ node scripts/bench/project-row-summary.mjs --markdown
 - Prefer script tests under `scripts/bench`, `scripts/ci`, `scripts/emit`, or
   `scripts/conformance`.
 - Use `node scripts/bench/validate-project-metadata.mjs` for row metadata.
+- Use `node scripts/bench/project-row-summary.mjs --markdown` before publishing
+  project-row status.
 - Wrap long project checks with `scripts/safe-run.sh`.

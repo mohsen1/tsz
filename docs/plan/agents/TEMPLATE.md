@@ -2,15 +2,18 @@
 
 AgentName: <AgentName>
 Computer: <M1|M4|Studio>
-Session: <A-F>
+Session: <A-C|Opus|manager>
 GitHub label: `agent:<AgentName>`
 
 ## Mission
 
 One narrow lane aligned with `docs/plan/ROADMAP.md` and the next-launch gates:
-conformance strictness, emit 100%, all bugs fixed or structurally owned, green
-project rows, `2x` timing wins over `tsgo`, and measurable architecture debt
-reduction.
+all tests passing, all benchmark/project rows green, every eligible green timed
+row at least `2x` faster than `tsgo`, conformance strictness, emit 100%, all
+bugs fixed or structurally owned, and measurable tech-debt reduction.
+
+This goal is not complete when a branch exists. Keep going until the scoped
+change lands in `main`, then pick the next release-gate item for this lane.
 
 ## Start Every Cycle
 

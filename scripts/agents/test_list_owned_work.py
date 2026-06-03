@@ -36,9 +36,9 @@ exec "$@"
         )
 
     def test_clear_owned_work_prints_summary_counters(self):
-        result = self.run_list_owned_work(["Studio-F"])
+        result = self.run_list_owned_work(["Studio-manager"])
 
-        self.assertIn("## agent:Studio-F", result.stdout)
+        self.assertIn("## agent:Studio-manager", result.stdout)
         self.assertIn("PRs:\n- none", result.stdout)
         self.assertIn("Issues:\n- none", result.stdout)
         self.assertIn("owned_pr_count=0", result.stdout)
@@ -54,7 +54,7 @@ exec "$@"
 
     def test_active_owned_work_prints_active_summary(self):
         result = self.run_list_owned_work(
-            ["Studio-F"],
+            ["Studio-manager"],
             prs=(
                 "#1 ready autoMerge=off mergeQueue=on queue=success first PR https://github.com/mohsen1/tsz/pull/1\n"
                 "#2 draft autoMerge=on mergeQueue=off queue=none second PR https://github.com/mohsen1/tsz/pull/2\n"
@@ -80,13 +80,13 @@ exec "$@"
             report_path = pathlib.Path(temp_dir) / "owned-work.json"
 
             result = self.run_list_owned_work(
-                ["Studio-F", "--json-report", str(report_path)],
+                ["Studio-manager", "--json-report", str(report_path)],
                 prs="#1 ready autoMerge=on mergeQueue=on queue=pending first PR https://github.com/mohsen1/tsz/pull/1\n",
                 issues="#2 issue https://github.com/mohsen1/tsz/issues/2\n",
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            self.assertIn("## agent:Studio-F", result.stdout)
+            self.assertIn("## agent:Studio-manager", result.stdout)
             self.assertEqual("scripts/agents/list-owned-work.sh", report["generated_by"])
             self.assertEqual("mohsen1/tsz", report["repository"])
             self.assertFalse(report["with_pr_state"])
@@ -111,8 +111,8 @@ exec "$@"
             self.assertEqual(2, report["total_owned_count"])
             self.assertEqual(1, len(report["agents"]))
             row = report["agents"][0]
-            self.assertEqual("Studio-F", row["agent"])
-            self.assertEqual("agent:Studio-F", row["label"])
+            self.assertEqual("Studio-manager", row["agent"])
+            self.assertEqual("agent:Studio-manager", row["label"])
             self.assertEqual(1, row["pr_count"])
             self.assertEqual(1, row["ready_pr_count"])
             self.assertEqual(0, row["draft_pr_count"])
@@ -137,7 +137,7 @@ exec "$@"
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             report_path = pathlib.Path(temp_dir) / "owned-work.json"
 
-            self.run_list_owned_work(["Studio-F", "--json-report", str(report_path)])
+            self.run_list_owned_work(["Studio-manager", "--json-report", str(report_path)])
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertTrue(report["ok"])

@@ -27,7 +27,7 @@ class ShowGoalTests(unittest.TestCase):
             fake_repo = temp_root / "repo"
             goal_dir = fake_repo / "docs" / "plan" / "agents"
             goal_dir.mkdir(parents=True)
-            (goal_dir / "Studio-F.md").write_text(local_goal, encoding="utf-8")
+            (goal_dir / "Studio-manager.md").write_text(local_goal, encoding="utf-8")
 
             fake_bin = temp_root / "bin"
             fake_bin.mkdir()
@@ -75,7 +75,7 @@ class ShowGoalTests(unittest.TestCase):
                           fi
                           ;;
                         show)
-                          if [[ "${2:-}" == "origin/main:docs/plan/agents/Studio-F.md" ]]; then
+                          if [[ "${2:-}" == "origin/main:docs/plan/agents/Studio-manager.md" ]]; then
                             printf '%s' "$FAKE_REMOTE_GOAL"
                             exit 0
                           fi
@@ -117,16 +117,16 @@ class ShowGoalTests(unittest.TestCase):
             return result.stdout, result.stderr, calls, temp_files
 
     def test_remote_goal_temp_file_is_cleaned_up(self):
-        output, stderr, calls, temp_files = self.run_show_goal(["Studio-F", "--no-fetch"])
+        output, stderr, calls, temp_files = self.run_show_goal(["Studio-manager", "--no-fetch"])
 
         self.assertEqual(output, "# remote goal\n")
-        self.assertIn("branch-local docs/plan/agents/Studio-F.md differs", stderr)
+        self.assertIn("branch-local docs/plan/agents/Studio-manager.md differs", stderr)
         self.assertIn("-C", calls[1])
         self.assertEqual(temp_files, [])
 
     def test_matching_remote_goal_does_not_warn(self):
         output, stderr, calls, temp_files = self.run_show_goal(
-            ["Studio-F", "--no-fetch"],
+            ["Studio-manager", "--no-fetch"],
             local_goal="# same goal\n",
             remote_goal="# same goal\n",
         )
@@ -137,7 +137,7 @@ class ShowGoalTests(unittest.TestCase):
         self.assertEqual(temp_files, [])
 
     def test_local_mode_skips_remote_goal_lookup(self):
-        output, stderr, calls, temp_files = self.run_show_goal(["Studio-F", "--local"])
+        output, stderr, calls, temp_files = self.run_show_goal(["Studio-manager", "--local"])
 
         self.assertEqual(output, "# local goal\n")
         self.assertEqual(stderr, "")
@@ -149,18 +149,18 @@ class ShowGoalTests(unittest.TestCase):
             report_path = pathlib.Path(temp_dir) / "goal.json"
 
             output, stderr, calls, temp_files = self.run_show_goal(
-                ["Studio-F", "--no-fetch", "--json-report", str(report_path)]
+                ["Studio-manager", "--no-fetch", "--json-report", str(report_path)]
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(output, "# remote goal\n")
-            self.assertIn("branch-local docs/plan/agents/Studio-F.md differs", stderr)
+            self.assertIn("branch-local docs/plan/agents/Studio-manager.md differs", stderr)
             self.assertTrue(report["ok"])
             self.assertEqual("pass", report["status"])
             self.assertEqual("pass", report["agent_goal_status"])
             self.assertEqual("scripts/agents/show-goal.sh", report["generated_by"])
-            self.assertEqual("Studio-F", report["agent"])
-            self.assertEqual("docs/plan/agents/Studio-F.md", report["goal_path"])
+            self.assertEqual("Studio-manager", report["agent"])
+            self.assertEqual("docs/plan/agents/Studio-manager.md", report["goal_path"])
             self.assertEqual("origin/main", report["printed_source"])
             self.assertFalse(report["fetch_attempted"])
             self.assertFalse(report["local_only"])
@@ -183,7 +183,7 @@ class ShowGoalTests(unittest.TestCase):
             report_path = pathlib.Path(temp_dir) / "goal.json"
 
             output, stderr, calls, temp_files = self.run_show_goal(
-                ["--json-report", str(report_path), "Studio-F", "--local"]
+                ["--json-report", str(report_path), "Studio-manager", "--local"]
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -213,7 +213,7 @@ class ShowGoalTests(unittest.TestCase):
             report_path = pathlib.Path(temp_dir) / "goal.json"
 
             self.run_show_goal(
-                ["Studio-F", "--no-fetch", "--json-report", str(report_path)],
+                ["Studio-manager", "--no-fetch", "--json-report", str(report_path)],
                 git_branch="",
                 git_upstream="",
             )
@@ -231,7 +231,7 @@ class ShowGoalTests(unittest.TestCase):
 
     def test_json_report_requires_path(self):
         result = subprocess.run(
-            [str(SCRIPT), "Studio-F", "--json-report"],
+            [str(SCRIPT), "Studio-manager", "--json-report"],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,

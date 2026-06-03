@@ -14,19 +14,15 @@ SCRIPT = ROOT / "scripts" / "agents" / "ensure-agent-labels.sh"
 CANONICAL_AGENT_LABELS = [
     "agent:M1-A",
     "agent:M1-B",
-    "agent:M1-C",
-    "agent:M1-D",
+    "agent:M1-Opus",
     "agent:M4-A",
     "agent:M4-B",
-    "agent:M4-C",
-    "agent:M4-D",
+    "agent:M4-Opus",
     "agent:Studio-A",
     "agent:Studio-B",
     "agent:Studio-C",
-    "agent:Studio-D",
-    "agent:Studio-E",
-    "agent:Studio-F",
-    "agent:Reviewer",
+    "agent:Studio-Opus",
+    "agent:Studio-manager",
 ]
 
 
@@ -111,8 +107,8 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "number": 2,
                     "title": "fix: owned",
                     "isDraft": False,
-                    "labels": [{"name": "agent:Studio-F"}],
-                    "body": "AgentName: Studio-F",
+                    "labels": [{"name": "agent:Studio-manager"}],
+                    "body": "AgentName: Studio-manager",
                     "url": "https://github.com/mohsen1/tsz/pull/2",
                 },
             ]
@@ -140,7 +136,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "fix: missing label",
                     "isDraft": False,
                     "labels": [],
-                    "body": "AgentName: `Studio-F`",
+                    "body": "AgentName: `Studio-manager`",
                     "url": "https://github.com/mohsen1/tsz/pull/3",
                 }
             ]
@@ -155,7 +151,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
             "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
             output,
         )
-        self.assertIn("AgentName=Studio-F", output)
+        self.assertIn("AgentName=Studio-manager", output)
 
     def test_strict_audit_fails_on_actionable_findings(self):
         result = self.run_audit_result(
@@ -165,7 +161,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "fix: missing label",
                     "isDraft": False,
                     "labels": [],
-                    "body": "AgentName: Studio-F",
+                    "body": "AgentName: Studio-manager",
                     "url": "https://github.com/mohsen1/tsz/pull/4",
                 }
             ],
@@ -286,7 +282,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "accepted regression owned",
                     "labels": [
                         {"name": "accepted-regression"},
-                        {"name": "agent:M1-C"},
+                        {"name": "agent:M1-Opus"},
                     ],
                     "url": "https://github.com/mohsen1/tsz/issues/12",
                 },
@@ -344,7 +340,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "title": "fix: missing owner",
                         "isDraft": False,
                         "labels": [],
-                        "body": "AgentName: `Studio-F`",
+                        "body": "AgentName: `Studio-manager`",
                         "url": "https://github.com/mohsen1/tsz/pull/30",
                     },
                     {
@@ -352,7 +348,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "title": "fix: generated owner",
                         "isDraft": False,
                         "labels": [{"name": "agent:dreamy-runner"}],
-                        "body": "AgentName: Studio-F",
+                        "body": "AgentName: Studio-manager",
                         "url": "https://github.com/mohsen1/tsz/pull/31",
                     },
                 ],
@@ -382,7 +378,7 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "number": 30,
                     "title": "fix: missing owner",
                     "url": "https://github.com/mohsen1/tsz/pull/30",
-                    "agent_name": "Studio-F",
+                    "agent_name": "Studio-manager",
                 }
             ],
             report["open_prs_missing_agent_label"],
@@ -408,8 +404,8 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                         "number": 32,
                         "title": "fix: owned",
                         "isDraft": False,
-                        "labels": [{"name": "agent:Studio-F"}],
-                        "body": "AgentName: Studio-F",
+                        "labels": [{"name": "agent:Studio-manager"}],
+                        "body": "AgentName: Studio-manager",
                         "url": "https://github.com/mohsen1/tsz/pull/32",
                     }
                 ],
