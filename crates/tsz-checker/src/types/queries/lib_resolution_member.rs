@@ -35,7 +35,8 @@ use super::lib_resolution_selected::selected_lib_symbol_for_name;
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_binder::SymbolId;
+use std::sync::Arc;
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 
 impl CheckerState<'_> {
     /// Resolve a single plain property `prop_name` of the simple lib interface
@@ -240,6 +241,13 @@ impl CheckerState<'_> {
         {
             return None;
         }
+        if self.type_annotation_is_lib_interface_reference(
+            member_arena,
+            sig.type_annotation,
+            &lib_binders,
+        ) {
+            return None;
+        }
         // Readonly properties carry extra write semantics. Leave those on the
         // full path so their exact behavior is authoritative. Optional plain
         // properties are safe here because property access returns the read
@@ -295,6 +303,40 @@ impl CheckerState<'_> {
             return None;
         }
         Some(member_type)
+    }
+
+    fn type_annotation_is_lib_interface_reference(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+        lib_binders: &[Arc<BinderState>],
+    ) -> bool {
+        let Some(type_ref) = arena
+            .get(type_idx)
+            .and_then(|node| arena.get_type_ref(node))
+        else {
+            return false;
+        };
+        let Some(type_name) = entity_name_text_in_arena(arena, type_ref.type_name) else {
+            return false;
+        };
+        if self.ctx.file_local_type_shadow_for_lib_name(&type_name) {
+            return false;
+        }
+        let sym_id = self.ctx.binder.file_locals.get(&type_name).or_else(|| {
+            self.ctx
+                .binder
+                .get_global_type_with_libs(&type_name, lib_binders)
+        });
+        let Some((sym_id, selected_binder_arc)) =
+            selected_lib_symbol_for_name(&self.ctx, &type_name, sym_id, lib_binders)
+        else {
+            return false;
+        };
+        let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
+        selected_binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::INTERFACE))
     }
 
     fn lib_interface_type_param_symbols(

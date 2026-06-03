@@ -28,11 +28,9 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 #     type-argument cascade guard. Invalid or unsupported intrinsic type args
 #     still report TS1009/TS1099/TS2304/TS2344/TS2558, but no longer cascade into
 #     false React intrinsic-props TS2739 diagnostics.
-#   - importMeta.ts: diagnostic CODES already match [TS2339, TS2364, TS17012].
-#     The only remaining drift is one extra false TS2339 "Property 'appendChild'
-#     does not exist on type 'HTMLElement'" on `document.body.appendChild(...)`,
-#     a lib-interface heritage cycle-drop bug tracked in #12299 (not genuine
-#     oscillation).
+#   - importMeta.ts: fixed by the global-augmentation lazy lib-member fallback.
+#     DOM interface heritage now keeps `document.body.appendChild(new Image())`
+#     aligned with tsc under `es5,dom`.
 #   - jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx: FIXED in
 #     #12261 and removed from the list below. PR #12238 had added a blanket
 #     early-return in check_jsx_attributes_against_props that skipped ALL
@@ -54,5 +52,4 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
-TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
 TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx
