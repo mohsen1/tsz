@@ -1400,26 +1400,8 @@ fn compile_inner(
     perf_log_phase("read_sources", read_sources_start);
 
     if let Some(ref root_dir_path) = root_dir {
-        let canonical_root = canonicalize_or_owned(root_dir_path);
         let root_display_path = root_dir_display.as_ref().unwrap_or(root_dir_path);
-        let mut blame_files: FxHashSet<PathBuf> = root_dir_diagnostic_roots;
-        for root_file in &root_file_paths {
-            if is_declaration_file(root_file) {
-                continue;
-            }
-            let canonical_root_file = canonicalize_or_owned(root_file);
-            if blame_files.contains(&canonical_root_file) {
-                continue;
-            }
-            let Some(deps) = dependencies.get(&canonical_root_file) else {
-                continue;
-            };
-            if deps.iter().any(|dep| {
-                is_declaration_file(dep) && !canonicalize_or_owned(dep).starts_with(&canonical_root)
-            }) {
-                blame_files.insert(canonical_root_file);
-            }
-        }
+        let blame_files: FxHashSet<PathBuf> = root_dir_diagnostic_roots;
         let mut blame_files: Vec<_> = blame_files.into_iter().collect();
         blame_files.sort();
         for file_path in blame_files {

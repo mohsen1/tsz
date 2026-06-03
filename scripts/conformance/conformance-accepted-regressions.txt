@@ -47,7 +47,12 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 #     legitimate TS2741 (and TS2322/excess). Removing it restores parity; the
 #     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
 # intersectionsOfLargeUnions2.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
+# inferentialTypingWithFunctionTypeZip.ts passes in an isolated harness run
+# (PR #12324 local focused filter: 1/1) but REGRESSED in ready-review weighted
+# shard 1/6 on exact head d2027409ac87deb82990e2e449d2f5334f53cc76. The
+# source is an inference-family order/residency sensitivity tracked in #8432.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
 TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts
