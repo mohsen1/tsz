@@ -9,11 +9,23 @@ use super::{TSC_VERSION, help};
 /// Preprocessing never writes to stdout or terminates the process itself.
 /// When a tsc-compatible quirk requires printing and exiting before clap runs
 /// (help, version, `--all`, or a pre-parse rejection), it returns this value so
-/// the binary entrypoint owns the I/O. `message` is the exact text to write to
-/// stdout verbatim (it already carries any trailing newline).
+/// the binary entrypoint owns the I/O. `message` is a single line of text with
+/// no trailing newline — the entrypoint adds it.
 pub(super) struct EarlyExit {
     pub(super) message: String,
     pub(super) code: i32,
+}
+
+impl EarlyExit {
+    /// A success early exit (code 0): help, version, or `--all`.
+    const fn print(message: String) -> Self {
+        Self { message, code: 0 }
+    }
+
+    /// A pre-parse rejection (code 1): TS5023 / TS6369.
+    const fn reject(message: String) -> Self {
+        Self { message, code: 1 }
+    }
 }
 
 /// Outcome of tsc-compatibility argument preprocessing.
@@ -144,8 +156,7 @@ fn canonicalize_long_flags(args: &mut [OsString]) {
 /// Detect the help / `--all` / version pre-parse exits.
 ///
 /// `--all` takes precedence over `--help`, which takes precedence over
-/// version. Returns the matching [`EarlyExit`] (stdout text + code 0), or
-/// `None` when no exit applies. Newlines match the original `println!` form.
+/// version. Returns the matching [`EarlyExit`] (code 0), or `None`.
 fn preparse_exit_directive(args: &[OsString]) -> Option<EarlyExit> {
     let is_build_mode = is_build_mode(args);
     let mut has_help = false;
@@ -169,29 +180,21 @@ fn preparse_exit_directive(args: &[OsString]) -> Option<EarlyExit> {
 
     // --all takes precedence (with or without --help)
     if has_all {
-        return Some(EarlyExit {
-            message: format!(
-                "{}\n",
-                help::colorize_help(&help::render_help_all(TSC_VERSION))
-            ),
-            code: 0,
-        });
+        return Some(EarlyExit::print(help::colorize_help(
+            &help::render_help_all(TSC_VERSION),
+        )));
     }
 
     // --help / -h / -?
     if has_help {
-        return Some(EarlyExit {
-            message: format!("{}\n", help::colorize_help(&help::render_help(TSC_VERSION))),
-            code: 0,
-        });
+        return Some(EarlyExit::print(help::colorize_help(&help::render_help(
+            TSC_VERSION,
+        ))));
     }
 
     // --version / -v / -V
     if has_version {
-        return Some(EarlyExit {
-            message: format!("Version {TSC_VERSION}\n"),
-            code: 0,
-        });
+        return Some(EarlyExit::print(format!("Version {TSC_VERSION}")));
     }
 
     None
@@ -218,10 +221,7 @@ fn preparse_unknown_rejection(args: &[OsString]) -> Option<EarlyExit> {
 }
 
 fn unknown_option_exit(option: &str) -> EarlyExit {
-    EarlyExit {
-        message: format!("error TS5023: Unknown compiler option '{option}'.\n"),
-        code: 1,
-    }
+    EarlyExit::reject(format!("error TS5023: Unknown compiler option '{option}'."))
 }
 
 fn is_build_mode(args: &[OsString]) -> bool {
@@ -688,8 +688,6 @@ pub(super) fn split_response_line(line: &str) -> Vec<String> {
 ///   - `-b` (short form) not first → TS5023 ("unknown compiler option")
 ///
 /// Returns an [`EarlyExit`] (code 1) if either form appears but is not first.
-/// The message already carries its trailing newline (matching the original
-/// `print!` form used by the entrypoint).
 fn build_position_rejection(args: &[OsString]) -> Option<EarlyExit> {
     // Skip program name (index 0)
     let mut first_non_program = true;
@@ -698,21 +696,18 @@ fn build_position_rejection(args: &[OsString]) -> Option<EarlyExit> {
         let s = arg.to_string_lossy();
         if s == "--build" {
             if !first_non_program {
-                return Some(EarlyExit {
-                    message:
-                        "error TS6369: Option '--build' must be the first command line argument.\n"
-                            .to_string(),
-                    code: 1,
-                });
+                return Some(EarlyExit::reject(
+                    "error TS6369: Option '--build' must be the first command line argument."
+                        .to_string(),
+                ));
             }
             return None;
         }
         if s == "-b" {
             if !first_non_program {
-                return Some(EarlyExit {
-                    message: "error TS5023: Unknown compiler option '-b'.\n".to_string(),
-                    code: 1,
-                });
+                return Some(EarlyExit::reject(
+                    "error TS5023: Unknown compiler option '-b'.".to_string(),
+                ));
             }
             return None;
         }
@@ -726,8 +721,12 @@ fn build_position_rejection(args: &[OsString]) -> Option<EarlyExit> {
 mod tests {
     use super::*;
 
-    fn preprocess_strs(args: &[&str]) -> Vec<String> {
+    fn run(args: &[&str]) -> PreprocessOutcome {
         preprocess_args(args.iter().map(OsString::from).collect())
+    }
+
+    fn preprocess_strs(args: &[&str]) -> Vec<String> {
+        run(args)
             .into_continue()
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -799,7 +798,7 @@ mod tests {
     /// whole point of this refactor: these paths used to call `process::exit`
     /// and so could not be asserted at all.
     fn early_exit(args: &[&str]) -> EarlyExit {
-        match preprocess_args(args.iter().map(OsString::from).collect()) {
+        match run(args) {
             PreprocessOutcome::EarlyExit(exit) => exit,
             PreprocessOutcome::Continue(args) => {
                 panic!("expected EarlyExit, got Continue({args:?})")
@@ -808,15 +807,12 @@ mod tests {
     }
 
     fn is_continue(args: &[&str]) -> bool {
-        matches!(
-            preprocess_args(args.iter().map(OsString::from).collect()),
-            PreprocessOutcome::Continue(_)
-        )
+        matches!(run(args), PreprocessOutcome::Continue(_))
     }
 
     #[test]
     fn version_flags_exit_zero_with_version_banner() {
-        let expected = format!("Version {TSC_VERSION}\n");
+        let expected = format!("Version {TSC_VERSION}");
         for input in [
             &["tsz", "--version"][..],
             &["tsz", "-V"][..],
@@ -839,7 +835,6 @@ mod tests {
         ] {
             let exit = early_exit(input);
             assert_eq!(exit.code, 0, "{input:?}");
-            assert!(exit.message.ends_with('\n'), "{input:?}");
             assert!(!exit.message.trim().is_empty(), "{input:?}");
         }
     }
@@ -871,7 +866,7 @@ mod tests {
             assert_eq!(exit.code, 1, "{opt}");
             assert_eq!(
                 exit.message,
-                format!("error TS5023: Unknown compiler option '{opt}'.\n"),
+                format!("error TS5023: Unknown compiler option '{opt}'."),
             );
         }
     }
@@ -884,7 +879,7 @@ mod tests {
         assert_eq!(exit.code, 1);
         assert_eq!(
             exit.message,
-            "error TS5023: Unknown compiler option '--noEmit=true'.\n"
+            "error TS5023: Unknown compiler option '--noEmit=true'."
         );
     }
 
@@ -895,15 +890,12 @@ mod tests {
         assert_eq!(long.code, 1);
         assert_eq!(
             long.message,
-            "error TS6369: Option '--build' must be the first command line argument.\n"
+            "error TS6369: Option '--build' must be the first command line argument."
         );
 
         let short = early_exit(&["tsz", "file.ts", "-b"]);
         assert_eq!(short.code, 1);
-        assert_eq!(
-            short.message,
-            "error TS5023: Unknown compiler option '-b'.\n"
-        );
+        assert_eq!(short.message, "error TS5023: Unknown compiler option '-b'.");
 
         assert!(is_continue(&["tsz", "--build", "file.ts"]));
     }

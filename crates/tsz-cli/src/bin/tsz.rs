@@ -45,11 +45,11 @@ fn main() -> Result<()> {
 
     // Preprocessing is side-effect free: it either hands back normalized args
     // or an early-exit directive (help/version/--all/TS5023/TS6369) whose I/O
-    // we own here. The directive message already carries its trailing newline.
+    // we own here. The entrypoint adds the trailing newline.
     let preprocessed = match preprocess_args(std::env::args_os().collect()) {
         PreprocessOutcome::Continue(args) => args,
         PreprocessOutcome::EarlyExit(EarlyExit { message, code }) => {
-            print!("{message}");
+            println!("{message}");
             std::process::exit(code);
         }
     };
