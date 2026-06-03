@@ -405,6 +405,47 @@ impl<'a> DeclarationEmitter<'a> {
         if found_candidate { Some(None) } else { None }
     }
 
+    /// When the inferred return type is a bare type parameter whose substitution is a
+    /// primitive literal AND a conflicting object-property inference site is present,
+    /// clears the pre-inferred literal from `substitutions` so the caller's fallback
+    /// loop can substitute the constraint instead (e.g. `"three"` → `string`).
+    pub(in crate::declaration_emitter) fn clear_conflicting_literal_substitution(
+        &self,
+        source_arena: &NodeArena,
+        decl_idx: NodeIndex,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_text: &str,
+        type_param_names: &[String],
+        substitutions: &mut Vec<(String, String)>,
+    ) {
+        let Some(return_name) = type_param_names
+            .iter()
+            .find(|n| type_text.trim() == n.as_str())
+        else {
+            return;
+        };
+        if !substitutions
+            .iter()
+            .any(|(n, v)| n == return_name && Self::is_literal_type_text_for_const_call(v))
+        {
+            return;
+        }
+        let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
+            return;
+        };
+        if matches!(
+            self.literal_direct_type_parameter_argument_substitution(
+                source_arena,
+                func,
+                call,
+                return_name,
+            ),
+            Some(None)
+        ) {
+            substitutions.retain(|(n, _)| n != return_name);
+        }
+    }
+
     pub(in crate::declaration_emitter) fn simple_type_parameter_argument_substitution(
         &self,
         source_arena: &NodeArena,
