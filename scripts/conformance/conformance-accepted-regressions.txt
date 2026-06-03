@@ -51,6 +51,11 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # 26902607247): all six conformance shards passed, aggregate strictness was
 # 12570/12585 observed vs 12582/12585 expected with this one newly unlisted
 # inference-family drift. Re-accepted below and tracked by #8432.
+# intersectionsOfLargeUnions2.ts and inferentialTypingWithFunctionTypeZip.ts
+# resolved again on PR #11890 exact head 8403756928 after rebasing onto
+# origin/main 85a6e79034 (CI run 26904672750): all six conformance shards
+# passed, aggregate strictness was 12570/12585 observed vs 12582/12585
+# expected with two newly unlisted JSX-family drift fixtures accepted here.
 # intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
 # logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
 # exactly 2 TS2536). The aggregate conformance run with real lib types
@@ -66,11 +71,11 @@ TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosing
 # (CI run 26900032045): all six conformance shards passed, aggregate strictness
 # was 12571/12585 observed vs 12582/12585 expected. These remaining unlisted
 # fixtures are same-code/fingerprint drift in mapped, conditional, inference,
-# variance, and recursive relation-policy families tracked by #8432; keep them
-# visible here until the owning parity fixes remove them.
+# JSX, variance, and recursive relation-policy families tracked by #8432; keep
+# them visible here until the owning parity fixes remove them.
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
-TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
