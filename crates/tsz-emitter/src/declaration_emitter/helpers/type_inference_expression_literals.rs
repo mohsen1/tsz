@@ -686,8 +686,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(acc) = self.arena.get_accessor(n) {
                         if let Some(name) = self.object_literal_member_name_text(acc.name) {
                             setter_names.insert(name);
-                        } else if let Some(name_node) = self.arena.get(acc.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        } else if self.computed_property_name_is_symbol_access(acc.name)
+                            && let Some(name_node) = self.arena.get(acc.name)
                             && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
                         {
                             computed_setter_source_texts.insert(src.trim().to_string());
@@ -697,8 +697,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(acc) = self.arena.get_accessor(n) {
                         if let Some(name) = self.object_literal_member_name_text(acc.name) {
                             getter_names.insert(name);
-                        } else if let Some(name_node) = self.arena.get(acc.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        } else if self.computed_property_name_is_symbol_access(acc.name)
+                            && let Some(name_node) = self.arena.get(acc.name)
                             && let Some(src) = self.get_source_slice(name_node.pos, name_node.end)
                         {
                             computed_getter_source_texts.insert(src.trim().to_string());
@@ -722,7 +722,11 @@ impl<'a> DeclarationEmitter<'a> {
             // via infer_property_name_text for `[Symbol.isConcatSpreadable]`),
             // use it directly. Only fall through to the non-nameable index-
             // signature path when the name cannot be reproduced at all.
-            let name_text = self.object_literal_member_name_text(name_idx);
+            let name_text = self.object_literal_member_name_text(name_idx).or_else(|| {
+                (member_node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                    .then(|| self.computed_identifier_or_access_name_text(name_idx))
+                    .flatten()
+            });
 
             // A computed key whose expression cannot be reproduced as a literal
             // property name (e.g. `[this.a]`) is not a named member in tsc's
@@ -1549,7 +1553,10 @@ impl<'a> DeclarationEmitter<'a> {
             || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
     }
 
-    fn computed_property_name_is_symbol_access(&self, name_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn computed_property_name_is_symbol_access(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
         let Some(name_node) = self.arena.get(name_idx) else {
             return false;
         };
