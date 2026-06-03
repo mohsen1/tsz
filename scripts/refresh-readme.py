@@ -93,16 +93,67 @@ def load_suite_counts(suite, explicit_path, default_paths):
     return None, None
 
 
-def load_conformance(args):
-    return load_suite_counts(
-        "conformance",
-        args.conformance_metrics_json,
-        [
-            ROOT / "ci-metrics" / "conformance.json",
-            ROOT / "scripts" / "conformance" / "conformance-snapshot.json",
-            ROOT / "scripts" / "conformance" / "conformance-detail.json",
-        ],
+def conformance_summary_from_readme(text):
+    section = text.split("<!-- CONFORMANCE_START -->", 1)
+    if len(section) != 2:
+        return None
+    section = section[1].split("<!-- CONFORMANCE_END -->", 1)[0]
+    match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", section)
+    if not match:
+        return None
+    return {
+        "passed": int(match.group(1).replace(",", "")),
+        "total": int(match.group(2).replace(",", "")),
+    }
+
+
+def readme_suite_summary_is_ahead(candidate, readme_summary):
+    if readme_summary is None:
+        return False
+    if readme_summary.get("total", 0) > candidate.get("total", 0):
+        return True
+    return (
+        readme_summary.get("total") == candidate.get("total")
+        and readme_summary.get("passed", 0) >= candidate.get("passed", 0)
     )
+
+
+def prefer_readme_suite_summary(candidate, readme_summary):
+    if readme_suite_summary_is_ahead(candidate, readme_summary):
+        return readme_summary
+    return candidate
+
+
+def load_conformance(args, readme_text):
+    readme_summary = conformance_summary_from_readme(readme_text)
+    explicit_path = args.conformance_metrics_json
+    default_paths = [
+        ROOT / "ci-metrics" / "conformance.json",
+        ROOT / "scripts" / "conformance" / "conformance-snapshot.json",
+        ROOT / "scripts" / "conformance" / "conformance-detail.json",
+    ]
+    for p in suite_metric_candidates(explicit_path, default_paths):
+        if not p.exists():
+            continue
+        summary = normalize_suite_summary(load_metric_json(p), "conformance")
+        if summary is None:
+            continue
+        passed = summary.get("passed")
+        total = summary.get("total")
+        if passed is None or total is None:
+            continue
+        if explicit_path is None and p in default_paths[1:]:
+            candidate = {"passed": passed, "total": total}
+            if readme_suite_summary_is_ahead(candidate, readme_summary):
+                print(
+                    "warning: preserving README conformance metrics because "
+                    f"{p.relative_to(ROOT)} is behind the existing README conformance block",
+                    file=sys.stderr,
+                )
+            selected = prefer_readme_suite_summary(candidate, readme_summary)
+            return selected["passed"], selected["total"]
+        return passed, total
+    return None, None
 
 
 def normalize_emit_summary(data):
@@ -366,7 +417,7 @@ def main():
         )
 
     # Conformance
-    passed, total = load_conformance(args)
+    passed, total = load_conformance(args, original)
     if passed is not None:
         bar = progress_bar(passed, total)
         block = f"```\nProgress: {bar} ({passed:,}/{total:,} tests)\n```"
