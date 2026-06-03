@@ -153,6 +153,16 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_require_property_import_alias_for_value_expression_inner(expr_idx, 0)
     }
 
+    /// Like [`js_require_property_import_alias_for_value_expression`] but skips
+    /// the native-ESM guard. Used for namespace members where a `require()`
+    /// property access can appear alongside `export {}` in a mixed JS file.
+    pub(in crate::declaration_emitter) fn js_require_property_import_alias_for_value_expression_unchecked(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, String, String)> {
+        self.js_require_property_import_alias_for_value_expression_inner(expr_idx, 0)
+    }
+
     fn current_source_file_has_native_esm_syntax(&self) -> bool {
         self.current_source_file_idx
             .and_then(|root_idx| self.arena.get(root_idx))

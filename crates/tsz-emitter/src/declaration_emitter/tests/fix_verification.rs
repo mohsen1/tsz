@@ -1613,6 +1613,202 @@ const result = getInterfaceFromString({ type: "two" }, "three");
 }
 
 #[test]
+fn fix_generic_call_callback_alias_does_not_trigger_conflicting_site() {
+    // `Callback<T>` is a TypeReference alias — its type annotation text does not
+    // contain `=>`, but it is NOT a direct object-property inference site either.
+    // The structural walk must recognise this and preserve the literal from `a`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Callback<T> = (x: T) => void;
+declare function f<T extends string>(a: T, b: Callback<T>): T;
+
+const result = f("hello", (_x) => {});
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const result = "hello";"#),
+        "expected callback-alias parameter not to trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_method_signature_does_not_trigger_conflicting_site() {
+    // `{ cb(x: T): void }` is a MethodSignature member — indirect inference, not a
+    // direct object-property site.  The structural walk must skip it and preserve
+    // the literal from `a`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, b: { cb(x: T): void }): T;
+
+const result = f("hello", { cb(_x: string) {} });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const result = "hello";"#),
+        "expected method-signature callback not to trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_object_property_guard_requires_concrete_argument() {
+    // The conflicting-site guard must be call-site-aware: an optional
+    // `options?: { type?: T }` parameter that is omitted, receives `{}`,
+    // or receives `undefined` supplies no concrete object-property inference
+    // for T.  The direct literal from `a: T` should be preserved in all three.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const onlyA    = f("hello");
+const emptyObj = f("hello", {});
+const undef    = f("hello", undefined);
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const onlyA = "hello";"#),
+        "omitted optional parameter must not trigger conflicting-site guard: {output}"
+    );
+    assert!(
+        output.contains(r#"declare const emptyObj = "hello";"#),
+        "empty-object argument must not trigger conflicting-site guard: {output}"
+    );
+    assert!(
+        output.contains(r#"declare const undef = "hello";"#),
+        "undefined argument must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_object_property_guard_same_literal_no_conflict() {
+    // When both `a: T` and `options.type` contribute the SAME literal, tsc has
+    // no disagreement between inference sites and keeps the literal.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const same = f("hello", { type: "hello" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const same = "hello";"#),
+        "same-literal object-property value must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_object_property_guard_non_matching_property_no_conflict() {
+    // `{ other: "world" }` has no property named `type`, so it supplies no
+    // inference for T through the `options: { type?: T }` path — not a conflict.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { type?: T }): T;
+
+const unrelated = f("hello", { other: "world" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const unrelated = "hello";"#),
+        "object with non-matching property must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_quoted_key_conflict_widens_to_constraint() {
+    // A quoted property key `{ "type"?: T }` is the same property as `type?: T`
+    // for inference purposes.  Conflicting literals across the two sites must
+    // still widen to the constraint.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function f<T extends Kind>(options: { "type"?: T }, fallback: T): T;
+
+const result = f({ "type": "two" }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "quoted-key annotation with conflicting literals must widen to constraint: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "two";"#)
+            && !output.contains(r#"declare const result: "three";"#),
+        "quoted-key conflict must not narrow to either literal: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_quoted_key_same_literal_no_conflict() {
+    // Same literal on both the direct `a: T` site and the quoted-key property
+    // site — no conflict, literal is preserved.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends string>(a: T, options?: { "type"?: T }): T;
+
+const same = f("hello", { "type": "hello" });
+"#,
+    );
+
+    assert!(
+        output.contains(r#"declare const same = "hello";"#),
+        "same-literal quoted-key property must not trigger conflicting-site guard: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_non_literal_property_value_widens_to_constraint() {
+    // `{ type: two }` carries an identifier value — the emitter cannot resolve
+    // it to a primitive literal.  tsc widens to the constraint rather than
+    // committing to either inference site.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const two = "two";
+declare function f<T extends string>(options: { type?: T }, fallback: T): T;
+
+const result = f({ type: two }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "non-literal property value (identifier) must trigger conservative conflict: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "three";"#),
+        "must not narrow to the fallback literal when property value is opaque: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_as_const_object_arg_widens_to_constraint() {
+    // `options` is an identifier bound to an `as const` object — it is not an
+    // inline object literal, so its properties are opaque to the emitter.
+    // tsc widens to the constraint when the two sites cannot be compared.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const options = { type: "two" } as const;
+declare function f<T extends string>(options: { type?: T }, fallback: T): T;
+
+const result = f(options, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "as-const identifier argument must trigger conservative conflict: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "three";"#),
+        "must not narrow to the fallback literal when options arg is an opaque reference: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
     let output = emit_dts_with_usage_analysis(
         r#"

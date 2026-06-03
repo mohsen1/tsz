@@ -378,6 +378,22 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         return_type_id: tsz_solver::types::TypeId,
     ) -> String {
+        // When the solver resolved the return type to a callable object
+        // (call signatures + own visible properties), the solver type is richer
+        // than what the AST-level `function_body_declared_return_identifier_type_text`
+        // can infer from source. Prefer printing the solver type directly.
+        if let Some(interner) = self.type_interner
+            && tsz_solver::type_queries::is_invokable_type(interner, return_type_id)
+            && self.type_has_visible_declaration_members(return_type_id)
+        {
+            let text = self.print_type_id_for_inferred_declaration(return_type_id);
+            if !text.is_empty() && text != "any" {
+                return self
+                    .rewrite_current_source_named_import_type_text(&text)
+                    .unwrap_or(text);
+            }
+        }
+
         if let Some(text) = self.function_body_declared_return_identifier_type_text(func) {
             return self
                 .rewrite_current_source_named_import_type_text(&text)

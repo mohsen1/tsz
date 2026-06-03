@@ -1317,7 +1317,8 @@ impl<'a> DeclarationEmitter<'a> {
 
             let &type_idx = heritage.types.nodes.first()?;
             if self.is_entity_name_heritage(type_idx)
-                && !self.js_entity_extends_needs_synthetic_alias(type_idx)
+                && (!self.js_entity_extends_needs_synthetic_alias(type_idx)
+                    || self.heritage_type_is_bare_array(type_idx))
             {
                 return None;
             }

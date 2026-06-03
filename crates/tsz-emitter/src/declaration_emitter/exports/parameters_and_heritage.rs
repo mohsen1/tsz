@@ -1095,7 +1095,10 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|text| text.trim() == "null")
     }
 
-    fn heritage_type_is_bare_array(&self, type_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn heritage_type_is_bare_array(
+        &self,
+        type_idx: NodeIndex,
+    ) -> bool {
         let Some(type_node) = self.arena.get(type_idx) else {
             return false;
         };

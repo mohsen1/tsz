@@ -1715,6 +1715,14 @@ impl<'a> DeclarationEmitter<'a> {
                             &type_param_constraints,
                         ),
                     );
+                    self.clear_conflicting_literal_substitution(
+                        source_arena,
+                        decl_idx,
+                        call,
+                        &type_text,
+                        &type_param_names,
+                        &mut type_param_substitutions,
+                    );
                 }
                 if Self::type_text_contains_mapped_type_literal(&type_text) {
                     self.preserve_literal_mapped_return_type_substitutions(

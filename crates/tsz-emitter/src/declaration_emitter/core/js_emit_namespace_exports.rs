@@ -1094,6 +1094,12 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(assigned_initializer)
                 .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
             {
+                // Prefer a solver-provided type over AST-level constructor inference.
+                if let Some(type_id) = self.get_node_type_or_names(&[assigned_initializer])
+                    && type_id != tsz_solver::types::TypeId::ANY
+                {
+                    return Some(self.print_type_id(type_id));
+                }
                 return self
                     .class_expression_constructor_type_text_from_ast_with_recursive_reference(
                         assigned_initializer,
