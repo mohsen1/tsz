@@ -1078,6 +1078,28 @@ impl TypeInterner {
         self.intersect_types_raw(vec![a, b])
     }
 
+    /// Write type for a property produced by intersecting two object members.
+    ///
+    /// A writable merged property keeps `write == read` (`read_type`), so it is
+    /// never mistaken for a split accessor — otherwise `has_split_accessor()`
+    /// would fire a spurious contravariant write check (issue #11323). Only a
+    /// fully-readonly property intersects its stored setter types. Shared by all
+    /// object/callable property-merge sites to keep them consistent.
+    #[inline]
+    pub fn merged_property_write_type(
+        &self,
+        readonly: bool,
+        read_type: TypeId,
+        existing_write: TypeId,
+        prop_write: TypeId,
+    ) -> TypeId {
+        if readonly {
+            self.intersect_types_raw2(existing_write, prop_write)
+        } else {
+            read_type
+        }
+    }
+
     pub(super) fn intersection_from_iter<I>(&self, members: I) -> TypeId
     where
         I: IntoIterator<Item = TypeId>,

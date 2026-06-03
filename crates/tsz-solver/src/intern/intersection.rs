@@ -628,13 +628,12 @@ impl TypeInterner {
                             existing.optional = existing.optional && prop.optional;
                             // Intersection: readonly only if ALL are readonly (writable wins)
                             existing.readonly = existing.readonly && prop.readonly;
-                            // Write type: if writable, use read type to avoid NONE sentinels
-                            if !existing.readonly {
-                                existing.write_type = existing.type_id;
-                            } else {
-                                existing.write_type =
-                                    self.intersect_types_raw2(existing.write_type, prop.write_type);
-                            }
+                            existing.write_type = self.merged_property_write_type(
+                                existing.readonly,
+                                existing.type_id,
+                                existing.write_type,
+                                prop.write_type,
+                            );
                         } else {
                             properties.push(prop.clone());
                         }
@@ -728,6 +727,13 @@ impl TypeInterner {
                 // Check if property already exists using HashMap for O(1) lookup
                 if let Some(&idx) = prop_index.get(&prop.name) {
                     let existing = &mut merged_props[idx];
+                    // Capture whether each member is a *genuine* split accessor
+                    // (write type diverges from read type) before the read-type
+                    // merge below overwrites `existing.type_id`.
+                    let existing_is_accessor = existing.write_type != TypeId::NONE
+                        && existing.write_type != existing.type_id;
+                    let prop_is_accessor =
+                        prop.write_type != TypeId::NONE && prop.write_type != prop.type_id;
                     // Property exists - intersect the types for stricter checking
                     // In TypeScript, if same property has different types, use intersection
                     // Use raw intersection to avoid infinite recursion.
@@ -758,21 +764,31 @@ impl TypeInterner {
                     // { readonly a: number } & { a: number } = { a: number } (writable)
                     // This matches tsc: if any member says writable, the intersection is writable
                     existing.readonly = existing.readonly && prop.readonly;
-                    // Write type: handle readonly vs writable merging and divergent accessors.
-                    // - NONE sentinel means "readonly, no setter". Skip it when merging.
-                    // - If both have real write_types, intersect them for divergent accessor support.
-                    // - Use normalizing `intersection2` to distribute over unions and reduce subtypes.
-                    if existing.write_type != prop.write_type {
-                        if prop.write_type == TypeId::NONE {
-                            // prop is readonly, keep existing.write_type unchanged
-                        } else if existing.write_type == TypeId::NONE {
-                            // existing was readonly, use prop's write_type
-                            existing.write_type = prop.write_type;
-                        } else {
-                            // Both have real write_types, intersect them
-                            existing.write_type =
-                                self.intersection2(existing.write_type, prop.write_type);
+                    // Write type. A *genuine* split accessor (a member whose
+                    // setter type diverges from its getter type) must preserve
+                    // its merged setter type so the contravariant write check
+                    // still applies (`divergentAccessorsTypes*`). A plain data
+                    // property must instead keep `write == read`: deriving it
+                    // from the normalizing `intersection2` while the read type is
+                    // the raw intersection would make it look like a split
+                    // accessor and fire a spurious contravariant check (#11323).
+                    if existing_is_accessor || prop_is_accessor {
+                        if existing.write_type != prop.write_type {
+                            if prop.write_type == TypeId::NONE {
+                                // prop is readonly, keep existing.write_type unchanged
+                            } else if existing.write_type == TypeId::NONE {
+                                // existing was readonly, use prop's write_type
+                                existing.write_type = prop.write_type;
+                            } else {
+                                existing.write_type =
+                                    self.intersection2(existing.write_type, prop.write_type);
+                            }
                         }
+                    } else if existing.readonly {
+                        existing.write_type =
+                            self.intersect_types_raw2(existing.write_type, prop.write_type);
+                    } else {
+                        existing.write_type = existing.type_id;
                     }
                     // Private remains inaccessible, all-protected remains protected,
                     // and any public constituent makes the merged intersection

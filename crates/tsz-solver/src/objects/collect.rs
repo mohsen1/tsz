@@ -513,15 +513,14 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // TS Rule: Readonly only if ALL are readonly (writable wins)
                 // { readonly a: number } & { a: number } = { a: number }
                 existing.readonly = existing.readonly && prop.readonly;
-                // Write type: if writable, use read type to avoid NONE sentinels
-                // from readonly members (NONE & number = "error & number").
-                if !existing.readonly {
-                    existing.write_type = existing.type_id;
+                // Write type tracks read type for writable properties; readonly
+                // members intersect their setter types (see issue #11323).
+                existing.write_type = if existing.readonly {
+                    self.interner
+                        .intersect_types_raw2(existing.write_type, prop.write_type)
                 } else {
-                    existing.write_type = self
-                        .interner
-                        .intersect_types_raw2(existing.write_type, prop.write_type);
-                }
+                    existing.type_id
+                };
                 // Merge visibility: use the more restrictive one (private > protected > public)
                 existing.visibility = merge_visibility(existing.visibility, prop.visibility);
                 // is_method: if one is a method, treat as property (more general)

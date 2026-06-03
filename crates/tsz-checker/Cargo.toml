@@ -239,6 +239,10 @@ name = "recursive_intersection_assignability_tests"
 path = "tests/recursive_intersection_assignability_tests.rs"
 
 [[test]]
+name = "intersection_merged_property_write_type_tests"
+path = "tests/intersection_merged_property_write_type_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
