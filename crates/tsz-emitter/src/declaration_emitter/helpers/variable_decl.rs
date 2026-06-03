@@ -489,6 +489,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 let type_text =
                     self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+                let type_text = self
+                    .rewrite_current_source_named_import_type_text(&type_text)
+                    .unwrap_or(type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -501,6 +504,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 let type_text =
                     self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+                let type_text = self
+                    .rewrite_current_source_named_import_type_text(&type_text)
+                    .unwrap_or(type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) = self.json_import_reference_type_text(initializer)

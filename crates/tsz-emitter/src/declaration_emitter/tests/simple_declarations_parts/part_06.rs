@@ -21,13 +21,13 @@ export class Foo {
     // return type's members sit at two levels (8 spaces) and the closing brace
     // at one level (4 spaces).
     assert!(
-        output.contains("    }): {\n        b: any;\n    };"),
+        output.contains("    }): {\n        b: number;\n    };"),
         "Expected inferred method object return type to nest one level deeper than the method: {output}"
     );
     // The bug emitted members at the base indent (4 spaces) with a column-0
     // closing brace; ensure that broken shape is gone.
     assert!(
-        !output.contains("    }): {\n    b: any;\n};"),
+        !output.contains("    }): {\n    b: number;\n};"),
         "Did not expect the inferred method object return type to ignore the member indent level: {output}"
     );
 }
@@ -50,7 +50,7 @@ export namespace Outer {
 
     // namespace (1) -> class (2) -> method members (3 -> 12 spaces), closing (2 -> 8 spaces).
     assert!(
-        output.contains("        }): {\n            size: any;\n        };"),
+        output.contains("        }): {\n            size: number;\n        };"),
         "Expected namespaced method object return type to track the namespace+class indent depth: {output}"
     );
 }
@@ -72,7 +72,7 @@ export class Box {
     // the nested object's own members sit at level 3 (12 spaces) with its
     // closing brace back at level 2 (8 spaces).
     assert!(
-        output.contains("        meta: {\n            tag: any;\n        };"),
+        output.contains("        meta: {\n            tag: number;\n        };"),
         "Expected nested inferred object members to indent recursively relative to the method: {output}"
     );
 }
@@ -91,11 +91,11 @@ export function make(x: { a: number }) {
     );
 
     assert!(
-        output.contains("): {\n    b: any;\n};"),
+        output.contains("): {\n    b: number;\n};"),
         "Expected a top-level function inferred object return type to keep base indentation: {output}"
     );
     assert!(
-        !output.contains("): {\n        b: any;\n    };"),
+        !output.contains("): {\n        b: number;\n    };"),
         "Did not expect a top-level function return type to be indented as a class member: {output}"
     );
 }
