@@ -430,6 +430,9 @@ mod mapped_comprehensive_tests;
 #[path = "../tests/mapped_empty_keyspace_subtype_tests.rs"]
 mod mapped_empty_keyspace_subtype_tests;
 #[cfg(test)]
+#[path = "../tests/mapped_index_signature_modifier_tests.rs"]
+mod mapped_index_signature_modifier_tests;
+#[cfg(test)]
 #[path = "../tests/matching_tests.rs"]
 mod matching_tests;
 #[cfg(test)]
