@@ -5,6 +5,7 @@ use crate::query_boundaries::assignability::{
 };
 use crate::query_boundaries::common as assignability_diagnostic_common;
 use crate::query_boundaries::common::type_param_info;
+use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -46,6 +47,17 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &self.ctx,
             &candidates,
+        )
+    }
+
+    const fn should_preserve_missing_property_diagnostic(
+        &self,
+        outcome: &crate::query_boundaries::assignability::RelationOutcome,
+    ) -> bool {
+        matches!(
+            outcome.failure,
+            Some(RelationFailure::MissingProperty { .. })
+                | Some(RelationFailure::MissingProperties { .. })
         )
     }
 
@@ -692,7 +704,12 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        if self.target_prefers_outer_assignment_diagnostic(target) {
+        if self.target_prefers_outer_assignment_diagnostic(target)
+            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && self
+                .missing_required_properties_from_index_signature_source(source, target)
+                .is_none()
+        {
             self.error_type_not_assignable_at_with_display_types(source, target, diag_idx);
         } else {
             self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
@@ -933,7 +950,12 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        if self.target_prefers_outer_assignment_diagnostic(target) {
+        if self.target_prefers_outer_assignment_diagnostic(target)
+            && !self.should_preserve_missing_property_diagnostic(&outcome)
+            && self
+                .missing_required_properties_from_index_signature_source(source, target)
+                .is_none()
+        {
             self.error_type_not_assignable_at_with_display_types(source, target, diag_idx);
         } else {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);

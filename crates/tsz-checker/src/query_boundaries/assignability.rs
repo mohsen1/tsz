@@ -137,6 +137,28 @@ pub(crate) fn target_prefers_outer_assignment_diagnostic<R: TypeResolver>(
     candidates: &[TypeId],
 ) -> bool {
     let type_db = db.as_type_database();
+    let expanded = alias_application_surface_candidates(db, resolver, candidates);
+
+    expanded.into_iter().any(|candidate| {
+        candidate != TypeId::ERROR
+            && candidate != TypeId::ANY
+            && (super::common::contains_generic_indexed_access_surface(type_db, candidate)
+                || super::common::is_generic_mapped_type(type_db, candidate)
+                || super::common::is_generic_mapped_application(db, resolver, candidate)
+                || (super::common::contains_conditional_type(type_db, candidate)
+                    && super::common::contains_type_parameters(type_db, candidate))
+                || super::common::is_generic_application_with_type_params(type_db, candidate))
+    })
+}
+
+/// Expand checker-facing type surfaces through display aliases and instantiated
+/// alias applications while keeping type-shape details behind this boundary.
+pub(crate) fn alias_application_surface_candidates<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidates: &[TypeId],
+) -> Vec<TypeId> {
+    let type_db = db.as_type_database();
     let mut expanded = candidates.to_vec();
 
     for candidate in candidates.iter().copied() {
@@ -153,16 +175,7 @@ pub(crate) fn target_prefers_outer_assignment_diagnostic<R: TypeResolver>(
         }
     }
 
-    expanded.into_iter().any(|candidate| {
-        candidate != TypeId::ERROR
-            && candidate != TypeId::ANY
-            && (super::common::contains_generic_indexed_access_surface(type_db, candidate)
-                || super::common::is_generic_mapped_type(type_db, candidate)
-                || super::common::is_generic_mapped_application(db, resolver, candidate)
-                || (super::common::contains_conditional_type(type_db, candidate)
-                    && super::common::contains_type_parameters(type_db, candidate))
-                || super::common::is_generic_application_with_type_params(type_db, candidate))
-    })
+    expanded
 }
 
 /// Return an instantiated homomorphic mapped target that projects over `source`.

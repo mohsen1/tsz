@@ -280,8 +280,40 @@ impl<'a> CheckerState<'a> {
             && !target_is_intersection_for_mismatch
             && let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
-            && missing_props.len() > 1
         {
+            if missing_props.len() == 1 {
+                let prop_name = self.ctx.types.resolve_atom_ref(missing_props[0]);
+                if prop_name.starts_with("__js_ctor_brand_")
+                    || tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
+                {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+                let tgt_str = self
+                    .checked_js_global_element_access_fallback_target_display(idx)
+                    .unwrap_or_else(|| target_str.clone());
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop_name, &source_str, &tgt_str],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                );
+            }
+
             // For TS2739 missing-properties source display, when the source is
             // a non-generic type alias whose body is a generic Application
             // (`type B = A<X1, X2, ...>`), tsc unfolds one level to display
