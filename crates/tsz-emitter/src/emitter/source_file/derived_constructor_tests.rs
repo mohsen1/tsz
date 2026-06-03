@@ -117,6 +117,23 @@ fn super_arg_this_without_fields_captures_this_es5_renamed() {
 }
 
 #[test]
+fn extends_null_constructor_without_super_uses_captured_this_recovery() {
+    let source =
+        "class NilDerived extends null {\n    constructor() {\n        this.value = 1;\n    }\n}\n";
+
+    let es5_output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        es5_output.contains("function NilDerived() {\n        _this.value = 1;\n    }"),
+        "`extends null` constructors without `super()` should preserve tsc's captured-this recovery shape.\nOutput:\n{es5_output}"
+    );
+    assert!(
+        !es5_output.contains("\n        this.value = 1;"),
+        "`extends null` no-super recovery should not leave constructor `this` unsubstituted.\nOutput:\n{es5_output}"
+    );
+}
+
+#[test]
 fn super_arg_without_this_keeps_inline_tail_return_es5() {
     // Negative / fallback case: a super-call argument that does NOT reference
     // `this` keeps the inline tail-super-return form, proving the capture is

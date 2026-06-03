@@ -960,7 +960,19 @@ impl<'a> AstToIr<'a> {
             if self.parenthesized_wraps_erasable_simple_primary(paren.expression) {
                 return self.convert_expression(paren.expression);
             }
-            IRNode::Parenthesized(Box::new(self.convert_expression(paren.expression)))
+            let expression =
+                IRNode::Parenthesized(Box::new(self.convert_expression(paren.expression)));
+            if let Some(comment) = self
+                .leading_block_comment_before_node(node)
+                .or_else(|| self.leading_block_comments_before_expression(node, paren.expression))
+            {
+                IRNode::LeadingCommentExpr {
+                    comment: comment.into(),
+                    expression: Box::new(expression),
+                }
+            } else {
+                expression
+            }
         } else {
             IRNode::ASTRef(idx)
         }
@@ -1088,6 +1100,16 @@ mod optional_chain_in_class_member_tests {
         assert!(
             !output.contains("Widget.handle = _a.id;"),
             "Optional access must not be dropped to a plain property access.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn accessor_return_preserves_jsdoc_type_cast_comment() {
+        let output =
+            emit_es5("class Casts {\n    get value() { return /** @type {*} */(null); }\n}\n");
+        assert!(
+            output.contains("return /** @type {*} */ (null);"),
+            "ES5 class IR must preserve erased JSDoc type-cast comments.\nOutput:\n{output}"
         );
     }
 

@@ -170,6 +170,13 @@ pub enum IRNode {
     /// Logical AND: `left && right`
     LogicalAnd { left: Box<Self>, right: Box<Self> },
 
+    /// Expression with a leading preserved source comment, such as an erased
+    /// JSDoc type assertion: `/** @type {*} */ expr`.
+    LeadingCommentExpr {
+        comment: Cow<'static, str>,
+        expression: Box<Self>,
+    },
+
     // =========================================================================
     // Statements
     // =========================================================================
@@ -973,6 +980,7 @@ impl IRNode {
                     || when_true.contains_identifier(name)
                     || when_false.contains_identifier(name)
             }
+            Self::LeadingCommentExpr { expression, .. } => expression.contains_identifier(name),
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
             | Self::CommaExprMultilineFlat(nodes)
@@ -1297,6 +1305,9 @@ impl IRNode {
                 condition.contains_captured_this_reference()
                     || when_true.contains_captured_this_reference()
                     || when_false.contains_captured_this_reference()
+            }
+            Self::LeadingCommentExpr { expression, .. } => {
+                expression.contains_captured_this_reference()
             }
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)

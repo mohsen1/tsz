@@ -42,13 +42,14 @@ impl<'a> Printer<'a> {
                 if self
                     .pending_commonjs_class_export_name
                     .as_ref()
-                    .is_some_and(|(class_idx, _)| *class_idx == *class_node)
+                    .is_some_and(|(class_idx, _, _)| *class_idx == *class_node)
                 {
-                    let (_, export_name) = self
+                    let (_, local_name, export_names) = self
                         .pending_commonjs_class_export_name
                         .take()
                         .expect("pending class export should be present");
-                    es5_emitter.set_pending_commonjs_class_export_name(Some(export_name));
+                    es5_emitter
+                        .set_pending_commonjs_class_export_bindings(local_name, export_names);
                 }
                 let es5_output = self.emit_es5_class_output(
                     &mut es5_emitter,
@@ -254,11 +255,22 @@ impl<'a> Printer<'a> {
                 } else if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                     // Use deferred export mechanism for class declarations so
                     // exports.X = X; appears before lowered static blocks/IIFEs.
-                    if let Some(name_id) = names.first()
-                        && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
+                    if let Some(class) = self.arena.get_class(node)
+                        && let Some(local_name) = self.get_identifier_text_opt(class.name)
                     {
+                        let export_names = if self.ctx.target_es5 {
+                            self.commonjs_export_name_strings(names.as_ref())
+                        } else {
+                            vec![local_name.clone()]
+                        };
+                        for export_name in &export_names {
+                            self.ctx
+                                .module_state
+                                .inline_exported_names
+                                .insert(export_name.clone());
+                        }
                         self.pending_commonjs_class_export_name =
-                            Some((idx, ident.escaped_text.clone()));
+                            Some((idx, local_name, export_names));
                     }
                     let export_name = names.first().copied();
                     self.with_cjs_export_body_mask(|this| {
@@ -268,16 +280,20 @@ impl<'a> Printer<'a> {
                             this.emit_chained_directive(node, idx, directives, index - 1);
                         }
                     });
-                    if let Some((_, class_name)) = self.pending_commonjs_class_export_name.take() {
+                    if let Some((_, local_name, export_names)) =
+                        self.pending_commonjs_class_export_name.take()
+                    {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
-                        self.write("exports.");
-                        self.write(&class_name);
-                        self.write(" = ");
-                        self.write(&class_name);
-                        self.write(";");
-                        self.write_line();
+                        for export_name in export_names {
+                            self.write("exports.");
+                            self.write(&export_name);
+                            self.write(" = ");
+                            self.write(&local_name);
+                            self.write(";");
+                            self.write_line();
+                        }
                     }
                 } else {
                     let export_name = names.first().copied();

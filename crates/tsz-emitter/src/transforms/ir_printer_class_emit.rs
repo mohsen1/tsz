@@ -68,14 +68,16 @@ impl<'a> IRPrinter<'a> {
         // CommonJS export assignment. tsc emits `exports.X = X;` immediately
         // after the class statement and BEFORE any trailing computed-property
         // side-effect statements, matching the ES2015+ ordering in `emit_es6.rs`.
-        if let Some(export_name) = self.take_pending_commonjs_class_export_name() {
-            self.write_line();
-            self.write_indent();
-            self.write("exports.");
-            self.write(&export_name);
-            self.write(" = ");
-            self.write(&export_name);
-            self.write(";");
+        if let Some((local_name, export_names)) = self.take_pending_commonjs_class_export_name() {
+            for export_name in export_names {
+                self.write_line();
+                self.write_indent();
+                self.write("exports.");
+                self.write(&export_name);
+                self.write(" = ");
+                self.write(&local_name);
+                self.write(";");
+            }
         }
 
         for init in computed_prop_temp_inits {

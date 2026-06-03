@@ -1803,10 +1803,61 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // Both TYPE_ASSERTION and AS_EXPRESSION use TypeAssertionData
         if let Some(assertion) = self.arena.get_type_assertion(node) {
-            self.convert_expression(assertion.expression)
+            let expression = self.convert_expression(assertion.expression);
+            if let Some(comment) = self.leading_block_comment_before_node(node).or_else(|| {
+                self.leading_block_comments_before_expression(node, assertion.expression)
+            }) {
+                IRNode::LeadingCommentExpr {
+                    comment: comment.into(),
+                    expression: Box::new(expression),
+                }
+            } else {
+                expression
+            }
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    pub(super) fn leading_block_comments_before_expression(
+        &self,
+        node: &Node,
+        expression_idx: NodeIndex,
+    ) -> Option<String> {
+        let source_text = self.source_text?;
+        let expr_node = self.arena.get(expression_idx)?;
+        if node.pos >= expr_node.pos {
+            return None;
+        }
+        let start = node.pos as usize;
+        let end = (expr_node.pos as usize).min(source_text.len());
+        let mut comments = Vec::new();
+        for comment in tsz_common::comments::get_comment_ranges(source_text) {
+            let comment_start = comment.pos as usize;
+            let comment_end = comment.end as usize;
+            if comment_start >= end {
+                break;
+            }
+            if comment_start >= start && comment_end <= end && comment.is_multi_line {
+                comments.push(source_text[comment_start..comment_end].to_string());
+            }
+        }
+        (!comments.is_empty()).then(|| comments.join(" "))
+    }
+
+    pub(super) fn leading_block_comment_before_node(&self, node: &Node) -> Option<String> {
+        let source_text = self.source_text?;
+        let node_start = node.pos as usize;
+        let comment = tsz_common::comments::get_comment_ranges(source_text)
+            .into_iter()
+            .take_while(|comment| comment.end as usize <= node_start)
+            .filter(|comment| comment.is_multi_line)
+            .last()?;
+        let comment_end = comment.end as usize;
+        if comment_end > node_start || !source_text[comment_end..node_start].trim().is_empty() {
+            return None;
+        }
+        Some(source_text[comment.pos as usize..comment_end].to_string())
     }
 
     fn convert_non_null(&self, idx: NodeIndex) -> IRNode {

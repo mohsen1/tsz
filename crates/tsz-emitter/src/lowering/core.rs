@@ -687,9 +687,15 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        let re_exported = self.ctx.options.target == ScriptTarget::ES5
+            && self
+                .get_identifier_text_ref(class.name)
+                .is_some_and(|n| self.re_exported_names.contains(n));
+
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
             && (force_export
+                || re_exported
                 || self
                     .arena
                     .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword));
@@ -827,8 +833,10 @@ impl<'a> LoweringPass<'a> {
         // Wrap with CommonJS export if needed
         let final_directive = if is_exported {
             if let Some(export_name) = class_name {
+                let local_name = self.get_identifier_text_ref(class.name);
+                let export_names = self.commonjs_export_names_for_local(local_name, export_name);
                 let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
+                    names: export_names,
                     is_default,
                     inner: Box::new(TransformDirective::Identity),
                 };

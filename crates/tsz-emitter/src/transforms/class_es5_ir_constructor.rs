@@ -414,6 +414,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let saved_temp_counter = self.temp_var_counter.get();
         self.temp_var_counter.set(0);
 
+        let capture_no_super_extends_null_this = self.extends_null && super_stmt_idx.is_none();
         if super_stmt_idx.is_some() && needs_pre_super_this_capture {
             body.push(IRNode::var_decl("_this", Some(IRNode::this())));
         }
@@ -430,7 +431,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
                 prev_stmt_end = stmt_node.end;
             }
-            let statement = if needs_pre_super_this_capture {
+            let statement = if capture_no_super_extends_null_this {
+                self.convert_statement_this_captured(stmt_idx)
+            } else if needs_pre_super_this_capture {
                 self.convert_statement_pre_super_this_captured(stmt_idx)
             } else {
                 self.convert_statement(stmt_idx)
