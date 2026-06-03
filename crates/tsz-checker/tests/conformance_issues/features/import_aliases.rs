@@ -41,6 +41,53 @@ export function assertNodeProperty<
     );
 }
 
+/// Pinning test: `NarrowMap[T][P]` where T extends keyof `WideMap` must emit exactly
+/// two TS2536 errors — one for `NarrowMap[T]` (T may not index `NarrowMap`) and one
+/// for `NarrowMap[T][P]` (P may not index the (already-invalid) result).
+/// tsc invariant: both errors anchor at the outermost `NarrowMap` expression start.
+/// This is the structural rule for intersectionsOfLargeUnions.ts.
+#[test]
+fn test_ts2536_nested_indexed_access_emits_two_errors() {
+    let source = r#"
+interface NarrowMap {
+    "a": { href: string };
+    "div": { id: string };
+}
+interface ExtraMap {
+    "circle": { cx: number };
+}
+interface WideMap extends NarrowMap, ExtraMap {}
+
+export function assertNodeProperty<
+    T extends keyof WideMap,
+    P extends keyof WideMap[T],
+    V extends NarrowMap[T][P]>(tagName: T, prop: P, value: V) {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .collect();
+    assert_eq!(
+        ts2536.len(),
+        2,
+        "Expected exactly 2 TS2536 errors for NarrowMap[T][P] nested indexed access:\n\
+         1. T cannot index NarrowMap (T extends keyof WideMap which is wider)\n\
+         2. P cannot index NarrowMap[T] (the already-invalid access)\n\
+         Got {} errors: {ts2536:#?}\nAll diagnostics: {diagnostics:#?}",
+        ts2536.len()
+    );
+    let msgs: Vec<&str> = ts2536.iter().map(|(_, msg)| msg.as_str()).collect();
+    assert!(
+        msgs.iter().any(|m| m.contains("NarrowMap'.")),
+        "One TS2536 should say 'NarrowMap' (T cannot index NarrowMap). Got: {msgs:#?}"
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("NarrowMap[T]")),
+        "One TS2536 should say 'NarrowMap[T]' (P cannot index NarrowMap[T]). Got: {msgs:#?}"
+    );
+}
+
 /// Same as above but with the full 3-function context from intersectionsOfLargeUnions.ts.
 /// The additional functions must not suppress the TS2536 diagnostic for the third function.
 #[test]
