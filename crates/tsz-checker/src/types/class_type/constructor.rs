@@ -1449,7 +1449,7 @@ impl<'a> CheckerState<'a> {
 
                 let partial_ctor = factory.callable(CallableShape {
                     call_signatures: Vec::new(),
-                    construct_signatures: Vec::new(),
+                    construct_signatures: rough_construct_signatures,
                     properties: partial_ctor_props,
                     string_index: static_string_index,
                     number_index: static_number_index,

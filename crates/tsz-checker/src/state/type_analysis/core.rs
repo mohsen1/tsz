@@ -2329,14 +2329,8 @@ impl<'a> CheckerState<'a> {
 
         // Check for circular reference
         if use_local_symbol_state && self.ctx.symbol_resolution_set.contains(&sym_id) {
-            // CRITICAL: For named entities (Interface, Class, TypeAlias, Enum), return Lazy placeholder
-            // instead of ERROR. This allows circular dependencies to work correctly.
-            //
-            // For example: `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
-            // When Filtered evaluates `keyof User` and User is still being checked, we return Lazy(User)
-            // instead of ERROR, allowing the type system to defer evaluation.
-            //
-            // For other symbols (variables, functions, etc.), we still return ERROR to prevent infinite loops.
+            // Named entities use Lazy placeholders so circular dependencies can
+            // defer evaluation; other symbols still return ERROR to avoid loops.
             let symbol = self.ctx.binder.get_symbol(sym_id);
             if let Some(symbol) = symbol {
                 let flags = symbol.flags;
@@ -2349,6 +2343,11 @@ impl<'a> CheckerState<'a> {
                         | symbol_flags::VALUE_MODULE)
                     != 0
                 {
+                    if flags & symbol_flags::CLASS != 0
+                        && let Some(partial) = self.circular_class_partial_constructor_type(sym_id)
+                    {
+                        return partial;
+                    }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     let lazy_type = factory.lazy(def_id);
                     // Don't cache the Lazy type - we want to retry when the circular reference is broken
