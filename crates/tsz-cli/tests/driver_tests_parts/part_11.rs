@@ -1687,6 +1687,47 @@ fn ts6059_not_emitted_when_all_files_under_root_dir() {
 }
 
 #[test]
+fn ts6059_not_emitted_for_declaration_dependency_outside_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "Node16",
+            "moduleResolution": "Node16",
+            "rootDir": "src"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        r#"import type { ExternalValue } from "external-pkg";
+
+export const value: ExternalValue = { id: "ok" };
+"#,
+    );
+    write_file(
+        &base.join("node_modules/external-pkg/package.json"),
+        r#"{ "types": "index.d.ts" }"#,
+    );
+    write_file(
+        &base.join("node_modules/external-pkg/index.d.ts"),
+        "export interface ExternalValue { id: string }\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&6059),
+        "Should NOT emit TS6059 for declaration dependency outside rootDir, got: {codes:?}"
+    );
+}
+
+#[test]
 fn phase_timings_are_populated_after_compilation() {
     let dir = TempDir::new().unwrap();
     let base = &dir.path;
@@ -1794,4 +1835,3 @@ var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
         result.diagnostics
     );
 }
-
