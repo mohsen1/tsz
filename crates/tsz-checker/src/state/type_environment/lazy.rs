@@ -242,11 +242,7 @@ impl<'a> CheckerState<'a> {
                 // or sibling reads would observe under-resolved results. Writes
                 // are reserved for the authoritative full-resolver second pass.
                 None,
-                if seed_persist {
-                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Collect
-                } else {
-                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip
-                },
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(seed_persist),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -331,11 +327,9 @@ impl<'a> CheckerState<'a> {
                 // resolver, so its application expansions are safe to memoize in
                 // the per-file application-eval cache.
                 Some(self.ctx.types),
-                if second_pass_seed_persist {
-                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Collect
-                } else {
-                    crate::query_boundaries::state::type_environment::CacheEntryCollection::Skip
-                },
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    second_pass_seed_persist,
+                ),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;

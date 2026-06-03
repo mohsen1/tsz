@@ -415,6 +415,12 @@ pub(crate) enum CacheEntryCollection {
     Skip,
 }
 
+impl CacheEntryCollection {
+    pub(crate) fn when_enabled(enabled: bool) -> Self {
+        if enabled { Self::Collect } else { Self::Skip }
+    }
+}
+
 /// Evaluate a type with a resolver, optionally seeding the evaluator cache.
 ///
 /// Returns the result plus side-effects (depth exceeded, cache drain).

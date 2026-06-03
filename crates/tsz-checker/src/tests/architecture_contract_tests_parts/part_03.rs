@@ -157,11 +157,10 @@ fn test_env_eval_threads_seed_persist_to_cache_entry_collection() {
     let lazy = fs::read_to_string("src/state/type_environment/lazy.rs")
         .expect("failed to read lazy type environment");
     assert!(
-        lazy.contains("if seed_persist")
-            && lazy.contains("CacheEntryCollection::Collect")
-            && lazy.contains("CacheEntryCollection::Skip")
+        lazy.contains("CacheEntryCollection::when_enabled(seed_persist)")
             && lazy.contains("let second_pass_seed_persist")
-            && lazy.contains("if second_pass_seed_persist"),
+            && lazy.contains("CacheEntryCollection::when_enabled")
+            && lazy.contains("second_pass_seed_persist"),
         "env-eval first pass must pass seed_persist and second pass must \
          recompute the gate before cache-entry collection"
     );
