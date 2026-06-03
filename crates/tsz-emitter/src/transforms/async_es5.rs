@@ -99,6 +99,7 @@ pub struct AsyncES5Emitter<'a> {
     tslib_prefix: bool,
     tslib_import_binding: String,
     system_import_meta: bool,
+    generator_this_arg: String,
 }
 
 impl<'a> AsyncES5Emitter<'a> {
@@ -116,6 +117,7 @@ impl<'a> AsyncES5Emitter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             system_import_meta: false,
+            generator_this_arg: "this".to_string(),
         }
     }
 
@@ -133,6 +135,10 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub const fn set_system_import_meta(&mut self, enabled: bool) {
         self.system_import_meta = enabled;
+    }
+
+    pub fn set_generator_this_arg(&mut self, arg: String) {
+        self.generator_this_arg = arg;
     }
 
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
@@ -237,6 +243,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
         printer.set_system_import_meta(self.system_import_meta);
+        printer.set_generator_this_arg(self.generator_this_arg.clone());
         printer.emit(&ir);
         printer.take_output()
     }
@@ -254,6 +261,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
         printer.set_system_import_meta(self.system_import_meta);
+        printer.set_generator_this_arg(self.generator_this_arg.clone());
         printer.emit(&ir);
         printer.take_output()
     }
@@ -324,6 +332,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
         printer.set_system_import_meta(self.system_import_meta);
+        printer.set_generator_this_arg(self.generator_this_arg.clone());
         let hoisted_names: Vec<&str> = hoisted
             .iter()
             .flat_map(|group| group.iter().map(String::as_str))
