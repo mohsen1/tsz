@@ -442,6 +442,22 @@ export function queueSkipReason(pr, requiredState, base, queueLabel = DEFAULT_QU
   return null;
 }
 
+export function queueInvalidationSkipReason(pr, base, queueLabel = DEFAULT_QUEUE_LABEL) {
+  if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
+  if (pr.isDraft) return "draft PR";
+  if (pr.isCrossRepository) return "cross-repository PR";
+  const readinessFailures = readyStateFailures({
+    number: pr.number,
+    title: pr.title,
+    body: pr.body || "",
+    draft: pr.isDraft,
+    labels: labelNames(pr.labels),
+  });
+  if (readinessFailures.length) return `ready-state WIP marker: ${readinessFailures.join(", ")}`;
+  if (!hasQueueLabel(pr.labels, queueLabel)) return `missing ${queueLabel} label`;
+  return null;
+}
+
 export function normalizeRestPullRequest(pr, repository, statusCheckRollup = undefined) {
   const baseRepository = pr.base?.repo?.full_name || repository;
   const headRepository = pr.head?.repo?.full_name || "";
@@ -810,6 +826,15 @@ function invalidatePullRequest(repository, pr, options) {
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
   const activeRun = activePendingQueueRun(repository, detailed, options);
   if (activeRun) return { invalidated: false, skipped: true, activeRun };
+  const ineligibleReason = queueInvalidationSkipReason(detailed, options.base, options.queueLabel);
+  if (ineligibleReason) {
+    return {
+      invalidated: false,
+      skipped: false,
+      skippedIneligible: true,
+      reason: ineligibleReason,
+    };
+  }
   postStatus(
     repository,
     pr.headRefOid,
@@ -825,12 +850,14 @@ function invalidateOpen(repository, options) {
   const prs = readPullRequests(repository, options.base, options.maxPrs);
   let invalidated = 0;
   let skippedActiveRuns = 0;
+  let skippedIneligible = 0;
   for (const pr of prs) {
     const result = invalidatePullRequest(repository, pr, options);
     if (result?.invalidated) invalidated += 1;
     if (result?.skipped) skippedActiveRuns += 1;
+    if (result?.skippedIneligible) skippedIneligible += 1;
   }
-  return { invalidated, skippedActiveRuns };
+  return { invalidated, skippedActiveRuns, skippedIneligible };
 }
 
 function cleanupQueueBranches(repository, options) {
@@ -1170,6 +1197,9 @@ export function formatResult(result, options) {
     lines.push(`Invalidated ${result.invalidated} open PR head(s).`);
     if (result.skippedActiveRuns) {
       lines.push(`Preserved ${result.skippedActiveRuns} active queue run status(es).`);
+    }
+    if (result.skippedIneligible) {
+      lines.push(`Skipped ${result.skippedIneligible} PR head(s) not eligible for the queue.`);
     }
   } else if (result.cleanupQueueBranches) {
     if (result.dryRun) {
