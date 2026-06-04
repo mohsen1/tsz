@@ -641,7 +641,7 @@ fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
     // ceiling.
     const MULTILINE_DECISION_LINE_CEILING: usize = 0;
     assert!(
-        decisions.len() <= MULTILINE_DECISION_LINE_CEILING,
+        decisions.len() == MULTILINE_DECISION_LINE_CEILING,
         "Multi-line rendered-type decision sites grew to {} (ceiling: {}). \
          Per §25 the printer must not feed checker decisions. Route the new \
          site through a structural `query_boundaries`/`tsz_solver::type_queries` \
