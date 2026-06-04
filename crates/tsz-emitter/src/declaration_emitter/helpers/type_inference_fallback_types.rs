@@ -263,6 +263,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.value_reference_symbol_type_text(expr_idx)
                         .filter(|text| text != "any" && text != "unknown")
                 })
+                .or_else(|| self.property_access_declared_type_annotation_text(expr_idx))
                 .or_else(|| {
                     self.this_property_constructor_assignment_type_text(expr_idx, depth + 1)
                 })
