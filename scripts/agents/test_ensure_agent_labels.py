@@ -14,9 +14,11 @@ SCRIPT = ROOT / "scripts" / "agents" / "ensure-agent-labels.sh"
 CANONICAL_AGENT_LABELS = [
     "agent:M1-A",
     "agent:M1-B",
+    "agent:M1-D",
     "agent:M1-Opus",
     "agent:M4-A",
     "agent:M4-B",
+    "agent:M4-C",
     "agent:M4-Opus",
     "agent:Studio-A",
     "agent:Studio-B",

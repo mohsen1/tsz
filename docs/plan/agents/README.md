@@ -36,8 +36,8 @@ Each session owns work through exactly one GitHub label:
 
 | Group | Sessions |
 | --- | --- |
-| M1 | `agent:M1-A`, `agent:M1-B`, `agent:M1-Opus` |
-| M4 | `agent:M4-A`, `agent:M4-B`, `agent:M4-Opus` |
+| M1 | `agent:M1-A`, `agent:M1-B`, `agent:M1-D`, `agent:M1-Opus` |
+| M4 | `agent:M4-A`, `agent:M4-B`, `agent:M4-C`, `agent:M4-Opus` |
 | Studio | `agent:Studio-A`, `agent:Studio-B`, `agent:Studio-C`, `agent:Studio-Opus` |
 | PR manager/reviewer | `agent:Studio-manager` |
 
@@ -144,9 +144,11 @@ Rules:
 | --- | --- | --- |
 | `M1-A` | Checker diagnostics | Diagnostic conformance, accepted-regression burn-down, rendered/source-text diagnostic debt |
 | `M1-B` | Checker orchestration | Relation diagnostic routing, flow/narrowing handoff, query-boundary cleanup |
+| `M1-D` | Flow narrowing | Solver-owned narrowing predicates, flow graph parity, and Kysely/Zod guard reductions |
 | `M1-Opus` | M1 deep debt | Cross-cutting checker architecture debt that blocks tests, bugs, project rows, or conformance strictness |
 | `M4-A` | Solver evaluation | Recursive conditional, mapped, template, `infer`, indexed-access, and key-space evaluation |
 | `M4-B` | Solver relations | Relation policy, inference/session state, stable identity, variance, and cache contracts |
+| `M4-C` | Inference sessions | Contextual typing, overloads, constructors, and instantiation-state project blockers |
 | `M4-Opus` | M4 deep debt | Solver substrate rewrites and cache/identity architecture needed for parity plus speed |
 | `Studio-A` | Project corpus | Release metric truth, project-row green status, benchmark artifact validity, bug intake routing |
 | `Studio-B` | Performance | Green-row residency and timing until every eligible row is at least `2x` faster than `tsgo` |
