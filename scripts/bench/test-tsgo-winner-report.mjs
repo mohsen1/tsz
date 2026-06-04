@@ -225,6 +225,10 @@ withTempDir((dir) => {
     ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
   );
   assert.equal(report.rows[1].loss_closure.issue, 7378);
+  assert.match(
+    report.rows[1].loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.vite-vanilla-ts-app\.perf\.json --noEmit -p .*vite-vanilla-ts-live\/tsconfig\.json/,
+  );
   assert.deepEqual(report.rows[1].attribution_status, {
     present: false,
     path: null,
@@ -304,6 +308,55 @@ withTempDir((dir) => {
     "200 classes",
     "BCT candidates=200",
   ]);
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+      {
+        name: "nextjs-fresh-app",
+        tsz_ms: 100,
+        tsgo_ms: 90,
+        winner: "tsgo",
+        factor: 1.11,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "generated app dependency graph",
+        },
+      },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  const byName = new Map(report.rows.map((row) => [row.name, row]));
+  assert.match(
+    byName.get("ts-essentials-project").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.ts-essentials-project\.perf\.json --noEmit -p .*ts-essentials\/tsconfig\.flat\.json/,
+  );
+  assert.match(
+    byName.get("nextjs-fresh-app").loss_closure.attribution_command,
+    /--perf-counters-json <artifact>\.nextjs-fresh-app\.perf\.json --noEmit -p .*next-app-live\/tsconfig\.json/,
+  );
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
