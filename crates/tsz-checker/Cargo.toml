@@ -1471,6 +1471,10 @@ name = "intersection_mapped_alias_indexed_access_tests"
 path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
 
 [[test]]
+name = "intersection_indexed_access_source_suppression_tests"
+path = "tests/intersection_indexed_access_source_suppression_tests.rs"
+
+[[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
 path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 
