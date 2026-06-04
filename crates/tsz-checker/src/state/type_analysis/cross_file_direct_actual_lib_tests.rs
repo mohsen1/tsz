@@ -547,6 +547,52 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         "value-merged DOM interfaces with non-void method returns should stay on the existing child/interface path",
     );
 
+    let document_value_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a lib value symbol");
+    let document_value_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_value_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (document_value, document_value_params) = state
+        .direct_actual_lib_symbol_type(
+            document_value_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            document_value_arena,
+            false,
+        )
+        .expect("document should lower to its annotated lazy lib interface");
+    assert!(
+        document_value_params.is_empty(),
+        "document should not expose type parameters",
+    );
+    let document_def = state
+        .resolve_actual_lib_name_to_def_id_for_lowering("Document")
+        .expect("Document should resolve to a lib definition");
+    assert_eq!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, document_value),
+        Some(document_def),
+        "document should preserve its Document annotation as a Lazy interface",
+    );
+    assert!(
+        state
+            .lazy_lib_member_receiver_def_id(document_value)
+            .is_some(),
+        "the returned lazy interface should remain eligible for lazy member lookup",
+    );
+    let (cached_document_value, cached_document_value_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(document_value_sym_id)
+        .expect("direct annotation path should populate the delegation cache");
+    assert_eq!(cached_document_value, document_value);
+    assert!(cached_document_value_params.is_empty());
+
     let error_sym_id = state
         .ctx
         .binder

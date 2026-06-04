@@ -10,11 +10,13 @@
 //!
 //! Scope (intentionally narrow for soundness — anything else returns `None` and
 //! falls back to the full-materialization path):
-//! - Plain property signatures only (`prop: T` / `prop?: T`). Methods,
-//!   accessors, index signatures, call/construct signatures, readonly writes,
-//!   and computed/symbol-named members take the full path.
-//! - A single own declaration of the member. Members declared more than once
-//!   (overloads / split declarations) take the full path.
+//! - Plain property signatures (`prop: T` / `prop?: T`) and unambiguous method
+//!   signature groups. Accessors, index signatures, call/construct signatures,
+//!   readonly writes, optional methods, and computed/symbol-named members take
+//!   the full path.
+//! - A single own property declaration, or one method overload group in one
+//!   arena. Split declarations and mixed property/method members take the full
+//!   path.
 //! - Heritage-inherited members can be resolved when the inherited annotation
 //!   does not reference the base interface's type parameters. Parameter-dependent
 //!   inherited members fall back to full materialization for substitution.
@@ -23,7 +25,7 @@
 
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext::{self, PROPERTY_SIGNATURE};
+use tsz_parser::parser::syntax_kind_ext::{self, METHOD_SIGNATURE, PROPERTY_SIGNATURE};
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -39,9 +41,9 @@ use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 
 impl CheckerState<'_> {
-    /// Resolve a single plain property `prop_name` of the simple lib interface
-    /// named `name`, returning its lowered member type without materializing the
-    /// rest of the interface.
+    /// Resolve a single plain property or unambiguous method group `prop_name`
+    /// of the simple lib interface named `name`, returning its lowered member
+    /// type without materializing the rest of the interface.
     ///
     /// Returns `None` (caller falls back to full materialization) when:
     /// - the interface symbol cannot be selected,
@@ -108,7 +110,11 @@ impl CheckerState<'_> {
         // Find the single own plain-property-signature declaration of `prop_name`
         // across the interface's declarations. Bail (None) on any ambiguity so
         // overloads/split declarations keep their full-path semantics.
-        let mut member: Option<(NodeIndex, &NodeArena, Vec<SymbolId>)> = None;
+        enum MemberMatch<'arena> {
+            Property(NodeIndex, &'arena NodeArena, Vec<SymbolId>),
+            Methods(Vec<NodeIndex>, &'arena NodeArena, Vec<SymbolId>),
+        }
+        let mut member: Option<MemberMatch<'_>> = None;
         for &(decl_idx, arena) in &decls_with_arenas {
             let Some(node) = arena.get(decl_idx) else {
                 continue;
@@ -136,7 +142,7 @@ impl CheckerState<'_> {
                 let Some(member_node) = arena.get(member_idx) else {
                     continue;
                 };
-                if member_node.kind != PROPERTY_SIGNATURE {
+                if member_node.kind != PROPERTY_SIGNATURE && member_node.kind != METHOD_SIGNATURE {
                     continue;
                 }
                 let Some(sig) = arena.get_signature(member_node) else {
@@ -151,15 +157,42 @@ impl CheckerState<'_> {
                 if member_name != prop_name {
                     continue;
                 }
-                if member.is_some() {
-                    // Declared more than once — ambiguous, fall back.
-                    return None;
+                match (&mut member, member_node.kind) {
+                    (None, k) if k == PROPERTY_SIGNATURE => {
+                        member = Some(MemberMatch::Property(
+                            member_idx,
+                            arena,
+                            type_param_symbols.clone(),
+                        ));
+                    }
+                    (None, k) if k == METHOD_SIGNATURE => {
+                        if sig.question_token {
+                            return None;
+                        }
+                        member = Some(MemberMatch::Methods(
+                            vec![member_idx],
+                            arena,
+                            type_param_symbols.clone(),
+                        ));
+                    }
+                    (Some(MemberMatch::Methods(methods, existing_arena, _)), k)
+                        if k == METHOD_SIGNATURE && std::ptr::eq(*existing_arena, arena) =>
+                    {
+                        if sig.question_token {
+                            return None;
+                        }
+                        methods.push(member_idx);
+                    }
+                    _ => {
+                        // Mixed property/method declarations, duplicate properties, or
+                        // overloads split across arenas are ambiguous; fall back.
+                        return None;
+                    }
                 }
-                member = Some((member_idx, arena, type_param_symbols.clone()));
             }
         }
 
-        let (member_idx, member_arena, type_param_symbols) = if let Some(member) = member {
+        let member = if let Some(member) = member {
             member
         } else {
             let mut heritage_bases = Vec::new();
@@ -220,6 +253,21 @@ impl CheckerState<'_> {
                 }
             }
             return inherited_member;
+        };
+        let (member_idx, member_arena, type_param_symbols) = match member {
+            MemberMatch::Property(member_idx, member_arena, type_param_symbols) => {
+                (member_idx, member_arena, type_param_symbols)
+            }
+            MemberMatch::Methods(methods, member_arena, type_param_symbols) => {
+                return self.lower_simple_lib_interface_method_group(
+                    member_arena,
+                    &methods,
+                    &type_param_symbols,
+                    selected_binder,
+                    &decls_with_arenas,
+                    fallback_arena,
+                );
+            }
         };
         let member_node = member_arena.get(member_idx)?;
         let sig = member_arena.get_signature(member_node)?;
@@ -303,6 +351,60 @@ impl CheckerState<'_> {
             return None;
         }
         Some(member_type)
+    }
+
+    fn lower_simple_lib_interface_method_group(
+        &mut self,
+        member_arena: &NodeArena,
+        methods: &[NodeIndex],
+        type_param_symbols: &[SymbolId],
+        selected_binder: &BinderState,
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> Option<TypeId> {
+        if methods.is_empty() || !type_param_symbols.is_empty() {
+            return None;
+        }
+
+        let resolver = |node_idx: NodeIndex| -> Option<u32> {
+            resolve_lib_node_in_arenas(selected_binder, node_idx, decls_with_arenas, fallback_arena)
+                .map(|sym_id| sym_id.0)
+        };
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+            lib_def_id_from_node(
+                &self.ctx,
+                selected_binder,
+                node_idx,
+                decls_with_arenas,
+                fallback_arena,
+            )
+        };
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
+        };
+        let lazy_type_params_resolver =
+            |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+
+        let lowering = TypeLowering::with_hybrid_resolver(
+            fallback_arena,
+            self.ctx.types,
+            &resolver,
+            &def_id_resolver,
+            &resolver,
+        )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+        .with_name_def_id_resolver(&name_resolver);
+        let lowering =
+            if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
+                lowering.prefer_name_def_id_resolution()
+            } else {
+                lowering
+            };
+        lowering
+            .with_arena(member_arena)
+            .lower_method_signature_group(methods)
     }
 
     fn type_annotation_is_lib_interface_reference(

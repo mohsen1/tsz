@@ -705,6 +705,9 @@ mod excess_prop_object_union_display_tests;
 #[path = "tests/explicit_alias_constraint_relation_routing_arch_tests.rs"]
 mod explicit_alias_constraint_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/explicit_type_arg_overload_pruning_tests.rs"]
+mod explicit_type_arg_overload_pruning_tests;
+#[cfg(test)]
 #[path = "../tests/file_session_switch_to_file_tests.rs"]
 mod file_session_switch_to_file_tests;
 #[cfg(test)]
