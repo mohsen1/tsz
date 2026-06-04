@@ -39,6 +39,78 @@ impl<'a> CheckerState<'a> {
         Some(target_sym_id)
     }
 
+    fn declaration_file_type_shadow_for_lib_name(
+        &self,
+        name: &str,
+        file_idx: Option<usize>,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(file_idx) = file_idx else {
+            return self.ctx.file_local_type_shadow_for_lib_name(name);
+        };
+        let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return false;
+        };
+        if !binder.is_external_module() {
+            return false;
+        }
+        binder.file_locals.get(name).is_some_and(|sym_id| {
+            let is_actual_or_merged_lib = self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || binder.lib_symbol_ids.contains(&sym_id);
+            !is_actual_or_merged_lib
+                && binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
+    }
+
+    fn resolve_declaration_file_type_symbol_for_lowering(
+        &self,
+        name: &str,
+        file_idx: Option<usize>,
+    ) -> Option<SymbolId> {
+        let file_idx = file_idx?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let sym_id = binder.file_locals.get(name)?;
+        let symbol = binder.get_symbol(sym_id)?;
+        let is_actual_or_merged_lib = self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            || binder.lib_symbol_ids.contains(&sym_id);
+        if is_actual_or_merged_lib {
+            return None;
+        }
+        if symbol.has_any_flags(symbol_flags::ALIAS)
+            && let Some(module_name) = symbol.import_module.as_ref()
+        {
+            let import_name = symbol.import_name.as_deref().unwrap_or(name);
+            let target_sym_id =
+                self.resolve_cross_file_export_from_file(module_name, import_name, Some(file_idx))?;
+            if let Some(target_file_idx) = self
+                .ctx
+                .resolve_symbol_file_index_stable(target_sym_id)
+                .or_else(|| self.ctx.resolve_symbol_file_index(target_sym_id))
+            {
+                self.ctx
+                    .register_symbol_file_target(target_sym_id, target_file_idx);
+            }
+            return Some(target_sym_id);
+        }
+        if symbol.has_any_flags(symbol_flags::TYPE) {
+            self.ctx.register_symbol_file_target(sym_id, file_idx);
+            return Some(sym_id);
+        }
+        None
+    }
+
+    fn resolve_declaration_file_type_def_id_for_lowering(
+        &self,
+        name: &str,
+        file_idx: Option<usize>,
+    ) -> Option<tsz_solver::def::DefId> {
+        self.resolve_declaration_file_type_symbol_for_lowering(name, file_idx)
+            .map(|sym_id| self.ctx.get_or_create_def_id_for_symbol_name(sym_id, name))
+    }
+
     pub(crate) fn get_reference_type_params_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -760,7 +832,16 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_symbol_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .map(|sym_id| sym_id.0)
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -772,11 +853,20 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
                                     .map(|sym_id| sym_id.0)
+                                })
                             })
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_def_id_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -784,12 +874,21 @@ impl<'a> CheckerState<'a> {
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
+                                })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                            self.resolve_declaration_file_type_def_id_for_lowering(
+                                type_name,
+                                effective_file_idx,
+                            )
+                            .or_else(|| {
+                                (!self.declaration_file_type_shadow_for_lib_name(
+                                    type_name,
+                                    effective_file_idx,
+                                ))
                                 .then(|| {
                                     self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
                                 })
@@ -797,6 +896,7 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                                 })
+                            })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
@@ -825,7 +925,16 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_symbol_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .map(|sym_id| sym_id.0)
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -837,11 +946,20 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
                                     .map(|sym_id| sym_id.0)
+                                })
                             })
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_def_id_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -849,12 +967,21 @@ impl<'a> CheckerState<'a> {
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
+                                })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                            self.resolve_declaration_file_type_def_id_for_lowering(
+                                type_name,
+                                effective_file_idx,
+                            )
+                            .or_else(|| {
+                                (!self.declaration_file_type_shadow_for_lib_name(
+                                    type_name,
+                                    effective_file_idx,
+                                ))
                                 .then(|| {
                                     self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
                                 })
@@ -862,6 +989,7 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                                 })
+                            })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
@@ -901,7 +1029,16 @@ impl<'a> CheckerState<'a> {
                     } else if let Some(type_parameters) = &class.type_parameters {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_symbol_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .map(|sym_id| sym_id.0)
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -913,11 +1050,20 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
                                     .map(|sym_id| sym_id.0)
+                                })
                             })
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                self.resolve_declaration_file_type_def_id_for_lowering(
+                                    name,
+                                    effective_file_idx,
+                                )
+                                .or_else(|| {
+                                    (!self.declaration_file_type_shadow_for_lib_name(
+                                        name,
+                                        effective_file_idx,
+                                    ))
                                     .then(|| {
                                         self.resolve_actual_lib_name_to_def_id_for_lowering(name)
                                     })
@@ -925,12 +1071,21 @@ impl<'a> CheckerState<'a> {
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
+                                })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                            self.resolve_declaration_file_type_def_id_for_lowering(
+                                type_name,
+                                effective_file_idx,
+                            )
+                            .or_else(|| {
+                                (!self.declaration_file_type_shadow_for_lib_name(
+                                    type_name,
+                                    effective_file_idx,
+                                ))
                                 .then(|| {
                                     self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
                                 })
@@ -938,6 +1093,7 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                                 })
+                            })
                         };
                         let params = tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
