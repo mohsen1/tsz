@@ -76,7 +76,12 @@ TypeScript/tests/cases/conformance/externalModules/circularReference.ts
 # (HTMLElementTagNameMap) still fails — the full lib type hierarchy exercises a
 # different code path. Tracked in #12260.
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+# PR #12509 exact head 4a1304578f after #12523 landed on main (CI run
+# 26949719321): all six conformance shards passed, aggregate strictness found
+# two newly unlisted mapped/keyof/indexed-access drift rows. Tracked by #8432.
+TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 
 # Ready-review aggregate drift observed on PR #11890 exact head f0e9bca2a1
 # (CI run 26900032045): all six conformance shards passed, aggregate strictness
