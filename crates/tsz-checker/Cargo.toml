@@ -47,6 +47,10 @@ name = "inference_placeholder_determinism_tests"
 path = "tests/inference_placeholder_determinism_tests.rs"
 
 [[test]]
+name = "context_sensitive_callback_inference_tests"
+path = "tests/context_sensitive_callback_inference_tests.rs"
+
+[[test]]
 name = "type_only_import_reexport_tests"
 path = "tests/type_only_import_reexport_tests.rs"
 
