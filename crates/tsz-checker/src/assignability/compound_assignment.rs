@@ -4,6 +4,7 @@ use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -31,7 +32,18 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // TS2364: The left-hand side of an assignment expression must be a variable or a property access.
         // Suppress when near a parse error (same rationale as in check_assignment_expression).
-        if !self.is_valid_assignment_target(left_idx) && !self.node_has_nearby_parse_error(left_idx)
+        //
+        // Compound assignments (+=, -=, etc.) are more restrictive than simple assignment:
+        // array/object destructuring patterns ([a, b] = rhs) are valid LHS for simple
+        // assignment but NOT for compound assignment. `[a, b] += rhs` is always TS2364
+        // because compound operators require a single readable reference, not a pattern.
+        let lhs_unwrapped = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
+        let is_destructuring_literal_lhs = self.ctx.arena.get(lhs_unwrapped).is_some_and(|n| {
+            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        });
+        if (!self.is_valid_assignment_target(left_idx) || is_destructuring_literal_lhs)
+            && !self.node_has_nearby_parse_error(left_idx)
         {
             self.error_at_node(
                 left_idx,
