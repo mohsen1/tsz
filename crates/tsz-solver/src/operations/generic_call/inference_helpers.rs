@@ -329,7 +329,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         lower_bounds: &[TypeId],
         inferred: TypeId,
     ) -> TypeId {
-        let mut concrete_bounds = lower_bounds
+        let pruned_bounds = self.prune_wrapped_return_type_param_candidates(lower_bounds);
+        if pruned_bounds.len() != lower_bounds.len()
+            && let Some(candidate) = self.single_bare_return_type_param_candidate(&pruned_bounds)
+        {
+            return candidate;
+        }
+        let effective_lower_bounds = if pruned_bounds.is_empty() {
+            lower_bounds
+        } else {
+            pruned_bounds.as_slice()
+        };
+
+        let mut concrete_bounds = effective_lower_bounds
             .iter()
             .copied()
             .filter(|ty| {
@@ -362,7 +374,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Conformance: `subtypeRelationForNever.ts`.
         let drop_never_promotion = concrete_bounds.len() == 1
             && concrete_bounds[0] == TypeId::NEVER
-            && lower_bounds
+            && effective_lower_bounds
                 .iter()
                 .any(|&b| matches!(b, TypeId::ANY | TypeId::UNKNOWN));
         if !drop_never_promotion
@@ -375,7 +387,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return concrete_bounds[0];
         }
 
-        if lower_bounds.len() <= 1 {
+        if effective_lower_bounds.len() <= 1 {
             return inferred;
         }
 
@@ -387,14 +399,74 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
-        let all_structural = lower_bounds
+        let all_structural = effective_lower_bounds
             .iter()
             .all(|ty| self.is_structural_return_inference_candidate(*ty));
         if all_structural {
-            return lower_bounds[0];
+            return effective_lower_bounds[0];
         }
 
         inferred
+    }
+
+    fn prune_wrapped_return_type_param_candidates(&self, lower_bounds: &[TypeId]) -> Vec<TypeId> {
+        let Some(duplicated_name) = self.duplicated_bare_return_type_param_name(lower_bounds)
+        else {
+            return lower_bounds.to_vec();
+        };
+
+        lower_bounds
+            .iter()
+            .copied()
+            .filter(|&bound| {
+                self.bare_return_type_param_name(bound) == Some(duplicated_name)
+                    || !self.is_structural_return_inference_candidate(bound)
+            })
+            .collect()
+    }
+
+    fn duplicated_bare_return_type_param_name(
+        &self,
+        lower_bounds: &[TypeId],
+    ) -> Option<tsz_common::Atom> {
+        let mut seen = FxHashSet::default();
+        let mut duplicated = None;
+        for &bound in lower_bounds {
+            let Some(name) = self.bare_return_type_param_name(bound) else {
+                continue;
+            };
+            if !seen.insert(name) {
+                if duplicated.is_some_and(|existing| existing != name) {
+                    return None;
+                }
+                duplicated = Some(name);
+            }
+        }
+        duplicated
+    }
+
+    fn bare_return_type_param_name(&self, ty: TypeId) -> Option<tsz_common::Atom> {
+        match self.interner.lookup(ty) {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.name),
+            _ => None,
+        }
+    }
+
+    fn single_bare_return_type_param_candidate(&self, lower_bounds: &[TypeId]) -> Option<TypeId> {
+        let mut first = None;
+        let mut first_name = None;
+        for &bound in lower_bounds {
+            let name = self.bare_return_type_param_name(bound)?;
+            if let Some(existing) = first_name {
+                if existing != name {
+                    return None;
+                }
+            } else {
+                first_name = Some(name);
+                first = Some(bound);
+            }
+        }
+        first
     }
 
     pub(super) fn constrain_return_context_structure(
