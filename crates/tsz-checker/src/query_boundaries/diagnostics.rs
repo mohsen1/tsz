@@ -1,5 +1,7 @@
 use super::state::checking as state_checking;
-use tsz_solver::{TypeId, construction::TypeDatabase};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::relations::subtype::TypeResolver;
 
 pub(crate) use super::common::{
     PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
@@ -26,6 +28,19 @@ pub(crate) fn union_or_intersection_mentions_object(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::union_or_intersection_mentions_object(db, type_id)
+}
+
+/// Check whether an application's *declared* alias body is a mapped type
+/// (e.g. `Partial<X>`, `Readonly<X>`, or `type F<T> = { [K in keyof T]... }`),
+/// even when the concrete instantiation is fully resolved. Diagnostic
+/// elaboration uses this to elaborate mapped-alias mismatches structurally
+/// rather than via type-argument variance, matching tsc.
+pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
 }
 
 pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

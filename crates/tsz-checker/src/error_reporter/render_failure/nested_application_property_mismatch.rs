@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
         // than collapsing to a single covariant type-argument line. Excluding
         // them here routes the four call sites that gate the type-argument fast
         // path into the structural property-chain elaboration instead.
-        if crate::query_boundaries::common::application_base_is_mapped_type(
+        if crate::query_boundaries::diagnostics::application_base_is_mapped_type(
             self.ctx.types,
             &self.ctx,
             app_type,
