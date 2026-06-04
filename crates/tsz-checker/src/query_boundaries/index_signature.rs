@@ -20,6 +20,53 @@ pub(crate) fn index_key_type_satisfies_index_signature(
         || tsz_solver::relations::subtype::is_subtype_of(db, index_type, signature_key_type)
 }
 
+/// Mirror tsc's `everyType(type, isValidIndexKeyType)` over a *resolved* index
+/// key `TypeId`.
+///
+/// tsc validates index-signature parameter types against the resolved type
+/// rather than its syntactic spelling: a union is a valid key iff every
+/// constituent is, an intersection iff some constituent is, and the leaf cases
+/// are `string`/`number`/`symbol` and template-literal (pattern) types. Crucially
+/// this is *not* an assignability test — `any` is assignable to
+/// `string | number | symbol` yet is rejected by tsc, so we inspect the type's
+/// shape directly.
+///
+/// Callers must resolve the top-level key type before invoking this (e.g. the
+/// lib global `PropertyKey` is a `Lazy(DefId)` alias for
+/// `string | number | symbol`); union/intersection members are expected to be
+/// resolved as a side effect of building the compound type. Spellings that
+/// can't be reached this way are still covered by the AST fallback at the call
+/// sites, so this only ever participates in *accepting* a key type.
+pub(crate) fn resolved_index_key_type_is_valid(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // `everyType` distributes the predicate over union constituents.
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+        return !members.is_empty()
+            && members
+                .iter()
+                .all(|&member| resolved_index_key_constituent_is_valid(db, member));
+    }
+    resolved_index_key_constituent_is_valid(db, type_id)
+}
+
+/// Validity of a single (non-union) resolved constituent. The generic
+/// intersection case (`T & string`) is steered to TS1337 by the AST pre-check
+/// at the call sites before validity is consulted, so this mirrors tsc's
+/// `some(types, isValidIndexKeyType)` for the intersection arm.
+fn resolved_index_key_constituent_is_valid(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if matches!(type_id, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
+        return true;
+    }
+    if tsz_solver::type_queries::is_template_literal_type(db, type_id) {
+        return true;
+    }
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+        return members
+            .iter()
+            .any(|&member| resolved_index_key_constituent_is_valid(db, member));
+    }
+    false
+}
+
 /// Structural AST check for index-signature parameter type validity.
 ///
 /// Accepts `string`/`number`/`symbol` keywords, template literal types, type
