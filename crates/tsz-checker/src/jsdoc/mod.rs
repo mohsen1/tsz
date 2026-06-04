@@ -35,6 +35,7 @@
 //! - Diagnostic emission → `diagnostics.rs`
 //! - New data structures → `types.rs`
 
+pub(crate) mod base_types;
 pub(crate) mod diagnostics;
 pub(crate) mod diagnostics_import_type_constraints;
 pub(crate) mod diagnostics_imports;

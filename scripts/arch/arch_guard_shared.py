@@ -239,7 +239,6 @@ LINE_LIMIT_CHECKS = [
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
             "crates/tsz-checker/src/flow/control_flow/core.rs",
-            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
@@ -793,7 +792,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: jsdoc/diagnostics.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "diagnostics.rs",
-        2440,
+        1450,
     ),
     (
         "Checker boundary: state/variable_checking/destructuring.rs size ratchet",
