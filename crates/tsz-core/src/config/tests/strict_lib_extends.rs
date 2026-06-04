@@ -1162,16 +1162,16 @@ fn ts6046_silent_for_valid_watch_file_value() {
 // so `try-tsz` project comparisons match tsc output on (code, message) tuples.
 
 #[test]
-fn ts5107_message_equals_flattened_tsc_output() {
-    let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
+fn ts5107_message_with_migration_url_equals_flattened_tsc_output() {
+    let source = r#"{"compilerOptions":{"moduleResolution":"node10"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
         .diagnostics
         .iter()
         .find(|d| d.code == 5107)
-        .expect("expected TS5107 for alwaysStrict=false");
+        .expect("expected TS5107 for moduleResolution=node10");
     let expected = concat!(
-        "Option 'alwaysStrict=false' is deprecated and will stop functioning in TypeScript 7.0.",
+        "Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0.",
         " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
         "\n  Visit https://aka.ms/ts6 for migration information.",
     );
@@ -1182,7 +1182,46 @@ fn ts5107_message_equals_flattened_tsc_output() {
 }
 
 #[test]
-fn ts5101_message_equals_flattened_tsc_output() {
+fn ts5107_message_without_migration_url_equals_flattened_tsc_output() {
+    let source = r#"{"compilerOptions":{"allowSyntheticDefaultImports":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5107)
+        .expect("expected TS5107 for allowSyntheticDefaultImports=false");
+    let expected = concat!(
+        "Option 'allowSyntheticDefaultImports=false' is deprecated and will stop ",
+        "functioning in TypeScript 7.0. Specify compilerOption ",
+        "'\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+    );
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5107 message must omit the TS5111 URL when tsc has no related message"
+    );
+}
+
+#[test]
+fn ts5107_classic_module_resolution_omits_migration_url() {
+    let source = r#"{"compilerOptions":{"moduleResolution":"classic"}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5107)
+        .expect("expected TS5107 for moduleResolution=classic");
+    let expected = concat!(
+        "Option 'moduleResolution=classic' is deprecated and will stop functioning in TypeScript 7.0.",
+        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
+    );
+    assert_eq!(
+        diag.message_text, expected,
+        "TS5107 must distinguish node10 from classic for the TS5111 URL"
+    );
+}
+
+#[test]
+fn ts5101_message_with_migration_url_equals_flattened_tsc_output() {
     let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
