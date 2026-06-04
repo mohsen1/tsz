@@ -614,6 +614,7 @@ return {
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
@@ -683,6 +684,7 @@ fn root_js_recovery_preserves_invalid_declaration_modifiers() {
 class C {
     async constructor() { }
     async field = 1
+    set invariant() { }
 }
 async export function f() { }
 async async function g() { }
@@ -690,11 +692,21 @@ function params(static x, export y, async z) { }
 async const value = 1
 async import 'assert'
 async export { f }
+export import 'fs'
+export export { g }
 export export var duplicateExport = 1
 export static var staticExport = 1
 function outer() {
     static function inner() { }
 }
+const object = {
+    static method() { }
+    [console.log('oh no'), 2]: 'hi',
+    #secret: 1,
+    export cantExportProperties: 4,
+}
+const { ...rest = true } = object
+const tri = import('1','2','3')
 ";
     let mut parser = ParserState::new("plain.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -705,22 +717,32 @@ function outer() {
         ..Default::default()
     };
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_current_root_js_source(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
     for expected in [
-        "async constructor()",
+        "constructor()",
         "async field = 1;",
+        "set invariant() { }",
         "async export function f() { }",
         "async async function g() { }",
         "function params(static x, export y, async z) { }",
         "async const value = 1;",
         "async import 'assert';",
         "export { f };",
+        "export import 'fs';",
+        "export { g };",
         "export export var duplicateExport = 1;",
         "export static var staticExport = 1;",
         "static function inner() { }",
+        "static method() { }",
+        "[console.log('oh no'), 2]: 'hi'",
+        "#secret: 1",
+        "cantExportProperties: 4",
+        "const { ...rest = true } = object;",
+        "const tri = import('1','2','3');",
     ] {
         assert!(
             output.contains(expected),
@@ -734,5 +756,9 @@ function outer() {
     assert!(
         !output.contains("async export {"),
         "Stray async before a named export should not be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var iant"),
+        "Recovered setter name tail should not emit as a synthetic variable statement.\nOutput:\n{output}"
     );
 }

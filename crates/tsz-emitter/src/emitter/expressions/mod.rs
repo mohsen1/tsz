@@ -2,6 +2,7 @@ mod access;
 mod access_comment_helpers;
 mod binary_downlevel;
 mod call;
+mod call_recovery;
 mod core;
 mod es5_super_receiver;
 mod literals;
