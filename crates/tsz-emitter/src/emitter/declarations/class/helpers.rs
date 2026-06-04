@@ -65,6 +65,13 @@ impl<'a> Printer<'a> {
                     }
                     return self.identifier_binding_name(param.name);
                 }
+                syntax_kind_ext::BINDING_ELEMENT => {
+                    let element = self.arena.get_binding_element(parent_node)?;
+                    if element.initializer != current {
+                        return None;
+                    }
+                    return self.identifier_binding_name(element.name);
+                }
                 syntax_kind_ext::PROPERTY_DECLARATION => {
                     let property = self.arena.get_property_decl(parent_node)?;
                     if property.initializer != current {

@@ -177,3 +177,22 @@ fn file_level_static_field_class_expr_temps_reserve_in_source_order_es2015() {
         "Nested function temp scopes should skip file-level class-expression temps.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn binding_pattern_default_class_expr_uses_binding_name_es2015() {
+    let source = "let { slot = class { static x = 1; } } = {};\nlet [item = class { static x = 2; }] = [];\n";
+    let output = emit(source, ScriptTarget::ES2015, false);
+
+    assert!(
+        output.contains(
+            "let { slot = (_a = class {\n    },\n    __setFunctionName(_a, \"slot\"),\n    _a.x = 1,\n    _a) } = {};"
+        ),
+        "Object binding defaults should use the binding element name for explicit class naming.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let [item = (_b = class {\n    },\n    __setFunctionName(_b, \"item\"),\n    _b.x = 2,\n    _b)] = [];"
+        ),
+        "Array binding defaults should use the binding element name for explicit class naming.\nOutput:\n{output}"
+    );
+}
