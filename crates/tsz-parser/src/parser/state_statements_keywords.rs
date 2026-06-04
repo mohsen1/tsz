@@ -165,6 +165,9 @@ impl ParserState {
             }
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
             SyntaxKind::ExportKeyword => {
+                if self.look_ahead_export_starts_export_declaration() {
+                    return self.parse_export_declaration();
+                }
                 let export_start = self.token_pos();
                 self.parse_expected(SyntaxKind::ExportKeyword);
                 let export_end = self.token_end();
@@ -179,6 +182,23 @@ impl ParserState {
             }
             _ => self.parse_statement(),
         }
+    }
+
+    fn look_ahead_export_starts_export_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = matches!(
+            self.token(),
+            SyntaxKind::OpenBraceToken
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::EqualsToken
+                | SyntaxKind::AsKeyword
+        );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     pub(crate) fn parse_statement_top_level_modifier(&mut self) -> NodeIndex {
