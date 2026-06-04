@@ -1483,6 +1483,31 @@ fn while_missing_open_paren_before_colon_recovers_rest_tail() {
             .any(|(_, _, _, message)| message == "')' expected."),
         "while colon recovery should not report a spurious missing `)`, got {fingerprints:?}"
     );
+
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let while_node = arena
+        .get(sf.statements.nodes[1])
+        .expect("expected recovered while statement");
+    assert_eq!(while_node.kind, syntax_kind_ext::WHILE_STATEMENT);
+    let while_data = arena.get_loop(while_node).expect("expected loop data");
+    assert_eq!(
+        while_data.condition,
+        NodeIndex::NONE,
+        "`while :` recovery should keep the condition missing"
+    );
+    assert_eq!(
+        arena.get(while_data.statement).unwrap().kind,
+        syntax_kind_ext::EXPRESSION_STATEMENT,
+        "the leading colon tail should become the while body"
+    );
+    assert!(
+        sf.statements.nodes.iter().skip(2).any(|&idx| arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::LABELED_STATEMENT)),
+        "`rest: string[]` should survive as a following labeled statement"
+    );
 }
 
 #[test]

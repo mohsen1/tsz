@@ -7,7 +7,7 @@ permalink: /compatibility/index.html
 
 # Compatibility
 
-`tsz` is close to `tsc` compatibility across diagnostics, emit, and editor behavior. The remaining work is concentrated in real-project compile readiness, project timing completeness, and the last release-gate gaps tracked below.
+`tsz` is close to `tsc` compatibility across diagnostics, emit, and editor behavior. The remaining work is concentrated in real-project compile readiness and the last release-gate gaps tracked below.
 
 Currently tracking **TypeScript `{{ metrics.ts_version }}`**.
 

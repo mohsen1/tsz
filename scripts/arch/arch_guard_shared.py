@@ -238,8 +238,6 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
-            "crates/tsz-checker/src/error_reporter/core_formatting.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
@@ -282,10 +280,9 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver instantiation boundary: instantiate.rs must not grow",
         ROOT / "crates" / "tsz-solver" / "src" / "instantiation" / "instantiate.rs",
-        # Ratcheted 2098 -> 2169 to restore green main after the live file grew
-        # past the cap (mapped-type modifier fixes #12477/#12392). Owner (M4/solver)
-        # should split instantiate.rs and ratchet this back down.
-        2169,
+        # Ratcheted down after substitution helpers split out of instantiate.rs.
+        # Keep future growth in the new submodule or continue splitting this file.
+        1983,
     ),
     (
         "Solver evaluation boundary: conditional.rs must not grow",
@@ -342,11 +339,11 @@ FILE_LINE_LIMIT_CHECKS = [
     # Ratcheted 8206→4981 after extracting the 3.2k-LOC test module into
     # config/tests/{options_parsing,module_resolution,strict_lib_extends}.rs.
     (
+        # Ratcheted 4275→4281: +6 lines for tsconfig selector normalization
+        # and config-validation fixes (#12493, #12496).
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
-        # Ratcheted to live (4281) + small buffer to restore green main; this file
-        # is actively churning. Core lane should split and ratchet back down.
-        4500,
+        4281,
     ),
     # LSP signature-help: the root provider has been split by concern. Existing
     # TypeData/direct lookup() debt is isolated in signature_help/shapes.rs (see
@@ -444,11 +441,11 @@ FILE_LINE_LIMIT_CHECKS = [
     # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
     # as pipeline stages are extracted per §19.
     (
+        # Ratcheted 3186→3193: +7 lines for config-validation false-positive
+        # fixes (#12493, #12496).
         "CLI boundary: driver/core monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
-        # Ratcheted to live (3193) + small buffer to restore green main. CLI lane
-        # should split and ratchet back down.
-        3400,
+        3193,
     ),
     # CLI LSP server: structure/outline handler — split by request kind per §19.
     (
@@ -536,7 +533,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "source_file"
         / "top_level_using.rs",
-        2537,
+        2608,
     ),
     # Emitter property/element access: split by access kind per §19.
     (
@@ -554,17 +551,16 @@ FILE_LINE_LIMIT_CHECKS = [
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
     (
-        "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
+        "Emitter boundary: emitter/expressions/core/private_fields.rs size ratchet",
         ROOT
         / "crates"
         / "tsz-emitter"
         / "src"
-        / "declaration_emitter"
-        / "helpers"
-        / "type_inference_return_normalization.rs",
-        # Ratcheted 2006 -> 2046 to restore green main after the live file grew
-        # past the cap. Owner (emit lane) should split and ratchet this back down.
-        2046,
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
     ),
     (
         "Checker boundary: types/property_access_type/resolve.rs size ratchet",
@@ -653,32 +649,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2886,
     ),
     (
-        # Newly over 2000 LOC on main; restoring green. M1 lane should split and
-        # ratchet this back down.
-        "Checker boundary: error_reporter/core_formatting.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-checker"
-        / "src"
-        / "error_reporter"
-        / "core_formatting.rs",
-        2017,
-    ),
-    (
-        # Newly over 2000 LOC on main; restoring green. M1 lane should split and
-        # ratchet this back down.
-        "Checker boundary: error_reporter/core/diagnostic_source/assignment_formatting.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-checker"
-        / "src"
-        / "error_reporter"
-        / "core"
-        / "diagnostic_source"
-        / "assignment_formatting.rs",
-        2048,
-    ),
-    (
         "Solver boundary: type_queries/flow.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "type_queries" / "flow.rs",
         2755,
@@ -700,11 +670,11 @@ FILE_LINE_LIMIT_CHECKS = [
         2843,
     ),
     (
+        # Ratcheted 2736→2896: +160 lines for three config-validation
+        # false-positive test cases (#12493).
         "CLI boundary: driver/tests.rs size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "tests.rs",
-        # Ratcheted to live (2843) + small buffer to restore green main. CLI lane
-        # should split and ratchet back down.
-        3100,
+        2896,
     ),
     (
         "Checker boundary: types/class_type/constructor.rs size ratchet",

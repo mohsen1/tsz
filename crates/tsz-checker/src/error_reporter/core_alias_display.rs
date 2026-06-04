@@ -1,0 +1,153 @@
+use crate::state::CheckerState;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    /// Look up a displayable non-generic type alias name for a `TypeId`.
+    pub(crate) fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
+        // Only check composite types - tsc does NOT preserve alias names for
+        // primitive types (number, string, etc.) or literal types.
+        // Restricting to object/function/callable/union/intersection types avoids
+        // regressions like `number` -> `TypeOfInfinity`.
+        let is_object =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
+        let is_union = if !is_object {
+            crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some()
+        } else {
+            false
+        };
+        let is_function = if !is_object && !is_union {
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty).is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                    .is_some()
+        } else {
+            false
+        };
+        if !is_object && !is_function && !is_union {
+            return None;
+        }
+
+        // If the type has a display alias (produced by evaluating a generic
+        // Application like B<string>), let the formatter handle it - using the
+        // raw alias name would lose the type arguments.
+        if self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
+            crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
+        }) {
+            return None;
+        }
+        if let Some(alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && def.type_params.is_empty()
+        {
+            let name = self.ctx.types.resolve_atom_ref(def.name);
+            if name.contains('<') {
+                return Some(name.to_string());
+            }
+        }
+
+        // For intersection types (e.g., typeof X & Function), expand to the full
+        // type representation rather than using the alias name. This matches tsc's
+        // behavior in assignability messages for complex intersection types.
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, ty).is_some() {
+            return None;
+        }
+
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind != tsz_solver::def::DefKind::TypeAlias
+            && !is_union
+        {
+            return None;
+        }
+
+        // Try body_to_alias first (raw alias body), then fall back to
+        // type_to_def (evaluated alias form registered by the checker).
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(ty)
+            .or_else(|| {
+                let def_id = self.ctx.definition_store.find_def_for_type(ty)?;
+                let def = self.ctx.definition_store.get(def_id)?;
+                if def.kind == tsz_solver::def::DefKind::TypeAlias {
+                    Some(def_id)
+                } else {
+                    None
+                }
+            })?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        // Only use the alias for non-generic type aliases. Generic aliases
+        // need type argument display (e.g., B<string> not B).
+        if !def.type_params.is_empty() {
+            return None;
+        }
+        // `type T = typeof value` aliases display as the resolved value type
+        // in assignment diagnostics. Do not repaint that resolved body as `T`.
+        if def.body.is_some_and(|body| {
+            crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+        }) || self.type_alias_definition_body_is_type_query(&def)
+        {
+            return None;
+        }
+        // Skip aliases whose body was computed by intersection reduction or
+        // conditional evaluation. tsc shows the expanded form for these.
+        if let Some(body) = def.body
+            && self.ctx.definition_store.is_computed_body(body)
+        {
+            return None;
+        }
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        Some(name.to_string())
+    }
+
+    pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
+        crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
+        .unwrap_or_else(|| self.format_type_diagnostic(ty))
+    }
+
+    pub(in crate::error_reporter) fn compute_ambiguous_conditional_display(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        let db = self.ctx.types.as_type_database();
+        let cond = crate::query_boundaries::state::type_environment::get_conditional_type(db, ty)?;
+        if !cond.is_distributive {
+            return None;
+        }
+        let param_info = crate::query_boundaries::common::type_param_info(db, cond.check_type)?;
+        let branches_are_concrete =
+            !crate::query_boundaries::common::contains_type_parameters(db, cond.true_type)
+                && !crate::query_boundaries::common::contains_type_parameters(db, cond.false_type);
+        if !branches_are_concrete {
+            return None;
+        }
+        let constraint = match param_info.constraint {
+            Some(c) => c,
+            None => return Some(self.ctx.types.union2(cond.true_type, cond.false_type)),
+        };
+        if crate::query_boundaries::assignability::is_fresh_subtype_of(
+            db,
+            constraint,
+            cond.extends_type,
+        ) {
+            return None;
+        }
+        let extends_members = crate::query_boundaries::common::union_members(db, cond.extends_type)
+            .unwrap_or_else(|| vec![cond.extends_type].into());
+        let has_overlap = extends_members.iter().any(|&m| {
+            crate::query_boundaries::assignability::is_fresh_subtype_of(db, m, constraint)
+        });
+        if has_overlap {
+            Some(self.ctx.types.union2(cond.true_type, cond.false_type))
+        } else {
+            None
+        }
+    }
+}

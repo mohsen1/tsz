@@ -1611,6 +1611,60 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn top_level_using_class_assignment_text(
+        emitted: &str,
+        binding_name: &str,
+        class_has_name: bool,
+    ) -> String {
+        if let Some(rewritten) = Self::splice_top_level_using_assignment_head(
+            emitted,
+            &format!("let {binding_name} = "),
+            &format!("{binding_name} = "),
+        ) {
+            return rewritten;
+        }
+        if let Some(rewritten) = Self::splice_top_level_using_assignment_head(
+            emitted,
+            &format!("var {binding_name} = "),
+            &format!("{binding_name} = "),
+        ) {
+            return rewritten;
+        }
+
+        let class_head = format!("class {binding_name}");
+        let assignment_head = if class_has_name {
+            format!("{binding_name} = class {binding_name}")
+        } else {
+            format!("{binding_name} = class")
+        };
+        Self::splice_top_level_using_assignment_head(emitted, &class_head, &assignment_head)
+            .unwrap_or_else(|| emitted.to_string())
+    }
+
+    fn splice_top_level_using_assignment_head(
+        emitted: &str,
+        needle: &str,
+        replacement: &str,
+    ) -> Option<String> {
+        let start = emitted.find(needle)?;
+        let mut rewritten =
+            String::with_capacity(emitted.len() + replacement.len().saturating_sub(needle.len()));
+        rewritten.push_str(&emitted[..start]);
+        rewritten.push_str(replacement);
+        rewritten.push_str(&emitted[start + needle.len()..]);
+        Some(rewritten)
+    }
+
+    fn top_level_using_assignment_rhs<'b>(emitted: &'b str, binding_name: &str) -> Option<&'b str> {
+        Some(
+            emitted
+                .strip_prefix(binding_name)?
+                .trim_start()
+                .strip_prefix('=')?
+                .trim_start(),
+        )
+    }
+
     fn mark_top_level_using_inline_cjs_export(
         &mut self,
         export_name: Option<&String>,
@@ -2168,6 +2222,30 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        if let Some(export_name) = export_name.as_ref()
+            && rewrite_as_direct_export
+            && export_name != "default"
+            && !self.ctx.target_es5
+            && !has_decorators
+            && !self.in_system_top_level_using_prelude
+        {
+            let assignment_target = format!(
+                "{}{binding_name}",
+                self.top_level_using_export_binding_prefix(export_name)
+            );
+            let assignment_suffix = self.top_level_using_export_binding_suffix();
+            self.emit_class_es6_assignment_with_suffix(
+                node,
+                idx,
+                assignment_target,
+                assignment_suffix,
+            );
+            if let Some(prev) = prev_anon_default_name {
+                self.anonymous_default_export_name = prev;
+            }
+            self.mark_top_level_using_inline_cjs_export(Some(export_name), is_es_module_output);
+            return true;
+        }
         if self.in_system_execute_body
             && self.ctx.target_es5
             && !has_decorators
@@ -2277,35 +2355,72 @@ impl<'a> Printer<'a> {
             }
             self.sync_es5_class_emitter_state(&mut es5_emitter);
         }
+        if export_name.is_none() && self.ctx.target_es5 && !has_decorators {
+            let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
+            self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+            es5_emitter.set_indent_level(self.writer.indent_level());
+            es5_emitter.set_transforms(self.transforms.clone());
+            es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            if let Some(text) = self.source_text_for_map() {
+                es5_emitter.set_source_text(text);
+            }
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+
+            let mut output = es5_emitter.emit_class_assignment_with_name(idx, &binding_name);
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+            if !output.is_empty() {
+                let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+                if let Some(stripped) = output.strip_prefix(&leading_indent) {
+                    output = stripped.to_string();
+                }
+                self.write(&output);
+                if !output.trim_end().ends_with(';') {
+                    self.write(";");
+                }
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                self.mark_top_level_using_inline_cjs_export(None, is_es_module_output);
+                return true;
+            }
+        }
+        let use_default_tc39_display_name = self.in_system_execute_body
+            && export_name.as_deref() == Some("default")
+            && !self.ctx.options.target.supports_es2025()
+            && class.name.is_none()
+            && has_decorators
+            && !self.ctx.options.legacy_decorators;
+        let prev_pending_tc39_name = if use_default_tc39_display_name {
+            self.pending_tc39_class_expression_name
+                .replace(("default".to_string(), false))
+        } else {
+            None
+        };
+
         let before_len = self.writer.len();
         self.emit(idx);
         let after_len = self.writer.len();
+        if use_default_tc39_display_name {
+            self.pending_tc39_class_expression_name = prev_pending_tc39_name;
+        }
         if let Some(prev) = prev_anon_default_name {
             self.anonymous_default_export_name = prev;
         }
         let full_output = self.writer.get_output().to_string();
         let emitted = &full_output[before_len..after_len];
 
-        let mut rewritten = emitted.replacen(
-            &format!("let {binding_name} = "),
-            &format!("{binding_name} = "),
-            1,
+        let mut rewritten = Self::top_level_using_class_assignment_text(
+            emitted,
+            &binding_name,
+            class.name.is_some(),
         );
-        if rewritten == emitted {
-            rewritten = emitted.replacen(
-                &format!("var {binding_name} = "),
-                &format!("{binding_name} = "),
-                1,
-            );
-        }
-        if rewritten == emitted {
-            let replacement = if class.name.is_some() {
-                format!("{binding_name} = class {binding_name}")
-            } else {
-                format!("{binding_name} = class")
-            };
-            rewritten = emitted.replacen(&format!("class {binding_name}"), &replacement, 1);
-        }
 
         self.writer.truncate(before_len);
         if let Some(export_name) = export_name.as_ref() {
@@ -2416,20 +2531,13 @@ impl<'a> Printer<'a> {
                     .strip_suffix(';')
                     .unwrap_or(&rewritten)
                     .trim_start();
-                let inline_expr = if let Some(eq_idx) = trimmed.find(" = (() => {") {
-                    let iife = trimmed[eq_idx + 3..].replace("class_1", "default_1");
-                    iife.replace(
-                        "__setFunctionName(_classThis, \"default_1\");",
-                        "__setFunctionName(_classThis, \"default\");",
-                    )
-                } else {
-                    trimmed.to_string()
-                };
+                let inline_expr =
+                    Self::top_level_using_assignment_rhs(trimmed, &binding_name).unwrap_or(trimmed);
                 self.write_export_binding_start(export_name);
                 if self.in_top_level_using_scope {
                     self.write("_default = ");
                 }
-                self.write(&inline_expr);
+                self.write(inline_expr);
                 self.write_export_binding_end();
             } else if self.in_system_execute_body
                 && (has_explicit_export_modifier
