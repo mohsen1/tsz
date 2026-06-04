@@ -277,9 +277,16 @@ fn generic_primitive_property_mismatch_is_property_name_independent() {
 }
 
 #[test]
-fn generic_mapped_property_mismatch_surfaces_type_arg_directly() {
-    // Mapped type aliases are also generic applications; tsc skips the
-    // "Types of property" wrapper for same-generic type-argument mismatches.
+fn generic_mapped_property_mismatch_elaborates_structurally() {
+    // A homomorphic mapped-type alias (`Wrap<T> = { [K in keyof T]: T[K] }`) is
+    // NOT a nominal generic reference: even though it is spelled as a generic
+    // application, tsc elaborates the mismatch *structurally* — it keeps the
+    // `Types of property 'a' are incompatible.` wrapper and then the leaf —
+    // rather than collapsing to a single covariant type-argument line the way a
+    // class/interface reference (`Box<number>`) does. Verified against tsc:
+    //   Type 'Wrap<{ a: number; }>' is not assignable to type 'Wrap<{ a: string; }>'.
+    //     Types of property 'a' are incompatible.
+    //       Type 'number' is not assignable to type 'string'.
     let diagnostic = ts2322_diagnostic(
         r#"
 type Wrap<T> = { [K in keyof T]: T[K] };
@@ -292,15 +299,15 @@ target = source;
     );
 
     assert!(
-        !has_related(&diagnostic, "Types of property 'a' are incompatible."),
-        "same-generic mapped mismatch must NOT show property-path wrapper, got {diagnostic:#?}"
+        has_related(&diagnostic, "Types of property 'a' are incompatible."),
+        "mapped-alias mismatch must keep the structural property wrapper, got {diagnostic:#?}"
     );
     assert!(
         has_related(
             &diagnostic,
             "Type 'number' is not assignable to type 'string'."
         ),
-        "expected type-argument mismatch nested directly for mapped wrapper, got {diagnostic:#?}"
+        "expected the leaf relation beneath the property wrapper, got {diagnostic:#?}"
     );
 }
 

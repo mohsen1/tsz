@@ -289,6 +289,19 @@ pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
     tsz_solver::type_queries::is_generic_mapped_application_db(db, resolver, type_id)
 }
 
+/// Check whether an application's *declared* alias body is a mapped type
+/// (e.g. `Partial<X>`, `Readonly<X>`, or `type F<T> = { [K in keyof T]... }`),
+/// even when the concrete instantiation is fully resolved. Diagnostic
+/// elaboration uses this to elaborate mapped-alias mismatches structurally
+/// rather than via type-argument variance, matching tsc.
+pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
+}
+
 /// Check if a type contains type parameters that require instantiation,
 /// but correctly handles mapped types by only checking their constraint and
 /// `name_type` (not the template, which always contains the iteration variable).
