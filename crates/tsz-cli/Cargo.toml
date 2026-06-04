@@ -103,6 +103,10 @@ path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
 name = "generic_call_bare_type_param_dts_emit_tests"
 path = "tests/generic_call_bare_type_param_dts_emit_tests.rs"
 
+[[test]]
+name = "generator_yield_star_dts_emit_tests"
+path = "tests/generator_yield_star_dts_emit_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
