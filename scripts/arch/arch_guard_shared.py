@@ -246,7 +246,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/utilities/core.rs",
         },
     ),
     (
@@ -623,7 +622,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Checker boundary: types/utilities/core.rs size ratchet",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "utilities" / "core.rs",
-        2779,
+        1703,
     ),
     (
         "Checker boundary: state/type_analysis/core.rs size ratchet",
