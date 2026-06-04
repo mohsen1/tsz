@@ -210,10 +210,13 @@ fn lazy_conditional_alias_resolving_to_never_renders_underlying() {
 }
 
 #[test]
-fn lazy_conditional_alias_resolving_to_tuple_keeps_alias_name() {
-    // A conditional that reduces to a *structural* result (here a tuple) keeps
-    // its alias name: only shared-singleton scalars drop the `aliasSymbol`.
-    // This guards the scalar gate against over-reaching into structural results.
+fn lazy_conditional_alias_resolving_to_tuple_renders_underlying() {
+    // A *conditional* resolves away into its branch type and never carries the
+    // alias's `aliasSymbol`, so tsc renders the underlying structural result —
+    // here `[string, number]` — rather than the alias name `Pair`. This holds
+    // for any resolved shape, not only shared-singleton scalars. (Verified
+    // against tsc 6.0.2: `type Pair = string extends string ? [string, number]
+    // : never` elaborates as `[string, number]`.)
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -248,7 +251,83 @@ fn lazy_conditional_alias_resolving_to_tuple_keeps_alias_name() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     assert_eq!(
         fmt.format(lazy),
-        "Pair",
-        "A conditional alias that reduces to a tuple must keep its declared name"
+        "[string, number]",
+        "A conditional alias that reduces to a tuple renders the underlying tuple"
     );
+}
+
+#[test]
+fn lazy_conditional_alias_resolving_to_object_renders_underlying() {
+    // `type C = string extends string ? { a: 1 } : never` → tsc shows
+    // `{ a: 1; }`, never `C`: the resolved conditional drops the alias symbol.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let object = db.object(vec![PropertyInfo::new(
+        db.intern_string("a"),
+        db.literal_number(1.0),
+    )]);
+    let body = db.conditional(crate::types::ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: object,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("C"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(lazy), "{ a: 1; }");
+}
+
+#[test]
+fn lazy_keyof_alias_renders_underlying_literal_union() {
+    // `type K = keyof { a: 1; b: 2 }` → tsc shows `"a" | "b"`, never `K`:
+    // `keyof` constructs its result without the enclosing alias symbol.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let object = db.object(vec![
+        PropertyInfo::new(db.intern_string("a"), db.literal_number(1.0)),
+        PropertyInfo::new(db.intern_string("b"), db.literal_number(2.0)),
+    ]);
+    let body = db.keyof(object);
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("K"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(lazy), "\"a\" | \"b\"");
+}
+
+#[test]
+fn lazy_index_access_alias_renders_underlying_object() {
+    // `type IA = { p: { a: 1 } }["p"]` → tsc shows `{ a: 1; }`, never `IA`:
+    // the indexed access resolves to its element type with no alias symbol.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let inner = db.object(vec![PropertyInfo::new(
+        db.intern_string("a"),
+        db.literal_number(1.0),
+    )]);
+    let outer = db.object(vec![PropertyInfo::new(db.intern_string("p"), inner)]);
+    let body = db.index_access(outer, db.literal_string("p"));
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("IA"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(lazy), "{ a: 1; }");
 }
