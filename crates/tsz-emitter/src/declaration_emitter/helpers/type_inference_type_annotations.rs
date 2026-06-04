@@ -504,6 +504,14 @@ impl<'a> DeclarationEmitter<'a> {
                     })
                 })?;
 
+            if let Some(type_text) = self.type_literal_member_declared_type_annotation_text(
+                source_arena,
+                declared_type,
+                &member_name,
+            ) {
+                return Some(type_text);
+            }
+
             let declared_type_sym_id =
                 self.declaration_type_symbol_from_type_node(source_arena, declared_type)?;
             let declared_type_sym_id = self
@@ -513,6 +521,56 @@ impl<'a> DeclarationEmitter<'a> {
                 self.resolve_portability_declaration_symbol(declared_type_sym_id, binder);
             self.type_member_declared_type_annotation_text(declared_type_sym_id, &member_name)
         })
+    }
+
+    fn type_literal_member_declared_type_annotation_text(
+        &self,
+        source_arena: &tsz_parser::parser::node::NodeArena,
+        type_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<String> {
+        let type_idx = source_arena.skip_parenthesized(type_idx);
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_literal = source_arena.get_type_literal(type_node)?;
+        for &member_idx in &type_literal.members.nodes {
+            let Some(member_node) = source_arena.get(member_idx) else {
+                continue;
+            };
+            if let Some(signature) = source_arena.get_signature(member_node)
+                && self
+                    .property_name_text_from_arena(source_arena, signature.name)
+                    .as_deref()
+                    == Some(member_name)
+                && signature.type_annotation.is_some()
+            {
+                return self
+                    .type_annotation_text_from_arena_node(source_arena, signature.type_annotation);
+            }
+            if let Some(prop_decl) = source_arena.get_property_decl(member_node)
+                && self
+                    .property_name_text_from_arena(source_arena, prop_decl.name)
+                    .as_deref()
+                    == Some(member_name)
+                && prop_decl.type_annotation.is_some()
+            {
+                return self
+                    .type_annotation_text_from_arena_node(source_arena, prop_decl.type_annotation);
+            }
+            if let Some(accessor) = source_arena.get_accessor(member_node)
+                && self
+                    .property_name_text_from_arena(source_arena, accessor.name)
+                    .as_deref()
+                    == Some(member_name)
+                && accessor.type_annotation.is_some()
+            {
+                return self
+                    .type_annotation_text_from_arena_node(source_arena, accessor.type_annotation);
+            }
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn type_member_declared_type_annotation_text(
