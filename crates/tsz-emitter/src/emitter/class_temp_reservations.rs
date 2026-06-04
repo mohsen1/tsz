@@ -48,6 +48,11 @@ impl<'a> Printer<'a> {
                 || k == super::syntax_kind_ext::CONSTRUCTOR
                 || k == super::syntax_kind_ext::GET_ACCESSOR
                 || k == super::syntax_kind_ext::SET_ACCESSOR
+                || k == super::syntax_kind_ext::FOR_STATEMENT
+                || k == super::syntax_kind_ext::WHILE_STATEMENT
+                || k == super::syntax_kind_ext::DO_STATEMENT
+                || k == super::syntax_kind_ext::FOR_IN_STATEMENT
+                || k == super::syntax_kind_ext::FOR_OF_STATEMENT
         ) {
             return;
         }
