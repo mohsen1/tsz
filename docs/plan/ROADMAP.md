@@ -73,7 +73,10 @@ remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
 cleanup as complete. It currently lists `13` accepted-regression entries even
 though the dashboard is exact, so the strictness gate is non-empty and each
-entry should be paid down or re-justified in follow-up PRs.
+entry should be paid down or re-justified in follow-up PRs. A checked-in detail
+snapshot that no longer lists these tests as failures is not enough to retire
+entries; removal must be backed by exact-head aggregate CI showing the tests no
+longer appear in the shard failure set.
 
 ## Evidence From Current Audit
 
