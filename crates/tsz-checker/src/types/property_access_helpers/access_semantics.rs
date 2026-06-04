@@ -620,19 +620,17 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve a (possibly mapped) instantiation through the type environment and,
-    /// when it reduces to a concrete object, report whether `prop_name` is absent.
+    /// when it reduces to a concrete object, report whether `prop_name` is present.
     ///
     /// The solver's environment-free finite-name queries cannot resolve
     /// `Lazy(DefId)` source references (type aliases / interfaces), so a mapped
     /// type whose source is such a reference — combined with a non-identity `as`
     /// clause — cannot be enumerated syntactically. The checker owns the
     /// `DefId -> TypeId` resolver, so evaluating here yields the real, fully
-    /// modifier-preserving object shape. Returns:
-    /// - `Some(false)` if the property exists (named or covered by an index sig),
-    /// - `Some(true)` if it is genuinely absent from a concrete object shape,
-    /// - `None` if the type does not reduce to a concrete object (still generic),
-    ///   so the caller can fall back to the conservative syntactic heuristic.
-    fn concrete_mapped_application_lacks_property(
+    /// modifier-preserving object shape. Empty evaluated shapes stay uncertain:
+    /// they may be artifacts of unresolved generic/keyof constraints rather
+    /// than proof that every property is absent.
+    fn concrete_mapped_application_has_property(
         &mut self,
         instantiated: TypeId,
         prop_name: &str,
@@ -646,6 +644,13 @@ impl<'a> CheckerState<'a> {
         }
         let shape = common_query::object_shape_for_type(self.ctx.types, evaluated)?;
 
+        let has_concrete_property_surface = shape.string_index.is_some()
+            || shape.number_index.is_some()
+            || !shape.properties.is_empty();
+        if !has_concrete_property_surface {
+            return None;
+        }
+
         // The property is "known" when a string index signature accepts any
         // string-named property, a named property matches, or a numeric index
         // signature covers a numeric-looking name. Mirrors the intersection
@@ -654,7 +659,7 @@ impl<'a> CheckerState<'a> {
         let is_known = shape.string_index.is_some()
             || shape.properties.iter().any(|prop| prop.name == target_atom)
             || (shape.number_index.is_some() && prop_name.parse::<f64>().is_ok());
-        Some(!is_known)
+        Some(is_known)
     }
 
     fn generic_mapped_application_lacks_explicit_property(
@@ -715,12 +720,12 @@ impl<'a> CheckerState<'a> {
         // the concrete instantiated shape has known remapped properties. Only
         // in that already-non-preserving fallback case do we ask the checker's
         // environment-backed evaluator for a precise concrete verdict.
-        if let Some(verdict) =
-            self.concrete_mapped_application_lacks_property(instantiated, prop_name)
+        if let Some(has_property) =
+            self.concrete_mapped_application_has_property(instantiated, prop_name)
         {
-            return Some(verdict);
+            return Some(!has_property);
         }
-        Some(true)
+        None
     }
 
     pub(crate) fn generic_mapped_receiver_explicit_property_names(
