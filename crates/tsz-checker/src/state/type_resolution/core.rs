@@ -135,6 +135,25 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|body| self.ctx.type_involves_depth_poisoned_def(body))
     }
 
+    fn def_body_can_own_ambient_depth(&self, def_id: tsz_solver::DefId) -> bool {
+        let Some(body) = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(def_id))
+            .or_else(|| self.ctx.definition_store.get_body(def_id))
+        else {
+            return false;
+        };
+
+        let db = self.ctx.types.as_type_database();
+        crate::query_boundaries::common::contains_conditional_type(db, body)
+            || crate::query_boundaries::common::contains_keyof_type(db, body)
+            || tsz_solver::type_queries::contains_index_access_type(db, body)
+            || crate::query_boundaries::common::is_mapped_type(db, body)
+    }
+
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         // Fuel check: prevent infinite loops in circular type references
@@ -506,24 +525,28 @@ impl<'a> CheckerState<'a> {
                         // body's recursive sub-call uses the default, possibly
                         // re-triggering fan-out). When all args are explicit the
                         // body's sub-call hits the base case immediately.
-                        let (exceeded, tuple_too_large) = if (computed_recursive_alias
+                        let default_omitting_alias_omits_arg = default_omitting_recursive_alias
+                            && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref);
+                        let alias_uses_ts2589_evaluator = computed_recursive_alias
                             || same_input_recursive_union_alias
                             || default_reset_recursive_alias
-                            || (default_omitting_recursive_alias
-                                && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref)))
-                            && let Some(base_def_id) = base_def_id
-                        {
-                            (
-                                self.evaluate_type_for_ts2589_check(type_id, base_def_id),
-                                self.ctx.types.take_tuple_too_large(),
-                            )
-                        } else {
-                            self.evaluate_type_with_env_uncached(type_id);
-                            (
-                                self.ctx.depth_exceeded.get(),
-                                self.ctx.types.take_tuple_too_large(),
-                            )
-                        };
+                            || default_omitting_alias_omits_arg;
+                        let alias_can_own_ambient_depth = alias_uses_ts2589_evaluator
+                            || base_def_id
+                                .is_some_and(|def_id| self.def_body_can_own_ambient_depth(def_id));
+                        let (exceeded, tuple_too_large) =
+                            if alias_uses_ts2589_evaluator && let Some(base_def_id) = base_def_id {
+                                (
+                                    self.evaluate_type_for_ts2589_check(type_id, base_def_id),
+                                    self.ctx.types.take_tuple_too_large(),
+                                )
+                            } else {
+                                self.evaluate_type_with_env_uncached(type_id);
+                                (
+                                    self.ctx.depth_exceeded.get() && alias_can_own_ambient_depth,
+                                    self.ctx.types.take_tuple_too_large(),
+                                )
+                            };
 
                         // Also detect circular mapped-type aliases that the evaluator
                         // can't expand: if the alias body is a mapped type that
@@ -1440,13 +1463,17 @@ impl<'a> CheckerState<'a> {
                             // body's sub-call hits the base case immediately.
                             let app_def_id = query::get_application_info(self.ctx.types, result)
                                 .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base));
-                            let (exceeded, tuple_too_large) = if (computed_recursive_alias
+                            let default_omitting_alias_omits_arg = default_omitting_recursive_alias
+                                && self.type_reference_omits_defaulted_alias_arg(sym_id, type_ref);
+                            let alias_uses_ts2589_evaluator = computed_recursive_alias
                                 || same_input_recursive_union_alias
                                 || default_reset_recursive_alias
-                                || (default_omitting_recursive_alias
-                                    && self.type_reference_omits_defaulted_alias_arg(
-                                        sym_id, type_ref,
-                                    )))
+                                || default_omitting_alias_omits_arg;
+                            let alias_can_own_ambient_depth = alias_uses_ts2589_evaluator
+                                || app_def_id.is_some_and(|def_id| {
+                                    self.def_body_can_own_ambient_depth(def_id)
+                                });
+                            let (exceeded, tuple_too_large) = if alias_uses_ts2589_evaluator
                                 && let Some(app_def_id) = app_def_id
                             {
                                 (
@@ -1456,7 +1483,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.evaluate_type_with_env_uncached(result);
                                 (
-                                    self.ctx.depth_exceeded.get(),
+                                    self.ctx.depth_exceeded.get() && alias_can_own_ambient_depth,
                                     self.ctx.types.take_tuple_too_large(),
                                 )
                             };
