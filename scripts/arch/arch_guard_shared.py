@@ -299,6 +299,18 @@ FILE_LINE_LIMIT_CHECKS = [
         2003,
     ),
     (
+        "Emitter expression boundary: private_fields.rs size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
+    ),
+    (
         "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
         ROOT
         / "crates"
