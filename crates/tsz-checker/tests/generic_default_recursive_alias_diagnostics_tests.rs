@@ -7,7 +7,11 @@
 //! should recover through the error type instead of cascading another TS2589 at
 //! the reference site.
 
-use tsz_checker::test_utils::{check_source_strict, diagnostic_codes, diagnostics_without_codes};
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_all_multi_file_with_global_index, check_multi_file_with_global_index,
+    check_source_strict, diagnostic_codes, diagnostics_without_codes,
+};
 
 fn semantic_codes(source: &str) -> Vec<u32> {
     diagnostic_codes(&diagnostics_without_codes(
@@ -151,7 +155,6 @@ interface ReadonlyArray<T> {
     readonly length: number;
     readonly [n: number]: T;
 }
-
 type List<A = any> = ReadonlyArray<A>;
 type Cast<A1 extends any, A2 extends any> = A1 extends A2 ? A1 : A2;
 type Extends<A1 extends any, A2 extends any> =
@@ -191,5 +194,193 @@ type Result = MergeAll<[{}], [[{ value: 1 }]]>;
     assert!(
         !codes.contains(&2589),
         "bounded recursive merge through a non-recursive List wrapper must not emit TS2589; got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_recursive_merge_cast_to_list_alias_no_declaration_ts2589() {
+    let codes = semantic_codes(
+        r##"
+interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+}
+
+type List<A = any> = ReadonlyArray<A>;
+type Cast<A1 extends any, A2 extends any> = A1 extends A2 ? A1 : A2;
+type Extends<A1 extends any, A2 extends any> =
+    [A1] extends [never] ? 0 : A1 extends A2 ? 1 : 0;
+
+type Iteration = [
+    value: number,
+    next: keyof IterationMap,
+];
+type IterationMap = {
+    "__": [number, "__"],
+    "0": [0, "1"],
+    "1": [1, "__"],
+};
+type IterationOf<N extends keyof IterationMap> = IterationMap[N];
+type Next<I extends Iteration> = IterationMap[I[1]];
+type Pos<I extends Iteration> = I[0];
+type Length<L extends List> = L["length"];
+type Depth = "flat" | "deep";
+type BuiltIn = Function | Date | Error | RegExp;
+
+type Merge<O extends object, O1 extends object> = O & O1;
+type __MergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth,
+    ignore extends object,
+    fill extends any,
+    I extends Iteration = IterationOf<"0">,
+> = {
+    0: __MergeAll<Merge<O, Os[Pos<I>] & object>, Os, depth, ignore, fill, Next<I>>;
+    1: O;
+}[Extends<Pos<I>, Length<Os>>];
+type _MergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth,
+    ignore extends object,
+    fill extends any,
+> = __MergeAll<O, Os, depth, ignore, fill> extends infer X
+    ? Cast<X, object>
+    : never;
+type ObjectMergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth = "flat",
+    ignore extends object = BuiltIn,
+    fill extends any = undefined,
+> = O extends unknown
+    ? Os extends unknown
+        ? _MergeAll<O, Os, depth, ignore, fill>
+        : never
+    : never;
+type MergeAll<
+    L extends List,
+    Ls extends List<List>,
+    depth extends Depth = "flat",
+    ignore extends object = BuiltIn,
+    fill extends any = undefined,
+> = Cast<ObjectMergeAll<L, Ls, depth, ignore, fill>, List>;
+"##,
+    );
+
+    assert!(
+        !codes.contains(&2589),
+        "generic list wrapper declaration around bounded recursive merge must not emit TS2589; got {codes:?}"
+    );
+}
+
+#[test]
+fn imported_generic_recursive_merge_cast_to_list_alias_no_declaration_ts2589() {
+    let files = [
+        (
+            "list.ts",
+            r#"
+export interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+}
+export type List<A = any> = ReadonlyArray<A>;
+"#,
+        ),
+        (
+            "cast.ts",
+            r#"
+export type Cast<A1 extends any, A2 extends any> = A1 extends A2 ? A1 : A2;
+export type Extends<A1 extends any, A2 extends any> =
+    [A1] extends [never] ? 0 : A1 extends A2 ? 1 : 0;
+"#,
+        ),
+        (
+            "objectMergeAll.ts",
+            r##"
+import {Cast, Extends} from "./cast";
+import {List} from "./list";
+
+type Iteration = [
+    value: number,
+    next: keyof IterationMap,
+];
+type IterationMap = {
+    "__": [number, "__"],
+    "0": [0, "1"],
+    "1": [1, "__"],
+};
+type IterationOf<N extends keyof IterationMap> = IterationMap[N];
+type Next<I extends Iteration> = IterationMap[I[1]];
+type Pos<I extends Iteration> = I[0];
+type Length<L extends List> = L["length"];
+export type Depth = "flat" | "deep";
+export type BuiltIn = { readonly __brand?: never };
+
+type Merge<O extends object, O1 extends object> = O & O1;
+type __MergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth,
+    ignore extends object,
+    fill extends any,
+    I extends Iteration = IterationOf<"0">,
+> = {
+    0: __MergeAll<Merge<O, Os[Pos<I>] & object>, Os, depth, ignore, fill, Next<I>>;
+    1: O;
+}[Extends<Pos<I>, Length<Os>>];
+type _MergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth,
+    ignore extends object,
+    fill extends any,
+> = __MergeAll<O, Os, depth, ignore, fill> extends infer X
+    ? Cast<X, object>
+    : never;
+export type ObjectMergeAll<
+    O extends object,
+    Os extends List<object>,
+    depth extends Depth = "flat",
+    ignore extends object = BuiltIn,
+    fill extends any = undefined,
+> = O extends unknown
+    ? Os extends unknown
+        ? _MergeAll<O, Os, depth, ignore, fill>
+        : never
+    : never;
+"##,
+        ),
+        (
+            "mergeAll.ts",
+            r#"
+import {Cast} from "./cast";
+import {List} from "./list";
+import {BuiltIn, Depth, ObjectMergeAll} from "./objectMergeAll";
+
+export type MergeAll<
+    L extends List,
+    Ls extends List<List>,
+    depth extends Depth = "flat",
+    ignore extends object = BuiltIn,
+    fill extends any = undefined,
+> = Cast<ObjectMergeAll<L, Ls, depth, ignore, fill>, List>;
+"#,
+        ),
+    ];
+    let entry_diagnostics =
+        check_multi_file_with_global_index(&files, "mergeAll.ts", CheckerOptions::default());
+    let diagnostics = check_all_multi_file_with_global_index(&files, CheckerOptions::default());
+    let entry_codes = diagnostic_codes(&diagnostics_without_codes(&entry_diagnostics, &[2318]));
+    let codes = diagnostic_codes(&diagnostics_without_codes(&diagnostics, &[2318]));
+
+    assert!(
+        !entry_codes.contains(&2589),
+        "entry-only imported generic list wrapper declaration must not emit TS2589; got {entry_codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "project-style imported generic list wrapper declaration around bounded recursive merge must not emit TS2589; got {codes:?}"
     );
 }
