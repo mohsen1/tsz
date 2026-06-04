@@ -975,6 +975,9 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/nullable_union_callback_variance_tests.rs"]
+mod nullable_union_callback_variance_tests;
+#[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]
@@ -1205,6 +1208,9 @@ mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
 mod variadic_tuple_readonly_relation_tests;
+#[cfg(test)]
+#[path = "../tests/variadic_tuple_tail_arity_inference_tests.rs"]
+mod variadic_tuple_tail_arity_inference_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;

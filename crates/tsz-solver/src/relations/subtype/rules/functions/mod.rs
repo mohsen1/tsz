@@ -445,12 +445,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (`value: T` in `Bivar<T>`); those keep ordinary method bivariance.
         let callback_originated_from_instantiated_generic =
             self.callback_param_originated_from_instantiated_generic(source_type, target_type);
-        let inner_signature_is_method_like = self.callable_first_signature_is_method(source_type)
-            || self.callable_first_signature_is_method(target_type);
-        let entering_callback_check = s_has_call
-            && t_has_call
+        // tsc detects callback parameters with `getSingleCallSignature(getNonNullableType(t))`,
+        // i.e. it strips `null`/`undefined` before deciding whether a parameter is a
+        // callback. A method parameter typed `((value: T) => R) | undefined` (the exact
+        // shape of `Promise.then`'s `onfulfilled`) is therefore still a callback and must
+        // be compared with strict callback variance, not relaxed method bivariance. The
+        // strictness only applies when both sides agree on nullability — tsc additionally
+        // gates on `getTypeFacts(IsUndefinedOrNull)` matching across source and target.
+        let s_nonnull = crate::narrowing::utils::remove_nullish(self.interner, source_type);
+        let t_nonnull = crate::narrowing::utils::remove_nullish(self.interner, target_type);
+        let s_is_nullable = s_nonnull != source_type;
+        let t_is_nullable = t_nonnull != target_type;
+        // Reuse the raw modality flags computed above when no nullish member was
+        // stripped (the common path); only re-query callability on the stripped
+        // form when the parameter actually was a nullish union, keeping the hot
+        // non-nullable path free of extra `evaluate_type` walks.
+        let s_call_for_callback = if s_is_nullable {
+            self.callable_modality_flags_for_type(s_nonnull).0
+        } else {
+            s_has_call
+        };
+        let t_call_for_callback = if t_is_nullable {
+            self.callable_modality_flags_for_type(t_nonnull).0
+        } else {
+            t_has_call
+        };
+        // `inner_signature_is_method_like` probes call `evaluate_type`; keep them
+        // behind the cheaper predicates and the `method_should_be_bivariant`
+        // short-circuit so they only run for non-method callback slots.
+        let entering_callback_check = s_call_for_callback
+            && t_call_for_callback
+            && s_is_nullable == t_is_nullable
             && !callback_originated_from_instantiated_generic
-            && (method_should_be_bivariant || inner_signature_is_method_like);
+            && (method_should_be_bivariant
+                || self.callable_first_signature_is_method(s_nonnull)
+                || self.callable_first_signature_is_method(t_nonnull));
         let entering_bivariant_callback_return =
             entering_callback_check && method_should_be_bivariant;
         let saved_in_callback = self.in_callback_param_check;
