@@ -182,6 +182,9 @@ impl<'a> CheckerState<'a> {
         let inferred_display = self
             .format_pick_over_all_keys_as_keyof(target)
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
+        if let Some(display) = self.reduced_alias_app_display(target) {
+            return display;
+        }
         if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
             self.excess_property_target_annotation_for_site(idx)
         {
