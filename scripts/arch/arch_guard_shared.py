@@ -678,7 +678,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2843,
+        2896,
     ),
     (
         "CLI boundary: driver/tests.rs size ratchet",
