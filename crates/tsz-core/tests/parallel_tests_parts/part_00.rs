@@ -308,6 +308,76 @@ fn test_parse_and_bind_single_json_keyword_root_is_valid() {
     assert!(result.parse_diagnostics.is_empty());
 }
 
+/// Regression for #12485: the parse-only (no-check) path must skip the TS
+/// grammar for `.json` inputs just like the bind paths. A realistic
+/// `package.json` is valid JSON; running it through the TS parser produced ~200
+/// spurious TS1005/TS1128 grammar errors.
+#[test]
+fn test_parse_file_single_json_is_not_parsed_as_typescript() {
+    let package_json = r#"{
+  "name": "drizzle-orm",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "build": "tsc", "test": "vitest" },
+  "keywords": ["orm", "sql", "typescript"],
+  "exports": { ".": "./index.js", "./package.json": "./package.json" }
+}"#;
+
+    let result = parse_file_single("package.json".to_string(), package_json.to_string());
+
+    assert_eq!(result.file_name, "package.json");
+    assert!(result.source_file.is_some());
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "valid package.json must not emit grammar diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+#[test]
+fn test_parse_files_parallel_json_is_not_parsed_as_typescript() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        (
+            "package.json".to_string(),
+            r#"{ "name": "pkg", "version": "1.0.0", "dependencies": {} }"#.to_string(),
+        ),
+        (
+            "tsconfig.json".to_string(),
+            r#"{ "compilerOptions": { "strict": true }, "include": ["**/*"] }"#.to_string(),
+        ),
+    ];
+
+    let results = parse_files_parallel(files);
+
+    assert_eq!(results.len(), 3);
+    for result in &results {
+        assert!(result.source_file.is_some());
+        assert!(
+            result.parse_diagnostics.is_empty(),
+            "{} should parse cleanly, got: {:?}",
+            result.file_name,
+            result.parse_diagnostics
+        );
+    }
+}
+
+/// The parse-only path still surfaces strict-JSON violations (unquoted property
+/// names) as TS1327 rather than TS-grammar noise, matching the bind path.
+#[test]
+fn test_parse_file_single_json_reports_strict_json_violation() {
+    let result =
+        parse_file_single("settings.json".to_string(), "{ name: \"x\" }".to_string());
+
+    let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1327],
+        "expected TS1327 for unquoted JSON property name, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
 // =========================================================================
 // Parallel Binding Tests
 // =========================================================================

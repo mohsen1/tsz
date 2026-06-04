@@ -16,8 +16,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tracing::trace;
 
-const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
-
 // Reusable scratch `FxHashSet<crate::TypeId>` for the recursive DFS used by
 // `type_evaluates_to_function`. Mirrors the pool pattern from #4722 / #4790
 // / #4801 / #4805.
@@ -930,37 +928,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.tuple(elements)
     }
 
-    fn spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
-        let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
-            return None;
-        };
-        let elems = self.interner.tuple_list(elems_id);
-        let [elem] = &*elems else {
-            return None;
-        };
-        if !elem.rest {
-            return None;
-        }
-        let name = elem.name?;
-        (self.interner.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME).then_some(elem.type_id)
-    }
-
-    fn generic_spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
-        let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
-            return None;
-        };
-        let [elem] = &*self.interner.tuple_list(elems_id) else {
-            return None;
-        };
-        (elem.rest
-            && elem.name.is_none()
-            && matches!(
-                self.interner.lookup(elem.type_id),
-                Some(TypeData::TypeParameter(_))
-            ))
-        .then_some(elem.type_id)
-    }
-
     fn normalize_spread_actual_type(&mut self, type_id: TypeId) -> TypeId {
         if type_id.is_intrinsic() {
             return type_id;
@@ -1525,6 +1492,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
+                // Two or more adjacent variadic type parameters (`...args: [...A, ...B]`)
+                // cannot be split without an implied arity, which a tuple-typed rest
+                // parameter never has (tsc's `getNonArrayRestType` returns `undefined`
+                // for it). tsc infers nothing here, leaving `A`/`B` to fall back to
+                // their constraints — so bail out of the single-variadic slicing below
+                // rather than mis-distributing the arguments.
+                let infer_var_rest_count = elements
+                    .iter()
+                    .filter(|elem| elem.rest && var_map.contains_key(&elem.type_id))
+                    .count();
+                if infer_var_rest_count >= 2 {
+                    return None;
+                }
                 elements.iter().enumerate().find_map(|(i, elem)| {
                     if !elem.rest {
                         return None;

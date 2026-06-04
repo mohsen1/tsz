@@ -388,3 +388,66 @@ class A {
         parser.get_diagnostics()
     );
 }
+
+// ─── Contextual-keyword type-parameter names in mapped types (#12484) ─────────
+
+#[test]
+fn mapped_type_with_type_keyword_as_parameter_name() {
+    // `[type in keyof T]` — `type` is a contextual keyword valid as a
+    // mapped-type type-parameter name. tsc accepts this; tsz must not reject it.
+    let source = "type R<T> = { [type in keyof T]: T[type] };";
+    let (parser, root) = parse_clean_source(source, "[type in keyof T] mapped type");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let type_node = arena.get(alias.type_node).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::MAPPED_TYPE,
+        "{{[type in keyof T]: ...}} should parse as a mapped type, not object literal"
+    );
+}
+
+#[test]
+fn mapped_type_readonly_with_type_keyword_as_parameter_name() {
+    // `readonly [type in keyof T]` — same as above but with readonly modifier.
+    let source = "type R<T> = { readonly [type in keyof T]: T[type] };";
+    let (parser, root) =
+        parse_clean_source(source, "readonly [type in keyof T] mapped type");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let type_node = arena.get(alias.type_node).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::MAPPED_TYPE,
+        "readonly {{[type in keyof T]: ...}} should parse as a mapped type"
+    );
+    let mapped = arena.get_mapped_type(type_node).expect("mapped data");
+    assert!(
+        mapped.readonly_token.is_some(),
+        "should have readonly token"
+    );
+}
+
+#[test]
+fn mapped_type_contextual_keyword_names_vary_binder() {
+    // Varying the parameter name to non-`type` contextual keywords confirms
+    // the fix is structural (any non-reserved keyword), not name-specific.
+    // `interface` is a contextual keyword that should also be valid here.
+    let source = "type R<T> = { [interface in keyof T]: T[interface] };";
+    let (parser, root) =
+        parse_clean_source(source, "[interface in keyof T] mapped type");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let type_node = arena.get(alias.type_node).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::MAPPED_TYPE,
+        "{{[interface in keyof T]: ...}} should parse as a mapped type"
+    );
+}
