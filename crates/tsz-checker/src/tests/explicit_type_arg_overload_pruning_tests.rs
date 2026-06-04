@@ -60,3 +60,49 @@ const selected: "specific" = choose<"a">(0);
         "multiple viable overloads should keep declaration order, got {diagnostics:?}",
     );
 }
+
+#[test]
+fn explicit_object_type_arg_prunes_keyof_constraint_before_key_expansion() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+interface FirstRegistry {
+  alpha: string;
+  beta: string;
+}
+
+declare function choose<K extends keyof FirstRegistry>(value: unknown): "registry";
+declare function choose<ElementType extends object>(value: unknown): "object";
+
+const selected: "object" = choose<object>("alpha");
+"#,
+    );
+
+    let codes = diagnostic_codes(&diagnostics);
+    assert!(
+        !codes.contains(&2322),
+        "object type arguments should prune keyof-constrained overloads, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn explicit_object_type_arg_keyof_pruning_varies_binder_names() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+interface SecondRegistry {
+  gamma: number;
+  delta: number;
+}
+
+declare function select<NameKey extends keyof SecondRegistry>(value: unknown): "key";
+declare function select<NodeShape extends object>(value: unknown): "shape";
+
+const selected: "shape" = select<object>("gamma");
+"#,
+    );
+
+    let codes = diagnostic_codes(&diagnostics);
+    assert!(
+        !codes.contains(&2322),
+        "renamed object type arguments should prune keyof-constrained overloads, got {diagnostics:?}",
+    );
+}
