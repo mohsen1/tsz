@@ -545,6 +545,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print all tracked findings")
     parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print a machine-readable report to stdout",
+    )
+    parser.add_argument(
         "--json-report",
         type=pathlib.Path,
         help="write a machine-readable report before exiting",
@@ -562,11 +567,15 @@ def main(argv: list[str] | None = None) -> int:
     findings = scan()
     allowlist = load_allowlist()
     failures = audit(findings, allowlist)
+    json_report = build_json_report(findings, allowlist, failures)
 
     if args.json_report is not None:
-        write_json_report(args.json_report, build_json_report(findings, allowlist, failures))
+        write_json_report(args.json_report, json_report)
 
-    if args.list or failures:
+    if args.json:
+        print(json.dumps(json_report, indent=2, sort_keys=True))
+
+    if not args.json and (args.list or failures):
         print_report(findings, allowlist)
 
     if failures:
@@ -591,8 +600,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    pass_summary = format_pass_summary(findings, failures, allowlist)
-    print(pass_summary)
+    if not args.json:
+        pass_summary = format_pass_summary(findings, failures, allowlist)
+        print(pass_summary)
     file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
     warnings = warning_failures(file_summaries)
     if args.fail_on_warnings and warnings:

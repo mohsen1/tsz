@@ -56,6 +56,30 @@ Generates an HTML/text report of crate dependencies and boundary compliance.
 python3 scripts/arch/render_architecture_report.py
 ```
 
+### `scripts/emit/audit-output-surgery.py`
+
+Audits emitter string rewrites that change already-emitted JS/DTS output and
+tracks the ratcheted allowlist budget.
+
+```bash
+# Run the guard
+python3 scripts/emit/audit-output-surgery.py
+
+# Emit machine-readable output-surgery pressure
+python3 scripts/emit/audit-output-surgery.py --json
+
+# Persist a report artifact while preserving the guard exit code
+python3 scripts/emit/audit-output-surgery.py --json-report artifacts/output_surgery_report.json
+
+# Fail when allowlisted debt exhausts category/global pressure budget
+python3 scripts/emit/audit-output-surgery.py --fail-on-warnings
+```
+
+The JSON payload includes `status`, `output_surgery_status`, git context,
+allowlist budget counters, category pressure, failures, files, and individual
+findings. Use `--json` for direct agent/CI probes and `--json-report` when a PR
+or workflow needs an artifact.
+
 ## Quality And Performance Tooling
 
 These tools are additive guardrails. Normal PR CI keeps the fast path focused on

@@ -434,6 +434,52 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertIn("warning_status=warn", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
+    def test_json_mode_writes_stdout_report_without_text_summary(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("dts-output-surgery", 2, "existing debt"),
+        }
+
+        with (
+            patch.object(self.audit, "scan", return_value=findings),
+            patch.object(self.audit, "load_allowlist", return_value=allowlist),
+            patch.object(self.audit, "build_git_context", return_value={"head": "abc123"}),
+            redirect_stdout(io.StringIO()) as stdout,
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            status = self.audit.main(["--json"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(status, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["git_context"], {"head": "abc123"})
+        self.assertEqual(payload["allowlisted_calls"], 1)
+        self.assertNotIn("Output-surgery audit passed", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_json_mode_preserves_failure_exit_and_stderr_summary(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+
+        with (
+            patch.object(self.audit, "scan", return_value=findings),
+            patch.object(self.audit, "load_allowlist", return_value={}),
+            patch.object(self.audit, "build_git_context", return_value={"head": "abc123"}),
+            redirect_stdout(io.StringIO()) as stdout,
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            status = self.audit.main(["--json"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(status, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["unallowlisted_calls"], 1)
+        self.assertNotIn("a.rs [UNALLOWLISTED]", stdout.getvalue())
+        self.assertIn("Output-surgery audit failed", stderr.getvalue())
+
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             report_path = pathlib.Path(temp_dir) / "nested" / "report.json"
