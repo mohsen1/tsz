@@ -5,8 +5,8 @@
 set -euo pipefail
 
 AGENTS=(
-  M1-A M1-B M1-Opus
-  M4-A M4-B M4-Opus
+  M1-A M1-B M1-D M1-Opus
+  M4-A M4-B M4-C M4-Opus
   Studio-A Studio-B Studio-C Studio-Opus
   Studio-manager
 )
@@ -83,8 +83,8 @@ fi
 is_canonical_agent_label() {
   local label="$1"
   case "$label" in
-    agent:M1-A|agent:M1-B|agent:M1-Opus|\
-    agent:M4-A|agent:M4-B|agent:M4-Opus|\
+    agent:M1-A|agent:M1-B|agent:M1-D|agent:M1-Opus|\
+    agent:M4-A|agent:M4-B|agent:M4-C|agent:M4-Opus|\
     agent:Studio-A|agent:Studio-B|agent:Studio-C|agent:Studio-Opus|\
     agent:Studio-manager)
       return 0
