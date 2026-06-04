@@ -18,6 +18,7 @@ use crate::query_boundaries::common::LiteralTypeKind;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use tsz_binder::{StableLocation, SymbolId};
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1040,54 +1041,82 @@ impl<'a> CheckerState<'a> {
         };
 
         for stable_location in stable_declarations {
-            let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
+            let Some(declared) =
+                self.declared_value_annotation_type_for_stable_location(sym_id, stable_location)
+            else {
                 continue;
             };
-            let Some(decl_node) = arena.get(decl_idx) else {
-                continue;
-            };
-            let annotation = arena
-                .get_variable_declaration(decl_node)
-                .map(|decl| decl.type_annotation)
-                .or_else(|| {
-                    arena
-                        .get_parameter(decl_node)
-                        .map(|param| param.type_annotation)
-                })
-                .unwrap_or(NodeIndex::NONE);
-            if annotation.is_none() {
-                continue;
-            }
-
-            let declared = if std::ptr::eq(arena, self.ctx.arena) {
-                self.get_type_from_type_node(annotation)
-            } else if stable_location.has_file_idx()
-                && stable_location.file_idx != self.ctx.current_file_idx as u32
-            {
-                self.type_of_value_declaration_for_cross_file_symbol(
-                    sym_id,
-                    decl_idx,
-                    stable_location.file_idx as usize,
-                )
-            } else if !std::ptr::eq(arena, self.ctx.arena)
-                && let Some(target_file_idx) = self.ctx.get_file_idx_for_arena(arena)
-                && target_file_idx != self.ctx.current_file_idx
-            {
-                self.type_of_value_declaration_for_cross_file_symbol(
-                    sym_id,
-                    decl_idx,
-                    target_file_idx,
-                )
-            } else {
-                self.type_of_value_declaration_for_symbol(sym_id, decl_idx)
-            };
-
             if self.is_matching_readonly_array_like_annotation(declared, arg_type) {
                 return Some(declared);
             }
         }
 
         None
+    }
+
+    fn declared_value_annotation_type_for_stable_location(
+        &mut self,
+        sym_id: SymbolId,
+        stable_location: StableLocation,
+    ) -> Option<TypeId> {
+        let key = (sym_id, stable_location);
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .declared_value_annotation_type
+            .get(&key)
+            .copied()
+        {
+            return cached;
+        }
+
+        let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
+            return None;
+        };
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return None;
+        };
+        let annotation = arena
+            .get_variable_declaration(decl_node)
+            .map(|decl| decl.type_annotation)
+            .or_else(|| {
+                arena
+                    .get_parameter(decl_node)
+                    .map(|param| param.type_annotation)
+            })
+            .unwrap_or(NodeIndex::NONE);
+        if annotation.is_none() {
+            self.ctx
+                .type_reference_validation_caches
+                .declared_value_annotation_type
+                .insert(key, None);
+            return None;
+        }
+
+        let declared = if std::ptr::eq(arena, self.ctx.arena) {
+            self.get_type_from_type_node(annotation)
+        } else if stable_location.has_file_idx()
+            && stable_location.file_idx != self.ctx.current_file_idx as u32
+        {
+            self.type_of_value_declaration_for_cross_file_symbol(
+                sym_id,
+                decl_idx,
+                stable_location.file_idx as usize,
+            )
+        } else if !std::ptr::eq(arena, self.ctx.arena)
+            && let Some(target_file_idx) = self.ctx.get_file_idx_for_arena(arena)
+            && target_file_idx != self.ctx.current_file_idx
+        {
+            self.type_of_value_declaration_for_cross_file_symbol(sym_id, decl_idx, target_file_idx)
+        } else {
+            self.type_of_value_declaration_for_symbol(sym_id, decl_idx)
+        };
+
+        self.ctx
+            .type_reference_validation_caches
+            .declared_value_annotation_type
+            .insert(key, Some(declared));
+        Some(declared)
     }
 
     pub(crate) fn call_arg_source_readonly_annotation_markers(

@@ -1,6 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tsz_binder::SymbolId;
+use tsz_binder::{StableLocation, SymbolId};
 use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
@@ -41,6 +41,11 @@ pub struct TypeReferenceValidationCaches {
     /// arena-local in project checks, so imported aliases from different files
     /// can share the same raw id while declaring different arities.
     pub ref_type_params: FxHashMap<(SymbolId, Option<usize>, String), Vec<TypeParamInfo>>,
+    /// Resolved explicit value-declaration annotation types, keyed by the
+    /// identifier symbol and stable declaration span. The declaration scan and
+    /// type-node lowering are checker-owned work; callers still apply their own
+    /// semantic predicate to the cached declared type.
+    pub declared_value_annotation_type: FxHashMap<(SymbolId, StableLocation), Option<TypeId>>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.

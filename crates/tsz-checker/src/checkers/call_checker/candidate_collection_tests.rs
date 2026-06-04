@@ -132,6 +132,105 @@ function destructured({ item }: { item: { a: 1 } }) {
 }
 
 #[test]
+fn readonly_identifier_annotation_resolution_cache_reuses_stable_declarations() {
+    let source = r#"
+declare function fromInput<T>(value: T): T;
+declare function fromPayload<U>(value: U): U;
+
+const input: readonly string[] = [];
+const payload: readonly number[] = [];
+fromInput(input);
+fromPayload(payload);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena().clone();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let input_arg = first_argument_for_call(&checker, "fromInput");
+    let payload_arg = first_argument_for_call(&checker, "fromPayload");
+    let string_array = checker.ctx.types.factory().array(TypeId::STRING);
+    let number_array = checker.ctx.types.factory().array(TypeId::NUMBER);
+
+    assert!(
+        checker
+            .ctx
+            .type_reference_validation_caches
+            .declared_value_annotation_type
+            .is_empty(),
+        "cache starts empty before explicit declaration annotation lookups"
+    );
+
+    let first_input = checker
+        .readonly_array_like_annotation_for_identifier_argument(input_arg, string_array)
+        .expect("readonly string annotation should match mutable string array input");
+    assert_eq!(
+        crate::query_boundaries::common::unwrap_readonly(checker.ctx.types, first_input),
+        string_array
+    );
+    let after_first_input = checker
+        .ctx
+        .type_reference_validation_caches
+        .declared_value_annotation_type
+        .len();
+
+    let second_input = checker
+        .readonly_array_like_annotation_for_identifier_argument(input_arg, string_array)
+        .expect("cached readonly string annotation should still match");
+    assert_eq!(second_input, first_input);
+    assert_eq!(
+        checker
+            .ctx
+            .type_reference_validation_caches
+            .declared_value_annotation_type
+            .len(),
+        after_first_input,
+        "repeated same-symbol lookup should reuse the cached stable declaration"
+    );
+
+    let first_payload = checker
+        .readonly_array_like_annotation_for_identifier_argument(payload_arg, number_array)
+        .expect("renamed readonly number annotation should match mutable number array input");
+    assert_eq!(
+        crate::query_boundaries::common::unwrap_readonly(checker.ctx.types, first_payload),
+        number_array
+    );
+    let after_first_payload = checker
+        .ctx
+        .type_reference_validation_caches
+        .declared_value_annotation_type
+        .len();
+    assert!(
+        after_first_payload > after_first_input,
+        "renamed symbol should use its own stable declaration cache entry"
+    );
+
+    let second_payload = checker
+        .readonly_array_like_annotation_for_identifier_argument(payload_arg, number_array)
+        .expect("cached renamed readonly number annotation should still match");
+    assert_eq!(second_payload, first_payload);
+    assert_eq!(
+        checker
+            .ctx
+            .type_reference_validation_caches
+            .declared_value_annotation_type
+            .len(),
+        after_first_payload,
+        "renamed repeated lookup should also reuse the cached stable declaration"
+    );
+}
+
+#[test]
 fn generic_call_source_markers_keep_cross_file_typed_identifier_sources() {
     let files = [
         (
