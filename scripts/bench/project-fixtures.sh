@@ -240,6 +240,15 @@ tsz_project_fixture_sources() {
     type-challenges-solutions-project)
       printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
       ;;
+    valibot-project)
+      printf 'valibot|%s|%s\n' "$VALIBOT_REPO" "$VALIBOT_REF"
+      ;;
+    msw-project)
+      printf 'msw|%s|%s\n' "$MSW_REPO" "$MSW_REF"
+      ;;
+    comlink-project)
+      printf 'comlink|%s|%s\n' "$COMLINK_REPO" "$COMLINK_REF"
+      ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
       [ -n "$fixture_dir" ] || [ -z "${FIXTURE_ROOT:-}" ] || fixture_dir="$FIXTURE_ROOT/vite-vanilla-ts-live"
