@@ -1370,15 +1370,6 @@ impl<'a> DeclarationEmitter<'a> {
             if binder.lib_symbol_ids.contains(&sym_id) {
                 return true;
             }
-            // A value import is already a public, nameable heritage surface.
-            // Even when package `export *` metadata fails to resolve the target
-            // class, tsc keeps `extends ImportedName` instead of synthesizing
-            // `Derived_base`.
-            if binder.symbols.get(sym_id).is_some_and(|symbol| {
-                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
-            }) {
-                return true;
-            }
 
             // The heritage reference may be an import alias (e.g.
             // `import { EventEmitter } from "events"`) or a re-export alias
@@ -1394,6 +1385,27 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return true;
             }
+
+            // When `declare module "M"` lives in the same file as `import { X } from "M"`,
+            // the binder treats the declaration as a module augmentation and does not
+            // populate `module_exports["M"]`. The portability chain above cannot resolve
+            // the alias, so we fall back to an arena scan keyed on the *exported* name
+            // (i.e. `symbol.import_name`) rather than the possibly-renamed local binding.
+            // This lets `import { LitElement as LE }` correctly find `class LitElement`
+            // in the module body, while a non-class export (`let Probe: number`) does not
+            // produce a false positive.
+            if let Some(symbol) = binder.symbols.get(sym_id)
+                && symbol.has_any_flags(symbol_flags::ALIAS)
+                && let Some(module_specifier) = symbol.import_module.as_deref()
+            {
+                let export_name = symbol
+                    .import_name
+                    .as_deref()
+                    .unwrap_or(symbol.escaped_name.as_str());
+                if self.ambient_module_contains_class(module_specifier, export_name) {
+                    return true;
+                }
+            }
         }
 
         let Some(expr_name) = self.get_identifier_text(expr_idx) else {
@@ -1404,6 +1416,51 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_identifier_text(class.name).as_deref() == Some(expr_name.as_str())
             })
         })
+    }
+
+    /// Whether the arena contains a class declaration named `class_name` inside
+    /// an ambient `declare module "module_specifier"` body. Used as a fallback
+    /// when the module is treated as an augmentation (same-file import + declaration)
+    /// and its exports are absent from the portability resolution table.
+    fn ambient_module_contains_class(&self, module_specifier: &str, class_name: &str) -> bool {
+        self.arena
+            .nodes
+            .iter()
+            .enumerate()
+            .any(|(raw_idx, decl_node)| {
+                let Some(class) = self.arena.get_class(decl_node) else {
+                    return false;
+                };
+                if self.get_identifier_text(class.name).as_deref() != Some(class_name) {
+                    return false;
+                }
+                // Walk up the parent chain to find an ambient module with the right specifier.
+                // Identifier-named namespaces are MODULE_DECLARATION nodes too, so skip them
+                // and keep walking; stop only when a string-literal MODULE_DECLARATION is found.
+                let mut current = NodeIndex(raw_idx as u32);
+                while let Some(parent_idx) = self.arena.parent_of(current) {
+                    if parent_idx.is_none() {
+                        break;
+                    }
+                    let Some(parent_node) = self.arena.get(parent_idx) else {
+                        break;
+                    };
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        if let Some(module) = self.arena.get_module(parent_node)
+                            && let Some(name_node) = self.arena.get(module.name)
+                            && name_node.kind == SyntaxKind::StringLiteral as u16
+                        {
+                            return self
+                                .arena
+                                .get_literal(name_node)
+                                .is_some_and(|lit| lit.text == module_specifier);
+                        }
+                        // Identifier-named namespace: keep walking upward.
+                    }
+                    current = parent_idx;
+                }
+                false
+            })
     }
 
     /// Whether `sym_id` denotes a class constructor value: it carries the

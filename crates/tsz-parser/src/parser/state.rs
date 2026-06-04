@@ -86,6 +86,10 @@ pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 /// Context flag: parsing a function-like body.
 pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
+/// Context flag: parsing an `if` condition header.
+pub const CONTEXT_FLAG_IF_CONDITION: u32 = 2097152;
+/// Context flag: parsing parameters of a recovered class member named `if`.
+pub const CONTEXT_FLAG_RECOVERED_IF_CLASS_MEMBER_PARAMETERS: u32 = 4194304;
 
 // =============================================================================
 // Parse Diagnostic
@@ -1071,6 +1075,31 @@ impl ParserState {
     #[inline]
     pub(crate) const fn in_parenthesized_expression_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn in_if_condition_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_IF_CONDITION) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn in_recovered_if_class_member_parameters(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_RECOVERED_IF_CLASS_MEMBER_PARAMETERS) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn current_token_is_comparison_tail(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::ExclamationEqualsToken
+                | SyntaxKind::ExclamationEqualsEqualsToken
+                | SyntaxKind::EqualsEqualsToken
+                | SyntaxKind::EqualsEqualsEqualsToken
+                | SyntaxKind::LessThanToken
+                | SyntaxKind::LessThanEqualsToken
+                | SyntaxKind::GreaterThanToken
+                | SyntaxKind::GreaterThanEqualsToken
+        )
     }
 
     /// Check if the current token is an illegal binding identifier in the current context
