@@ -291,7 +291,10 @@ stdout or a JSON report when CI or agent handoffs need machine-readable counts
 for unallowlisted, over-allowlist, and stale-allowlist failures. Use
 `--fail-on-warnings` in debt-removal PRs or focused gates that need exhausted
 category/global budget pressure to fail even when every call is still
-allowlisted.
+allowlisted. With `--json` or `--json-report`, strict warning failure is
+reported as `ok: false` with `status: "warning_failed"` while
+`output_surgery_status` remains `"passed"` unless unallowlisted, stale, or
+over-cap surgery is present.
 
 ### 7.1 SourceWriter
 

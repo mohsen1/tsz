@@ -414,6 +414,40 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertIn("allowlist_pressure_status=blocked", stdout.getvalue())
         self.assertIn("Output-surgery audit warnings failed", stderr.getvalue())
 
+    def test_json_fail_on_warnings_reports_strict_warning_failure(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+        ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("dts-output-surgery", 1, "existing debt"),
+        }
+
+        with (
+            patch.object(self.audit, "scan", return_value=findings),
+            patch.object(self.audit, "load_allowlist", return_value=allowlist),
+            patch.object(self.audit, "build_git_context", return_value={"head": "abc123"}),
+            redirect_stdout(io.StringIO()) as stdout,
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            status = self.audit.main(["--json", "--fail-on-warnings"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(status, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "warning_failed")
+        self.assertEqual(payload["output_surgery_status"], "passed")
+        self.assertTrue(payload["fail_on_warnings"])
+        self.assertEqual(payload["strict_warning_status"], "failed")
+        self.assertEqual(payload["warning_failure_count"], 1)
+        self.assertEqual(
+            payload["warning_failures"],
+            [
+                "allowlist pressure is blocked; exhausted categories: "
+                "dts-output-surgery"
+            ],
+        )
+        self.assertIn("Output-surgery audit warnings failed", stderr.getvalue())
+
     def test_default_mode_allows_warnings(self):
         findings = [
             self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
