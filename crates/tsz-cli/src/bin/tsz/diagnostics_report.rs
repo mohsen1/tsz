@@ -515,6 +515,57 @@ pub(super) fn print_diagnostics(
     print!("{}", render_diagnostics_report(&report, extended));
 }
 
+/// Get peak memory usage (max RSS) in KB.
+///
+/// Supported platforms:
+/// - **Unix (Linux + macOS)**: calls `getrusage(RUSAGE_SELF)` to read `ru_maxrss`.
+///   On macOS `ru_maxrss` is in bytes, on Linux it is in KB.
+/// - **Other**: returns 0.
+///
+/// This reports *peak* RSS (matching tsc's `--extendedDiagnostics` behavior).
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn get_memory_usage_kb() -> u64 {
+    // Minimal repr(C) struct matching the POSIX rusage layout.
+    // We only need fields through ru_maxrss; remaining fields are padding.
+    #[repr(C)]
+    struct Rusage {
+        ru_utime: [i64; 2], // struct timeval (tv_sec + tv_usec), 16 bytes on 64-bit
+        ru_stime: [i64; 2], // struct timeval
+        ru_maxrss: i64,     // max resident set size
+        _pad: [i64; 13],    // remaining fields (ixrss through nivcsw)
+    }
+
+    const RUSAGE_SELF: i32 = 0;
+
+    unsafe extern "C" {
+        fn getrusage(who: i32, usage: *mut Rusage) -> i32;
+    }
+
+    unsafe {
+        let mut usage: Rusage = std::mem::zeroed();
+        if getrusage(RUSAGE_SELF, &mut usage) == 0 {
+            let maxrss = usage.ru_maxrss as u64;
+            // macOS reports bytes; Linux reports KB.
+            #[cfg(target_os = "macos")]
+            {
+                maxrss / 1024
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                maxrss
+            }
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn get_memory_usage_kb() -> u64 {
+    0
+}
+
 #[cfg(test)]
 mod diagnostics_report_tests {
     use super::*;
@@ -743,54 +794,4 @@ Access request-cache hit rate: 90.0% (45/50)\n\
 Memory used:                   8192K\n";
         assert_eq!(out, expected, "extended golden mismatch:\n{out}");
     }
-}
-/// Get peak memory usage (max RSS) in KB.
-///
-/// Supported platforms:
-/// - **Unix (Linux + macOS)**: calls `getrusage(RUSAGE_SELF)` to read `ru_maxrss`.
-///   On macOS `ru_maxrss` is in bytes, on Linux it is in KB.
-/// - **Other**: returns 0.
-///
-/// This reports *peak* RSS (matching tsc's `--extendedDiagnostics` behavior).
-#[cfg(unix)]
-#[allow(unsafe_code)]
-fn get_memory_usage_kb() -> u64 {
-    // Minimal repr(C) struct matching the POSIX rusage layout.
-    // We only need fields through ru_maxrss; remaining fields are padding.
-    #[repr(C)]
-    struct Rusage {
-        ru_utime: [i64; 2], // struct timeval (tv_sec + tv_usec), 16 bytes on 64-bit
-        ru_stime: [i64; 2], // struct timeval
-        ru_maxrss: i64,     // max resident set size
-        _pad: [i64; 13],    // remaining fields (ixrss through nivcsw)
-    }
-
-    const RUSAGE_SELF: i32 = 0;
-
-    unsafe extern "C" {
-        fn getrusage(who: i32, usage: *mut Rusage) -> i32;
-    }
-
-    unsafe {
-        let mut usage: Rusage = std::mem::zeroed();
-        if getrusage(RUSAGE_SELF, &mut usage) == 0 {
-            let maxrss = usage.ru_maxrss as u64;
-            // macOS reports bytes; Linux reports KB.
-            #[cfg(target_os = "macos")]
-            {
-                maxrss / 1024
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                maxrss
-            }
-        } else {
-            0
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn get_memory_usage_kb() -> u64 {
-    0
 }
