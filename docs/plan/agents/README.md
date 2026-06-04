@@ -55,7 +55,7 @@ Rules:
 5. Draft PRs are active runway, not storage. Do not merge work that is draft,
    labelled `WIP`, titled `[WIP]`, or described as blocked/not ready.
 6. A session drains owned PRs before opening unrelated new PRs. Valid runway
-   outcomes are: landed on `main`, `merge-queue`, ready with verified PR-head
+   outcomes are: landed on `main`, native merge queue, ready with verified PR-head
    checks, refreshed draft/WIP with a signed blocker, signed handoff, or
    evidence-linked duplicate/superseded closure.
 7. Keep draft runway small: at most two unstacked draft PRs per `agent:*`
@@ -74,11 +74,11 @@ intake only after that queue is drained, queued, or explicitly blocked.
 1. Run the lane's `Start Every Cycle` commands.
 2. If open PRs carry the lane label, inspect each one and move it to the next
    concrete state before starting new issue work: fix/rebase it, mark it ready,
-   add `merge-queue`, restore draft/WIP with a signed blocker, hand it off, or
+   queue it with `gh pr merge --queue`, restore draft/WIP with a signed blocker, hand it off, or
    close it only as duplicate/superseded with evidence.
-3. If an owned ready `main` PR has passing PR-head `CI Summary` and
-   `GitGuardian Security Checks`, is not dirty/conflicting, and is not WIP or
-   blocked, add `merge-queue` or ask `Studio-manager` to queue it.
+3. If an owned ready `main` PR has passing PR-head `CI Summary`, is not
+   dirty/conflicting, and is not WIP or blocked, queue it with
+   `gh pr merge --queue` or ask `Studio-manager` to queue it.
 4. Treat stale drafts as live debt. Drafts older than 24 hours without fresh
    commits/comments, and owners over two unstacked drafts, must be refreshed,
    handed off, marked help-wanted, or documented as blocked before new PRs.
@@ -96,7 +96,7 @@ scripts/agents/list-owned-work.sh --all
 scripts/agents/list-owned-work.sh --pr-state Studio-manager
 node scripts/ci/pr-ownership-report.mjs
 node scripts/ci/pr-ownership-report.mjs --json /tmp/tsz-pr-ownership.json
-gh issue list --repo mohsen1/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
+gh issue list --repo tsz-org/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
 ```
 
 ## Source-Of-Truth Goal Loop

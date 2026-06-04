@@ -56,21 +56,21 @@ exec "$@"
         result = self.run_list_owned_work(
             ["Studio-manager"],
             prs=(
-                "#1 ready autoMerge=off mergeQueue=on queue=success first PR https://github.com/mohsen1/tsz/pull/1\n"
-                "#2 draft autoMerge=on mergeQueue=off queue=none second PR https://github.com/mohsen1/tsz/pull/2\n"
-                "#4 ready autoMerge=off mergeQueue=off queue=none third PR https://github.com/mohsen1/tsz/pull/4\n"
-                "#5 ready autoMerge=off mergeQueue=on queue=pending fourth PR https://github.com/mohsen1/tsz/pull/5\n"
+                "#1 ready autoMerge=off nativeQueue=on first PR https://github.com/tsz-org/tsz/pull/1\n"
+                "#2 draft autoMerge=on nativeQueue=off second PR https://github.com/tsz-org/tsz/pull/2\n"
+                "#4 ready autoMerge=off nativeQueue=off third PR https://github.com/tsz-org/tsz/pull/4\n"
+                "#5 ready autoMerge=on nativeQueue=on fourth PR https://github.com/tsz-org/tsz/pull/5\n"
             ),
-            issues="#3 issue https://github.com/mohsen1/tsz/issues/3\n",
+            issues="#3 issue https://github.com/tsz-org/tsz/issues/3\n",
         )
 
         self.assertIn("owned_pr_count=4", result.stdout)
         self.assertIn("owned_ready_pr_count=3", result.stdout)
         self.assertIn("owned_draft_pr_count=1", result.stdout)
-        self.assertIn("owned_auto_merge_pr_count=1", result.stdout)
+        self.assertIn("owned_auto_merge_pr_count=2", result.stdout)
         self.assertIn("owned_merge_queue_pr_count=2", result.stdout)
-        self.assertIn("owned_merge_queue_tested_pr_count=1", result.stdout)
-        self.assertIn("owned_merge_queue_unverified_pr_count=1", result.stdout)
+        self.assertIn("owned_merge_queue_tested_pr_count=0", result.stdout)
+        self.assertIn("owned_merge_queue_unverified_pr_count=0", result.stdout)
         self.assertIn("owned_ready_unqueued_pr_count=1", result.stdout)
         self.assertIn("owned_issue_count=1", result.stdout)
         self.assertIn("owned_work_status=active", result.stdout)
@@ -81,14 +81,14 @@ exec "$@"
 
             result = self.run_list_owned_work(
                 ["Studio-manager", "--json-report", str(report_path)],
-                prs="#1 ready autoMerge=on mergeQueue=on queue=pending first PR https://github.com/mohsen1/tsz/pull/1\n",
-                issues="#2 issue https://github.com/mohsen1/tsz/issues/2\n",
+                prs="#1 ready autoMerge=on nativeQueue=on first PR https://github.com/tsz-org/tsz/pull/1\n",
+                issues="#2 issue https://github.com/tsz-org/tsz/issues/2\n",
             )
 
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertIn("## agent:Studio-manager", result.stdout)
             self.assertEqual("scripts/agents/list-owned-work.sh", report["generated_by"])
-            self.assertEqual("mohsen1/tsz", report["repository"])
+            self.assertEqual("tsz-org/tsz", report["repository"])
             self.assertFalse(report["with_pr_state"])
             self.assertIn("git_context", report)
             self.assertIsInstance(report["git_context"]["head"], str)
@@ -105,7 +105,7 @@ exec "$@"
             self.assertEqual(1, report["total_auto_merge_pr_count"])
             self.assertEqual(1, report["total_merge_queue_pr_count"])
             self.assertEqual(0, report["total_merge_queue_tested_pr_count"])
-            self.assertEqual(1, report["total_merge_queue_unverified_pr_count"])
+            self.assertEqual(0, report["total_merge_queue_unverified_pr_count"])
             self.assertEqual(0, report["total_ready_unqueued_pr_count"])
             self.assertEqual(1, report["total_issue_count"])
             self.assertEqual(2, report["total_owned_count"])
@@ -119,17 +119,17 @@ exec "$@"
             self.assertEqual(1, row["auto_merge_pr_count"])
             self.assertEqual(1, row["merge_queue_pr_count"])
             self.assertEqual(0, row["merge_queue_tested_pr_count"])
-            self.assertEqual(1, row["merge_queue_unverified_pr_count"])
+            self.assertEqual(0, row["merge_queue_unverified_pr_count"])
             self.assertEqual(0, row["ready_unqueued_pr_count"])
             self.assertEqual(1, row["issue_count"])
             self.assertFalse(row["owned_work_clear"])
             self.assertEqual("active", row["owned_work_status"])
             self.assertEqual(
-                ["#1 ready autoMerge=on mergeQueue=on queue=pending first PR https://github.com/mohsen1/tsz/pull/1"],
+                ["#1 ready autoMerge=on nativeQueue=on first PR https://github.com/tsz-org/tsz/pull/1"],
                 row["prs"],
             )
             self.assertEqual(
-                ["#2 issue https://github.com/mohsen1/tsz/issues/2"],
+                ["#2 issue https://github.com/tsz-org/tsz/issues/2"],
                 row["issues"],
             )
 

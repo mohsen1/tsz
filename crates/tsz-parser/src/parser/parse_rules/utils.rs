@@ -59,10 +59,16 @@ pub fn look_ahead_is_async_declaration(
             token,
             SyntaxKind::ClassKeyword
                 | SyntaxKind::FunctionKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::ExportKeyword
                 | SyntaxKind::InterfaceKeyword
                 | SyntaxKind::EnumKeyword
                 | SyntaxKind::NamespaceKeyword
                 | SyntaxKind::ModuleKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::ImportKeyword
         )
     })
 }

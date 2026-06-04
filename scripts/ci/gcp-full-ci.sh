@@ -339,7 +339,7 @@ ensure_source_git_context() {
   git init
   git config user.email "cloud-build@thirdface-ai-oauth.iam.gserviceaccount.com"
   git config user.name "Cloud Build"
-  git remote add origin "${TSZ_CI_REPO_URL:-https://github.com/mohsen1/tsz.git}"
+  git remote add origin "${TSZ_CI_REPO_URL:-https://github.com/tsz-org/tsz.git}"
   git add -A
   git commit -q -m "cloud build source snapshot"
 }

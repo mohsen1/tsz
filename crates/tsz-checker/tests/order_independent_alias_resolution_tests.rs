@@ -1,7 +1,7 @@
 //! Order-independence regression tests for cross-file alias / re-export
 //! resolution.
 //!
-//! Root cause (refs <https://github.com/mohsen1/tsz/issues/7574>, PR #12148):
+//! Root cause (refs <https://github.com/tsz-org/tsz/issues/7574>, PR #12148):
 //! `resolve_alias_symbol_inner` used to pin a resolved alias to its target's
 //! owning file by reading the *dynamic*, monotonically-growing `symbol -> file`
 //! overlay. That made the pinned file — and therefore which symbol an alias

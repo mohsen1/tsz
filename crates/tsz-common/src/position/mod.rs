@@ -87,7 +87,7 @@ impl LineMap {
     /// (PARAGRAPH SEPARATOR) as line terminators. tsc's scanner uses the same
     /// set; recognizing all of them here keeps line numbers stable for
     /// directive comments, diagnostic positions, and editor mappings.
-    /// See <https://github.com/mohsen1/tsz/issues/3331>.
+    /// See <https://github.com/tsz-org/tsz/issues/3331>.
     #[must_use]
     pub fn build(source: &str) -> Self {
         let mut line_starts = vec![0u32];

@@ -15,8 +15,8 @@ checks and queue status.
   most one per PR.
 - Implementation agents manage their own PRs. Manager/queue-owner agents handle
   cross-PR queueing and merge order.
-- If you are not the manager/queue owner, do not merge or add `merge-queue` as
-  routine implementation work.
+- If you are not the manager/queue owner, do not merge or queue PRs as routine
+  implementation work.
 
 ## Before Publish
 

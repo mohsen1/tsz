@@ -642,3 +642,63 @@ fn js_passthrough_esm_no_use_strict_from_always_strict() {
         "ESM JS files should NOT get \"use strict\" (ESM is implicitly strict).\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn root_js_recovery_preserves_invalid_declaration_modifiers() {
+    let source = "\
+class C {
+    async constructor() { }
+    async field = 1
+}
+async export function f() { }
+async async function g() { }
+function params(static x, export y, async z) { }
+async const value = 1
+async import 'assert'
+async export { f }
+export export var duplicateExport = 1
+export static var staticExport = 1
+function outer() {
+    static function inner() { }
+}
+";
+    let mut parser = ParserState::new("plain.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let opts = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ESNext,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    for expected in [
+        "async constructor()",
+        "async field = 1;",
+        "async export function f() { }",
+        "async async function g() { }",
+        "function params(static x, export y, async z) { }",
+        "async const value = 1;",
+        "async import 'assert';",
+        "export { f };",
+        "export export var duplicateExport = 1;",
+        "export static var staticExport = 1;",
+        "static function inner() { }",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected recovered JS modifier output `{expected}`.\nOutput:\n{output}"
+        );
+    }
+    assert!(
+        !output.contains("async;\n"),
+        "Recovered modifiers should stay attached to declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("async export {"),
+        "Stray async before a named export should not be preserved.\nOutput:\n{output}"
+    );
+}

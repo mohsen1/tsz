@@ -26,6 +26,7 @@ mod assignability_satisfies;
 mod assignability_type_helpers;
 mod call_errors;
 mod call_errors_anchors;
+mod conditional_alias_display;
 mod core;
 mod core_alias_display;
 mod core_formatting;

@@ -34,7 +34,7 @@ This is not switch/migration messaging. The user-facing promise is:
 - Emit comparison is explicitly out of scope for v1.
 - Privacy default: no upload, no source sharing, and no source extraction until
   the user approves an interactive prompt.
-- Reports go to GitHub Discussions for `mohsen1/tsz`, because issues are not
+- Reports go to GitHub Discussions for `tsz-org/tsz`, because issues are not
   user-opened today.
 - Prefer interaction over secondary commands or submission flags. A single run
   should naturally ask whether to prepare, review, and submit/report.
@@ -203,7 +203,7 @@ Snippet repro MVP:
 
 GitHub Discussions:
 
-- Target repository: `mohsen1/tsz`.
+- Target repository: `tsz-org/tsz`.
 - Target category: `General`.
 - Title prefix: `[try-tsz]`.
 - Prefer authenticated submission through `gh api graphql` using
@@ -213,7 +213,7 @@ GitHub Discussions:
   Discussions URL:
 
 ```text
-https://github.com/mohsen1/tsz/discussions/new?category=general&title=...&body=...
+https://github.com/tsz-org/tsz/discussions/new?category=general&title=...&body=...
 ```
 
 ## Result Model

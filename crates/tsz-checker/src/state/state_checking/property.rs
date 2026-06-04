@@ -406,9 +406,11 @@ impl<'a> CheckerState<'a> {
                         accepted = true;
                         break;
                     }
-                    if self
-                        .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
-                        || self.generic_mapped_receiver_lacks_explicit_property(
+                    if self.generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
+                        member,
+                        prop_name.as_ref(),
+                    ) || self
+                        .generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
                             resolved_member,
                             prop_name.as_ref(),
                         )
@@ -1462,7 +1464,6 @@ const c: TaggedCategory = { name: "root", tag: "top", parent: { name: "child", t
 
     #[test]
     fn ts2353_debug_structural_type_alias_recursive_intersection() {
-        // DEBUG: structural type alias (not interface) recursive intersection
         let diags = check_source_diagnostics(
             r#"
 type Chain = { data: string; rest?: Chain; };

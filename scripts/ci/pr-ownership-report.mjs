@@ -2,8 +2,7 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const QUEUE_LABEL = "merge-queue";
-const REQUIRED_PR_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
+const REQUIRED_PR_CHECKS = ["CI Summary"];
 const DEFAULT_DRAFT_STALE_HOURS = 24;
 const DEFAULT_UNSTACKED_DRAFT_BUDGET = 2;
 
@@ -34,8 +33,9 @@ function parseArgs(argv) {
 }
 
 function normalizePr(raw) {
-  const labels = Array.isArray(raw.labels)
-    ? raw.labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean)
+  const rawLabels = Array.isArray(raw.labels?.nodes) ? raw.labels.nodes : raw.labels;
+  const labels = Array.isArray(rawLabels)
+    ? rawLabels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean)
     : [];
   const statusCheckRollup = Array.isArray(raw.statusCheckRollup)
     ? raw.statusCheckRollup.map(normalizeCheck).filter(Boolean)
@@ -50,6 +50,8 @@ function normalizePr(raw) {
     mergeStateStatus: String(raw.mergeStateStatus || "UNKNOWN"),
     mergeable: String(raw.mergeable || "UNKNOWN"),
     autoMergeArmed: Boolean(raw.autoMergeRequest),
+    inMergeQueue: Boolean(raw.isInMergeQueue),
+    mergeQueueEnabled: Boolean(raw.isMergeQueueEnabled),
     labels,
     statusCheckRollup,
     body: String(raw.body ?? ""),
@@ -71,31 +73,78 @@ function loadPulls(fixture) {
     return JSON.parse(fs.readFileSync(fixture, "utf8")).map(normalizePr);
   }
 
-  const result = spawnSync(
-    "gh",
-    [
-      "pr",
-      "list",
-      "--state",
-      "open",
-      "--limit",
-      "500",
-      "--json",
-      "number,title,isDraft,updatedAt,baseRefName,headRefName,labels,body,mergeStateStatus,mergeable,autoMergeRequest",
-    ],
-    { encoding: "utf8" },
-  );
-  if (result.status !== 0) {
-    fail(result.stderr.trim() || "gh pr list failed");
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            number
+            title
+            isDraft
+            updatedAt
+            baseRefName
+            headRefName
+            labels(first: 50) { nodes { name } }
+            body
+            mergeStateStatus
+            mergeable
+            autoMergeRequest { enabledAt }
+            isInMergeQueue
+            isMergeQueueEnabled
+          }
+        }
+      }
+    }
+  `;
+  const repository = process.env.GITHUB_REPOSITORY || "tsz-org/tsz";
+  const [owner, name] = repository.split("/", 2);
+  if (!owner || !name) {
+    fail(`invalid GITHUB_REPOSITORY: ${repository}`);
   }
-  return JSON.parse(result.stdout).map(normalizePr);
+
+  const pulls = [];
+  let after = null;
+  for (;;) {
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${name}`,
+      "-f",
+      `query=${query}`,
+    ];
+    if (after) {
+      args.push("-f", `after=${after}`);
+    }
+    const result = spawnSync("gh", args, { encoding: "utf8" });
+    if (result.status !== 0) {
+      fail(result.stderr.trim() || "gh api graphql failed");
+    }
+    const parsed = JSON.parse(result.stdout);
+    const connection = parsed.data?.repository?.pullRequests;
+    if (!connection) {
+      fail("gh api graphql response did not include pullRequests");
+    }
+    pulls.push(...connection.nodes);
+    if (!connection.pageInfo?.hasNextPage) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return pulls.map(normalizePr);
 }
 
 function shouldHydrateRequiredChecks(pr) {
   return (
     !pr.isDraft &&
     pr.baseRefName === "main" &&
-    !pr.labels.includes(QUEUE_LABEL) &&
+    !pr.inMergeQueue &&
     !isWipPr({ labels: pr.labels, title: pr.title })
   );
 }
@@ -344,6 +393,8 @@ function makeReport(pulls) {
     mergeStateStatus: pr.mergeStateStatus,
     mergeable: pr.mergeable,
     autoMergeArmed: pr.autoMergeArmed,
+    inMergeQueue: pr.inMergeQueue,
+    mergeQueueEnabled: pr.mergeQueueEnabled,
     labels: pr.labels.sort(),
     statusCheckRollup: pr.statusCheckRollup,
     agentName: agentNameFrom(pr.body),
@@ -588,12 +639,12 @@ function makeReport(pulls) {
     .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
 
-  const readyMainMissingQueueLabelPrs = normalized
+  const readyMainNotQueuedPrs = normalized
     .filter((pr) => (
       !pr.draft
       && pr.base === "main"
       && !isWipPr(pr)
-      && !pr.labels.includes(QUEUE_LABEL)
+      && !pr.inMergeQueue
     ))
     .map((pr) => {
       const checks = requiredCheckSummary(pr);
@@ -623,9 +674,9 @@ function makeReport(pulls) {
       stacked: stacks.reduce((sum, stack) => sum + stack.children.length, 0),
       missingAgentName: normalized.filter((pr) => pr.agentName === null).length,
       agentLabelMismatches: agentLabelMismatches.length,
-      mergeQueued: normalized.filter((pr) => pr.labels.includes(QUEUE_LABEL)).length,
-      readyMissingQueueLabel: readyMainMissingQueueLabelPrs.length,
-      queueCandidates: readyMainMissingQueueLabelPrs.filter((pr) => pr.queueCandidate).length,
+      nativeQueued: normalized.filter((pr) => pr.inMergeQueue).length,
+      readyNotQueued: readyMainNotQueuedPrs.length,
+      queueCandidates: readyMainNotQueuedPrs.filter((pr) => pr.queueCandidate).length,
       draftParkingOwners: draftParkingOwners.length,
       staleDraftPrs: staleDraftPrs.length,
     },
@@ -636,7 +687,7 @@ function makeReport(pulls) {
     draftRunwayByOwner,
     draftParkingOwners,
     staleDraftPrs,
-    readyMainMissingQueueLabelPrs,
+    readyMainNotQueuedPrs,
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
@@ -659,7 +710,7 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; merge-queued: ${report.counts.mergeQueued}; ready missing queue label: ${report.counts.readyMissingQueueLabel}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; native queued: ${report.counts.nativeQueued}; ready not queued: ${report.counts.readyNotQueued}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
   console.log("");
   console.log("## Owner Summary");
@@ -681,13 +732,13 @@ function printMarkdown(report) {
   }
   console.log("");
   console.log("## Queue Admission");
-  if (report.readyMainMissingQueueLabelPrs.length === 0) {
+  if (report.readyMainNotQueuedPrs.length === 0) {
     console.log("- none");
   } else {
     console.log("");
     console.log("| PR | Owner | Queue candidate | Merge state | Checks | Title |");
     console.log("|----|-------|-----------------|-------------|--------|-------|");
-    for (const pr of report.readyMainMissingQueueLabelPrs) {
+    for (const pr of report.readyMainNotQueuedPrs) {
       const owner = ownerOf(pr);
       const candidate = pr.queueCandidate ? "yes" : "no";
       console.log(

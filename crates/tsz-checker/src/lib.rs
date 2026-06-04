@@ -243,6 +243,9 @@ mod instantiation_expression_inline_utility_modifier_tests;
 #[path = "tests/instantiation_expression_lib_display_tests.rs"]
 mod instantiation_expression_lib_display_tests;
 #[cfg(test)]
+#[path = "tests/interface_extends_generic_override_variance_tests.rs"]
+mod interface_extends_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -938,6 +941,9 @@ mod mapped_indexed_access_diagnostic_tests;
 #[cfg(test)]
 #[path = "tests/mapped_infer_with_substitution_tests.rs"]
 mod mapped_infer_with_substitution_tests;
+#[cfg(test)]
+#[path = "tests/mapped_intersection_excess_property_tests.rs"]
+mod mapped_intersection_excess_property_tests;
 #[cfg(test)]
 #[path = "tests/mapped_true_base_constraint_relation_routing_arch_tests.rs"]
 mod mapped_true_base_constraint_relation_routing_arch_tests;

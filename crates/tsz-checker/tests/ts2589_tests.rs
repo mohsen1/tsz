@@ -678,7 +678,7 @@ function foo(arg: Circular<tup>): tup {
 /// A recursive mapped type whose template contains the alias itself in a union
 /// with a ground type should NOT emit TS2589.  tsc handles this coinductively.
 ///
-/// Regression for: <https://github.com/mohsen1/tsz/issues/6169>
+/// Regression for: <https://github.com/tsz-org/tsz/issues/6169>
 #[test]
 fn recursive_mapped_type_with_union_ground_type_no_ts2589() {
     let source = r#"
@@ -1134,7 +1134,7 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
 }
 
 mod issue_6761 {
-    //! Tests for <https://github.com/mohsen1/tsz/issues/6761>.
+    //! Tests for <https://github.com/tsz-org/tsz/issues/6761>.
     //!
     //! Structural rule: the `TypeEvaluator`'s per-`TypeId` recursion guard
     //! is a stack-protection limit, not tsc's `instantiationDepth`. When it
@@ -1370,7 +1370,7 @@ type Invert<O extends Record<keyof O, Key>> =
 /// for a small union. For `Permutation<"a" | "b">`, there are only 2 permutations
 /// and the recursion terminates in a few steps. tsc accepts this without error.
 ///
-/// Repro for: <https://github.com/mohsen1/tsz/issues/6515>
+/// Repro for: <https://github.com/tsz-org/tsz/issues/6515>
 #[test]
 fn permutation_type_small_union_no_ts2799() {
     // Use T parameter name
@@ -1579,7 +1579,7 @@ type T = TrimRight<"hello   ">;
 }
 
 mod issue_9784 {
-    //! Tests for <https://github.com/mohsen1/tsz/issues/9784>.
+    //! Tests for <https://github.com/tsz-org/tsz/issues/9784>.
     //!
     //! Structural rule: a generic type alias whose body is `T extends infer X
     //! ? <re-application of the alias> : ...` always takes the true branch (a
@@ -1683,7 +1683,7 @@ mod issue_9784 {
 }
 
 mod issue_9777 {
-    //! Tests for <https://github.com/mohsen1/tsz/issues/9777>.
+    //! Tests for <https://github.com/tsz-org/tsz/issues/9777>.
     //!
     //! Structural rule: when a recursive type alias re-applies itself through an
     //! `infer`/conditional wrapper and the type argument *grows* every step (an
@@ -1799,7 +1799,7 @@ mod issue_9777 {
 }
 
 mod issue_10859 {
-    //! Tests for <https://github.com/mohsen1/tsz/issues/10859>.
+    //! Tests for <https://github.com/tsz-org/tsz/issues/10859>.
     //!
     //! Structural rule: a `default_omitting_recursive_alias` whose use site
     //! supplies all type arguments explicitly is always finite — the body's

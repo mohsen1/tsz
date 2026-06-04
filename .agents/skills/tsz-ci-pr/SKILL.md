@@ -13,8 +13,8 @@ Use for PR checks, CI triage, ready state, queue evidence, and landing. Use
 - Use `gh`; sign substantive comments with `AgentName`.
 - Never merge draft/WIP PRs (`draft`, `WIP`, `[WIP]`, or body/branch says WIP).
 - Ready PRs run heavy CI. Draft PRs intentionally run light CI.
-- `Queue Tested` is queue-owned and appears after `merge-queue`.
-- If asked to land, verify `state: MERGED`; queue label alone is not enough.
+- Ready PRs land through GitHub's native merge queue.
+- If asked to land, verify `state: MERGED`; an armed queue request alone is not enough.
 
 ## Inspect
 
@@ -34,18 +34,17 @@ now.
 2. Fix failures in-PR; comment with root cause and verification.
 3. Mark ready only after implementation and verification:
    `gh pr ready <pr>`.
-4. Add `merge-queue` only when exact-head PR-head checks such as `CI Summary`
-   and `GitGuardian Security Checks` pass and policy permits:
-   `gh pr edit <pr> --add-label merge-queue`.
-5. Inspect `Poor Man's Merge Queue` and synthetic
-   `automation/merge-queue/pr-<n>` runs if queue stalls.
+4. Queue with GitHub's native merge queue only when exact-head PR-head checks
+   such as `CI Summary` pass and policy permits:
+   `gh pr merge --queue <pr>`.
+5. Inspect `merge_group` CI runs if queue validation stalls.
 6. Verify final merge:
    `gh pr view <pr> --json state,mergedAt,mergedBy,url`.
 
 ## Failure Hints
 
 - `CI Summary`: umbrella PR-head status.
-- `Queue Tested`: queue synthetic-merge status.
+- `merge_group` CI: native queued-merge summary validation.
 - `conformance-aggregate`: accepted-regression drift can fail aggregate even
   when shards pass.
 - `unit-cloudbuild`: often exposes memory, linking, or architecture guard

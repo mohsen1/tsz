@@ -267,7 +267,7 @@ const commonMetadata = {
   author: "Mohsen Azimi <mohsen@users.noreply.github.com>",
   repository: {
     type: "git",
-    url: "git+https://github.com/mohsen1/tsz.git",
+    url: "git+https://github.com/tsz-org/tsz.git",
   },
 };
 
@@ -413,7 +413,7 @@ const pkg = {
   author: "Mohsen Azimi <mohsen@users.noreply.github.com>",
   repository: {
     type: "git",
-    url: "git+https://github.com/mohsen1/tsz.git",
+    url: "git+https://github.com/tsz-org/tsz.git",
   },
   keywords: ["typescript", "compiler", "tsz", "tsc"],
   bin: {
@@ -432,7 +432,7 @@ const commonMetadata = {
   author: "Mohsen Azimi <mohsen@users.noreply.github.com>",
   repository: {
     type: "git",
-    url: "git+https://github.com/mohsen1/tsz.git",
+    url: "git+https://github.com/tsz-org/tsz.git",
   },
 };
 

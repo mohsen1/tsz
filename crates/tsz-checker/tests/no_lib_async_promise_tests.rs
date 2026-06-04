@@ -1,4 +1,4 @@
-// Regression tests for https://github.com/mohsen1/tsz/issues/3787 — under
+// Regression tests for https://github.com/tsz-org/tsz/issues/3787 — under
 // `--noLib` an async function declaration must NOT trigger TS2318 ("Cannot
 // find global type 'Promise'") even though the `Promise` type isn't
 // available. With `noLib`, the user owns the global type surface; tsc skips

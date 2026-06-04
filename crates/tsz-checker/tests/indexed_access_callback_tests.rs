@@ -5,7 +5,7 @@
 //! literal argument, the callback parameter should resolve to the specific property
 //! type (e.g. `T["name"]` = `string`) rather than the full union `T[keyof T]`.
 //!
-//! See: <https://github.com/mohsen1/tsz/issues/6978>
+//! See: <https://github.com/tsz-org/tsz/issues/6978>
 
 use tsz_checker::context::CheckerOptions;
 

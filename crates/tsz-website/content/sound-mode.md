@@ -157,4 +157,4 @@ The project is especially interested in where the boundary should be. What shoul
 
 Stricter TypeScript is worth exploring, but the shape has to come from real use. Sound Mode is the place to test those ideas before they harden into defaults.
 
-The detailed plan is tracked in [SOUND_MODE.md](https://github.com/mohsen1/tsz/blob/main/docs/plan/SOUND_MODE.md), and broader milestones are in the [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md).
+The detailed plan is tracked in [SOUND_MODE.md](https://github.com/tsz-org/tsz/blob/main/docs/plan/SOUND_MODE.md), and broader milestones are in the [Internal Roadmap](https://github.com/tsz-org/tsz/blob/main/docs/plan/ROADMAP.md).
