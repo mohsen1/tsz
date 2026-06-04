@@ -252,41 +252,15 @@ impl<'a> CheckerState<'a> {
         };
         let source = self.substitute_required_mapped_source(source, substitutions);
 
-        let source_resolved = self.resolve_lazy_type(source);
-        self.ensure_relation_input_ready(source_resolved);
-        let mut source = self.evaluate_type_with_resolution(source_resolved);
-        let mut property_result =
-            tsz_solver::objects::collect_properties(source, self.ctx.types, &self.ctx);
-        if !matches!(
-            &property_result,
-            tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. }
-                if !properties.is_empty()
-        ) {
-            let source_base = self.constraint_check_base_type(source_resolved);
-            if source_base != source_resolved
-                && !matches!(source_base, TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER)
-            {
-                let source_base = self.resolve_lazy_type(source_base);
-                self.ensure_relation_input_ready(source_base);
-                let base_source = self.evaluate_type_with_resolution(source_base);
-                let base_property_result =
-                    tsz_solver::objects::collect_properties(base_source, self.ctx.types, &self.ctx);
-                if matches!(
-                    &base_property_result,
-                    tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. }
-                        if !properties.is_empty()
-                ) {
-                    source = base_source;
-                    property_result = base_property_result;
-                }
-            }
-        }
+        let source = self.resolve_lazy_type(source);
+        self.ensure_relation_input_ready(source);
+        let source = self.evaluate_type_with_resolution(source);
         let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
-            property_result
+            tsz_solver::objects::collect_properties(source, self.ctx.types, &self.ctx)
         else {
             return false;
         };
-        if properties.is_empty() {
+        if properties.is_empty() || properties.iter().any(|prop| prop.optional) {
             return false;
         }
 
@@ -387,7 +361,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_props) = self.type_literal_alias_property_nodes(source) else {
             return false;
         };
-        if source_props.is_empty() {
+        if source_props.is_empty() || source_props.iter().any(|(_, _, optional)| *optional) {
             return false;
         }
         let Some(arg_props) = self.type_literal_alias_property_nodes(type_arg) else {

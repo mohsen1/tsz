@@ -131,9 +131,3 @@ TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssign
 TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
-
-# PR #12432 exact-head aggregate run 26947964502 after rebasing onto current
-# main: all six shards passed, aggregate strictness was 12555/12585 observed vs
-# 12585/12585 expected, with these two newly unlisted keyof/indexing-family rows.
-TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
-TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts

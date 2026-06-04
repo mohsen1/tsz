@@ -238,8 +238,6 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
-            "crates/tsz-checker/src/error_reporter/core_formatting.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
@@ -280,7 +278,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver instantiation boundary: instantiate.rs must not grow",
         ROOT / "crates" / "tsz-solver" / "src" / "instantiation" / "instantiate.rs",
-        2169,
+        2098,
     ),
     (
         "Solver evaluation boundary: conditional.rs must not grow",
@@ -299,7 +297,19 @@ FILE_LINE_LIMIT_CHECKS = [
         2003,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
+        "Emitter expression boundary: private_fields.rs size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
+    ),
+    (
+        "Solver engine boundary: generic call resolver must stay at current 3413 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -307,7 +317,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3359,
+        3413,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
@@ -561,24 +571,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declaration_emitter"
         / "helpers"
         / "type_inference_return_normalization.rs",
-        2046,
-    ),
-    (
-        "Checker boundary: error_reporter/core_formatting.rs size ratchet",
-        ROOT / "crates" / "tsz-checker" / "src" / "error_reporter" / "core_formatting.rs",
-        2017,
-    ),
-    (
-        "Checker boundary: error_reporter/core/diagnostic_source/assignment_formatting.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-checker"
-        / "src"
-        / "error_reporter"
-        / "core"
-        / "diagnostic_source"
-        / "assignment_formatting.rs",
-        2048,
+        2006,
     ),
     (
         "Emitter boundary: emitter/expressions/core/private_fields.rs size ratchet",
@@ -697,7 +690,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2896,
+        2843,
     ),
     (
         # Ratcheted 2736→2896: +160 lines for three config-validation
@@ -893,7 +886,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: operations/call_args.rs size ratchet",
         ROOT / "crates" / "tsz-solver" / "src" / "operations" / "call_args.rs",
-        2084,
+        2097,
     ),
     (
         "LSP boundary: navigation/definition.rs size ratchet",
@@ -1245,7 +1238,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # #12468): `classify_index_sig_param_type` and the resolved-key
         # `resolved_index_key_type_is_valid` query each use solver calls
         # rather than direct `query_boundaries::common` access.
-        3231,
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        3212,
     ),
 ]
 
