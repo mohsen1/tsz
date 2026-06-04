@@ -46,16 +46,9 @@ fn with_evaluates_visited<R>(f: impl FnOnce(&mut FxHashSet<crate::TypeId>) -> R)
     r
 }
 
-impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn is_string_like_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.interner.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::String))
-                | Some(TypeData::TemplateLiteral(_))
-                | Some(TypeData::Literal(LiteralValue::String(_)))
-        )
-    }
+mod string_helpers;
 
+impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn extract_iterable_yield_type(&mut self, target: TypeId) -> Option<TypeId> {
         use crate::visitor::{
             application_id, callable_shape_id, object_shape_id, object_with_index_shape_id,
@@ -117,15 +110,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .any(|&member| self.is_iterable_like_call_target(member)),
             _ => false,
         }
-    }
-
-    pub(crate) fn function_signature_is_contextually_sensitive(
-        &self,
-        params: &[ParamInfo],
-    ) -> bool {
-        params.iter().any(|param| {
-            param.type_id == TypeId::ANY || self.type_uses_inference_placeholders(param.type_id)
-        })
     }
 
     fn is_assignable_via_contextual_signatures_strict(
