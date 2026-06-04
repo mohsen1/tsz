@@ -1,5 +1,4 @@
 use super::state::*;
-use crate::parser::node::*;
 use crate::parser::parse_rules::*;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
@@ -98,22 +97,13 @@ impl ParserState {
                         "An import declaration cannot have modifiers.",
                         diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
                     );
-                    let import_decl = self.parse_import_declaration();
-                    let end_pos = self.token_end();
-                    self.arena.add_export_decl(
-                        syntax_kind_ext::EXPORT_DECLARATION,
+                    let export_modifier = self.arena.add_token(
+                        SyntaxKind::ExportKeyword as u16,
                         start_pos,
-                        end_pos,
-                        ExportDeclData {
-                            modifiers: None,
-                            is_type_only: false,
-                            is_default_export: false,
-                            default_keyword_pos: None,
-                            export_clause: import_decl,
-                            module_specifier: NodeIndex::NONE,
-                            attributes: NodeIndex::NONE,
-                        },
-                    )
+                        start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
+                    );
+                    let modifiers = Some(self.make_node_list(vec![export_modifier]));
+                    self.parse_import_declaration_with_modifiers(start_pos, modifiers)
                 }
             }
             SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
@@ -159,7 +149,9 @@ impl ParserState {
                         &format!("'{}' modifier already seen.", "export"),
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
-                    if self.is_token(SyntaxKind::ClassKeyword) {
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        self.parse_export_named(start_pos, false)
+                    } else if self.is_token(SyntaxKind::ClassKeyword) {
                         let export_modifier = self.arena.add_token(
                             SyntaxKind::ExportKeyword as u16,
                             second_export_pos,

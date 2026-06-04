@@ -656,11 +656,17 @@ function params(static x, export y, async z) { }
 async const value = 1
 async import 'assert'
 async export { f }
+export import 'fs'
+export export { g }
 export export var duplicateExport = 1
 export static var staticExport = 1
 function outer() {
     static function inner() { }
 }
+const object = {
+    static method() { }
+}
+const { ...rest = true } = object
 ";
     let mut parser = ParserState::new("plain.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -676,7 +682,7 @@ function outer() {
     let output = printer.get_output().to_string();
 
     for expected in [
-        "async constructor()",
+        "constructor()",
         "async field = 1;",
         "async export function f() { }",
         "async async function g() { }",
@@ -684,9 +690,13 @@ function outer() {
         "async const value = 1;",
         "async import 'assert';",
         "export { f };",
+        "export import 'fs';",
+        "export { g };",
         "export export var duplicateExport = 1;",
         "export static var staticExport = 1;",
         "static function inner() { }",
+        "static method() { }",
+        "const { ...rest = true } = object;",
     ] {
         assert!(
             output.contains(expected),
