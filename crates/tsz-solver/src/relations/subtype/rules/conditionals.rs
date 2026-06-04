@@ -463,7 +463,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Currently handles these patterns:
     /// - `T extends U ? T : Y` → `(T & U) | Y` (Extract pattern)
     /// - Other patterns: returns the general `X | Y` union
-    fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
+    pub(crate) fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
         // Compute the default constraint for deferred conditional types.
         //
         // Deferred conditionals arise when:
