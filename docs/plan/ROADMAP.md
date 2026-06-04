@@ -59,7 +59,7 @@ artifacts are triage inputs only, not current public truth.
 | Declaration emit | `99.5%` (`1,661 / 1,669`) in README/public aggregate and checked detail |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 | Open bug issues | `68` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
-| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlisted resource-region calls ratcheted to `4 / 6` with `2` remaining budget slots |
+| Output-surgery audit | passing: `0` unallowlisted calls, `0` stale allowlist entries; resource-region output surgery is capped at `4 / 4` with `0` remaining budget slots |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -126,11 +126,11 @@ changes the picture.
    `13,468 / 13,530` and declaration emit `1,661 / 1,669`. DTS still needs to
    move away from late semantic discovery during printing toward a precomputed
    declaration/public-API summary.
-8. Output-surgery audit is green again: the current audit reports `0`
-   unallowlisted calls and `0` stale allowlist entries. Resource-region
-   output-surgery is now `4 / 6`; Studio emit work should keep ratcheting it
-   down and must not spend the remaining capacity without an owner, removal
-   condition, and counter update.
+8. Output-surgery audit is passing with exhausted pressure: the current audit
+   reports `0` unallowlisted calls and `0` stale allowlist entries. Resource-region
+   output-surgery is now `4 / 4`; Studio emit work should keep ratcheting it
+   down, and any cap increase must name an owner, removal condition, and
+   counter update.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
