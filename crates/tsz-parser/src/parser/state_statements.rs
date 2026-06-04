@@ -1842,7 +1842,10 @@ impl ParserState {
         self.recovered_template_literal_property_in_object = false;
 
         let name = self.parse_variable_declaration_name();
-        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+        // tsc only treats a postfix `!` as a definite assignment assertion when
+        // the binding name is a plain identifier and no line break precedes it.
+        // Outside `for` initializers `allowExclamation` is true.
+        let exclamation_token = self.parse_definite_assignment_assertion(name, true);
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else {
