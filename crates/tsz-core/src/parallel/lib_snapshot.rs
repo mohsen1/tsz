@@ -7,7 +7,7 @@
 //!
 //! # Format
 //!
-//! `[8-byte magic "TSZSNAP\x03"][bincode payload]`. Bumping the trailing
+//! `[8-byte magic "TSZSNAP\x05"][bincode payload]`. Bumping the trailing
 //! byte invalidates older snapshots — necessary when the
 //! `BinderState`/`NodeArena` layout shifts in a way that breaks
 //! positional binary decoding.
@@ -57,7 +57,7 @@ use tsz_parser::parser::node::NodeArena;
 
 /// Magic header. Trailing byte is the format version. Bump on layout
 /// changes that break round-trip.
-const SNAPSHOT_MAGIC: &[u8; 8] = b"TSZSNAP\x04";
+const SNAPSHOT_MAGIC: &[u8; 8] = b"TSZSNAP\x05";
 
 /// Environment variable that controls the lib snapshot cache.
 const ENV_VAR: &str = "TSZ_LIB_CACHE";
@@ -79,6 +79,8 @@ struct LibSnapshot {
     content_hash: u64,
     /// The parsed AST.
     arena: NodeArena,
+    /// Compile-time source hash for embedded lib text elided from `arena`.
+    embedded_source_hash: Option<u64>,
     /// The bound symbol/scope/flow/declared-modules state.
     binder: BinderState,
     /// Root source-file `NodeIndex`.
@@ -112,7 +114,8 @@ fn lib_set_hash(keys: &[(&str, u64)]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     keys.len().hash(&mut hasher);
-    for (_, content_hash) in keys {
+    for (file_name, content_hash) in keys {
+        file_name.hash(&mut hasher);
         content_hash.hash(&mut hasher);
     }
     hasher.finish()
@@ -191,6 +194,11 @@ pub(super) fn try_load(file_name: &str, source_text: &str) -> Option<Arc<LibFile
     if snapshot.content_hash != hash || snapshot.file_name != file_name {
         return None;
     }
+    snapshot_into_lib_file(snapshot)
+}
+
+fn snapshot_into_lib_file(mut snapshot: LibSnapshot) -> Option<Arc<LibFile>> {
+    restore_embedded_source_text(&mut snapshot)?;
     Some(Arc::new(LibFile::new(
         snapshot.file_name,
         Arc::new(snapshot.arena),
@@ -255,12 +263,11 @@ pub(super) fn try_load_many(keys: &[(&str, u64)]) -> Option<Vec<Arc<LibFile>>> {
             record(false);
             return None;
         }
-        files.push(Arc::new(LibFile::new(
-            snapshot.file_name,
-            Arc::new(snapshot.arena),
-            Arc::new(snapshot.binder),
-            snapshot.root_index,
-        )));
+        let Some(file) = snapshot_into_lib_file(snapshot) else {
+            record(false);
+            return None;
+        };
+        files.push(file);
     }
     record(true);
     Some(files)
@@ -284,6 +291,7 @@ pub(super) fn try_store(file_name: &str, source_text: &str, lib: &Arc<LibFile>) 
         file_name: file_name.to_string(),
         content_hash: hash,
         arena: (*lib.arena).clone(),
+        embedded_source_hash: None,
         binder: (*lib.binder).clone(),
         root_index: lib.root_index,
     };
@@ -320,10 +328,12 @@ pub(super) fn try_store_many(keys: &[(&str, u64)], libs: &[Arc<LibFile>]) -> Res
     let path = snapshot_set_path(&dir, set_hash);
     let mut files = Vec::with_capacity(libs.len());
     for ((file_name, content_hash), lib) in keys.iter().zip(libs) {
+        let embedded_source_hash = embedded_source_hash_for_snapshot(file_name, *content_hash);
         files.push(LibSnapshot {
             file_name: (*file_name).to_string(),
             content_hash: *content_hash,
-            arena: (*lib.arena).clone(),
+            arena: snapshot_arena_for_store(&lib.arena, embedded_source_hash.is_some()),
+            embedded_source_hash,
             binder: (*lib.binder).clone(),
             root_index: lib.root_index,
         });
@@ -392,6 +402,55 @@ fn decode_payload<T: DeserializeOwned>(payload: &[u8]) -> Result<T> {
     Ok(value)
 }
 
+fn snapshot_arena_for_store(arena: &NodeArena, elide_source_text: bool) -> NodeArena {
+    let mut arena = arena.clone();
+    if elide_source_text {
+        for source_file in &mut arena.source_files {
+            source_file.text = Arc::from("");
+        }
+    }
+    arena
+}
+
+fn embedded_source_hash_for_snapshot(file_name: &str, content_hash: u64) -> Option<u64> {
+    let embedded_name = embedded_file_name(file_name)?;
+    let source_hash = crate::embedded_libs::get_lib_content_hash(embedded_name)?;
+    (content_hash_from_source_hash(file_name, source_hash) == content_hash).then_some(source_hash)
+}
+
+fn restore_embedded_source_text(snapshot: &mut LibSnapshot) -> Option<()> {
+    let source_hash = match snapshot.embedded_source_hash {
+        Some(source_hash) => source_hash,
+        None => return Some(()),
+    };
+    let source_text =
+        embedded_source_text_for_snapshot(&snapshot.file_name, snapshot.content_hash, source_hash)?;
+    for source_file in &mut snapshot.arena.source_files {
+        source_file.text = Arc::from(source_text);
+    }
+    Some(())
+}
+
+fn embedded_source_text_for_snapshot(
+    file_name: &str,
+    content_hash: u64,
+    source_hash: u64,
+) -> Option<&'static str> {
+    if content_hash_from_source_hash(file_name, source_hash) != content_hash {
+        return None;
+    }
+    let embedded_name = embedded_file_name(file_name)?;
+    if crate::embedded_libs::get_lib_content_hash(embedded_name)? != source_hash {
+        return None;
+    }
+    crate::embedded_libs::get_lib_content(embedded_name)
+}
+
+fn embedded_file_name(file_name: &str) -> Option<&str> {
+    let name = Path::new(file_name).file_name()?.to_str()?;
+    Some(name.strip_prefix("lib.").unwrap_or(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +480,7 @@ mod tests {
             file_name: "snap_test.d.ts".to_string(),
             content_hash: 0xdeadbeef,
             arena: (*lib.arena).clone(),
+            embedded_source_hash: None,
             binder: (*lib.binder).clone(),
             root_index: lib.root_index,
         };
@@ -482,6 +542,57 @@ mod tests {
         let mut wrong_hash = keys;
         wrong_hash[0].1 ^= 1;
         assert!(try_load_many(&wrong_hash).is_none());
+    }
+
+    #[test]
+    fn lib_set_hash_includes_file_names() {
+        let first = [("lib.alpha.d.ts", 1), ("lib.beta.d.ts", 2)];
+        let renamed = [("lib.gamma.d.ts", 1), ("lib.beta.d.ts", 2)];
+
+        assert_ne!(lib_set_hash(&first), lib_set_hash(&renamed));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn embedded_snapshot_set_elides_and_restores_source_text() {
+        // SAFETY: nextest runs each test in its own process, so the env
+        // mutations don't race other threads.
+        unsafe {
+            std::env::set_var(ENV_VAR, "1");
+        }
+        let tmp = tempfile::TempDir::new().expect("tmp dir");
+        unsafe {
+            std::env::set_var(ENV_DIR, tmp.path());
+        }
+
+        let file_name = "/embedded-lib/decorators.d.ts";
+        let embedded_name = "decorators.d.ts";
+        let embedded_text =
+            crate::embedded_libs::get_lib_content(embedded_name).expect("embedded source");
+        let embedded_hash =
+            crate::embedded_libs::get_lib_content_hash(embedded_name).expect("embedded hash");
+        let key_hash = content_hash_from_source_hash(file_name, embedded_hash);
+        let lib = parse_and_bind(file_name, embedded_text);
+        let keys = [(file_name, key_hash)];
+
+        try_store_many(&keys, &[Arc::clone(&lib)]).expect("set write should succeed");
+
+        let cache_bytes =
+            fs::read(snapshot_set_path(tmp.path(), lib_set_hash(&keys))).expect("cache file");
+        assert!(
+            !cache_bytes
+                .windows(embedded_text.len())
+                .any(|window| window == embedded_text.as_bytes()),
+            "embedded source text should not be serialized into the set snapshot"
+        );
+
+        let restored = try_load_many(&keys).expect("set cache should hit");
+        let root = restored[0].arena.get(restored[0].root_index).expect("root");
+        let source_file = restored[0]
+            .arena
+            .get_source_file(root)
+            .expect("source file data");
+        assert_eq!(&*source_file.text, embedded_text);
     }
 
     #[test]
