@@ -318,6 +318,9 @@ mod optional_property_target_undefined_display_tests;
 #[path = "../tests/overload_modifier_tests.rs"]
 mod overload_modifier_tests;
 #[cfg(test)]
+#[path = "tests/override_incompatibility_elaboration_tests.rs"]
+mod override_incompatibility_elaboration_tests;
+#[cfg(test)]
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]

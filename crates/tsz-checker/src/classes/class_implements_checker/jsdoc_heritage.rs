@@ -1361,7 +1361,7 @@ impl<'a> CheckerState<'a> {
             };
 
             let mut missing_members: Vec<String> = Vec::new();
-            let mut incompatible_members: Vec<(String, String, String)> = Vec::new();
+            let mut incompatible_members: Vec<(String, TypeId, TypeId)> = Vec::new();
             let mut interface_has_index_signature = false;
 
             if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
@@ -1401,12 +1401,10 @@ impl<'a> CheckerState<'a> {
                                 class_idx,
                             )
                         {
-                            let expected_str = self.format_type(interface_member_type);
-                            let actual_str = self.format_type(class_member_type);
                             incompatible_members.push((
                                 member_name.clone(),
-                                expected_str,
-                                actual_str,
+                                interface_member_type,
+                                class_member_type,
                             ));
                         }
                     } else {
@@ -1482,7 +1480,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Report incompatible member types (TS2416)
-            for (member_name, expected, actual) in incompatible_members {
+            for (member_name, expected_type, actual_type) in incompatible_members {
                 // For JSDoc @implements, we don't have a specific member node to point to,
                 // so use the class name node for the error location.
                 // Find the class member node if possible for better error location
@@ -1513,10 +1511,10 @@ impl<'a> CheckerState<'a> {
                     ),
                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                 );
-                self.report_type_not_assignable_detail(
+                self.report_type_override_incompatibility_detail(
                     error_node_idx,
-                    &actual,
-                    &expected,
+                    actual_type,
+                    expected_type,
                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                 );
             }
