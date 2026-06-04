@@ -809,14 +809,16 @@ function readJsonIfExists(p) {
   }
 }
 
-function benchReadinessBanner(readiness) {
-  const messages = benchReadinessMessages(readiness);
+function benchReadinessBanner(readiness, winnerReport) {
+  const messages = benchReadinessMessages(readiness, winnerReport);
   if (messages.length === 0) return "";
   return `<p class="bench-readiness-warning">⚠️ ${escapeHtml(messages.join(" "))}</p>`;
 }
 
 let _benchReadinessStatus;
 let _benchmarkSourceKind = null;
+let _benchmarkArtifactPath = null;
+let _benchWinnerReport;
 
 function benchmarkArtifactFiles() {
   const artifactsDir = path.join(ROOT, "artifacts");
@@ -848,6 +850,18 @@ function loadBenchReadinessStatus() {
   return null;
 }
 
+function loadBenchWinnerReport() {
+  if (_benchWinnerReport !== undefined) return _benchWinnerReport;
+  if (!_benchmarkArtifactPath) {
+    _benchWinnerReport = null;
+    return _benchWinnerReport;
+  }
+
+  const winnerPath = _benchmarkArtifactPath.replace(/\.json$/, ".tsgo-winners.json");
+  _benchWinnerReport = readJsonIfExists(winnerPath) ?? null;
+  return _benchWinnerReport;
+}
+
 function sanitizeLegacyBenchmarkData(data) {
   if (data?.validation?.hyperfine_exit_codes_required === true) {
     return data;
@@ -867,6 +881,7 @@ function loadBenchmarks() {
     const data = readJsonIfExists(overrideArtifact);
     if (data?.results) {
       _benchmarkSourceKind = "override";
+      _benchmarkArtifactPath = overrideArtifact;
       return sanitizeLegacyBenchmarkData(data);
     }
   }
@@ -878,10 +893,12 @@ function loadBenchmarks() {
   ]);
   if (selectedArtifact) {
     _benchmarkSourceKind = selectedArtifact.file === snapshotPath ? "snapshot" : "artifact";
+    _benchmarkArtifactPath = selectedArtifact.file;
     return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }
 
   _benchmarkSourceKind = null;
+  _benchmarkArtifactPath = null;
   return null;
 }
 
@@ -1862,7 +1879,7 @@ export function getProjectCompatibilityDashboard() {
   };
 
   const readiness = loadBenchReadinessStatus();
-  const artifactBanner = benchReadinessBanner(readiness);
+  const artifactBanner = benchReadinessBanner(readiness, loadBenchWinnerReport());
 
   return `<section class="compat-dashboard">
   <h2>Compatibility</h2>
