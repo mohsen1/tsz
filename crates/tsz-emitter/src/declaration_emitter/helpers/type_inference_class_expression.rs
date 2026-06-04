@@ -232,8 +232,22 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.indent_level + 2
         };
+        let base_members = base_constraint_idx.and_then(|constraint_idx| {
+            self.constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
+                .map(|members| {
+                    (
+                        members,
+                        self.constructor_constraint_base_members_precede_class_members(
+                            constraint_idx,
+                        ),
+                    )
+                })
+        });
         let mut instance_scratch = self.scratch_object_type_body_emitter(instance_indent);
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
+        if let Some((base_members, true)) = base_members.as_ref() {
+            instance_scratch.write(base_members);
+        }
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -247,11 +261,8 @@ impl<'a> DeclarationEmitter<'a> {
                 instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
         }
-        if let Some(constraint_idx) = base_constraint_idx
-            && let Some(base_members) = self
-                .constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
-        {
-            instance_scratch.write(&base_members);
+        if let Some((base_members, false)) = base_members.as_ref() {
+            instance_scratch.write(base_members);
         }
         let members = instance_scratch.writer.take_output();
         let members = Self::strip_abstract_member_modifiers(members.trim_end());
@@ -700,22 +711,38 @@ impl<'a> DeclarationEmitter<'a> {
         constraint_idx: NodeIndex,
         indent_level: u32,
     ) -> Option<String> {
+        let instance_type_idx =
+            self.constructor_constraint_instance_type_node_idx(constraint_idx)?;
+        self.instance_type_node_members_text_at(instance_type_idx, indent_level)
+    }
+
+    fn constructor_constraint_base_members_precede_class_members(
+        &self,
+        constraint_idx: NodeIndex,
+    ) -> bool {
+        self.constructor_constraint_instance_type_node_idx(constraint_idx)
+            .and_then(|instance_type_idx| self.arena.get(instance_type_idx))
+            .is_some_and(|node| self.type_node_is_any(node))
+    }
+
+    fn constructor_constraint_instance_type_node_idx(
+        &self,
+        constraint_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let constraint_node = self.arena.get(constraint_idx)?;
 
         if let Some(type_ref) = self.arena.get_type_ref(constraint_node)
             && let Some(type_arguments) = type_ref.type_arguments.as_ref()
             && let Some(instance_arg_index) =
                 self.constructor_type_reference_instance_arg_index(type_ref)
-            && let Some(instance_arg_idx) = type_arguments.nodes.get(instance_arg_index).copied()
         {
-            return self.instance_type_node_members_text_at(instance_arg_idx, indent_level);
+            return type_arguments.nodes.get(instance_arg_index).copied();
         }
 
         if constraint_node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
             && let Some(func_type) = self.arena.get_function_type(constraint_node)
         {
-            return self
-                .instance_type_node_members_text_at(func_type.type_annotation, indent_level);
+            return Some(func_type.type_annotation);
         }
 
         None
