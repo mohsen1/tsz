@@ -231,7 +231,7 @@ fn get_code_fixes_unresolved_function_call_offers_missing_function_declaration()
     // Plain unresolved call expression `foo(1);` must produce a
     // `fixMissingFunctionDeclaration` action, not an empty
     // `Add all missing imports` action. Regression for
-    // https://github.com/mohsen1/tsz/issues/3806.
+    // https://github.com/tsz-org/tsz/issues/3806.
     let mut server = make_server();
     let content = "foo(1);\n";
     server

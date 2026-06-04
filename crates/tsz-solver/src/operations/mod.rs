@@ -24,6 +24,7 @@
 //! - `core`: Call evaluation, assignability traits, and free-function entry points
 //! - `binary_ops`: Binary operation evaluation (+, -, *, /, etc.)
 //! - `call_args`: Argument checking, parameter analysis, tuple rest handling, placeholder detection
+//! - `call_contextual`: Contextual sensitivity and callback context helpers
 //! - `constraints`: Type constraint collection for generic inference
 //! - `constructors`: Constructor (new) expression resolution
 //! - `generic_call`: Generic function call inference
@@ -38,6 +39,7 @@
 
 pub mod binary_ops;
 mod call_args;
+mod call_contextual;
 pub mod compound_assignment;
 mod constraints;
 mod constructors;

@@ -30,6 +30,10 @@ fn ts2536(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags.iter().filter(|d| d.code == 2536).collect()
 }
 
+fn ts2344(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+    diags.iter().filter(|d| d.code == 2344).collect()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Standard lib utilities
 // ──────────────────────────────────────────────────────────────────────────
@@ -396,5 +400,105 @@ type Test<T> = {
     assert!(
         !ts2536(&diags).is_empty(),
         "B[P] where P extends keyof A but B ≠ A must still emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn create_type_options_satisfies_required_options_constraint() {
+    let diags = check_es5(
+        r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type;
+
+type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+
+type Ok = Paths<{ value: string }>;
+"#,
+    );
+    assert!(
+        ts2344(&diags).is_empty(),
+        "CreateTypeOptions must not emit TS2344: {diags:?}"
+    );
+}
+
+#[test]
+fn renamed_create_type_options_binders_satisfy_required_constraint() {
+    let diags = check_es5(
+        r#"
+type MergeOptions<
+  Bag extends Required<Bag>,
+  Patch extends Partial<Bag>,
+  Fallback extends Required<Bag>,
+> = {
+  [Name in keyof Bag]: Patch[Name] extends Bag[Name] ? Patch[Name] : Fallback[Name];
+};
+
+interface Shape {
+  mode: "deep";
+  count: number;
+}
+
+interface ShapeDefaults {
+  mode: "deep";
+  count: 1;
+}
+
+type UseShape<Value, Config extends Required<Shape>> = Value;
+type Ok = UseShape<string, MergeOptions<Shape, {}, ShapeDefaults>>;
+"#,
+    );
+    assert!(
+        ts2344(&diags).is_empty(),
+        "renamed option binders must not affect TS2344: {diags:?}"
+    );
+}
+
+#[test]
+fn incompatible_create_type_options_defaults_still_emit_ts2344() {
+    let diags = check_es5(
+        r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+interface PathBag {
+  depth: number;
+}
+
+interface BadDefaults {
+  depth: string;
+}
+
+type UsePaths<Type, Options extends Required<PathBag>> = Type;
+type Bad = UsePaths<unknown, CreateTypeOptions<PathBag, {}, BadDefaults>>;
+"#,
+    );
+    assert!(
+        !ts2344(&diags).is_empty(),
+        "incompatible defaults must still emit TS2344"
     );
 }

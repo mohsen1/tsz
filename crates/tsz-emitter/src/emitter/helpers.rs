@@ -13,6 +13,15 @@ fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
     })
 }
 
+fn strip_keyword_token<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
+    text.strip_prefix(keyword).and_then(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+            .then_some(tail)
+    })
+}
+
 const fn is_identifier_continue(byte: u8) -> bool {
     byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
 }
@@ -229,6 +238,79 @@ impl<'a> Printer<'a> {
         self.arena
             .has_modifier(modifiers, SyntaxKind::StaticKeyword)
             || self.has_recovered_namespace_static_modifier(node)
+    }
+
+    pub(in crate::emitter) fn emit_recovered_root_js_declaration_modifiers(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        include_export: bool,
+    ) {
+        if !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return;
+        }
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                continue;
+            };
+            match mod_node.kind {
+                k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
+                k if include_export && k == SyntaxKind::ExportKeyword as u16 => {
+                    self.write("export ");
+                }
+                k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
+                _ => {}
+            }
+        }
+    }
+
+    pub(in crate::emitter) fn should_emit_recovered_root_js_declaration_modifiers(&self) -> bool {
+        self.is_current_root_js_source
+            && !self.ctx.target_es5
+            && self.transforms.is_empty()
+            && !self.ctx.is_commonjs()
+    }
+
+    pub(in crate::emitter) fn emit_recovered_root_js_export_clause_modifiers(
+        &mut self,
+        node: &Node,
+    ) {
+        if !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return;
+        }
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let Some(line) = text.get(start..) else {
+            return;
+        };
+        let line = line.split_once(['\n', '\r']).map_or(line, |(head, _)| head);
+        let Some(mut rest) = strip_keyword_token(line, "export") else {
+            return;
+        };
+
+        loop {
+            rest = rest.trim_start_matches([' ', '\t']);
+            if rest.is_empty()
+                || ["var", "let", "const", "function", "class", "import"]
+                    .iter()
+                    .any(|keyword| starts_with_keyword_token(rest, keyword))
+            {
+                return;
+            }
+            if let Some(after_static) = strip_keyword_token(rest, "static") {
+                self.write("static ");
+                rest = after_static;
+            } else if let Some(after_export) = strip_keyword_token(rest, "export") {
+                self.write("export ");
+                rest = after_export;
+            } else {
+                return;
+            }
+        }
     }
 
     fn has_recovered_namespace_static_modifier(&self, node: &Node) -> bool {

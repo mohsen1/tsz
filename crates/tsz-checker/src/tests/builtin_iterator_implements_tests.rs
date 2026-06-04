@@ -13,7 +13,7 @@
 //! Fix: when cross-arena delegation is active, resolve each declaration with
 //! its own `NodeArena` via `lower_merged_interface_declarations_with_symbol`.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/8422>
+//! Issue: <https://github.com/tsz-org/tsz/issues/8422>
 
 use crate::test_utils::check_source_codes;
 

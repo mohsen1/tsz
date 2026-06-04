@@ -163,6 +163,11 @@ impl<'a> Printer<'a> {
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
+                        if mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                            && self.should_emit_recovered_root_js_declaration_modifiers()
+                        {
+                            self.write("async ");
+                        }
                         if self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR
                         {

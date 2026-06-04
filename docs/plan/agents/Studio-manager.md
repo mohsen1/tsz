@@ -55,7 +55,7 @@ gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt
 Priority order:
 
 1. Ready PRs with red, missing, stale, or blocked required checks.
-2. Ready PRs that can be safely moved to `merge-queue`.
+2. Ready PRs that can be safely queued with GitHub's native merge queue.
 3. PRs touching checker/solver relation, inference, evaluation, narrowing,
    identity, or cache semantics.
 4. PRs touching emit/DTS output boundaries, output surgery, source-text
@@ -102,5 +102,5 @@ readiness concerns.
 - Use `node scripts/ci/pr-ownership-report.mjs` for PR topology.
 - Use `scripts/agents/ensure-agent-labels.sh --audit --json-report /tmp/tsz-agent-label-audit.json` for label hygiene.
 - Use `scripts/ci/check-wip-state-comments.mjs` when changing WIP state.
-- Use GitHub PR-head check status before adding `merge-queue`.
+- Use GitHub PR-head check status before queueing with `gh pr merge --queue`.
 - No compiler suite is needed for metadata-only cleanup.

@@ -19,7 +19,7 @@
  *   Pre-fetched JSON array of GitHub issues with shape:
  *     { number, title, labels: string[], state, html_url? }
  *   To generate:
- *     gh api repos/mohsen1/tsz/issues --paginate \
+ *     gh api repos/tsz-org/tsz/issues --paginate \
  *       | jq '[.[] | {number, title, labels: [.labels[].name], state, html_url}]' \
  *       > open-issues.json
  */
@@ -184,7 +184,7 @@ function linkIssue(issue) {
     title: issue.title,
     labels: Array.isArray(issue.labels) ? issue.labels : [],
     state: issue.state ?? "open",
-    url: issue.html_url ?? `https://github.com/mohsen1/tsz/issues/${issue.number}`,
+    url: issue.html_url ?? `https://github.com/tsz-org/tsz/issues/${issue.number}`,
   };
 }
 

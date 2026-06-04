@@ -105,6 +105,12 @@ impl RelationOverflowFlags {
     }
 }
 
+/// Project-run cache for global JSDoc typedef lookup.
+pub struct JSDocGlobalTypedefLookupCache {
+    pub miss_cache: RefCell<FxHashSet<String>>,
+    pub in_progress: RefCell<FxHashSet<String>>,
+}
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -444,6 +450,11 @@ pub struct CheckerContext<'a> {
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+
+    /// Negative results and re-entrancy state for global JSDoc typedef lookup.
+    /// Misses are stable for the project run; the in-progress set prevents a
+    /// recursive typedef's cycle-break `None` from poisoning that miss cache.
+    pub jsdoc_global_typedef_lookup_cache: JSDocGlobalTypedefLookupCache,
 
     /// True once `nested_namespace_candidates_cache` has been populated for every
     /// nested namespace export name visible across all binders.

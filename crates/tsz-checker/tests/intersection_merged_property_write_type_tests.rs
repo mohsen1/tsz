@@ -9,7 +9,7 @@
 //! spurious contravariant write check rejects perfectly valid assignments such
 //! as assigning the intersection to `{ a: { b } }`.
 //!
-//! See <https://github.com/mohsen1/tsz/issues/11323>.
+//! See <https://github.com/tsz-org/tsz/issues/11323>.
 
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::{check_source_strict, diagnostic_count};

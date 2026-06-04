@@ -1280,6 +1280,30 @@ const f = <a-\u{0063}/>;"#;
     }
 
     #[test]
+    fn jsx_unterminated_empty_expression_preserves_recovery_braces() {
+        let source = "function foo() {\n    var x = <div>  { </div>\n}";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("var x = <div>  {} </div>;"),
+            "Malformed JSX child expression should preserve tsc's recovered empty braces.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_invalid_attribute_starters_preserve_recovered_tail() {
+        let source = "<test1 32data={32} />;\n<test2 -data={32} />;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("<test1 />;\n32;"),
+            "Numeric JSX attribute recovery should leave the numeric prefix as a statement.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("<test2 /> - data;"),
+            "Signed JSX attribute recovery should preserve the recovered binary tail.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_expression_without_expression_normalizes_multiline_leading_comment_indentation() {
         let source = "let x = <div>{\n    // ??? 1\n            // ??? 2\n}</div>;";
         let output = emit_jsx(source);
