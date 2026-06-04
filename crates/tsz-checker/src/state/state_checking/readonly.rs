@@ -376,43 +376,42 @@ impl<'a> CheckerState<'a> {
                     // evaluates to a readonly tuple, resolve it so a fixed-element
                     // write is recognized as a readonly named-property write
                     // (TS2540). Other shapes (e.g. `ReadonlyArray<T>`, which is an
-                    // index signature) keep their existing unevaluated handling.
+                    // index signature) are already detected on the unevaluated
+                    // application below.
                     let object_type = self.resolve_readonly_tuple_application(object_type);
 
                     let index_type = self.get_type_of_node(access.name_or_argument);
-                    if let Some(name) = self.get_readonly_element_access_name(
+                    // Primary classification on the (tuple-resolved) declared
+                    // type. This already covers concretely-resolved shapes:
+                    // named aliases, `ReadonlyArray<T>`, `readonly T[]`, and
+                    // readonly tuples.
+                    if let Some(diag) = self.emit_readonly_element_access_diag(
                         object_type,
                         access.name_or_argument,
                         index_type,
+                        target_idx,
                     ) {
-                        // TS2542: use specific diagnostic for readonly index signatures.
-                        // Check if the property resolved through an index signature
-                        // (either the explicit "index signature" sentinel or via
-                        // from_index_signature on a named property).
-                        //
-                        // Exception: readonly tuple fixed elements (e.g., v[0] on
-                        // `readonly [number, number, ...number[]]`) are named properties
-                        // even though resolve_array_property reports from_index_signature.
-                        let from_idx_sig =
-                            self.readonly_element_access_from_index_signature(object_type, &name);
-                        if from_idx_sig {
-                            // tsc anchors TS2542 at the full element access expression
-                            self.error_readonly_index_signature_at(object_type, target_idx);
-                            return ReadonlyAssignmentDiagnostic::IndexSignature;
-                        } else {
-                            // tsc anchors TS2540 at the argument expression inside
-                            // the brackets (e.g., the `0` in `v[0]`), not the full
-                            // element access expression.
-                            self.error_readonly_property_at(&name, access.name_or_argument);
-                            return ReadonlyAssignmentDiagnostic::NamedProperty;
-                        }
+                        return diag;
                     }
-                    // Check for mapped types with explicit readonly modifier (e.g., Readonly<T>).
-                    // This handles Application types like Readonly<T> where T is generic,
-                    // which require TypeEnvironment evaluation to resolve the base type alias.
-                    if self.is_readonly_mapped_type(object_type) {
-                        self.error_readonly_index_signature_at(object_type, target_idx);
-                        return ReadonlyAssignmentDiagnostic::IndexSignature;
+                    // Fallback: a property (or variable) whose declared type is a
+                    // deferred mapped/alias application — `Readonly<number[]>`,
+                    // a user `{ readonly [K in keyof T]: ... }` alias, etc. — is
+                    // left as an unevaluated `Application` by `get_type_of_node`,
+                    // so the primary classification above misses its readonly
+                    // index signature / named property. Evaluate to the
+                    // structural shape and retry, mirroring tsc which classifies
+                    // the resolved type. This is purely additive: it only runs
+                    // when the declared form exposed no readonly write.
+                    let resolved = self.resolve_readonly_element_access_target(object_type);
+                    if resolved != object_type
+                        && let Some(diag) = self.emit_readonly_element_access_diag(
+                            resolved,
+                            access.name_or_argument,
+                            index_type,
+                            target_idx,
+                        )
+                    {
+                        return diag;
                     }
                     // Check AST-level interface readonly for element access (obj["x"])
                     if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
@@ -1384,6 +1383,53 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Classify a readonly element/index-access write for `object_type`,
+    /// emitting TS2542 (readonly index signature) or TS2540 (readonly named
+    /// property) and returning the matching diagnostic variant, or `None` when
+    /// `object_type` exposes no readonly write at this access.
+    ///
+    /// Shared by the declared-type path and the deferred-application fallback so
+    /// both classify identically.
+    fn emit_readonly_element_access_diag(
+        &mut self,
+        object_type: TypeId,
+        index_expr: NodeIndex,
+        index_type: TypeId,
+        target_idx: NodeIndex,
+    ) -> Option<ReadonlyAssignmentDiagnostic> {
+        if let Some(name) =
+            self.get_readonly_element_access_name(object_type, index_expr, index_type)
+        {
+            // TS2542: use the specific diagnostic for readonly index signatures.
+            // Check if the property resolved through an index signature (either
+            // the explicit "index signature" sentinel or via from_index_signature
+            // on a named property).
+            //
+            // Exception: readonly tuple fixed elements (e.g., v[0] on
+            // `readonly [number, number, ...number[]]`) are named properties
+            // even though resolve_array_property reports from_index_signature.
+            let from_idx_sig =
+                self.readonly_element_access_from_index_signature(object_type, &name);
+            if from_idx_sig {
+                // tsc anchors TS2542 at the full element access expression.
+                self.error_readonly_index_signature_at(object_type, target_idx);
+                return Some(ReadonlyAssignmentDiagnostic::IndexSignature);
+            }
+            // tsc anchors TS2540 at the argument expression inside the brackets
+            // (e.g., the `0` in `v[0]`), not the full element access expression.
+            self.error_readonly_property_at(&name, index_expr);
+            return Some(ReadonlyAssignmentDiagnostic::NamedProperty);
+        }
+        // Mapped types with an explicit readonly modifier (e.g., Readonly<T>).
+        // This handles Application types like Readonly<T> where T is generic,
+        // which require TypeEnvironment evaluation to resolve the base type alias.
+        if self.is_readonly_mapped_type(object_type) {
+            self.error_readonly_index_signature_at(object_type, target_idx);
+            return Some(ReadonlyAssignmentDiagnostic::IndexSignature);
+        }
+        None
+    }
+
     /// If `type_id` is an unevaluated type-alias application that evaluates to a
     /// readonly tuple, return the evaluated readonly tuple; otherwise return
     /// `type_id` unchanged. Used so an inline `Readonly<[a, b]>` element write is
@@ -1399,6 +1445,53 @@ impl<'a> CheckerState<'a> {
         let is_readonly_tuple = readonly_inner_type(self.ctx.types, resolved)
             .is_some_and(|inner| tuple_list_id(self.ctx.types, inner).is_some());
         if is_readonly_tuple { resolved } else { type_id }
+    }
+
+    /// If `type_id` is an unevaluated type-alias / mapped-type application that
+    /// evaluates to a concrete indexable shape (an object, array, or tuple —
+    /// possibly `readonly`), return the evaluated shape so the element/index
+    /// access readonly checks operate on the resolved structural type.
+    /// Otherwise return `type_id` unchanged.
+    ///
+    /// `get_type_of_node` resolves a *named* type alias eagerly, but leaves an
+    /// inline application — `Readonly<number[]>`, a user `{ readonly [K in
+    /// keyof T]: ... }` mapped alias, or a property whose declared type is such
+    /// an application — as an unevaluated `Application`. The readonly index/
+    /// element write check (TS2542 for a readonly index signature, TS2540 for a
+    /// readonly named property reached via a literal element key) needs the
+    /// structural form to detect the `readonly` modifier, mirroring tsc which
+    /// always classifies the resolved type. The assignability and property/
+    /// method-lookup paths already evaluate these applications; only the
+    /// index-write check lagged, so e.g. `(r.b as RO<number[]>)[0] = 1` was
+    /// silently accepted.
+    ///
+    /// Adoption is gated on the evaluation producing a concrete shape: a still
+    /// unresolved generic application (e.g. `Readonly<T>` with free `T`) is left
+    /// untouched so generic-only handling (TS2862) is unaffected, and a `-readonly`
+    /// (mutable) result simply produces no diagnostic downstream.
+    fn resolve_readonly_element_access_target(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{
+            array_element_type, object_shape_for_type, readonly_inner_type, tuple_list_id,
+        };
+        use crate::query_boundaries::type_checking_utilities::application_base;
+
+        if application_base(self.ctx.types, type_id).is_none() {
+            return type_id;
+        }
+        let resolved = self.evaluate_type_with_env(type_id);
+        // A no-op evaluation leaves the original `Application`, which fails the
+        // `application_base(resolved).is_none()` gate below and falls through to
+        // returning `type_id` — so no separate unchanged-result check is needed.
+        let resolved_is_concrete_shape = application_base(self.ctx.types, resolved).is_none()
+            && (object_shape_for_type(self.ctx.types, resolved).is_some()
+                || array_element_type(self.ctx.types, resolved).is_some()
+                || tuple_list_id(self.ctx.types, resolved).is_some()
+                || readonly_inner_type(self.ctx.types, resolved).is_some());
+        if resolved_is_concrete_shape {
+            resolved
+        } else {
+            type_id
+        }
     }
 
     fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {

@@ -1911,6 +1911,10 @@ name = "ts2542_readonly_index_coemission_tests"
 path = "tests/ts2542_readonly_index_coemission_tests.rs"
 
 [[test]]
+name = "readonly_deferred_mapped_application_index_write_tests"
+path = "tests/readonly_deferred_mapped_application_index_write_tests.rs"
+
+[[test]]
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
 
