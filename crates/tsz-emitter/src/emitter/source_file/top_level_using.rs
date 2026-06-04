@@ -1655,6 +1655,16 @@ impl<'a> Printer<'a> {
         Some(rewritten)
     }
 
+    fn top_level_using_assignment_rhs<'b>(emitted: &'b str, binding_name: &str) -> Option<&'b str> {
+        Some(
+            emitted
+                .strip_prefix(binding_name)?
+                .trim_start()
+                .strip_prefix('=')?
+                .trim_start(),
+        )
+    }
+
     fn mark_top_level_using_inline_cjs_export(
         &mut self,
         export_name: Option<&String>,
@@ -2381,9 +2391,25 @@ impl<'a> Printer<'a> {
                 return true;
             }
         }
+        let use_default_tc39_display_name = self.in_system_execute_body
+            && export_name.as_deref() == Some("default")
+            && !self.ctx.options.target.supports_es2025()
+            && class.name.is_none()
+            && has_decorators
+            && !self.ctx.options.legacy_decorators;
+        let prev_pending_tc39_name = if use_default_tc39_display_name {
+            self.pending_tc39_class_expression_name
+                .replace(("default".to_string(), false))
+        } else {
+            None
+        };
+
         let before_len = self.writer.len();
         self.emit(idx);
         let after_len = self.writer.len();
+        if use_default_tc39_display_name {
+            self.pending_tc39_class_expression_name = prev_pending_tc39_name;
+        }
         if let Some(prev) = prev_anon_default_name {
             self.anonymous_default_export_name = prev;
         }
@@ -2505,20 +2531,13 @@ impl<'a> Printer<'a> {
                     .strip_suffix(';')
                     .unwrap_or(&rewritten)
                     .trim_start();
-                let inline_expr = if let Some(eq_idx) = trimmed.find(" = (() => {") {
-                    let iife = trimmed[eq_idx + 3..].replace("class_1", "default_1");
-                    iife.replace(
-                        "__setFunctionName(_classThis, \"default_1\");",
-                        "__setFunctionName(_classThis, \"default\");",
-                    )
-                } else {
-                    trimmed.to_string()
-                };
+                let inline_expr =
+                    Self::top_level_using_assignment_rhs(trimmed, &binding_name).unwrap_or(trimmed);
                 self.write_export_binding_start(export_name);
                 if self.in_top_level_using_scope {
                     self.write("_default = ");
                 }
-                self.write(&inline_expr);
+                self.write(inline_expr);
                 self.write_export_binding_end();
             } else if self.in_system_execute_body
                 && (has_explicit_export_modifier
