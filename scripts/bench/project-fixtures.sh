@@ -249,6 +249,18 @@ tsz_project_fixture_sources() {
     comlink-project)
       printf 'comlink|%s|%s\n' "$COMLINK_REPO" "$COMLINK_REF"
       ;;
+    effect-project)
+      printf 'effect|%s|%s\n' "$EFFECT_REPO" "$EFFECT_REF"
+      ;;
+    drizzle-orm-project)
+      printf 'drizzle-orm|%s|%s\n' "$DRIZZLE_ORM_REPO" "$DRIZZLE_ORM_REF"
+      ;;
+    ts-rest-project)
+      printf 'ts-rest|%s|%s\n' "$TS_REST_REPO" "$TS_REST_REF"
+      ;;
+    ofetch-project)
+      printf 'ofetch|%s|%s\n' "$OFETCH_REPO" "$OFETCH_REF"
+      ;;
     vite-vanilla-ts-app)
       local fixture_dir="${VITE_APP_BENCH_DIR:-}"
       [ -n "$fixture_dir" ] || [ -z "${FIXTURE_ROOT:-}" ] || fixture_dir="$FIXTURE_ROOT/vite-vanilla-ts-live"
