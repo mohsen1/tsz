@@ -29,9 +29,24 @@ Python-based architecture guard that validates import patterns across the entire
 # Run the guard
 python3 scripts/arch/arch_guard.py
 
+# Emit machine-readable guard status
+python3 scripts/arch/arch_guard.py --json
+
+# Persist a report artifact while preserving the guard exit code
+python3 scripts/arch/arch_guard.py --json-report artifacts/arch_guard_report.json
+
+# Render the CheckerContext field lifetime manifest
+python3 scripts/arch/arch_guard.py --checker-context-lifetime-table
+
 # Run its test suite
 python3 scripts/arch/test_arch_guard.py
 ```
+
+The JSON payload includes `status`, `arch_guard_status`, git context, total
+matched debt, and per-check failures. Use `--json-report` for CI artifacts or
+PR evidence when changing boundary ratchets, LSP/WASM/compiler-service
+front-door rules, checker context lifetime ownership, or output-surgery-adjacent
+architecture caps.
 
 ### `scripts/arch/render_architecture_report.py`
 
