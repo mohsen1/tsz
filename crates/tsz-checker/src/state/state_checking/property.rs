@@ -406,9 +406,11 @@ impl<'a> CheckerState<'a> {
                         accepted = true;
                         break;
                     }
-                    if self
-                        .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
-                        || self.generic_mapped_receiver_lacks_explicit_property(
+                    if self.generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
+                        member,
+                        prop_name.as_ref(),
+                    ) || self
+                        .generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
                             resolved_member,
                             prop_name.as_ref(),
                         )

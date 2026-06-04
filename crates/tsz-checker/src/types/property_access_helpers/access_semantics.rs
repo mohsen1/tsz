@@ -667,6 +667,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
         use_known_finite_names: bool,
+        use_concrete_fallback: bool,
     ) -> Option<bool> {
         use crate::query_boundaries::common::{
             TypeSubstitution, application_info, instantiate_type,
@@ -715,17 +716,22 @@ impl<'a> CheckerState<'a> {
             }
             return None;
         }
-        // For non-identity key-remapping over `Lazy(DefId)` sources, the
-        // environment-free finite-name path above may find no names even when
-        // the concrete instantiated shape has known remapped properties. Only
-        // in that already-non-preserving fallback case do we ask the checker's
-        // environment-backed evaluator for a precise concrete verdict.
-        if let Some(has_property) =
-            self.concrete_mapped_application_has_property(instantiated, prop_name)
-        {
-            return Some(!has_property);
+        if use_concrete_fallback {
+            // For non-identity key-remapping over `Lazy(DefId)` sources, the
+            // environment-free finite-name path above may find no names even
+            // when the concrete instantiated shape has known remapped
+            // properties. Only opt-in callers that are checking concrete
+            // object-literal/intersection excess properties should ask the
+            // checker's environment-backed evaluator for that verdict; broader
+            // relation/keyof/constraint paths need the conservative syntactic
+            // fallback below.
+            if let Some(has_property) =
+                self.concrete_mapped_application_has_property(instantiated, prop_name)
+            {
+                return Some(!has_property);
+            }
         }
-        None
+        Some(true)
     }
 
     pub(crate) fn generic_mapped_receiver_explicit_property_names(
@@ -787,8 +793,44 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::common as common_query;
 
-        if let Some(lacks_explicit_property) =
-            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, false)
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(
+                object_type,
+                prop_name,
+                false,
+                false,
+            )
+        {
+            return lacks_explicit_property;
+        }
+
+        let resolved = self.resolve_type_for_property_access(object_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+
+        for candidate in [resolved, evaluated] {
+            if !common_query::contains_type_parameters(self.ctx.types, candidate) {
+                continue;
+            }
+
+            let Some(mapped_id) = common_query::mapped_type_id(self.ctx.types, candidate) else {
+                continue;
+            };
+
+            return !self.mapped_type_has_explicit_property(mapped_id, prop_name);
+        }
+
+        false
+    }
+
+    pub(crate) fn generic_mapped_receiver_lacks_explicit_property_with_concrete_fallback(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common as common_query;
+
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(object_type, prop_name, false, true)
         {
             return lacks_explicit_property;
         }
@@ -818,8 +860,8 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::common as common_query;
 
-        if let Some(lacks_explicit_property) =
-            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, true)
+        if let Some(lacks_explicit_property) = self
+            .generic_mapped_application_lacks_explicit_property(object_type, prop_name, true, true)
         {
             return lacks_explicit_property;
         }
