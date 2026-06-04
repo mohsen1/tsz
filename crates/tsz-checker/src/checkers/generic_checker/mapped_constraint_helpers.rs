@@ -250,6 +250,7 @@ impl<'a> CheckerState<'a> {
         let Some(source) = self.required_mapped_constraint_source(constraint) else {
             return false;
         };
+        let source = self.resolve_lazy_type(source);
         let source = self.substitute_required_mapped_source(source, substitutions);
 
         let source = self.resolve_lazy_type(source);
