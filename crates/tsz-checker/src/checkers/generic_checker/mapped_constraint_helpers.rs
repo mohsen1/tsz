@@ -260,7 +260,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if properties.is_empty() || properties.iter().any(|prop| prop.optional) {
+        if properties.is_empty() {
             return false;
         }
 
@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_props) = self.type_literal_alias_property_nodes(source) else {
             return false;
         };
-        if source_props.is_empty() || source_props.iter().any(|(_, _, optional)| *optional) {
+        if source_props.is_empty() {
             return false;
         }
         let Some(arg_props) = self.type_literal_alias_property_nodes(type_arg) else {
