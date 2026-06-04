@@ -431,6 +431,88 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(super) fn source_file_type_node_is_function_signature_lowerable<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        node_idx: NodeIndex,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        if Self::source_file_type_node_is_option_bag_lowerable(
+            arena,
+            delegate_binder,
+            node_idx,
+            seen_type_names,
+        ) {
+            return true;
+        }
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(name) = arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        Self::source_file_type_reference_targets_non_generic_local_interface_identity(
+            arena,
+            delegate_binder,
+            name,
+        )
+    }
+
+    fn source_file_type_reference_targets_non_generic_local_interface_identity(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        name: &str,
+    ) -> bool {
+        let Some(sym_id) = delegate_binder.file_locals.get(name) else {
+            return false;
+        };
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let disallowed_flags = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::TYPE_ALIAS;
+        if symbol.flags & symbol_flags::INTERFACE == 0
+            || symbol.flags & disallowed_flags != 0
+            || symbol.declarations.len() != 1
+        {
+            return false;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        if !Self::lib_declaration_name_matches(arena, decl_idx, name) {
+            return false;
+        }
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        arena.get_interface(decl_node).is_some_and(|interface| {
+            interface
+                .type_parameters
+                .as_ref()
+                .is_none_or(|params| params.nodes.is_empty())
+        })
+    }
+
     pub(super) fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,

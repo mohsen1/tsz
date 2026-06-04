@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut seen_type_names = Vec::new();
-        if !Self::source_file_type_node_is_option_bag_lowerable(
+        if !Self::source_file_type_node_is_function_signature_lowerable(
             symbol_arena,
             delegate_binder,
             function.type_annotation,
@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
             let param = symbol_arena
                 .get(param_idx)
                 .and_then(|param_node| symbol_arena.get_parameter(param_node))?;
-            if !Self::source_file_type_node_is_option_bag_lowerable(
+            if !Self::source_file_type_node_is_function_signature_lowerable(
                 symbol_arena,
                 delegate_binder,
                 param.type_annotation,
@@ -191,7 +191,7 @@ impl<'a> CheckerState<'a> {
             let param = symbol_arena
                 .get(param_idx)
                 .and_then(|param_node| symbol_arena.get_parameter(param_node))?;
-            if !Self::source_file_type_node_is_option_bag_lowerable(
+            if !Self::source_file_type_node_is_function_signature_lowerable(
                 symbol_arena,
                 delegate_binder,
                 param.type_annotation,
@@ -327,14 +327,14 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             return predicate.type_node == NodeIndex::NONE
-                || Self::source_file_type_node_is_option_bag_lowerable(
+                || Self::source_file_type_node_is_function_signature_lowerable(
                     arena,
                     binder,
                     predicate.type_node,
                     seen_type_names,
                 );
         }
-        Self::source_file_type_node_is_option_bag_lowerable(
+        Self::source_file_type_node_is_function_signature_lowerable(
             arena,
             binder,
             annotation,

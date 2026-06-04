@@ -1,10 +1,12 @@
 use crate::context::{CheckerContext, CheckerOptions};
-use crate::query_boundaries::common::{TypeInterner, function_shape_for_type};
+use crate::query_boundaries::common::{TypeInterner, function_shape_for_type, lazy_def_id};
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_common::perf_counters::PerfCounters;
 use tsz_parser::parser::ParserState;
+use tsz_solver::construction::QueryDatabase;
 use tsz_solver::def::DefinitionStore;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
@@ -177,6 +179,74 @@ fn direct_source_file_function_declaration_lowers_readonly_array_of_local_shape(
 }
 
 #[test]
+fn direct_source_file_function_declaration_lowers_local_interface_identity() {
+    let (arena, binder, types) = parse_bound_source(
+        r#"
+                export function summarize(): { mean: number } {
+                    return { mean: 1 };
+                }
+                interface DashboardModel {
+                    summary: ReturnType<typeof summarize>;
+                }
+                export function render(model: DashboardModel): string {
+                    return String(model.summary.mean);
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let state = CheckerState { ctx };
+    let render_sym = binder.file_locals.get("render").expect("function symbol");
+    let model_sym = binder
+        .file_locals
+        .get("DashboardModel")
+        .expect("DashboardModel symbol");
+
+    let result = state
+        .direct_source_file_function_declaration_type(
+            render_sym,
+            binder.as_ref(),
+            arena.as_ref(),
+            true,
+        )
+        .expect("bare non-generic local interface identity should lower directly");
+    let shape = function_shape_for_type(&types, result)
+        .expect("direct source function lowering should produce a function type");
+
+    assert_eq!(shape.params.len(), 1);
+    let model_def = state.ctx.get_or_create_def_id(model_sym);
+    assert_eq!(
+        lazy_def_id(types.as_type_database(), shape.params[0].type_id),
+        Some(model_def),
+        "complex local interface bodies should stay behind lazy identity",
+    );
+    assert_eq!(shape.return_type, TypeId::STRING);
+}
+
+#[test]
+fn direct_source_file_function_declaration_rejects_generic_local_interface_identity() {
+    let result = direct_function_type_for_source(
+        r#"
+                interface Box<T> { value: T; }
+                export function render(box: Box): string {
+                    return String(box);
+                }
+            "#,
+        "render",
+    );
+
+    assert!(
+        result.is_none(),
+        "generic local interfaces need the child checker for type arguments/defaults",
+    );
+}
+
+#[test]
 fn direct_source_file_function_declaration_rejects_non_readonly_type_operator() {
     let result = direct_function_type_for_source(
         r#"
@@ -339,6 +409,85 @@ fn delegate_explicit_cross_file_source_function_lowers_annotated_signature() {
         Some((ty, params)),
         "explicit cross-file function result should be cached by file target",
     );
+}
+
+#[test]
+fn delegate_source_file_symbol_arena_function_lowers_local_interface_identity() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "view.ts",
+        r#"
+                export function summarize(): { mean: number } {
+                    return { mean: 1 };
+                }
+                export interface DashboardModel {
+                    summary: ReturnType<typeof summarize>;
+                }
+                export function renderDashboard(model: DashboardModel): string {
+                    return String(model.summary.mean);
+                }
+            "#,
+    );
+    let (requester_arena, mut requester_binder, _) =
+        parse_bound_source_with_name("main.ts", "// imports renderDashboard from view");
+    let render_sym = target_binder
+        .file_locals
+        .get("renderDashboard")
+        .expect("renderDashboard symbol");
+    let render_decl = target_binder
+        .get_symbol(render_sym)
+        .expect("renderDashboard symbol data")
+        .declarations[0];
+    {
+        let requester_binder = Arc::make_mut(&mut requester_binder);
+        Arc::make_mut(&mut requester_binder.symbol_arenas)
+            .insert(render_sym, Arc::clone(&target_arena));
+        Arc::make_mut(&mut requester_binder.declaration_arenas)
+            .entry((render_sym, render_decl))
+            .or_default()
+            .push(Arc::clone(&target_arena));
+    }
+
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "main.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.share_owner_symbol_type_results = true;
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let mut state = CheckerState { ctx };
+    #[cfg(any(test, debug_assertions))]
+    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+    let child_checkers_before = PerfCounters::snapshot()
+        .checker
+        .with_parent_cache_constructed;
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(render_sym)
+        .expect("source-file symbol-arena function should lower directly");
+    let child_checkers_after = PerfCounters::snapshot()
+        .checker
+        .with_parent_cache_constructed;
+    let shape = function_shape_for_type(&types, ty)
+        .expect("direct source function lowering should produce a function type");
+
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "direct source-file function lowering must not construct a delegated child checker",
+    );
+    assert!(params.is_empty(), "renderDashboard should be non-generic");
+    assert_eq!(shape.params.len(), 1);
+    assert_eq!(shape.return_type, TypeId::STRING);
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
 }
 
 #[test]
