@@ -90,7 +90,11 @@ TypeScript/tests/cases/compiler/promisesWithConstraints.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
-TypeScript/tests/cases/conformance/types/typeRelationships/assignmentCompatibility/covariantCallbacks.ts
+# covariantCallbacks.ts: RESOLVED by this PR — tsz now detects nullable-union
+# callback method parameters the way tsc does (getSingleCallSignature(
+# getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
+# covariant TS2322 again. Removed from this ledger; covered by
+# nullable_union_callback_variance_tests.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
 
 # PR #12491 exact-head aggregate run 26937439181 (job 79473172800) still
