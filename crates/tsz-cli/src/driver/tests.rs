@@ -1385,6 +1385,59 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
 }
 
 #[test]
+fn test_no_ts18003_when_inherited_include_has_dot_prefix() {
+    // Regression for the selector-normalization half of issue #12460 (the
+    // `mswjs/msw` shape): a root that inherits `"include": ["./global.d.ts"]`
+    // from a base config via `extends`. Anchoring the inherited selector onto
+    // the base dir must collapse the leading `./`, otherwise the glob
+    // `<dir>/./global.d.ts` matches nothing and discovery raises a false
+    // TS18003.
+    //
+    // Deliberately no `references` here: the references-only suppression (added
+    // separately in #12493) would otherwise mask a broken selector fix, so this
+    // test would no longer exercise the normalization. With an empty discovery
+    // and no `files`/`references`, a regressed selector would re-raise TS18003.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    fs::write(
+        root.join("tsconfig.base.json"),
+        r#"{
+      "compilerOptions": { "strict": true },
+      "include": ["./global.d.ts"],
+      "exclude": ["node_modules"]
+    }"#,
+    )
+    .expect("write base tsconfig");
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{ "extends": "./tsconfig.base.json" }"#,
+    )
+    .expect("write root tsconfig");
+    fs::write(
+        root.join("global.d.ts"),
+        "declare module 'virtual-mod' { export const x: number; }\n",
+    )
+    .expect("write global.d.ts");
+
+    let project = root.to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("args");
+    let result = compile(&args, root).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&18003),
+        "inherited ./global.d.ts must be discovered; got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_batch_style_project_mode_keeps_ts7005_for_imported_dts_export() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
