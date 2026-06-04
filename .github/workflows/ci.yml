@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
   merge_group:
   push:
     branches:
@@ -71,6 +71,16 @@ jobs:
             required_summary=true
             compiler_checks_required=false
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "${{ github.event.action }}" == "edited" ]]; then
+              # Body/title edits can repair AgentName, project-corpus, or WIP
+              # metadata without changing the PR head SHA. Refresh only the
+              # metadata gates so stale failed PR-body checks can clear without
+              # asking agents to push a no-op code commit.
+              echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
+              should_run=false
+              full_run=false
+              compiler_checks_required=false
+            fi
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
             # For any other label, this would just duplicate the existing

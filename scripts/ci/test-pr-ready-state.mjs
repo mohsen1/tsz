@@ -10,6 +10,7 @@ import { normalizePullRequest, readyStateFailures } from "./check-pr-ready-state
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "ci", "check-pr-ready-state.mjs");
+const CI_WORKFLOW = path.join(ROOT, ".github", "workflows", "ci.yml");
 
 function readyPr(overrides = {}) {
   return {
@@ -129,3 +130,15 @@ const passingDraft = runFixture(readyPr({
 }));
 assert.equal(passingDraft.status, 0, passingDraft.stderr);
 assert.match(passingDraft.stdout, /Ready-state WIP check passed/);
+
+const ciWorkflow = fs.readFileSync(CI_WORKFLOW, "utf8");
+assert.match(
+  ciWorkflow,
+  /pull_request:\s*\n\s*types:\s*\[[^\]]*\bedited\b[^\]]*\]/,
+  "CI should rerun PR metadata gates after body/title edits",
+);
+assert.match(
+  ciWorkflow,
+  /github\.event\.action }}"\s*==\s*"edited"[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?compiler_checks_required=false/,
+  "edited PR events should refresh body/ready-state gates without heavy CI",
+);
