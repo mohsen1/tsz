@@ -930,7 +930,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.tuple(elements)
     }
 
-    fn spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
+    pub(crate) fn spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
         let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
             return None;
         };
@@ -1525,6 +1525,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
+                // Two or more adjacent variadic type parameters (`...args: [...A, ...B]`)
+                // cannot be split without an implied arity, which a tuple-typed rest
+                // parameter never has (tsc's `getNonArrayRestType` returns `undefined`
+                // for it). tsc infers nothing here, leaving `A`/`B` to fall back to
+                // their constraints — so bail out of the single-variadic slicing below
+                // rather than mis-distributing the arguments.
+                let infer_var_rest_count = elements
+                    .iter()
+                    .filter(|elem| elem.rest && var_map.contains_key(&elem.type_id))
+                    .count();
+                if infer_var_rest_count >= 2 {
+                    return None;
+                }
                 elements.iter().enumerate().find_map(|(i, elem)| {
                     if !elem.rest {
                         return None;
