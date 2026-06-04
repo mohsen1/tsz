@@ -271,9 +271,8 @@ a:hover { text-decoration: underline; }
 }
 
 .try-tsz-prompt {
-  border-left: 3px solid var(--link);
   margin: 0 0 1.5rem;
-  padding: 0.1rem 0 0.1rem 1rem;
+  padding: 0.1rem 0;
 }
 
 .try-tsz-prompt h2 {
