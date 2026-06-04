@@ -59,6 +59,48 @@ fn cjs_class_private_field_var_before_es_module_preamble() {
     );
 }
 
+#[test]
+fn es5_cjs_exported_private_field_storage_wraps_preamble_and_export() {
+    let source = r#"export class Class {
+  #field: any
+}
+
+const task: Class = {} as unknown;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    let storage_decl_pos = output
+        .find("var _Class_field;")
+        .expect("expected private storage declaration; output:\n{output}");
+    let preamble_pos = output
+        .find("Object.defineProperty(exports, \"__esModule\"")
+        .expect("expected CJS __esModule preamble; output:\n{output}");
+    let export_assign_pos = output
+        .find("exports.Class = Class;")
+        .expect("expected class export assignment; output:\n{output}");
+    let storage_init_pos = output
+        .find("_Class_field = new WeakMap();")
+        .expect("expected private storage initialization; output:\n{output}");
+    let trailing_stmt_pos = output
+        .find("var task = {};")
+        .expect("expected trailing statement; output:\n{output}");
+
+    assert!(
+        storage_decl_pos < preamble_pos
+            && preamble_pos < export_assign_pos
+            && export_assign_pos < storage_init_pos
+            && storage_init_pos < trailing_stmt_pos,
+        "ES5 CJS exported private-field storage must follow tsc's preamble/export ordering.\nOutput:\n{output}"
+    );
+}
+
 /// Assignment destructuring temp `var _a;` from
 /// `export const [] = [];` must be hoisted BEFORE the CJS preamble. This
 /// path was already correct (it goes through `cjs_destructuring_export_temps`)
