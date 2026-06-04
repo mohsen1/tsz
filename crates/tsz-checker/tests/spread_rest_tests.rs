@@ -1497,3 +1497,129 @@ type Triple = [...[1, 2], ...[3, 4], ...[5, 6]];
         "TS1265 must not fire for three fixed-length tuple spreads, got {ts1265_count}: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// Spreading an open-ended (variadic) tuple into a generic rest-tuple parameter
+// must preserve the trailing `...E[]` rest in the inferred type parameter,
+// rather than materializing it into a single fixed element. Regression for the
+// "variadic tuple arity inference drops trailing rest under nested spreads"
+// family: `f(1, ...t)` where `t: [string, ...boolean[]]` and the signature is
+// `(...args: [first: number, ...T])` must infer `T = [string, ...boolean[]]`
+// (open-ended), matching tsc, not `T = [string, boolean]`.
+//
+// The inferred type is surfaced by assigning the call result to the impossible
+// literal type `0`, whose TS2322 message renders the full inferred tuple.
+
+fn inferred_rest_tuple_message(source: &str) -> String {
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
+    assert!(
+        !ts2322.is_empty(),
+        "expected a TS2322 surfacing the inferred type, got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+    // No spurious argument errors should appear for a valid call.
+    let spurious = diagnostic_count_where(&diagnostics, |code| matches!(code, 2345 | 2554 | 2556));
+    assert_eq!(
+        spurious,
+        0,
+        "no TS2345/TS2554/TS2556 expected for a valid variadic spread call, got: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+    ts2322
+        .iter()
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn spread_open_tuple_after_fixed_arg_preserves_trailing_rest() {
+    // `(...args: [first: number, ...T])`, call `f(1, ...arr)` with
+    // `arr: [string, ...boolean[]]` -> T = [string, ...boolean[]].
+    let message = inferred_rest_tuple_message(
+        r#"
+declare function f<T extends unknown[]>(...args: [first: number, ...T]): T;
+const arr: [string, ...boolean[]] = ["x", true, false];
+const result = f(1, ...arr);
+const probe: 0 = result;
+"#,
+    );
+    assert!(
+        message.contains("[string, ...boolean[]]"),
+        "trailing rest must be preserved as [string, ...boolean[]], got: {message}"
+    );
+}
+
+#[test]
+fn spread_open_tuple_then_fixed_arg_into_leading_rest_preserves_rest() {
+    // `(...args: [...T, last: string])`, call `f(...arr, "x")` with
+    // `arr: [number, ...boolean[]]` -> T = [number, ...boolean[]].
+    let message = inferred_rest_tuple_message(
+        r#"
+declare function f<Elems extends unknown[]>(...args: [...Elems, last: string]): Elems;
+const arr: [number, ...boolean[]] = [1, true];
+const result = f(...arr, "x");
+const probe: 0 = result;
+"#,
+    );
+    assert!(
+        message.contains("[number, ...boolean[]]"),
+        "trailing rest must be preserved as [number, ...boolean[]], got: {message}"
+    );
+}
+
+#[test]
+fn spread_open_tuple_between_fixed_args_preserves_rest() {
+    // `(...args: [first: string, ...T, last: boolean])`, call
+    // `f("h", ...arr, true)` with `arr: [number, ...string[]]`
+    // -> T = [number, ...string[]].
+    let message = inferred_rest_tuple_message(
+        r#"
+declare function f<Mid extends unknown[]>(...args: [first: string, ...Mid, last: boolean]): Mid;
+const arr: [number, ...string[]] = [1, "a", "b"];
+const result = f("h", ...arr, true);
+const probe: 0 = result;
+"#,
+    );
+    assert!(
+        message.contains("[number, ...string[]]"),
+        "trailing rest must be preserved as [number, ...string[]], got: {message}"
+    );
+}
+
+#[test]
+fn spread_open_tuple_into_bare_rest_type_param_preserves_rest() {
+    // `(...args: T)`, call `f(...arr)` with `arr: [string, ...boolean[]]`
+    // -> T = [string, ...boolean[]] (the whole open tuple, no fixed prefix).
+    let message = inferred_rest_tuple_message(
+        r#"
+declare function f<Args extends unknown[]>(...args: Args): Args;
+const arr: [string, ...boolean[]] = ["x", true];
+const result = f(...arr);
+const probe: 0 = result;
+"#,
+    );
+    assert!(
+        message.contains("[string, ...boolean[]]"),
+        "open tuple spread into bare rest type param must stay [string, ...boolean[]], got: {message}"
+    );
+}
+
+#[test]
+fn spread_fully_fixed_tuple_still_materializes_elements() {
+    // Adjacent positive/fallback case: a fully fixed tuple spread keeps the
+    // existing positional expansion (no open-ended rest to preserve).
+    let message = inferred_rest_tuple_message(
+        r#"
+declare function f<T extends unknown[]>(...args: [first: number, ...T]): T;
+const arr: [string, boolean] = ["x", true];
+const result = f(1, ...arr);
+const probe: 0 = result;
+"#,
+    );
+    assert!(
+        message.contains("[string, boolean]"),
+        "fully fixed tuple spread should infer the fixed tuple, got: {message}"
+    );
+}

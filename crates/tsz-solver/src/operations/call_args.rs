@@ -191,6 +191,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
 
+            // Named spread-argument marker (`__tsz_spread_argument__`) wrapping an
+            // open-ended spread tail, e.g. the `...boolean[]` of a `[string, ...boolean[]]`
+            // tuple spread that was expanded positionally into the rest parameter. The
+            // marker stands for an indeterminate run of `inner`-typed arguments, so it
+            // must be validated against the *remaining* rest type (the variadic span),
+            // not the single rest element type the positional loop would otherwise use
+            // (which would reject the marker tuple itself). Mirrors the bare `[...U]`
+            // type-parameter spread handling above and the aggregate-rest marker path.
+            if let Some(rest_param) = params.last().filter(|p| p.rest)
+                && i >= params.len().saturating_sub(1)
+                && let Some(inner) = self.spread_argument_marker_inner(*arg_type)
+            {
+                let rest_type = self.unwrap_readonly(rest_param.type_id);
+                let rest_start = params.len().saturating_sub(1);
+                let consumed_offset = i - rest_start;
+                let remaining_rest_type =
+                    self.remaining_rest_type_after_offset(rest_type, consumed_offset);
+                // Defer to inference when the remaining rest type still mentions type
+                // parameters: the spread tail feeds those variables rather than being
+                // checked against a concrete element type here.
+                if crate::type_queries::contains_type_parameters_db(
+                    self.interner,
+                    remaining_rest_type,
+                ) {
+                    continue;
+                }
+                // Compare the marker's spread (array) form against the remaining rest
+                // type's array form so `...boolean[]` checks as `boolean[] <: boolean[]`
+                // rather than `[...boolean[]] <: boolean`. The non-array fallback keeps
+                // a tuple-shaped remaining rest comparable against the inner directly.
+                let inner_array = self.spread_array_form(inner);
+                let remaining_array = self.spread_array_form(remaining_rest_type);
+                if self.checker.is_assignable_to(inner_array, remaining_array)
+                    || self.checker.is_assignable_to(inner, remaining_rest_type)
+                {
+                    continue;
+                }
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: remaining_rest_type,
+                    actual: inner,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
+
             let Some(param_type) = self.param_type_for_arg_index(params, i, arg_count) else {
                 break;
             };
@@ -1203,6 +1248,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     pub(super) fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
         utils::expand_tuple_rest(self.interner, type_id)
+    }
+
+    /// Normalize a type to its array (spread) form: an array-like `E[]` collapses
+    /// to a canonical `Array<E>`; anything else (tuples, type parameters, …) is
+    /// returned unchanged. Used to compare a spread tail against a rest type by
+    /// their element types rather than their wrapped/tuple shapes.
+    fn spread_array_form(&self, ty: TypeId) -> TypeId {
+        self.array_application_element_type(ty)
+            .map(|elem| self.interner.array(elem))
+            .unwrap_or(ty)
     }
 
     /// Given a rest param type and an offset of consumed fixed elements,
