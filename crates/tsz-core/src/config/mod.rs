@@ -1621,10 +1621,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 {
                     let start = find_value_offset_in_source(&stripped, key);
                     let value_len = estimate_json_value_len(value);
-                    let msg = deprecation_helpers::with_migration_url(format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
-                        &[key, display_value, "7.0", "6.0"],
-                    ));
+                    let msg = deprecation_helpers::maybe_with_migration_url(
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
+                            &[key, display_value, "7.0", "6.0"],
+                        ),
+                        key,
+                    );
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -1651,10 +1654,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         .map(|p| (compiler_opts_pos + p) as u32)
                         .unwrap_or(0);
                     let key_len = key.len() as u32 + 2; // include quotes
-                    let msg = deprecation_helpers::with_migration_url(format_message(
-                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
-                        &[key, "7.0", "6.0"],
-                    ));
+                    let msg = deprecation_helpers::maybe_with_migration_url(
+                        format_message(
+                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
+                            &[key, "7.0", "6.0"],
+                        ),
+                        key,
+                    );
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
