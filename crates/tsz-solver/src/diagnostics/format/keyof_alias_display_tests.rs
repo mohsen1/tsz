@@ -127,3 +127,128 @@ fn lazy_union_alias_keeps_its_name() {
         "A union-bodied alias must keep its name"
     );
 }
+
+#[test]
+fn lazy_conditional_alias_resolving_to_intrinsic_renders_underlying() {
+    // `type X = string extends string ? string : number` reduces to the shared
+    // `string` singleton. tsc attaches no `aliasSymbol` to a conditional result,
+    // so the diagnostic surface is `string`, never `X`. The body is a
+    // `Conditional`, so the syntactic intrinsic/literal check does not catch it;
+    // the formatter must evaluate the computed body to discover the scalar.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let body = db.conditional(crate::types::ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    });
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("X"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(lazy),
+        "string",
+        "A conditional-bodied alias that reduces to an intrinsic must render structurally"
+    );
+}
+
+#[test]
+fn lazy_conditional_alias_resolving_to_literal_renders_underlying() {
+    // `type Y = string extends string ? "yes" : "no"` reduces to the literal
+    // `"yes"`; tsc shows `"yes"`, not `Y`.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let body = db.conditional(crate::types::ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: db.literal_string("yes"),
+        false_type: db.literal_string("no"),
+        is_distributive: false,
+    });
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Y"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(lazy), "\"yes\"");
+}
+
+#[test]
+fn lazy_conditional_alias_resolving_to_never_renders_underlying() {
+    // A conditional that reduces to `never` displays as `never`, not the alias.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let body = db.conditional(crate::types::ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::NUMBER,
+        true_type: TypeId::BOOLEAN,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Z"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(lazy), "never");
+}
+
+#[test]
+fn lazy_conditional_alias_resolving_to_tuple_keeps_alias_name() {
+    // A conditional that reduces to a *structural* result (here a tuple) keeps
+    // its alias name: only shared-singleton scalars drop the `aliasSymbol`.
+    // This guards the scalar gate against over-reaching into structural results.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let body = db.conditional(crate::types::ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: tuple,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Pair"),
+        vec![],
+        body,
+    ));
+    let lazy = db.lazy(def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(lazy),
+        "Pair",
+        "A conditional alias that reduces to a tuple must keep its declared name"
+    );
+}
