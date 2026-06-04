@@ -27,6 +27,35 @@ fn test_module_resolution_file_exists_cache_is_per_cache() {
 }
 
 #[test]
+fn test_implied_resolution_mode_reuses_package_type_cache_for_sibling_dirs() {
+    use std::fs;
+
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    fs::write(dir.path().join("package.json"), r#"{"name":"fixture"}"#).unwrap();
+
+    let mut cache = ModuleResolutionCache::default();
+    for idx in 0..5 {
+        let child = dir.path().join(format!("lib/part{idx}"));
+        fs::create_dir_all(&child).unwrap();
+        let file = child.join("index.ts");
+        assert_eq!(
+            implied_resolution_mode_for_file_with_cache(&file, dir.path(), &mut cache),
+            "require"
+        );
+    }
+
+    assert_eq!(
+        cache.package_json_by_path.len(),
+        1,
+        "sibling package-type probes should parse only the nearest real package.json"
+    );
+    assert!(
+        cache.package_type_by_dir.len() >= 5,
+        "sibling directories should be memoized after the package-type walk"
+    );
+}
+
+#[test]
 fn test_preserve_symlinks_keeps_symlink_path_identity() {
     use std::fs;
     use std::os::unix::fs::symlink;
