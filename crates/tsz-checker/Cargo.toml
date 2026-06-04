@@ -511,6 +511,10 @@ name = "lib_type_alias_to_interface_resolution_tests"
 path = "tests/lib_type_alias_to_interface_resolution_tests.rs"
 
 [[test]]
+name = "dom_literal_alias_direct_resolution_tests"
+path = "tests/dom_literal_alias_direct_resolution_tests.rs"
+
+[[test]]
 name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
 
