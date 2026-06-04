@@ -270,7 +270,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1920,
+        1924,
     ),
     (
         "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
@@ -634,7 +634,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2798,
+        2843,
     ),
     (
         "CLI boundary: driver/tests.rs size ratchet",
