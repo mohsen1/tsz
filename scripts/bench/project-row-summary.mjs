@@ -8,9 +8,10 @@
  * Exit 2: usage error.
  *
  * Usage:
- *   node scripts/bench/project-row-summary.mjs [--markdown]
+ *   node scripts/bench/project-row-summary.mjs [--markdown] [--json]
  *
- * Without --markdown, outputs plain text.  With --markdown, outputs GFM.
+ * Without --markdown or --json, outputs plain text. With --markdown, outputs
+ * GFM. With --json, outputs a machine-readable coverage report.
  * When $GITHUB_STEP_SUMMARY is set, the markdown table is also appended to
  * that file automatically (regardless of --markdown) so the coverage is
  * visible in the PR checks UI without a separate step.
@@ -284,6 +285,22 @@ export function formatPlainText(coverage) {
   return lines.join("\n");
 }
 
+export function buildJsonReport(coverage) {
+  const { rows, drift } = coverage;
+  return {
+    ok: drift.length === 0,
+    status: drift.length === 0 ? "passed" : "failed",
+    rowCount: rows.length,
+    driftCount: drift.length,
+    drift,
+    rows,
+  };
+}
+
+export function formatJson(coverage) {
+  return JSON.stringify(buildJsonReport(coverage), null, 2);
+}
+
 export function appendStepSummary(coverage, stepSummaryPath) {
   if (!stepSummaryPath) return;
   fs.appendFileSync(stepSummaryPath, `${formatMarkdown(coverage)}\n`);
@@ -292,16 +309,23 @@ export function appendStepSummary(coverage, stepSummaryPath) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const markdown = args.includes("--markdown");
-  const unknownArgs = args.filter((a) => a !== "--markdown");
+  const json = args.includes("--json");
+  const unknownArgs = args.filter((a) => a !== "--markdown" && a !== "--json");
   if (unknownArgs.length > 0) {
     process.stderr.write(`Unknown arguments: ${unknownArgs.join(", ")}\n`);
-    process.stderr.write("Usage: project-row-summary.mjs [--markdown]\n");
+    process.stderr.write("Usage: project-row-summary.mjs [--markdown] [--json]\n");
+    process.exit(2);
+  }
+  if (markdown && json) {
+    process.stderr.write("Choose only one stdout format: --markdown or --json\n");
     process.exit(2);
   }
 
   const surfaces = readSurfaceData();
   const coverage = computeCoverage(surfaces);
-  const output = markdown ? formatMarkdown(coverage) : formatPlainText(coverage);
+  const output = json
+    ? formatJson(coverage)
+    : (markdown ? formatMarkdown(coverage) : formatPlainText(coverage));
   process.stdout.write(`${output}\n`);
 
   // When running in GitHub Actions, also append the markdown table to the
