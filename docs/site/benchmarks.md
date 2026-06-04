@@ -22,7 +22,7 @@ permalink: /benchmarks/index.html
 
 ## Full Project Type Checking
 
-Full-project rows use real repositories and generated app fixtures. If a project has a timing pair in the latest artifact, it is shown here even when compatibility tracking has more work left.
+Full-project rows use real repositories and generated app fixtures.
 
 {{ benchmark_charts | safe }}
 
