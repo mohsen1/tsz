@@ -667,6 +667,7 @@ const object = {
     static method() { }
 }
 const { ...rest = true } = object
+const tri = import('1','2','3')
 ";
     let mut parser = ParserState::new("plain.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -697,6 +698,7 @@ const { ...rest = true } = object
         "static function inner() { }",
         "static method() { }",
         "const { ...rest = true } = object;",
+        "const tri = import('1','2','3');",
     ] {
         assert!(
             output.contains(expected),
