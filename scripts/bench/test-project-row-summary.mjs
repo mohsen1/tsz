@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   BENCH_RUNNER_EXCLUDED_ROWS,
   COMPILE_GUARD_EXCLUDED_ROWS,
@@ -16,6 +18,7 @@ import {
   formatJson,
   formatMarkdown,
   formatPlainText,
+  formatUsage,
   rowRequiresFixtureSource,
 } from "./project-row-summary.mjs";
 import {
@@ -24,6 +27,8 @@ import {
   PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
+
+const SCRIPT_PATH = fileURLToPath(new URL("./project-row-summary.mjs", import.meta.url));
 
 // Baseline surface data built from the live project-rows.mjs exports.
 function baseSurfaces() {
@@ -314,6 +319,23 @@ function baseSurfaces() {
   assert.ok(summary.includes("## Project Row Coverage"), "step summary missing markdown heading");
   assert.ok(summary.includes(`All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`), "step summary missing clean summary");
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// Help output is available for cycle and CI users without running the summary.
+{
+  const usage = formatUsage();
+  assert.ok(usage.includes("Usage: project-row-summary.mjs"), "usage missing command");
+  assert.ok(usage.includes("--markdown"), "usage missing --markdown");
+  assert.ok(usage.includes("--json"), "usage missing --json");
+  assert.ok(usage.includes("--help"), "usage missing --help");
+
+  const result = spawnSync(process.execPath, [SCRIPT_PATH, "--help"], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, "");
+  assert.ok(result.stdout.includes("Usage: project-row-summary.mjs"));
+  assert.ok(result.stdout.includes("compatibility-corpus surfaces"));
 }
 
 // Extractor: bench runner rows from shell snippet.

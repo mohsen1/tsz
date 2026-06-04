@@ -28,6 +28,15 @@ import {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const USAGE = `Usage: project-row-summary.mjs [--markdown] [--json] [--help]
+
+Print project-row coverage across benchmark, compile-guard, fixture, and
+compatibility-corpus surfaces.
+
+Options:
+  --markdown  Print a GitHub-flavored markdown table.
+  --json      Print a machine-readable coverage report.
+  --help      Show this help text.`;
 
 // Rows intentionally excluded from certain surfaces.
 export const BENCH_RUNNER_EXCLUDED_ROWS = new Set([
@@ -306,14 +315,23 @@ export function appendStepSummary(coverage, stepSummaryPath) {
   fs.appendFileSync(stepSummaryPath, `${formatMarkdown(coverage)}\n`);
 }
 
+export function formatUsage() {
+  return USAGE;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
+  const help = args.includes("--help") || args.includes("-h");
+  if (help) {
+    process.stdout.write(`${formatUsage()}\n`);
+    process.exit(0);
+  }
   const markdown = args.includes("--markdown");
   const json = args.includes("--json");
   const unknownArgs = args.filter((a) => a !== "--markdown" && a !== "--json");
   if (unknownArgs.length > 0) {
     process.stderr.write(`Unknown arguments: ${unknownArgs.join(", ")}\n`);
-    process.stderr.write("Usage: project-row-summary.mjs [--markdown] [--json]\n");
+    process.stderr.write(`${formatUsage()}\n`);
     process.exit(2);
   }
   if (markdown && json) {
