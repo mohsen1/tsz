@@ -37,14 +37,10 @@ pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped
 /// evaluator. Otherwise return `None`.
 ///
-/// tsc loses the outer alias when this specific reduction collapses to a
-/// concrete type. The classic case is
-/// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]` (where `WeakKeyTypes`
-/// has only `object: object` in the es2022 lib) which displays as `object`,
-/// not `WeakKey`. The match is intentionally narrow — generic indexed-access
-/// aliases (`type Pair<T> = Pairs<T>[keyof T]`) and non-self-keyof aliases
-/// stay opaque because pre-resolving them in the formatter can blow up
-/// recursion fuel and emit spurious TS2589s.
+/// tsc loses the outer alias when this reduction collapses to a concrete type.
+/// The match is intentionally narrow: generic indexed-access aliases and
+/// non-self-keyof aliases stay opaque to avoid recursion-fuel blowups and
+/// spurious TS2589s.
 pub(crate) fn indexed_access_alias_body(
     db: &dyn TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
