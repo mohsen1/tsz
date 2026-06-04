@@ -690,17 +690,6 @@ impl<'a> CheckerState<'a> {
         let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
 
-        // Answer precisely from the real shape when the instantiation reduces to a
-        // concrete object; only genuinely generic receivers fall through to the
-        // environment-free syntactic heuristic below, which cannot enumerate a
-        // non-identity `as` clause over a `Lazy(DefId)` source (see
-        // `concrete_mapped_application_lacks_property`).
-        if let Some(verdict) =
-            self.concrete_mapped_application_lacks_property(instantiated, prop_name)
-        {
-            return Some(verdict);
-        }
-
         let instantiated_mapped_id =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)?;
         let instantiated_mapped = self.ctx.types.mapped_type(instantiated_mapped_id);
@@ -720,6 +709,16 @@ impl<'a> CheckerState<'a> {
                 return Some(true);
             }
             return None;
+        }
+        // For non-identity key-remapping over `Lazy(DefId)` sources, the
+        // environment-free finite-name path above may find no names even when
+        // the concrete instantiated shape has known remapped properties. Only
+        // in that already-non-preserving fallback case do we ask the checker's
+        // environment-backed evaluator for a precise concrete verdict.
+        if let Some(verdict) =
+            self.concrete_mapped_application_lacks_property(instantiated, prop_name)
+        {
+            return Some(verdict);
         }
         Some(true)
     }
