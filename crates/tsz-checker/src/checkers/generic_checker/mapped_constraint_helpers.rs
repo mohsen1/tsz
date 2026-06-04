@@ -250,6 +250,7 @@ impl<'a> CheckerState<'a> {
         let Some(source) = self.required_mapped_constraint_source(constraint) else {
             return false;
         };
+        let source = self.resolve_lazy_type(source);
         let mut source = self.substitute_required_mapped_source(source, substitutions);
 
         let mut source_resolved = self.resolve_lazy_type(source);
@@ -364,6 +365,7 @@ impl<'a> CheckerState<'a> {
                 if !self
                     .required_mapped_constraint_relation_outcome(arg_type, source_type)
                     .related
+                    && !self.conditional_result_branches_satisfy_constraint(arg_type, source_type)
                 {
                     return false;
                 }
