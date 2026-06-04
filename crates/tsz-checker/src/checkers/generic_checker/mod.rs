@@ -21,6 +21,18 @@ pub(crate) struct CallTypeArgumentValidation {
 
 impl<'a> CheckerState<'a> {
     fn resolve_well_known_lib_constraint_type(&mut self, constraint: TypeId) -> Option<TypeId> {
+        let generic_app = query_common::get_application_lazy_def_id(self.ctx.types, constraint)
+            .is_some()
+            || self
+                .ctx
+                .types
+                .get_display_alias(constraint)
+                .is_some_and(|alias| {
+                    query_common::get_application_lazy_def_id(self.ctx.types, alias).is_some()
+                });
+        if generic_app {
+            return None;
+        }
         let name = self.well_known_lib_constraint_type_name(constraint)?;
         self.resolve_lib_type_by_name(&name)
     }
