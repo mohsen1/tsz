@@ -252,11 +252,15 @@ def emit_freshness_status(detail_summary, public_summary):
 
 def emit_freshness_report(detail_summary, public_summary):
     status = emit_freshness_status(detail_summary, public_summary)
+    aggregate_matches_public = status["state"] == "aggregate-match"
     return {
         "state": status["state"],
         "detailSummary": detail_summary,
         "publicSummary": public_summary,
         "detailIsCurrent": emit_detail_is_current(status),
+        "detailAggregateMatchesPublic": aggregate_matches_public,
+        "rowFreshnessProven": False,
+        "rowFreshnessEvidence": "aggregate-only" if aggregate_matches_public else status["state"],
         "jsPassDelta": status.get("jsPassDelta"),
         "dtsPassDelta": status.get("dtsPassDelta"),
         "jsTotalDelta": status.get("jsTotalDelta"),
