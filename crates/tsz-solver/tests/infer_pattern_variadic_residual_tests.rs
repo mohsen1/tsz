@@ -322,8 +322,7 @@ fn conditional_infer_tail_applied_to_previous_tail_preserves_arity() {
 
     let infer_h2 = infer_var(&interner, "_H2");
     let infer_rest2 = infer_var(&interner, "Rest2");
-    let extends_tuple2 =
-        interner.tuple(vec![tuple_elem(infer_h2), rest_tuple_elem(infer_rest2)]);
+    let extends_tuple2 = interner.tuple(vec![tuple_elem(infer_h2), rest_tuple_elem(infer_rest2)]);
     let cond2 = ConditionalType {
         check_type: tail1,
         extends_type: extends_tuple2,
@@ -335,8 +334,7 @@ fn conditional_infer_tail_applied_to_previous_tail_preserves_arity() {
 
     let expected = interner.tuple(vec![tuple_elem(TypeId::BOOLEAN)]);
     assert_eq!(
-        tail2,
-        expected,
+        tail2, expected,
         "Tail<Tail<[string, number, boolean]>> should produce [boolean]"
     );
 }
