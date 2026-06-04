@@ -1075,6 +1075,15 @@ impl TypePredicateCache for QueryCache<'_> {
         self.interner
             .set_contains_resolver_dependent_cache(type_id, result);
     }
+
+    fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_conditional_cached(type_id)
+    }
+
+    fn set_contains_conditional_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_conditional_cache(type_id, result);
+    }
 }
 
 impl TypeTupleLimitSignal for QueryCache<'_> {
