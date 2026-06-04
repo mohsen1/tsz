@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_six() {
+    fn schema_version_is_seven() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 6);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 7);
     }
 
     #[test]
@@ -20,6 +20,7 @@ mod json_tests {
             "delegate",
             "checker",
             "identity",
+            "lib_bootstrap",
             "overlay",
             "resolver",
             "interner",
@@ -56,7 +57,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 6);
+        assert_eq!(json["schema_version"], 7);
     }
 
     #[test]

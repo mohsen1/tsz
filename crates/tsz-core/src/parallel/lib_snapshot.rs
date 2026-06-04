@@ -204,21 +204,55 @@ pub(super) fn try_load(file_name: &str, source_text: &str) -> Option<Arc<LibFile
 /// The key contains each lib file's name and content hash in final load order,
 /// so a hit is valid only for the exact same lib graph and physical contents.
 pub(super) fn try_load_many(keys: &[(&str, u64)]) -> Option<Vec<Arc<LibFile>>> {
-    if keys.is_empty() || !is_enabled() {
+    if keys.is_empty() {
         return None;
     }
-    let dir = cache_dir()?;
+    let timing_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
+    let record = |hit: bool| {
+        if let Some(start) = timing_start {
+            tsz_common::perf_counters::record_lib_snapshot_set_load(
+                keys.len() as u64,
+                hit,
+                start.elapsed().as_nanos() as u64,
+            );
+        }
+    };
+    if !is_enabled() {
+        record(false);
+        return None;
+    }
+    let dir = match cache_dir() {
+        Some(dir) => dir,
+        None => {
+            record(false);
+            return None;
+        }
+    };
     let set_hash = lib_set_hash(keys);
     let path = snapshot_set_path(&dir, set_hash);
-    let bytes = fs::read(&path).ok()?;
-    let snapshot = decode_snapshot_set(&bytes).ok()?;
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            record(false);
+            return None;
+        }
+    };
+    let snapshot = match decode_snapshot_set(&bytes) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            record(false);
+            return None;
+        }
+    };
     if snapshot.set_hash != set_hash || snapshot.files.len() != keys.len() {
+        record(false);
         return None;
     }
 
     let mut files = Vec::with_capacity(snapshot.files.len());
     for (snapshot, (expected_name, expected_hash)) in snapshot.files.into_iter().zip(keys) {
         if snapshot.content_hash != *expected_hash || snapshot.file_name != *expected_name {
+            record(false);
             return None;
         }
         files.push(Arc::new(LibFile::new(
@@ -228,6 +262,7 @@ pub(super) fn try_load_many(keys: &[(&str, u64)]) -> Option<Vec<Arc<LibFile>>> {
             snapshot.root_index,
         )));
     }
+    record(true);
     Some(files)
 }
 
