@@ -93,8 +93,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // PERF: Cache predicate results for extends_type once per iteration.
         // type_contains_infer is called up to 5 times and contains_free_type_parameters
         // at least once, each creating fresh FxHashSet/FxHashMap allocations.
-        let extends_has_infer =
-            self.type_contains_infer(extends_type) || self.type_contains_infer(cond.extends_type);
+        let extends_has_infer = self.cached_type_contains_infer(extends_type)
+            || self.cached_type_contains_infer(cond.extends_type);
         // Use the FREE-type-parameter query: type parameters bound by inner
         // function/callable signatures (e.g., the `T` in `<T>() => ...`) are
         // already resolved within their own scope, so they must not force the

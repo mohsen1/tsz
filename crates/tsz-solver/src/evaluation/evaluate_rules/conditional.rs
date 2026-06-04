@@ -189,7 +189,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // the check side; otherwise recursive helper aliases can expand
             // nested generic conditionals before any concrete instantiation is
             // available.
-            if !self.type_contains_infer(cond.extends_type)
+            if !self.cached_type_contains_infer(cond.extends_type)
                 && matches!(
                     self.interner().lookup(cond.check_type),
                     Some(TypeData::Conditional(_))
@@ -519,7 +519,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let deferred_extends = if matches!(
                     self.interner().lookup(cond.extends_type),
                     Some(TypeData::Application(_))
-                ) && self.type_contains_infer(cond.extends_type)
+                ) && self.cached_type_contains_infer(cond.extends_type)
                 {
                     cond.extends_type
                 } else {
@@ -550,7 +550,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
             //   Both sides evaluate to the same empty object, but V must be bound to number.
             if check_type == extends_type
-                && !self.type_contains_infer(cond.extends_type)
+                && !self.cached_type_contains_infer(cond.extends_type)
                 && !self.type_is_compound_generic(cond.extends_type)
             {
                 return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
@@ -656,7 +656,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 if cond.extends_type != extends_type
-                    && self.type_contains_infer(cond.extends_type)
+                    && self.cached_type_contains_infer(cond.extends_type)
                     && self.match_infer_pattern(
                         check_type,
                         cond.extends_type,
@@ -672,7 +672,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 loop_bindings.clear();
                 loop_visited.clear();
                 if cond.extends_type != extends_type
-                    && self.type_contains_infer(cond.extends_type)
+                    && self.cached_type_contains_infer(cond.extends_type)
                     && let Some(alias) = self.interner().get_display_alias(check_type)
                     && alias != check_type
                     && self.match_infer_pattern(
@@ -689,7 +689,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 loop_bindings.clear();
                 loop_visited.clear();
-                if self.type_contains_infer(cond.extends_type)
+                if self.cached_type_contains_infer(cond.extends_type)
                     && let Some(alias) = self.interner().get_display_alias(check_type)
                     && alias != check_type
                     && self.match_infer_pattern(
@@ -1600,15 +1600,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
         let pattern_base = self.interner().type_application(pattern_app_id).base;
 
-        let contains_infer =
-            if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
-                contains_infer
-            } else {
-                let contains_infer = self.type_contains_infer(cond.extends_type);
-                self.cache_contains_infer(cond.extends_type, contains_infer);
-                contains_infer
-            };
-        if !contains_infer {
+        if !self.cached_type_contains_infer(cond.extends_type) {
             return None;
         }
 

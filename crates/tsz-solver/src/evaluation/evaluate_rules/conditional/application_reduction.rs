@@ -46,7 +46,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TypeData::Application(_) => substituted,
                 TypeData::Conditional(cond_id) => {
                     let cond = self.interner().get_conditional(cond_id);
-                    if !self.type_contains_infer(cond.extends_type) {
+                    if !self.cached_type_contains_infer(cond.extends_type) {
                         break;
                     }
                     let cond_extends = cond.extends_type;

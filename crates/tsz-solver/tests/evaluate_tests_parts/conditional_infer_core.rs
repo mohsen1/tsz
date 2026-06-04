@@ -22,6 +22,29 @@ fn evaluator_cache_statistics_report_entries_and_size() {
 }
 
 #[test]
+fn evaluator_caches_conditional_infer_predicates_during_evaluation() {
+    let interner = TypeInterner::new();
+    let prop = interner.intern_string("value");
+    let (_name, inferred) = test_infer_param(&interner, "R");
+    let check_type = interner.object(vec![PropertyInfo::readonly(prop, TypeId::STRING)]);
+    let extends_type = interner.object(vec![PropertyInfo::readonly(prop, inferred)]);
+    let cond_type = interner.conditional(ConditionalType {
+        check_type,
+        extends_type,
+        true_type: inferred,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    assert_eq!(evaluator.evaluate(cond_type), TypeId::STRING);
+    assert!(
+        evaluator.cache_statistics().contains_infer_entries >= 1,
+        "conditional evaluation should memoize infer-predicate probes within the evaluator"
+    );
+}
+
+#[test]
 fn test_conditional_true_branch() {
     let interner = TypeInterner::new();
 

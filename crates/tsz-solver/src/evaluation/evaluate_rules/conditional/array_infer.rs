@@ -20,8 +20,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.interner().lookup(type_id) {
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner().type_application(app_id);
-                let app_args_contain_infer =
-                    app.args.iter().any(|&arg| self.type_contains_infer(arg));
+                let app_args_contain_infer = app
+                    .args
+                    .iter()
+                    .any(|&arg| self.cached_type_contains_infer(arg));
                 if app_args_contain_infer && self.application_base_is_unresolved(app.base) {
                     return true;
                 }

@@ -10,12 +10,15 @@
 //! - Variance through conditional, mapped, union, intersection types
 
 use super::*;
+use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::relations::variance::compute_variance;
+use crate::relations::subtype::TypeEnvironment;
+use crate::relations::variance::{compute_type_param_variances_with_resolver, compute_variance};
 use crate::types::{
     ConditionalType, FunctionShape, MappedModifier, MappedType, ObjectFlags, ObjectShape,
     ParamInfo, PropertyInfo, TupleElement, TypeParamInfo, Variance,
 };
+use std::sync::Arc;
 
 fn create_interner() -> TypeInterner {
     TypeInterner::new()
@@ -34,6 +37,73 @@ fn type_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
 /// Helper to create and intern a type parameter type.
 fn intern_type_param(interner: &TypeInterner, name: &str) -> TypeId {
     interner.type_param(type_param(interner, name))
+}
+
+#[test]
+fn test_type_param_variance_mask_matches_single_param_walks() {
+    let interner = create_interner();
+    let mut env = TypeEnvironment::new();
+
+    let t_info = type_param(&interner, "T");
+    let u_info = type_param(&interner, "U");
+    let v_info = type_param(&interner, "V");
+    let k_info = type_param(&interner, "K");
+
+    let t_type = interner.type_param(t_info);
+    let u_type = interner.type_param(u_info);
+    let v_type = interner.type_param(v_info);
+    let k_type = interner.type_param(k_info);
+
+    let consume_u = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: u_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let indexed = interner.index_access(v_type, k_type);
+    let body = interner.object(vec![
+        PropertyInfo::readonly(interner.intern_string("out"), t_type),
+        PropertyInfo::readonly(interner.intern_string("consume"), consume_u),
+        PropertyInfo::readonly(interner.intern_string("indexed"), indexed),
+    ]);
+
+    let def_id = DefId(42);
+    env.insert_def_with_params(def_id, body, vec![t_info, u_info, v_info, k_info]);
+
+    let multi = compute_type_param_variances_with_resolver(&interner, &env, def_id)
+        .expect("generic def variance");
+    let single: Arc<[Variance]> = Arc::from(vec![
+        compute_variance(&interner, body, t_info.name),
+        compute_variance(&interner, body, u_info.name),
+        compute_variance(&interner, body, v_info.name),
+        compute_variance(&interner, body, k_info.name),
+    ]);
+
+    assert_eq!(
+        multi, single,
+        "whole-mask variance computation must match the old per-parameter walks"
+    );
+    assert_eq!(multi[0], Variance::COVARIANT | Variance::DIRECT_USAGE);
+    assert_eq!(multi[1], Variance::CONTRAVARIANT | Variance::DIRECT_USAGE);
+    assert_eq!(
+        multi[2],
+        Variance::COVARIANT
+            | Variance::DIRECT_USAGE
+            | Variance::NEEDS_STRUCTURAL_FALLBACK
+            | Variance::REJECTION_UNRELIABLE
+    );
+    assert_eq!(
+        multi[3],
+        Variance::COVARIANT | Variance::DIRECT_USAGE | Variance::NEEDS_STRUCTURAL_FALLBACK
+    );
 }
 
 // =============================================================================

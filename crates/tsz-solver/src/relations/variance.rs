@@ -228,8 +228,8 @@ impl<'a> VarianceComputer<'a> {
     }
 
     fn compute(&mut self, type_id: TypeId, target_param: Atom) -> Variance {
-        let visitor = VarianceVisitor::new(self, target_param);
-        visitor.compute(type_id)
+        let variances = VarianceVisitor::new(self, &[target_param]).compute(type_id);
+        variances.into_iter().next().unwrap_or_else(Variance::empty)
     }
 
     fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
@@ -278,10 +278,8 @@ impl<'a> VarianceComputer<'a> {
             }
 
             let body = self.resolver.resolve_lazy(def_id, self.db)?;
-            let mut variances = Vec::with_capacity(params.len());
-            for param in &params {
-                variances.push(self.compute(body, param.name));
-            }
+            let param_names: Vec<_> = params.iter().map(|param| param.name).collect();
+            let variances = VarianceVisitor::new(self, &param_names).compute(body);
             Some(Arc::from(variances))
         })();
 
@@ -305,20 +303,22 @@ impl<'a> VarianceComputer<'a> {
     }
 }
 
-/// Visitor that computes variance for a specific type parameter.
+/// Visitor that computes variance for one or more type parameters.
 ///
 /// The visitor tracks the current polarity (positive for covariant positions,
 /// negative for contravariant positions) as it traverses the type graph.
-/// When it encounters the target type parameter, it records the current polarity.
+/// When it encounters a target type parameter, it records the current polarity.
 struct VarianceVisitor<'a, 'b> {
     /// Shared variance computation host.
     computer: &'b mut VarianceComputer<'a>,
-    /// The name of the type parameter we're searching for (e.g., 'T').
-    target_param: Atom,
-    /// The accumulated variance result so far.
-    result: Variance,
-    /// Unified recursion guard for (`TypeId`, Polarity) cycle detection.
-    guard: crate::recursion::RecursionGuard<(TypeId, bool)>,
+    /// Target type parameters keyed by name, pointing into `results`.
+    target_indices: FxHashMap<Atom, usize>,
+    /// The accumulated variance results, one per target parameter.
+    results: Vec<Variance>,
+    /// Active (`TypeId`, Polarity) stack for cycle detection.
+    active_stack: smallvec::SmallVec<[(TypeId, bool); 64]>,
+    /// Total attempted guarded entries for the current variance walk.
+    iterations: u32,
     /// Stack of polarities to track current position in the type graph.
     /// true = Positive (Covariant), false = Negative (Contravariant)
     polarity_stack: Vec<bool>,
@@ -330,9 +330,9 @@ struct VarianceVisitor<'a, 'b> {
     /// double-count S's variance contribution (adding a spurious contravariant
     /// occurrence through the keyof reversal).
     bound_type_params: smallvec::SmallVec<[Atom; 2]>,
-    /// Whether the target parameter was seen as the object of an indexed access.
+    /// Whether each target parameter was seen as the object of an indexed access.
     /// Used to detect when indexed access can normalize away type argument differences.
-    seen_target_in_index_access: bool,
+    seen_target_in_index_access: Vec<bool>,
     /// Depth counter for mapped type nesting. When > 0, occurrences of the target
     /// parameter are inside a mapped type and should not set `DIRECT_USAGE`.
     inside_mapped_depth: u32,
@@ -355,7 +355,7 @@ struct VarianceVisitor<'a, 'b> {
     /// the unreliability set by sibling method-bivariant occurrences: e.g.
     /// `{ m(x: T, cb: (x: T) => void) }` should be COVARIANT, not bivariant,
     /// because the callback occurrence pins the variance.
-    strict_occurrence_seen: bool,
+    strict_occurrence_seen: Vec<bool>,
     /// Depth counter for visiting type arguments of an Application whose base
     /// generic has `REJECTION_UNRELIABLE` in its variance. Inside such a visit
     /// we do not treat the leaf occurrence as a strict signal — the
@@ -367,54 +367,47 @@ struct VarianceVisitor<'a, 'b> {
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
     /// Create a new `VarianceVisitor`.
-    fn new(computer: &'b mut VarianceComputer<'a>, target_param: Atom) -> Self {
+    fn new(computer: &'b mut VarianceComputer<'a>, target_params: &[Atom]) -> Self {
+        let mut target_indices = FxHashMap::default();
+        for (index, &param) in target_params.iter().enumerate() {
+            target_indices.entry(param).or_insert(index);
+        }
+        let target_count = target_params.len();
         Self {
             computer,
-            target_param,
-            result: Variance::empty(),
-            guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::Variance,
-            ),
+            target_indices,
+            results: vec![Variance::empty(); target_count],
+            active_stack: smallvec::SmallVec::new(),
+            iterations: 0,
             polarity_stack: vec![true], // Start with positive (covariant) polarity
             bound_type_params: smallvec::SmallVec::new(),
-            seen_target_in_index_access: false,
+            seen_target_in_index_access: vec![false; target_count],
             inside_mapped_depth: 0,
             method_bivariant_depth: 0,
             suppress_method_bivariance: false,
-            strict_occurrence_seen: false,
+            strict_occurrence_seen: vec![false; target_count],
             inside_unreliable_application: 0,
         }
     }
 
-    /// Entry point: computes the variance of `target_param` within `type_id`.
-    fn compute(mut self, type_id: TypeId) -> Variance {
+    /// Entry point: computes the variance of each target parameter within `type_id`.
+    fn compute(mut self, type_id: TypeId) -> Vec<Variance> {
         self.visit_with_polarity(type_id, true);
-        // When the type parameter is used as the object of an indexed access
-        // AND a mapped type with modifiers is present (NEEDS_STRUCTURAL_FALLBACK),
-        // the variance-based rejection becomes unreliable. Indexed access types
-        // combined with intersections can normalize away differences between type
-        // arguments, producing structurally equivalent instantiations even when
-        // the type arguments themselves are not assignable.
-        if self.seen_target_in_index_access && self.result.needs_structural_fallback() {
-            self.result |= Variance::REJECTION_UNRELIABLE;
+        for index in 0..self.results.len() {
+            // Indexed access plus structural fallback can normalize away type
+            // argument differences, making variance rejection unreliable.
+            if self.seen_target_in_index_access[index]
+                && self.results[index].needs_structural_fallback()
+            {
+                self.results[index] |= Variance::REJECTION_UNRELIABLE;
+            }
+            // Strict occurrences pin method-bivariant unreliability, except for
+            // indexed-access normalization unreliability.
+            if self.strict_occurrence_seen[index] && !self.seen_target_in_index_access[index] {
+                self.results[index].remove(Variance::REJECTION_UNRELIABLE);
+            }
         }
-        // If we found at least one strict (non-method-bivariant, non-inherited)
-        // occurrence of the target parameter, the variance signal is reliable —
-        // clear `REJECTION_UNRELIABLE` that may have been added by sibling
-        // method-bivariant occurrences. This matches tsc, where a callback or
-        // direct-position occurrence of T pins the variance even when T also
-        // appears as a direct method parameter.
-        //
-        // Skip the clear when the target was seen as the object of an indexed
-        // access: in that case `REJECTION_UNRELIABLE` is set for an unrelated
-        // reason (indexed-access + intersection normalisation can collapse
-        // distinct type arguments into structurally equal results — see
-        // `DerivedTable<S>` in `variancePropagation`), and a sibling strict
-        // occurrence does NOT make that rejection reliable.
-        if self.strict_occurrence_seen && !self.seen_target_in_index_access {
-            self.result.remove(Variance::REJECTION_UNRELIABLE);
-        }
-        self.result
+        self.results
     }
 
     /// Core recursive step with polarity tracking.
@@ -429,12 +422,16 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             return;
         }
 
-        // Unified enter: cycle detection + depth/iteration limits
         let key = (type_id, polarity);
-        match self.guard.enter(key) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return, // Cycle or limits exceeded
+        self.iterations = self.iterations.saturating_add(1);
+        if self.iterations > crate::recursion::RecursionProfile::Variance.max_iterations()
+            || self.active_stack.len()
+                >= crate::recursion::RecursionProfile::Variance.max_depth() as usize
+            || self.active_stack.contains(&key)
+        {
+            return;
         }
+        self.active_stack.push(key);
 
         // Push new polarity onto stack
         self.polarity_stack.push(polarity);
@@ -446,7 +443,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         // Pop polarity from stack
         self.polarity_stack.pop();
 
-        self.guard.leave(key);
+        debug_assert_eq!(self.active_stack.pop(), Some(key));
     }
 
     /// Get the current polarity from the stack.
@@ -455,58 +452,80 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
     }
 
     /// Record an occurrence of the target parameter at the current polarity.
-    fn add_occurrence(&mut self, polarity: bool) {
+    fn add_occurrence(&mut self, target_index: usize, polarity: bool) {
+        let result = &mut self.results[target_index];
         if self.method_bivariant_depth > 0 {
             // Inside method parameter types, always record as COVARIANT.
             // This matches tsc behavior: method bivariance makes T appear in
             // both co and contra positions (BIVARIANT), but tsc checks bivariant
             // type args using the covariant direction first. The net effect is
             // that method-param occurrences act as covariant for variance checking.
-            self.result |= Variance::COVARIANT;
-            self.result |= Variance::REJECTION_UNRELIABLE;
+            *result |= Variance::COVARIANT;
+            *result |= Variance::REJECTION_UNRELIABLE;
         } else if polarity {
-            self.result |= Variance::COVARIANT;
+            *result |= Variance::COVARIANT;
         } else {
-            self.result |= Variance::CONTRAVARIANT;
+            *result |= Variance::CONTRAVARIANT;
         }
         // Mark as direct usage when outside mapped type contexts.
         // Direct usage (function params, return types, properties) provides
         // reliable variance signal, unlike mapped type keyof/template positions.
         if self.inside_mapped_depth == 0 {
-            self.result |= Variance::DIRECT_USAGE;
+            *result |= Variance::DIRECT_USAGE;
         }
         // Track whether we've found T at a strict position. A strict occurrence
         // is one that's outside method bivariance AND outside an application
         // visit that already inherited unreliability. Such an occurrence pins
         // the variance signal — see `compute()` for how this is consumed.
         if self.method_bivariant_depth == 0 && self.inside_unreliable_application == 0 {
-            self.strict_occurrence_seen = true;
+            self.strict_occurrence_seen[target_index] = true;
+        }
+    }
+
+    fn mark_all_results(&mut self, variance: Variance) {
+        for result in &mut self.results {
+            *result |= variance;
         }
     }
 
     /// Check if a constraint type uses `keyof` of the target type parameter.
     /// For mapped types like `{ [K in keyof S]: Template }`, the key set depends
     /// on S via keyof, so the variance shortcut is unreliable even without modifiers.
-    fn constraint_uses_keyof_of_target(&self, constraint: TypeId) -> bool {
+    fn mark_keyof_constraint_fallback(&mut self, constraint: TypeId) {
         if let Some(crate::types::TypeData::KeyOf(inner)) = self.computer.db.lookup(constraint) {
-            self.type_references_target_param(inner)
-        } else {
-            false
+            let mut indices = smallvec::SmallVec::<[usize; 4]>::new();
+            self.target_indices_referenced_by(inner, &mut indices);
+            for index in indices {
+                self.results[index] |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            }
         }
     }
 
-    /// Check if a type references the target type parameter (directly or nested).
-    fn type_references_target_param(&self, type_id: TypeId) -> bool {
+    /// Collect target parameters referenced by a type (directly or nested).
+    fn target_indices_referenced_by(
+        &self,
+        type_id: TypeId,
+        out: &mut smallvec::SmallVec<[usize; 4]>,
+    ) {
         if type_id.is_intrinsic() {
-            return false;
+            return;
         }
         match self.computer.db.lookup(type_id) {
-            Some(crate::types::TypeData::TypeParameter(info)) => info.name == self.target_param,
-            Some(crate::types::TypeData::KeyOf(inner)) => self.type_references_target_param(inner),
-            Some(crate::types::TypeData::IndexAccess(obj, idx)) => {
-                self.type_references_target_param(obj) || self.type_references_target_param(idx)
+            Some(crate::types::TypeData::TypeParameter(info)) => {
+                if let Some(&index) = self.target_indices.get(&info.name)
+                    && !out.contains(&index)
+                {
+                    out.push(index);
+                }
             }
-            _ => false,
+            Some(crate::types::TypeData::KeyOf(inner)) => {
+                self.target_indices_referenced_by(inner, out);
+            }
+            Some(crate::types::TypeData::IndexAccess(obj, idx)) => {
+                self.target_indices_referenced_by(obj, out);
+                self.target_indices_referenced_by(idx, out);
+            }
+            _ => {}
         }
     }
 }
@@ -721,9 +740,9 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Type parameters: check if this is our target.
     fn visit_type_parameter(&mut self, info: &TypeParamInfo) {
-        if info.name == self.target_param {
+        if let Some(&target_index) = self.target_indices.get(&info.name) {
             let current_polarity = self.get_current_polarity();
-            self.add_occurrence(current_polarity);
+            self.add_occurrence(target_index, current_polarity);
         }
 
         // Skip constraint/default for bound type parameters (mapped type iteration
@@ -834,11 +853,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 // from nested applications. If Required<T> needs structural fallback
                 // due to modifiers, then Foo<T> = { a: Required<T> } also needs it.
                 if base_param_variance.needs_structural_fallback() {
-                    self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                    self.mark_all_results(Variance::NEEDS_STRUCTURAL_FALLBACK);
                 }
                 let inherits_unreliable = base_param_variance.rejection_unreliable();
                 if inherits_unreliable {
-                    self.result |= Variance::REJECTION_UNRELIABLE;
+                    self.mark_all_results(Variance::REJECTION_UNRELIABLE);
                 }
 
                 // Composition Rules:
@@ -871,7 +890,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // We have a DefId but can't resolve the body/params, so we
             // can't verify whether the inner type has mapped type modifiers
             // that would make the variance shortcut unsound.
-            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            self.mark_all_results(Variance::NEEDS_STRUCTURAL_FALLBACK);
             for &arg in &app.args {
                 self.visit_with_polarity(arg, current_polarity);
                 self.visit_with_polarity(arg, !current_polarity);
@@ -921,12 +940,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Plain mapped types like `Record<P, T> = { [K in P]: T }` do NOT need
         // fallback because the key set P is a direct type argument, not derived
         // through `keyof`, so variance correctly captures the relationship.
-        if mapped.optional_modifier.is_some()
-            || mapped.readonly_modifier.is_some()
-            || self.constraint_uses_keyof_of_target(mapped.constraint)
-        {
-            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+        if mapped.optional_modifier.is_some() || mapped.readonly_modifier.is_some() {
+            self.mark_all_results(Variance::NEEDS_STRUCTURAL_FALLBACK);
         }
+        self.mark_keyof_constraint_fallback(mapped.constraint);
 
         // Homomorphic mapped types with non-identity templates need structural
         // fallback. For identity mapped types (`{ [K in keyof S]: S[K] }`), the
@@ -957,15 +974,9 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                     false
                 };
                 if !is_identity {
-                    self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                    self.mark_all_results(Variance::NEEDS_STRUCTURAL_FALLBACK);
                 }
             }
-        }
-
-        // Type parameter constraint: check if it's our target
-        if mapped.type_param.name == self.target_param {
-            // The iteration variable K itself doesn't contribute to variance
-            // It's a binder, not a usage of T
         }
 
         // Track that we're inside a mapped type so occurrences are not
@@ -1017,11 +1028,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // access. This indicates that the type mapping S → S["key"] may
         // normalize away differences between type arguments.
         if let Some(TypeData::TypeParameter(tp)) = self.computer.db.lookup(object_type)
-            && tp.name == self.target_param
+            && let Some(&target_index) = self.target_indices.get(&tp.name)
         {
-            self.seen_target_in_index_access = true;
+            self.seen_target_in_index_access[target_index] = true;
         }
-        let before = self.result;
+        let before = self.results.clone();
         // Suppress method bivariance inside indexed access. When a type uses
         // the `bivarianceHack` pattern like `{ m(x: T): any }['m']`, the
         // indexed access extracts the method as a plain function, stripping
@@ -1042,20 +1053,24 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // A's variance for that property. Only non-literal keys (type params,
         // keyof, unions, etc.) can cause non-obvious normalization that makes
         // the variance shortcut unreliable.
-        if self.result != before {
+        if self.results != before {
             let is_literal_key = matches!(
                 self.computer.db.lookup(key_type),
                 Some(TypeData::Literal(_))
             );
             if !is_literal_key {
-                self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                for (index, before_result) in before.iter().enumerate() {
+                    if self.results[index] != *before_result {
+                        self.results[index] |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+                    }
+                }
             }
         }
     }
 
     /// Template literals: types in spans are at current polarity.
     fn visit_template_literal(&mut self, template_id: u32) {
-        let before = self.result;
+        let before = self.results.clone();
         let spans = self
             .computer
             .db
@@ -1069,8 +1084,12 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             }
         }
         self.inside_unreliable_application -= 1;
-        if self.result != before {
-            self.result |= Variance::REJECTION_UNRELIABLE;
+        if self.results != before {
+            for (index, before_result) in before.iter().enumerate() {
+                if self.results[index] != *before_result {
+                    self.results[index] |= Variance::REJECTION_UNRELIABLE;
+                }
+            }
         }
     }
 
@@ -1097,7 +1116,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Infer types: declaration is not a usage.
     fn visit_infer(&mut self, info: &TypeParamInfo) {
-        // FIX: Do not check info.name == self.target_param.
+        // FIX: Do not check info.name against target parameters.
         // 'infer X' declares X, it doesn't use the outer target param.
         // If 'infer T' shadows outer 'T', it's still a declaration, not a usage.
 

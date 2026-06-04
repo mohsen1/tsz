@@ -84,7 +84,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // object with multiple infers) cannot be modeled here. Defer to the
             // general `match_infer_pattern` engine, which handles every position
             // with variance-aware candidate merging.
-            if !captured && self.type_contains_infer(prop.type_id) {
+            if !captured && self.cached_type_contains_infer(prop.type_id) {
                 return None;
             }
         }

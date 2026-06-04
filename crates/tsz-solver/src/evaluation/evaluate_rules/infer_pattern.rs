@@ -146,6 +146,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.type_contains_infer_inner_with_key(type_id, key, &mut visited)
     }
 
+    #[inline]
+    pub(crate) fn cached_type_contains_infer(&mut self, type_id: TypeId) -> bool {
+        if let Some(cached) = self.cached_contains_infer(type_id) {
+            return cached;
+        }
+        let contains_infer = self.type_contains_infer(type_id);
+        self.cache_contains_infer(type_id, contains_infer);
+        contains_infer
+    }
+
     fn type_contains_infer_inner(&self, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
         if type_id.is_intrinsic() {
             return false;
