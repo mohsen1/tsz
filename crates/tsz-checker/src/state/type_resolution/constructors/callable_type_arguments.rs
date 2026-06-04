@@ -321,26 +321,34 @@ impl<'a> CheckerState<'a> {
             if query::contains_type_parameters(self.ctx.types.as_type_database(), constraint) {
                 continue;
             }
-            let constraint = self.evaluate_type_for_assignability(constraint);
             let db = self.ctx.types.as_type_database();
-            if !common_query::is_literal_or_primitive_or_compound_of_those(db, constraint) {
-                continue;
-            }
-
             if common_query::contains_type_parameters(db, type_arg)
                 || common_query::enum_def_id(db, type_arg).is_some()
             {
                 continue;
             }
 
-            if !common_query::is_literal_or_primitive_or_compound_of_those(db, type_arg) {
-                if query::lazy_def_id(db, type_arg).is_some_and(|def_id| {
+            let object_like_type_arg = common_query::is_object_like_type(db, type_arg)
+                || query::lazy_def_id(db, type_arg).is_some_and(|def_id| {
                     matches!(
                         self.ctx.definition_store.get_kind(def_id),
                         Some(DefKind::Class | DefKind::Interface)
                     )
-                }) || common_query::is_object_like_type(db, type_arg)
-                {
+                });
+            if (common_query::is_keyof_type(db, constraint)
+                || common_query::contains_keyof_type(db, constraint))
+                && object_like_type_arg
+            {
+                return true;
+            }
+
+            let constraint = self.evaluate_type_for_assignability(constraint);
+            if !common_query::is_literal_or_primitive_or_compound_of_those(db, constraint) {
+                continue;
+            }
+
+            if !common_query::is_literal_or_primitive_or_compound_of_those(db, type_arg) {
+                if object_like_type_arg {
                     return true;
                 }
                 continue;
