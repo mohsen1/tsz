@@ -1043,6 +1043,17 @@ impl<'a> CheckerState<'a> {
                 return (TypeId::ERROR, Vec::new());
             }
 
+            // Type-only inline default exports have no `value_declaration`; resolve
+            // their inline interface/type alias declaration to the local type symbol
+            // so default imports see that type instead of generic alias `any`.
+            if import_module.is_none()
+                && value_decl.is_none()
+                && let Some(target_type) =
+                    self.inline_default_export_type_only_target_type(sym_id, declarations)
+            {
+                return (target_type, Vec::new());
+            }
+
             // Synthetic `export default ...` aliases point directly at the exported
             // declaration node (often an anonymous class/function). They are real
             // value symbols, not unresolved imports, so compute the declaration type

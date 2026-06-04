@@ -35,6 +35,10 @@ name = "assertion_source_literal_display_tests"
 path = "tests/assertion_source_literal_display_tests.rs"
 
 [[test]]
+name = "export_default_interface_type_import_tests"
+path = "tests/export_default_interface_type_import_tests.rs"
+
+[[test]]
 name = "nested_discriminant_narrowing_tests"
 path = "tests/nested_discriminant_narrowing_tests.rs"
 
