@@ -705,7 +705,6 @@ impl<'a> Printer<'a> {
             if self
                 .arena
                 .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
-                || self.has_recovered_accessor_modifier(node)
             {
                 self.write("accessor ");
             }
@@ -828,7 +827,6 @@ impl<'a> Printer<'a> {
         if self
             .arena
             .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node)
         {
             self.write("accessor ");
         }

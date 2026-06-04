@@ -109,3 +109,60 @@ fdb.selectFrom("tbl0 as a0")
         format_diagnostics(&source, &diagnostics)
     );
 }
+
+/// Same fuel-exhaustion mechanism, but the draining statements and the target
+/// `select` callback live inside a single *function body* rather than at the
+/// top level. The per-file instantiation-fuel budget is also cumulative across
+/// the statements of a block/function body, and kysely's introspectors (the
+/// real witness — `mssql-introspector.ts`, `sqlite-introspector.ts`,
+/// `migrator.ts`) are methods that run many heavy query-builder statements
+/// before a `select`/`map` callback. The fuel reset must therefore apply
+/// between block-body statements too, not only between top-level statements,
+/// or the later callback parameter degrades to implicit `any` (TS7006) with a
+/// downstream TS2347 (issue #10683 / #10677).
+///
+/// Binder names here deliberately differ from the top-level test (`builder`,
+/// `cond`, `expr` instead of `eb`/`qb`) so the fix cannot be keyed to any
+/// Kysely-specific identifier.
+#[test]
+fn fuel_drained_inside_function_body_keeps_select_callback_context() {
+    let mut schema = String::from("type BodyDB = {\n");
+    for i in 0..3 {
+        schema.push_str(&format!(
+            "  \"rel{i}\": {{ id: number; name: string; ref_id: number; kind: \"k{i}\"; note: string }};\n"
+        ));
+    }
+    schema.push_str("};\ndeclare const bdb: QueryCreator<BodyDB>;\n");
+
+    // Heavy draining statements, this time as statements *inside* a function
+    // body (indented so they read as a method-like body).
+    let mut drainer = String::new();
+    for k in 0..130 {
+        drainer.push_str(&format!(
+            "  bdb.selectFrom(\"rel0 as s{k}\").select([\"s{k}.name as m{k}\"]);\n"
+        ));
+    }
+
+    let target = r#"
+  bdb.selectFrom("rel0 as a0")
+    .innerJoin("rel1 as a1", "a1.ref_id", "a0.id")
+    .leftJoin("rel2 as a2", (link) => link.onRef("a2.ref_id", "=", "a0.id"))
+    .$if(!withInternalKyselyTables, (cond) => cond.where("a0.name", "!=", "x"))
+    .select((builder) => [
+      "a0.name as name0",
+      "a1.name as name1",
+      builder.ref("a0.kind").$castTo<BodyDB["rel0"]["kind"]>().as("a0_kind"),
+      builder.ref("a1.id").$castTo<number>().as("a1_id"),
+    ]);
+"#;
+
+    let source =
+        format!("{PRELUDE}\n{schema}\nfunction introspectBody() {{\n{drainer}\n{target}\n}}\n");
+
+    let diagnostics = strict_default_lib_diagnostics(&source);
+    assert!(
+        !diagnostics.iter().any(|d| matches!(d.code, 7006 | 2347)),
+        "fuel exhausted inside a function body must not strip callback context. Got: {:#?}",
+        format_diagnostics(&source, &diagnostics)
+    );
+}

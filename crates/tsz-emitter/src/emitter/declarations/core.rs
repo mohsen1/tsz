@@ -84,7 +84,6 @@ impl<'a> Printer<'a> {
         if self
             .arena
             .has_modifier(&func.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node)
         {
             self.write("accessor ");
         }
@@ -654,7 +653,6 @@ impl<'a> Printer<'a> {
                 if self
                     .arena
                     .has_modifier(&enum_decl.modifiers, SyntaxKind::AccessorKeyword)
-                    || self.has_recovered_accessor_modifier(node)
                 {
                     let var_prefix = format!("var {enum_name};");
                     let accessor_var_prefix = format!("accessor {var_prefix}");

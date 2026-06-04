@@ -70,6 +70,20 @@ fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
 }
 
 #[test]
+fn recovered_top_level_accessor_modifier_comes_from_parser_fact() {
+    let output = parse_and_emit_strict_target(
+        "accessor /* recovered */ function F() {}\n",
+        "a.ts",
+        ScriptTarget::ES2020,
+    );
+
+    assert!(
+        output.contains("accessor function F()"),
+        "Recovered top-level accessor should emit from the parsed modifier, not source-text adjacency.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
     let output =
         parse_and_emit_strict_es2015("declare let a: () => number;\na = () => 1 // ok\n", "a.ts");

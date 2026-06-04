@@ -93,14 +93,93 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             // tsc emits TS1275 via grammarErrorOnNode for the `accessor` modifier
             // on any non-property-declaration node (top-level class/interface/var/...).
+            let start_pos = self.token_pos();
             self.parse_error_at_current_token(
                 "'accessor' modifier can only appear on a property declaration.",
                 diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
             );
-            self.next_token();
-            self.parse_statement()
+            let accessor_start = self.token_pos();
+            self.parse_expected(SyntaxKind::AccessorKeyword);
+            let accessor_end = self.token_end();
+            let accessor_modifier = self.arena.add_token(
+                SyntaxKind::AccessorKeyword as u16,
+                accessor_start,
+                accessor_end,
+            );
+            self.parse_accessor_modified_statement(start_pos, vec![accessor_modifier])
         } else {
             self.parse_expression_statement()
+        }
+    }
+
+    fn parse_accessor_modified_statement(
+        &mut self,
+        start_pos: u32,
+        modifiers: Vec<NodeIndex>,
+    ) -> NodeIndex {
+        match self.token() {
+            SyntaxKind::FunctionKeyword => self.parse_function_declaration_with_async(
+                false,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::ClassKeyword => self.parse_class_declaration_with_modifiers(
+                start_pos,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration_with_modifiers(
+                start_pos,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::TypeKeyword => self.parse_type_alias_declaration_with_modifiers(
+                start_pos,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::EnumKeyword => self.parse_enum_declaration_with_modifiers(
+                start_pos,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::NamespaceKeyword
+            | SyntaxKind::ModuleKeyword
+            | SyntaxKind::GlobalKeyword => self.parse_module_declaration_with_modifiers(
+                start_pos,
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::VarKeyword
+            | SyntaxKind::LetKeyword
+            | SyntaxKind::ConstKeyword
+            | SyntaxKind::UsingKeyword
+            | SyntaxKind::AwaitKeyword => self.parse_variable_statement_with_modifiers(
+                Some(start_pos),
+                Some(self.make_node_list(modifiers.clone())),
+            ),
+            SyntaxKind::ImportKeyword => {
+                if self.look_ahead_is_import_equals() {
+                    self.parse_import_equals_declaration_with_modifiers(
+                        start_pos,
+                        Some(self.make_node_list(modifiers.clone())),
+                    )
+                } else {
+                    self.parse_import_declaration_with_modifiers(
+                        start_pos,
+                        Some(self.make_node_list(modifiers.clone())),
+                    )
+                }
+            }
+            SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
+            SyntaxKind::ExportKeyword => {
+                let export_start = self.token_pos();
+                self.parse_expected(SyntaxKind::ExportKeyword);
+                let export_end = self.token_end();
+                let export_modifier = self.arena.add_token(
+                    SyntaxKind::ExportKeyword as u16,
+                    export_start,
+                    export_end,
+                );
+                let mut export_modifiers = modifiers;
+                export_modifiers.push(export_modifier);
+                self.parse_accessor_modified_statement(start_pos, export_modifiers)
+            }
+            _ => self.parse_statement(),
         }
     }
 
