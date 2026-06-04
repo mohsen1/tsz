@@ -111,9 +111,14 @@ impl<'a> CheckerState<'a> {
                     if constraint_resolved == TypeId::ANY {
                         continue;
                     }
+                    let required_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
                     if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
                         type_arg,
-                        constraint_resolved,
+                        required_constraint,
                         &type_arg_substitutions,
                     ) {
                         continue;
