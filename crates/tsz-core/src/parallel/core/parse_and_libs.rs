@@ -229,7 +229,19 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     diagnostics
 }
 
-fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindResult {
+/// Build the empty source-file skeleton tsz uses to represent a `.json` file.
+///
+/// `.json` inputs are never run through the TypeScript grammar (that is what
+/// produces spurious TS1005/TS1128 on a perfectly valid `package.json`). Instead
+/// every parse/bind entry point routes `.json` through this single helper so the
+/// program holds a statement-free source file plus the strict-JSON validation
+/// diagnostics, matching tsc's dedicated JSON parse path. Returning the parts
+/// (rather than a `BindResult`) lets both the bind paths and the parse-only
+/// no-check path share one definition of "how a JSON file enters the program".
+fn synthesize_json_source_file(
+    file_name: &str,
+    source_text: String,
+) -> (NodeArena, NodeIndex, Vec<ParseDiagnostic>) {
     let parse_diagnostics = validate_json_syntax(&source_text);
 
     let mut arena = NodeArena::new();
@@ -241,7 +253,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         SourceFileData {
             statements: NodeList::default(),
             end_of_file_token: eof_token,
-            file_name: file_name.clone(),
+            file_name: file_name.to_string(),
             text: Arc::<str>::from(source_text),
             language_version: 99,
             language_variant: 0,
@@ -255,6 +267,27 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
             transform_flags: 0,
         },
     );
+
+    (arena, source_file, parse_diagnostics)
+}
+
+/// Build a parse-only [`ParseResult`] for a `.json` file without invoking the
+/// TypeScript parser. Used by the no-check / parse-only driver paths, mirroring
+/// the `.json` skip in the bind paths.
+fn synthesize_json_parse_result(file_name: String, source_text: String) -> ParseResult {
+    let (arena, source_file, parse_diagnostics) =
+        synthesize_json_source_file(&file_name, source_text);
+    ParseResult {
+        file_name,
+        source_file,
+        arena,
+        parse_diagnostics,
+    }
+}
+
+fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindResult {
+    let (arena, source_file, parse_diagnostics) =
+        synthesize_json_source_file(&file_name, source_text);
 
     let mut binder = BinderState::new();
     binder.set_debug_file(&file_name);
@@ -450,6 +483,15 @@ pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
 
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
+            // Skip parsing .json files - they should not be parsed as TypeScript.
+            // A `.json` input is a JSON module, not a TS source; running it
+            // through the TS grammar emits spurious TS1005/TS1128 on valid JSON
+            // (e.g. `package.json`). The bind paths already route `.json` here;
+            // the parse-only no-check path must do the same.
+            if file_name.ends_with(".json") {
+                return synthesize_json_parse_result(file_name, source_text);
+            }
+
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
 
@@ -468,6 +510,11 @@ pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
 
 /// Parse a single file (for comparison/testing)
 pub fn parse_file_single(file_name: String, source_text: String) -> ParseResult {
+    // Mirror the `.json` skip used by every other parse/bind entry point.
+    if file_name.ends_with(".json") {
+        return synthesize_json_parse_result(file_name, source_text);
+    }
+
     let mut parser = ParserState::new(file_name.clone(), source_text);
     let source_file = parser.parse_source_file();
 
