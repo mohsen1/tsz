@@ -445,3 +445,42 @@ fn mapped_declared_source_display_uses_finite_property_surface() {
         "finite mapped display classification should live in the diagnostic query boundary"
     );
 }
+
+#[test]
+fn generic_constraint_lib_resolution_uses_structural_names() {
+    let sources = [
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/checkers/generic_checker/mod.rs"
+        ))
+        .expect("generic checker source should be readable"),
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/checkers/generic_checker/constraint_validation.rs"
+        ))
+        .expect("generic constraint validation source should be readable"),
+    ];
+
+    for source in sources {
+        assert!(
+            !source.contains("let constraint_name = self.format_type_diagnostic(constraint);"),
+            "generic constraint lib fallback must not derive a semantic decision from rendered constraint text"
+        );
+        assert!(
+            !source.contains("is_well_known_lib_type_name(&constraint_name)"),
+            "generic constraint lib fallback should prove lib identity structurally"
+        );
+    }
+
+    let generic_checker = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/checkers/generic_checker/mod.rs"
+    ))
+    .expect("generic checker source should be readable");
+    assert!(
+        generic_checker.contains("resolve_well_known_lib_constraint_type")
+            && generic_checker.contains("query_common::lazy_def_id")
+            && generic_checker.contains("query_common::get_application_lazy_def_id"),
+        "generic constraint lib fallback should inspect Lazy/Application DefIds"
+    );
+}
