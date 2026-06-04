@@ -1840,13 +1840,6 @@ pub(crate) fn instantiate_function_with_type_args(
     c::instantiate_function_with_type_args(db, function_type, type_args)
 }
 
-pub(crate) fn normalize_object_union_members_for_write_target(
-    db: &dyn TypeDatabase,
-    members: &[TypeId],
-) -> Option<Vec<TypeId>> {
-    tsz_solver::operations::normalize_object_union_members_for_write_target(db, members)
-}
-
 pub(crate) fn index_access_parts(
     db: &dyn TypeDatabase,
     type_id: TypeId,

@@ -82,9 +82,7 @@ pub(crate) fn write_target_logical_result_type(
     };
     let members = [left_result, right_type];
     let normalized =
-        crate::query_boundaries::common::normalize_object_union_members_for_write_target(
-            db, &members,
-        )?;
+        tsz_solver::operations::normalize_object_union_members_for_write_target(db, &members)?;
     Some(WriteTargetLogicalResult::Type(
         tsz_solver::utils::union_or_single(db, normalized),
     ))
