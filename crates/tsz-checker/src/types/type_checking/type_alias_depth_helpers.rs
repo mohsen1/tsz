@@ -7,53 +7,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn type_alias_body_has_recursive_alias_ref(
-        &self,
-        alias_sid: tsz_binder::SymbolId,
-    ) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
-            return false;
-        };
-        symbol.declarations.iter().copied().any(|decl_idx| {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                return false;
-            };
-            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                return false;
-            }
-            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
-                return false;
-            };
-            self.type_node_contains_alias_ref_for_depth_check(alias.type_node, alias_sid)
-        })
-    }
-
-    fn type_node_contains_alias_ref_for_depth_check(
-        &self,
-        node_idx: NodeIndex,
-        alias_sid: tsz_binder::SymbolId,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && self
-                .resolve_type_symbol_for_lowering(type_ref.type_name)
-                .map(tsz_binder::SymbolId)
-                == Some(alias_sid)
-        {
-            return true;
-        }
-        self.ctx
-            .arena
-            .get_children(node_idx)
-            .into_iter()
-            .any(|child_idx| {
-                self.type_node_contains_alias_ref_for_depth_check(child_idx, alias_sid)
-            })
-    }
-
     pub(crate) fn type_arg_nodes_all_are_deferred_passthrough_for_depth_check(
         &mut self,
         type_args: &NodeList,

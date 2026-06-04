@@ -121,6 +121,29 @@ type Thousand = BuildTuple<number, 1000>;
 }
 
 #[test]
+fn awaited_style_recursive_thenable_reports_depth_at_use() {
+    let codes = semantic_codes(
+        r#"
+interface Chain {
+  then(cb: (value: Chain) => void): void;
+}
+type Settled<T> =
+  T extends null | undefined ? T :
+  T extends object & { then(onfulfilled: infer F, ...args: infer _): any; } ?
+    F extends ((value: infer V, ...args: infer _) => any) ? Settled<V> : never :
+  T;
+type Result = Settled<Chain>;
+"#,
+    );
+
+    assert_eq!(
+        codes,
+        vec![2589],
+        "recursive thenable unwrapping owns a use-site TS2589; got {codes:?}"
+    );
+}
+
+#[test]
 fn bounded_recursive_merge_wrapped_in_list_alias_no_ts2589() {
     let codes = semantic_codes(
         r#"
