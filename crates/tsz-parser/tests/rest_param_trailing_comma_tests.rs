@@ -1,9 +1,9 @@
 //! Tests for TS1013 (trailing comma after rest) specifically in function
 //! parameter lists vs binding patterns.
 //!
-//! ECMAScript 2017+ allows trailing commas after rest parameters in function
-//! signatures. TypeScript inherits this rule: `f(...args,)` is valid.
-//! Binding pattern rests (`{...x,}`, `[...x,]`) remain illegal per spec.
+//! TypeScript reports TS1013 for trailing commas after rest parameters in
+//! non-ambient function signatures, but suppresses the diagnostic for ambient
+//! declarations. Binding pattern rests (`{...x,}`, `[...x,]`) remain illegal.
 
 use crate::parser::test_fixture::parse_source;
 
@@ -16,23 +16,23 @@ fn has_code(source: &str, code: u32) -> bool {
     error_codes(source).contains(&code)
 }
 
-// --- function parameter rest: trailing comma is VALID ---
+// --- non-ambient function parameter rest: trailing comma is INVALID ---
 
 #[test]
-fn test_function_rest_trailing_comma_no_ts1013() {
+fn test_function_rest_trailing_comma_ts1013() {
     // Plain function signature
     assert!(
-        !has_code("function f(...args: number[],): void {}", 1013),
-        "trailing comma after rest param must NOT be TS1013 in function"
+        has_code("function f(...args: number[],): void {}", 1013),
+        "trailing comma after rest param must be TS1013 in non-ambient function"
     );
 }
 
 #[test]
-fn test_arrow_rest_trailing_comma_no_ts1013() {
+fn test_arrow_rest_trailing_comma_ts1013() {
     // Arrow function
     assert!(
-        !has_code("const f = (...args: string[],) => {};", 1013),
-        "trailing comma after rest param must NOT be TS1013 in arrow"
+        has_code("const f = (...args: string[],) => {};", 1013),
+        "trailing comma after rest param must be TS1013 in non-ambient arrow"
     );
 }
 
@@ -46,11 +46,11 @@ fn test_call_signature_rest_trailing_comma_no_ts1013() {
 }
 
 #[test]
-fn test_method_rest_trailing_comma_no_ts1013() {
+fn test_method_rest_trailing_comma_ts1013() {
     // Class method
     assert!(
-        !has_code("class C { m(...a: boolean[],): void {} }", 1013),
-        "trailing comma after rest param must NOT be TS1013 in class method"
+        has_code("class C { m(...a: boolean[],): void {} }", 1013),
+        "trailing comma after rest param must be TS1013 in non-ambient class method"
     );
 }
 
