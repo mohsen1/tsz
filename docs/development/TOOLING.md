@@ -108,6 +108,30 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked
 scripts/quality/run-coverage.sh
 ```
 
+## Emit Snapshot Tooling
+
+### `scripts/emit/query-emit.py`
+
+Reads the checked-in emit detail artifact without re-running the emit suite.
+Use text output for quick triage and JSON output when a PR, CI artifact, or
+handoff needs structured evidence.
+
+```bash
+# Human-readable failure families
+python3 scripts/emit/query-emit.py --families
+
+# Machine-readable failure families
+python3 scripts/emit/query-emit.py --families-json
+
+# Historical checked-detail rows when the public aggregate is newer
+python3 scripts/emit/query-emit.py --families-json --include-stale-detail
+```
+
+When the README/public aggregate is ahead of `scripts/emit/emit-detail.json`,
+family rows are suppressed by default. Pass `--include-stale-detail` only when
+the report is explicitly framed as historical checked-detail triage rather than
+the current public remaining set.
+
 ### Mutation Testing
 
 `cargo-mutants` is intentionally scoped by default. Use it to audit whether

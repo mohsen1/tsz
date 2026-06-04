@@ -333,6 +333,106 @@ after
         self.assertIn("class/private/accessor/decorator lowering", text)
         self.assertIn("generic/type-display declarations", text)
 
+    def test_failure_family_json_suppresses_stale_rows_by_default(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            report = self.mod.failure_family_report(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        self.assertEqual(report["freshness"]["state"], "stale")
+        self.assertTrue(report["familiesSuppressed"])
+        self.assertFalse(report["includeStaleDetail"])
+        self.assertEqual(
+            [
+                (surface["surface"], surface["publicRemaining"], surface["checkedDetailRemaining"])
+                for surface in report["surfaces"]
+            ],
+            [("js", 71, 436), ("dts", 25, 63)],
+        )
+        self.assertEqual(report["surfaces"][0]["families"], [])
+        self.assertIsNone(report["surfaces"][0]["checkedDetailFailures"])
+
+    def test_failure_family_json_includes_explicit_stale_rows(self):
+        data = {
+            "summary": {
+                "jsPass": 13094,
+                "jsTotal": 13530,
+                "dtsPass": 1606,
+                "dtsTotal": 1669,
+            },
+            "results": [
+                {
+                    **make_result("classUsedBeforeInitializedVariables", js_error="+1/-1 lines"),
+                    "dtsStatus": "pass",
+                },
+                {
+                    **make_result("classWithStaticBlock", js_error="+1/-1 lines"),
+                    "dtsStatus": "pass",
+                },
+                {
+                    **make_result("inferTypePredicates", dts_error="+1/-1 lines"),
+                    "jsStatus": "pass",
+                },
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        try:
+            report = self.mod.failure_family_report(
+                data,
+                top=1,
+                include_stale_detail=True,
+            )
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        self.assertFalse(report["familiesSuppressed"])
+        self.assertTrue(report["includeStaleDetail"])
+        self.assertEqual(report["top"], 1)
+        self.assertEqual(report["surfaces"][0]["checkedDetailFailures"], 2)
+        self.assertEqual(
+            report["surfaces"][0]["families"],
+            [
+                {
+                    "family": "class/private/accessor/decorator lowering",
+                    "count": 2,
+                    "examples": [
+                        "classUsedBeforeInitializedVariables",
+                        "classWithStaticBlock",
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(report["surfaces"][1]["checkedDetailFailures"], 1)
+        self.assertEqual(
+            report["surfaces"][1]["families"][0]["family"],
+            "generic/type-display declarations",
+        )
+
     def test_current_failure_family_heading_keeps_plain_count(self):
         summary = {
             "jsPass": 13459,

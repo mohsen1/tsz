@@ -13,6 +13,9 @@ Usage:
   # Failure-family dashboard
   python3 scripts/emit/query-emit.py --families
 
+  # Machine-readable failure-family dashboard
+  python3 scripts/emit/query-emit.py --families-json
+
   # Include historical family rows even when emit-detail.json is stale
   python3 scripts/emit/query-emit.py --families --include-stale-detail
 
@@ -548,6 +551,71 @@ def collect_failures_by_family(data, surface):
     return families
 
 
+def family_rows(data, surface, top=None):
+    families = collect_failures_by_family(data, surface)
+    rows = sorted(
+        families.items(),
+        key=lambda item: (-len(item[1]), item[0]),
+    )
+    if top is not None:
+        rows = rows[:top]
+    return [
+        {
+            "family": family,
+            "count": len(results),
+            "examples": [
+                result["name"]
+                for result in sorted(results, key=lambda result: result["name"])[:3]
+            ],
+        }
+        for family, results in rows
+    ]
+
+
+def failure_count_by_surface(data, surface):
+    return sum(len(results) for results in collect_failures_by_family(data, surface).values())
+
+
+def failure_family_report(data, top=20, include_stale_detail=False):
+    detail_summary = emit_summary(data)
+    public_summary = emit_summary_from_readme()
+    freshness = emit_freshness_report(detail_summary, public_summary)
+    families_suppressed = freshness["state"] == "stale" and not include_stale_detail
+
+    surfaces = []
+    for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
+        rows = [] if families_suppressed else family_rows(data, surface, top)
+        surfaces.append(
+            {
+                "surface": surface,
+                "title": title,
+                "checkedDetailFailures": None
+                if families_suppressed
+                else failure_count_by_surface(data, surface),
+                "publicRemaining": emit_remaining_failures(public_summary, surface),
+                "checkedDetailRemaining": emit_remaining_failures(detail_summary, surface),
+                "families": rows,
+            }
+        )
+
+    return {
+        "freshness": freshness,
+        "familiesSuppressed": families_suppressed,
+        "includeStaleDetail": include_stale_detail,
+        "top": top,
+        "surfaces": surfaces,
+    }
+
+
+def print_failure_families_json(data, top=20, include_stale_detail=False):
+    print(
+        json.dumps(
+            failure_family_report(data, top=top, include_stale_detail=include_stale_detail),
+            sort_keys=True,
+        )
+    )
+
+
 def show_failure_families(data, top=20, include_stale_detail=False):
     print("Emit failure families")
     print()
@@ -639,6 +707,11 @@ def main():
         action="store_true",
         help="With --families, print historical family rows even when emit-detail.json is stale",
     )
+    parser.add_argument(
+        "--families-json",
+        action="store_true",
+        help="Show JS/DTS failure family counts as machine-readable JSON",
+    )
     parser.add_argument("--close", action="store_true", help="Show close-to-passing tests")
     parser.add_argument("--filter", type=str, help="Filter by substring in test name")
     parser.add_argument("--status", type=str, help="Filter by status (pass/fail/skip/timeout)")
@@ -675,6 +748,8 @@ def main():
         show_dts_failures(filtered_data, args.top, args.paths_only)
     elif args.top_errors:
         show_top_errors(filtered_data, args.top)
+    elif args.families_json:
+        print_failure_families_json(filtered_data, args.top, args.include_stale_detail)
     elif args.families:
         show_failure_families(filtered_data, args.top, args.include_stale_detail)
     elif args.close:
