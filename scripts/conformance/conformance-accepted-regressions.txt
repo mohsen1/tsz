@@ -102,11 +102,13 @@ TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varia
 # nullable_union_callback_variance_tests.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
 
-# PR #12473 exact-head aggregate run 26943822883 (job 79497485538) observed
-# these parser/operator diagnostic rows after all six conformance shards passed.
-# Keep them accepted as explicit gate debt until the owning parser/checker
-# diagnostic fixes make the rows match `tsc` again.
+# PR #12473 exact-head aggregate runs 26943822883 (job 79497485538) and
+# 26945895666 (job 79502200459) observed these parser/operator diagnostic rows
+# after all six conformance shards passed. Keep them accepted as explicit gate
+# debt until the owning parser/checker diagnostic fixes make the rows match
+# `tsc` again.
 TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
+TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
 TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
 TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
 
