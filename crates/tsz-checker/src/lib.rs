@@ -234,6 +234,9 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/index_sig_param_resolved_key_type_tests.rs"]
+mod index_sig_param_resolved_key_type_tests;
+#[cfg(test)]
 #[path = "tests/instantiation_expression_inline_utility_modifier_tests.rs"]
 mod instantiation_expression_inline_utility_modifier_tests;
 #[cfg(test)]
@@ -971,6 +974,9 @@ mod new_typeof_property_tests;
 #[cfg(test)]
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
+#[cfg(test)]
+#[path = "tests/nullable_union_callback_variance_tests.rs"]
+mod nullable_union_callback_variance_tests;
 #[cfg(test)]
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;

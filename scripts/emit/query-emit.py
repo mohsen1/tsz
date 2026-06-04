@@ -247,7 +247,7 @@ def emit_freshness_status(detail_summary, public_summary):
         return {"state": "stale", **status}
     if status["jsPassDelta"] < 0 or status["dtsPassDelta"] < 0:
         return {"state": "detail-ahead", **status}
-    return {"state": "current", **status}
+    return {"state": "aggregate-match", **status}
 
 
 def emit_freshness_report(detail_summary, public_summary):
@@ -280,8 +280,12 @@ def emit_freshness_status_line_from_status(status):
             f"(README/public ahead by JS +{status['jsPassDelta']:,} pass, "
             f"DTS +{status['dtsPassDelta']:,} pass over matching totals)."
         )
-    if state == "current":
-        return "Emit detail freshness: current (README/public aggregate matches checked detail)."
+    if state == "aggregate-match":
+        return (
+            "Emit detail freshness: aggregate-match "
+            "(README/public aggregate matches checked detail; "
+            "per-row freshness is not proven)."
+        )
     if state == "detail-ahead":
         return (
             "Emit detail freshness: detail-ahead "
@@ -298,7 +302,7 @@ def emit_freshness_status_line_from_status(status):
 
 
 def emit_detail_is_current(freshness_status):
-    return freshness_status.get("state") == "current"
+    return freshness_status.get("state") == "aggregate-match"
 
 
 def emit_pass_rate(summary, prefix):

@@ -4,7 +4,6 @@
 //! callable types with call/construct signatures.
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
-use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -1318,45 +1317,20 @@ impl<'a> CheckerState<'a> {
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
-                let mut is_valid_index_type = false;
-                let mut is_valid_via_ast = false;
-                if !has_param_grammar_error && param_data.type_annotation.is_some() {
-                    // Check the AST node kind first: type parameters and literal types
-                    // trigger TS1337 regardless of what their constraint resolves to
-                    // (e.g. `T extends string` resolves to STRING but is still invalid).
-                    let type_ann_kind = self
-                        .ctx
-                        .arena
-                        .get(param_data.type_annotation)
-                        .map_or(0, |n| n.kind);
-                    let is_generic_or_literal = self.is_type_param_or_literal_in_index_sig(
-                        type_ann_kind,
-                        param_data.type_annotation,
-                    );
-                    if is_generic_or_literal {
+                let is_valid_index_type = if !has_param_grammar_error
+                    && param_data.type_annotation.is_some()
+                {
+                    let (is_generic_or_literal, is_valid) =
+                        self.classify_index_sig_param_type(key_type, param_data.type_annotation);
+                    if !is_valid {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
-                            param_idx,
-                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
-                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
-                        );
-                    } else {
-                        is_valid_index_type = key_type == TypeId::STRING
-                            || key_type == TypeId::NUMBER
-                            || key_type == TypeId::SYMBOL
-                            || is_template_literal_type(self.ctx.types, key_type);
-                        // AST fallback: unions of valid types and non-generic
-                        // intersections (`string | number`, `string & Tag`)
-                        // resolve to composite TypeIds that don't match the
-                        // primitive checks above.
-                        is_valid_via_ast = !is_valid_index_type
-                            && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
-                                self.ctx.arena,
-                                self.ctx.binder,
-                                param_data.type_annotation,
+                        if is_generic_or_literal {
+                            self.error_at_node(
+                                param_idx,
+                                diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
                             );
-                        if !is_valid_index_type && !is_valid_via_ast {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        } else {
                             self.error_at_node(
                                 param_idx,
                                 diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
@@ -1364,7 +1338,10 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                }
+                    is_valid
+                } else {
+                    false
+                };
 
                 // TS2693: Check if parameter name without type annotation
                 // refers to a type (e.g., `[K]: number` where `K` is a type alias).
@@ -1424,7 +1401,7 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if is_valid_index_type || is_valid_via_ast {
+                if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         if number_index.is_none() {
                             number_index = Some(info);
