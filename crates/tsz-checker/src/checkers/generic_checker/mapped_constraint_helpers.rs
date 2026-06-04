@@ -345,6 +345,7 @@ impl<'a> CheckerState<'a> {
                 if !self
                     .required_mapped_constraint_relation_outcome(arg_type, source_type)
                     .related
+                    && !self.conditional_result_branches_satisfy_constraint(arg_type, source_type)
                 {
                     return false;
                 }
