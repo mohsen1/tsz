@@ -430,7 +430,7 @@ impl<'a> Printer<'a> {
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
             if let Some(body_node) = self.arena.get(method.body) {
                 let temp_count =
-                    self.estimate_assignment_destructuring_temps_in_constructor(body_node);
+                    self.estimate_private_destructuring_receiver_temps_in_function_body(body_node);
                 if temp_count > 0 {
                     self.preallocate_assignment_temps(temp_count);
                 }

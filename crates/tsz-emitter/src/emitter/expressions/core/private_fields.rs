@@ -221,6 +221,14 @@ impl<'a> Printer<'a> {
             })
     }
 
+    pub(in crate::emitter) fn native_private_destructuring_receiver_needs_temp(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        self.try_extract_private_field_access(idx)
+            .is_some_and(|access| !self.receiver_is_plain_identifier(access.expression))
+    }
+
     fn private_member_is_static(&self, clean_name: &str) -> bool {
         let Some((_, class_alias)) = self.private_static_class_alias.as_ref() else {
             return false;

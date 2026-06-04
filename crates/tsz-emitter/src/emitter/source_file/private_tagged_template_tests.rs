@@ -349,6 +349,26 @@ class A {
 }
 
 #[test]
+fn instance_private_field_destructuring_method_keeps_plain_receiver_direct() {
+    let source = r#"
+class A {
+    #field;
+    static test(_a) {
+        [_a.#field] = [2];
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "static test(_a) {\n        [({ set value(_b) { __classPrivateFieldSet(_a, _A_field, _b, \"f\"); } }).value] = [2];\n    }"
+        ),
+        "Instance private field destructuring in methods should not reserve a receiver temp for plain identifier receivers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_async_generator_helpers_preserve_function_kind() {
     let source = r#"
 const Widget = class {
