@@ -412,27 +412,12 @@ impl<'a> CheckerState<'a> {
             if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
                 seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
-            // Reset resolution fuel between top-level statements so that a
-            // large-lib type-graph materialisation in one statement (e.g. a DOM
-            // call that triggers the full HTMLElement prototype chain) does not
-            // exhaust the global budget and cause subsequent statements in the
-            // same file to receive ERROR types, silently dropping TS2322/TS2345
-            // diagnostics (issue #12144).  The inner worklist guards inside
-            // `ensure_refs_resolved` still bound the work per statement.
-            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
-            // Likewise reset the session's generic-instantiation fuel between
-            // top-level statements. This budget (`MAX_GLOBAL_INSTANTIATION_FUEL`)
-            // is cumulative per file, so a statement that performs heavy generic
-            // Application evaluation (deep builder/query chains, large keyof
-            // unions) can exhaust it and leave `instantiation_limits_exceeded()`
-            // true for every following statement. When that happens, contextual
-            // typing of later callback arguments bails to `any`, which spuriously
-            // strips parameter context (TS7006) and then reports TS2347 on the
-            // now-"untyped" generic calls inside the callback (issue #10677). The
-            // per-context `MAX_INSTANTIATION_DEPTH` and session depth limit still
-            // bound the work performed within any single statement.
-            self.ctx.eval_session.reset_instantiation_fuel();
-            self.ctx.depth_exceeded.set(false);
+            // The per-statement fuel-budget reset (generic-instantiation and
+            // lazy-resolution) now happens once for every statement inside
+            // `StatementChecker::check_with_request`, so heavy work in one
+            // statement cannot starve the next in any statement-list context.
+            // See `reset_per_statement_fuel_budgets` for the full rationale
+            // (issues #12144, #10677, #10683).
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {
                 self.ctx.is_unreachable = true;
@@ -1537,6 +1522,43 @@ impl<'a> CheckerState<'a> {
     /// while providing actual implementations via the `StatementCheckCallbacks` trait.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
         StatementChecker::check(stmt_idx, self);
+    }
+
+    /// Reset the cumulative per-file fuel budgets that bound generic
+    /// `Application` evaluation and lazy reference resolution, plus the
+    /// transient depth-exceeded flag.
+    ///
+    /// Both budgets (`MAX_GLOBAL_INSTANTIATION_FUEL` and the lazy-resolution
+    /// worklist budget) accumulate across every statement in a file. A single
+    /// statement that performs heavy generic evaluation (deep builder/query
+    /// chains over large `keyof` unions — kysely is the canonical witness) can
+    /// exhaust a budget and leave `instantiation_limits_exceeded()` /
+    /// resolution-fuel-exhausted permanently true for every *following*
+    /// statement. When that happens, later statements resolve generic receiver
+    /// types to opaque/`any`: contextual typing of a callback argument then
+    /// collapses, so the callback parameter is reported as implicitly `any`
+    /// (TS7006) and the generic calls inside the callback are treated as
+    /// untyped (TS2347); large-lib materialisations likewise drop TS2322/TS2345
+    /// (issues #12144, #10677).
+    ///
+    /// Resetting is monotonically safe — it only grants the next statement a
+    /// fresh budget to do *more* resolution work, never less — so it cannot
+    /// introduce new ERROR/`any` degradation. The per-context
+    /// `MAX_INSTANTIATION_DEPTH`, the session depth limit, and the per-statement
+    /// resolution worklist guards still bound the work performed within any
+    /// single statement, so runaway recursive types still terminate.
+    ///
+    /// Mirrors the granularity tsc uses (it has no cumulative per-file budget,
+    /// only per-relation depth limits). Invoked once per statement from
+    /// `StatementChecker::check_with_request` (via `reset_between_statements`),
+    /// so every statement-list context — top level, block/function body, switch
+    /// case clause, loop and if bodies — is covered uniformly and a heavy
+    /// statement inside a method body cannot starve a later callback in the same
+    /// body.
+    pub(crate) fn reset_per_statement_fuel_budgets(&mut self) {
+        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        self.ctx.eval_session.reset_instantiation_fuel();
+        self.ctx.depth_exceeded.set(false);
     }
 
     pub(crate) fn check_statement_with_request(
