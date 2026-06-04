@@ -19,7 +19,7 @@ impl<'a> Printer<'a> {
     /// runtime. It keys purely on structural facts (no initializer + define
     /// semantics enabled) and intentionally does not re-check abstract/declare/
     /// private/accessor — those are filtered independently at each call site.
-    pub(super) const fn no_init_property_is_runtime_materialized(
+    pub(in crate::emitter) const fn no_init_property_is_runtime_materialized(
         &self,
         prop: &tsz_parser::parser::node::PropertyDeclData,
     ) -> bool {
