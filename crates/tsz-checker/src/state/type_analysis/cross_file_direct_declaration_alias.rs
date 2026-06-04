@@ -132,7 +132,26 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::LITERAL_TYPE,
             );
             if alias_contains_literal {
-                return None;
+                let (alias_body, params) = self.lower_cross_arena_type_alias_declaration(
+                    sym_id,
+                    decl_idx,
+                    symbol_arena,
+                    type_alias,
+                );
+                if matches!(alias_body, TypeId::UNKNOWN | TypeId::ERROR) {
+                    return None;
+                }
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, alias_body, params.clone());
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(alias_body, def_id);
+                let alias_type = self.ctx.types.lazy(def_id);
+                self.ctx
+                    .lib_delegation_cache
+                    .insert_symbol_type(sym_id, (alias_type, params.clone()));
+                return Some((alias_type, params));
             }
 
             let (alias_type, mut params) = self.resolve_lib_type_with_params(&name);

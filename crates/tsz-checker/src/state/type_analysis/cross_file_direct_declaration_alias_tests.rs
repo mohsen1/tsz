@@ -102,11 +102,64 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
             .map(std::convert::AsRef::as_ref)
             .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
 
+        let (ty, params) = state
+            .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+            .unwrap_or_else(|| {
+                panic!("{literal_union_alias} literal declaration alias should lower directly")
+            });
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+        assert!(params.is_empty(), "{literal_union_alias} is non-generic");
+        let def_id = state
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(
+                state
+                    .ctx
+                    .definition_store
+                    .get_body(state.ctx.get_or_create_def_id(sym_id))
+                    .unwrap_or_else(|| panic!("{literal_union_alias} should register a body")),
+            )
+            .unwrap_or_else(|| panic!("{literal_union_alias} body should map back to an alias"));
+        assert_eq!(def_id, state.ctx.get_or_create_def_id(sym_id));
+        assert!(
+            state.ctx.lib_delegation_cache.symbol_type(sym_id).is_some(),
+            "{literal_union_alias} should populate the built-in lib delegation cache",
+        );
+    }
+
+    for generic_literal_alias in ["OptionalPostfixToken", "OptionalPrefixToken"] {
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get(generic_literal_alias)
+            .unwrap_or_else(|| {
+                panic!("{generic_literal_alias} should resolve to a DOM lib symbol")
+            });
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .unwrap_or_else(|| panic!("{generic_literal_alias} should have a delegate arena"));
+
+        let (ty, params) = state
+            .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+            .unwrap_or_else(|| {
+                panic!("{generic_literal_alias} generic literal alias should lower directly")
+            });
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+        assert_eq!(params.len(), 1, "{generic_literal_alias} generic arity");
         assert!(
             state
-                .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
-                .is_none(),
-            "{literal_union_alias} should stay on the normal cross-file path so recursive mapped inference preserves its string-like apparent shape",
+                .ctx
+                .definition_store
+                .get_body(state.ctx.get_or_create_def_id(sym_id))
+                .is_some(),
+            "{generic_literal_alias} should register a body",
         );
     }
 }
