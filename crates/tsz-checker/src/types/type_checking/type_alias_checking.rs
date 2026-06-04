@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
                     body_type,
                 );
             if !type_params.is_empty() || can_register_non_generic_conditional {
-                let alias_def_id = self.ctx.get_or_create_def_id(alias_sid);
+                let _ = self.ctx.get_or_create_def_id(alias_sid);
                 let registered_type = if can_register_non_generic_conditional {
                     self.evaluate_type_with_env_uncached(body_type)
                 } else {
@@ -364,7 +364,6 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_types.insert(alias_sid, registered_type);
                 self.ctx
                     .register_resolved_type(alias_sid, registered_type, type_params);
-                self.ctx.clear_type_evaluation_caches_for_def(alias_def_id);
             }
         }
         record_type_alias_phase_timing(
