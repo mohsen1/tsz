@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
             };
             let name_atom = self.ctx.types.intern_string(&property_name);
             let type_id = if sig.type_annotation.is_some() {
-                if let Some(type_id) = self.try_lower_simple_actual_lib_type_reference(
+                if let Some(type_id) = self.try_lower_simple_actual_lib_annotation(
                     sig.type_annotation,
                     facts.allow_actual_lib_type_references,
                 ) {
@@ -357,6 +357,63 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.lazy(def_id))
     }
 
+    fn try_lower_simple_actual_lib_annotation(
+        &mut self,
+        type_idx: NodeIndex,
+        allow_actual_lib_type_references: bool,
+    ) -> Option<TypeId> {
+        if !allow_actual_lib_type_references {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_actual_lib_type_reference_outcome(
+                ActualLibTypeReferenceOutcome::Disabled,
+            );
+            return None;
+        }
+
+        let node = self.ctx.arena.get(type_idx)?;
+        let factory = self.ctx.types.factory();
+        match node.kind {
+            kind if kind == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                let wrapped = self.ctx.arena.get_wrapped_type(node)?;
+                self.try_lower_simple_actual_lib_annotation(wrapped.type_node, true)
+            }
+            kind if kind == syntax_kind_ext::UNION_TYPE
+                || kind == syntax_kind_ext::INTERSECTION_TYPE =>
+            {
+                let composite = self.ctx.arena.get_composite_type(node)?;
+                let mut members = Vec::with_capacity(composite.types.nodes.len());
+                for member_idx in composite.types.nodes.iter().copied() {
+                    if let Some(member_type) =
+                        self.try_lower_simple_actual_lib_annotation(member_idx, true)
+                    {
+                        members.push(member_type);
+                    } else if self.is_simple_local_interface_fastpath_type(member_idx) {
+                        members.push(self.get_type_from_type_node_in_type_literal(member_idx));
+                    } else {
+                        return None;
+                    }
+                }
+                Some(if node.kind == syntax_kind_ext::UNION_TYPE {
+                    factory.union(members)
+                } else {
+                    factory.intersection(members)
+                })
+            }
+            kind if kind == syntax_kind_ext::ARRAY_TYPE => {
+                let array = self.ctx.arena.get_array_type(node)?;
+                let element_type = self
+                    .try_lower_simple_actual_lib_annotation(array.element_type, true)
+                    .or_else(|| {
+                        self.is_simple_local_interface_fastpath_type(array.element_type)
+                            .then(|| {
+                                self.get_type_from_type_node_in_type_literal(array.element_type)
+                            })
+                    })?;
+                Some(factory.array(element_type))
+            }
+            _ => self.try_lower_simple_actual_lib_type_reference(type_idx, true),
+        }
+    }
+
     fn is_simple_local_interface_primitive_type_reference(
         &self,
         node: &tsz_parser::parser::node::Node,
@@ -556,7 +613,9 @@ mod tests {
     use super::*;
     use crate::context::{CheckerContext, CheckerOptions, LibContext};
     use crate::query_boundaries::common::TypeInterner;
-    use crate::query_boundaries::common::{lazy_def_id, raw_property_type};
+    use crate::query_boundaries::common::{
+        array_element_type, lazy_def_id, raw_property_type, union_members,
+    };
     use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
@@ -637,6 +696,130 @@ mod tests {
         assert_eq!(
             lazy_def_id(state.ctx.types.as_type_database(), href_type),
             Some(expected_def_id),
+        );
+    }
+
+    #[test]
+    fn simple_actual_lib_interface_lowers_wrapped_actual_lib_property_refs() {
+        let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        let dom = lib_files
+            .iter()
+            .find(|lib| {
+                lib.arena
+                    .source_files
+                    .first()
+                    .is_some_and(|source_file| source_file.file_name.ends_with("dom.d.ts"))
+            })
+            .expect("dom lib should be loaded");
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            dom.arena.as_ref(),
+            dom.binder.as_ref(),
+            &types,
+            "dom.d.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("DisplayMediaStreamOptions")
+            .expect("DisplayMediaStreamOptions should be a DOM lib interface");
+        let declarations = state
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .expect("DisplayMediaStreamOptions symbol should exist")
+            .declarations
+            .clone();
+        let interface_type = state
+            .try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl: false,
+                    has_cross_file_same_index: false,
+                    has_local_interface_decl: true,
+                    has_local_interface_heritage_extends: false,
+                    has_local_computed_property_name: false,
+                    suppress_missing_interface_decl_reject: false,
+                    allow_actual_lib_type_references: true,
+                },
+            )
+            .expect("simple DOM interface should lower wrapped actual-lib refs");
+
+        let audio = state.ctx.types.intern_string("audio");
+        let audio_type =
+            raw_property_type(state.ctx.types.as_type_database(), interface_type, audio)
+                .expect("audio property should be present");
+        let members = union_members(state.ctx.types.as_type_database(), audio_type)
+            .expect("audio should lower as a union");
+        let constraints_def = state
+            .resolve_actual_lib_name_to_def_id_for_lowering("MediaTrackConstraints")
+            .expect("MediaTrackConstraints should have actual-lib identity");
+        assert!(
+            members.iter().copied().any(|member| {
+                lazy_def_id(state.ctx.types.as_type_database(), member) == Some(constraints_def)
+            }),
+            "union should preserve MediaTrackConstraints lazy identity",
+        );
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("GetComposedRangesOptions")
+            .expect("GetComposedRangesOptions should be a DOM lib interface");
+        let declarations = state
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .expect("GetComposedRangesOptions symbol should exist")
+            .declarations
+            .clone();
+        let interface_type = state
+            .try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl: false,
+                    has_cross_file_same_index: false,
+                    has_local_interface_decl: true,
+                    has_local_interface_heritage_extends: false,
+                    has_local_computed_property_name: false,
+                    suppress_missing_interface_decl_reject: false,
+                    allow_actual_lib_type_references: true,
+                },
+            )
+            .expect("simple DOM interface should lower array actual-lib refs");
+
+        let shadow_roots = state.ctx.types.intern_string("shadowRoots");
+        let shadow_roots_type = raw_property_type(
+            state.ctx.types.as_type_database(),
+            interface_type,
+            shadow_roots,
+        )
+        .expect("shadowRoots property should be present");
+        let shadow_root_type =
+            array_element_type(state.ctx.types.as_type_database(), shadow_roots_type)
+                .expect("shadowRoots should lower as an array");
+        let shadow_root_def = state
+            .resolve_actual_lib_name_to_def_id_for_lowering("ShadowRoot")
+            .expect("ShadowRoot should have actual-lib identity");
+        assert_eq!(
+            lazy_def_id(state.ctx.types.as_type_database(), shadow_root_type),
+            Some(shadow_root_def),
         );
     }
 
