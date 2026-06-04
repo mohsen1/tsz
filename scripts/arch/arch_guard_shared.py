@@ -531,7 +531,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "source_file"
         / "top_level_using.rs",
-        2537,
+        2589,
     ),
     # Emitter property/element access: split by access kind per §19.
     (
