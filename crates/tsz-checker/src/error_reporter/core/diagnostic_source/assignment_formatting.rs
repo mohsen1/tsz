@@ -891,10 +891,21 @@ impl<'a> CheckerState<'a> {
                 // For plain `keyof SomeName`, the annotation text is already correct
                 // (tsc shows `keyof A`, not the expanded literal union). Only route
                 // through TypeFormatter when the operand contains a union/intersection.
+                //
+                // An *anonymous* operand — an inline object type literal
+                // (`keyof { a: 1 }`) — has no writable name, so tsc renders the
+                // evaluated key set (`"a"`), not the `keyof { ... }` spelling.
+                // Route those through the TypeFormatter, which reduces the
+                // operator. A named operand keeps the annotation text.
+                let operand_is_anonymous = crate::query_boundaries::common::keyof_inner_type(
+                    self.ctx.types,
+                    display_target,
+                )
+                .is_some_and(|operand| self.keyof_operand_is_anonymous(operand));
                 let operand_text = display.trim_start_matches("keyof ").trim();
                 let needs_distribution = operand_text.contains('|')
                     || (operand_text.contains('&') && operand_text.starts_with('('));
-                if needs_distribution {
+                if needs_distribution || operand_is_anonymous {
                     return self.format_type_for_assignability_message(display_target);
                 }
                 return self.format_annotation_like_type(&display);

@@ -330,6 +330,26 @@ impl<'a> CheckerState<'a> {
             {
                 return format!("keyof {}", symbol.escaped_name);
             }
+
+            // Anonymous object operand (an inline `keyof { ... }` type literal):
+            // the operand has no user-visible name, so tsc renders the evaluated
+            // key set (`"a" | "b"`) rather than the `keyof { ... }` spelling — an
+            // index type only prints `keyof X` when `X` is a named reference. The
+            // alias-name branch above already returned for a named alias and the
+            // symbol-name branch for a symbol-bearing operand, so here it is
+            // enough to confirm the operand is an object with no binder symbol.
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, keyof_inner)
+                .is_some_and(|shape| shape.symbol.is_none())
+            {
+                let evaluated = self.evaluate_type_with_env(ty);
+                if evaluated != ty
+                    && evaluated != TypeId::ERROR
+                    && crate::query_boundaries::common::keyof_inner_type(self.ctx.types, evaluated)
+                        .is_none()
+                {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
+            }
         }
 
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {

@@ -7,6 +7,18 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// True when a `keyof` operand has no user-visible name: it is an object type
+    /// (typically an inline object type literal) with no binder symbol *and* no
+    /// type-alias name for display. Such an operand cannot be written as
+    /// `keyof Name`, so tsc renders the reduced key set (`"a" | "b"`) instead of
+    /// the `keyof { ... }` spelling. A named interface / class / alias fails this
+    /// predicate and keeps its `keyof Name` form.
+    pub(in crate::error_reporter) fn keyof_operand_is_anonymous(&self, operand: TypeId) -> bool {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+            .is_some_and(|shape| shape.symbol.is_none())
+            && self.lookup_type_alias_name_for_display(operand).is_none()
+    }
+
     /// True when `ty` is a `keyof X` whose operand `X` resolves to a plain object
     /// type with no string/number index signature. Only that shape yields a
     /// finite unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as a
