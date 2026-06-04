@@ -581,6 +581,16 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(ref_idx) else {
             return;
         };
+        // A template literal body collapses through its eagerly-evaluated
+        // interpolation spans, so the argument-bearing self-application that
+        // earns the body-position TS2315 lives inside a `${...}` span rather than
+        // at the top of the body (`type Str<T> = \`${T}${Str<...>}\``).
+        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
+            for span_expr in self.template_literal_type_span_expressions(ref_idx) {
+                self.validate_collapsed_alias_body_reference(span_expr);
+            }
+            return;
+        }
         let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
             return;
         };
