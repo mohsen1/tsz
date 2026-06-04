@@ -35,11 +35,11 @@ fn es2015_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit(source, ScriptTarget::ES2015);
 
     assert!(
-        output.contains("class Inner {\n        constructor() {\n            this[_c] = 456;"),
+        output.contains("class Inner {\n        constructor() {\n            this[_d] = 456;"),
         "Instance computed field should use the captured computed-name temp in the constructor.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("_b = _a.c,\n    _c = _a.c,\n") && output.contains("_d[_b] = 123,"),
+        output.contains("_c = _a.c,\n    _d = _a.c,\n") && output.contains("_b[_c] = 123,"),
         "Computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
     );
 }
@@ -75,6 +75,24 @@ fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
             && !output.contains("_b = this.c")
             && !output.contains("_c = this.c"),
         "ES5 define-mode computed names must not use unbound `this`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_static_initializer_class_expr_result_temp_precedes_computed_key_temps() {
+    let source = "class C {\n    static c = \"foo\";\n    static bar = class Inner {\n        static [this.c] = 123;\n        [this.c] = 456;\n    };\n}\n";
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("var _a, _b, _c, _d;"),
+        "Static-initializer class-expression temps should share the hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.bar = (_b = class Inner {\n        constructor() {\n            this[_d] = 456;\n        }\n    },\n    _c = _a.c,\n    _d = _a.c,\n    _b[_c] = 123,\n    _b);"
+        ),
+        "Class-expression result temp should be reserved before computed key temps while \
+         preserving enclosing static `this` alias evaluation.\nOutput:\n{output}"
     );
 }
 

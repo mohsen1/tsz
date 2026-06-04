@@ -21,7 +21,7 @@ use crate::transforms::private_fields_es5::{
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::{ClassData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{
     contains_async_arrow_function, contains_super_reference, contains_this_reference,
@@ -29,6 +29,48 @@ use tsz_parser::syntax::transform_utils::{
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    fn class_computed_property_names_contain_static_context_reference(
+        &self,
+        class: &ClassData,
+    ) -> bool {
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let name_idx = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .map(|prop| prop.name),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .map(|method| method.name),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .map(|accessor| accessor.name)
+                }
+                _ => None,
+            };
+            let Some(name_idx) = name_idx else {
+                return false;
+            };
+            let Some(name_node) = self.arena.get(name_idx) else {
+                return false;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return false;
+            }
+            self.arena
+                .get_computed_property(name_node)
+                .is_some_and(|computed| {
+                    contains_this_reference(self.arena, computed.expression)
+                        || contains_super_reference(self.arena, computed.expression)
+                })
+        })
+    }
+
     pub(in crate::emitter) fn emit_class_es6_with_options(
         &mut self,
         node: &Node,
@@ -1160,9 +1202,12 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
+        let computed_name_needs_class_expr_temp_first =
+            self.class_computed_property_names_contain_static_context_reference(class);
         let preplanned_class_expr_temp = if needs_static_comma_expr
             && private_class_alias.is_none()
-            && self.file_level_class_temp_reservations.contains_key(&_idx)
+            && (self.file_level_class_temp_reservations.contains_key(&_idx)
+                || computed_name_needs_class_expr_temp_first)
         {
             Some(self.make_class_static_temp_name_hoisted(_idx))
         } else {
