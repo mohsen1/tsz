@@ -102,11 +102,20 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
             .map(std::convert::AsRef::as_ref)
             .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
 
+        let (ty, params) = state
+            .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+            .unwrap_or_else(|| {
+                panic!("{literal_union_alias} literal declaration alias should lower directly")
+            });
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
         assert!(
-            state
-                .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
-                .is_none(),
-            "{literal_union_alias} should stay on the normal cross-file path so recursive mapped inference preserves its string-like apparent shape",
+            params.is_empty(),
+            "{literal_union_alias} should remain non-generic",
+        );
+        assert!(
+            state.ctx.lib_delegation_cache.symbol_type(sym_id).is_some(),
+            "{literal_union_alias} should populate the built-in lib delegation cache",
         );
     }
 }
