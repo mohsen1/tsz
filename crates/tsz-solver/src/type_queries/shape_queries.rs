@@ -187,6 +187,48 @@ pub fn is_generic_mapped_application_db<R: TypeResolver>(
     is_generic_mapped_type_db(db.as_type_database(), instantiated)
 }
 
+/// Returns `true` when `type_id` is a generic `Application` whose aliased body
+/// is a mapped type (e.g. `Partial<X>`, `Readonly<X>`, or a user
+/// `type F<T> = { [K in keyof T]... }`), regardless of whether the concrete
+/// instantiation still contains type parameters.
+///
+/// Unlike [`is_generic_mapped_application_db`], this inspects the *declared*
+/// alias body rather than the substituted result, so it stays `true` for fully
+/// concrete instantiations like `Partial<{ a: number }>`. Diagnostic
+/// elaboration uses it to decide that such applications must be compared
+/// structurally (drilling into `Types of property` / `The types of 'a.b'`
+/// chains) rather than via type-argument variance: tsc never reduces a mapped
+/// alias mismatch to a single covariant type-argument line because the type
+/// parameter does not occupy a plain argument position.
+pub fn application_base_is_mapped_type_db<R: TypeResolver>(
+    db: &dyn crate::construction::QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    let Some(def_id) = super::classifiers::get_lazy_def_id(db, app.base) else {
+        return false;
+    };
+    let type_db = db.as_type_database();
+    let Some(mut body) = resolver.resolve_lazy(def_id, type_db) else {
+        return false;
+    };
+    // The alias body may itself be a thin `Lazy` re-export; follow one more hop
+    // so `type Id<T> = ...` chains resolve to the mapped body.
+    if let Some(inner_def) = super::classifiers::get_lazy_def_id(type_db, body)
+        && let Some(resolved) = resolver.resolve_lazy(inner_def, type_db)
+    {
+        body = resolved;
+    }
+    crate::visitors::visitor_predicates::is_mapped_type(type_db, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +253,91 @@ mod tests {
             default: None,
             is_const: false,
         })
+    }
+
+    /// Minimal resolver that maps a single `DefId` to a pre-built alias body so
+    /// `application_base_is_mapped_type_db` can be exercised without the full
+    /// checker `TypeEnvironment`.
+    struct DefBodyResolver {
+        def_id: DefId,
+        body: TypeId,
+    }
+
+    impl TypeResolver for DefBodyResolver {
+        fn resolve_ref(
+            &self,
+            _symbol: crate::types::SymbolRef,
+            _interner: &dyn TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            (def_id == self.def_id).then_some(self.body)
+        }
+    }
+
+    fn make_identity_mapped(interner: &TypeInterner) -> TypeId {
+        let param = TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        interner.mapped(MappedType {
+            type_param: param,
+            constraint: interner.keyof(make_type_param(interner, "T")),
+            name_type: None,
+            template: TypeId::STRING,
+            readonly_modifier: None,
+            optional_modifier: None,
+        })
+    }
+
+    #[test]
+    fn application_base_is_mapped_type_detects_mapped_alias() {
+        let interner = TypeInterner::new();
+        let def_id = DefId(7);
+        let body = make_identity_mapped(&interner);
+        let resolver = DefBodyResolver { def_id, body };
+        let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+        assert!(application_base_is_mapped_type_db(
+            &interner, &resolver, app
+        ));
+    }
+
+    #[test]
+    fn application_base_is_mapped_type_rejects_non_mapped_alias() {
+        let interner = TypeInterner::new();
+        let def_id = DefId(7);
+        // Alias body is a plain object-ish type, not a mapped type.
+        let resolver = DefBodyResolver {
+            def_id,
+            body: TypeId::STRING,
+        };
+        let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+        assert!(!application_base_is_mapped_type_db(
+            &interner, &resolver, app
+        ));
+    }
+
+    #[test]
+    fn application_base_is_mapped_type_rejects_non_application() {
+        let interner = TypeInterner::new();
+        let resolver = DefBodyResolver {
+            def_id: DefId(7),
+            body: make_identity_mapped(&interner),
+        };
+        assert!(!application_base_is_mapped_type_db(
+            &interner,
+            &resolver,
+            TypeId::STRING
+        ));
+        assert!(!application_base_is_mapped_type_db(
+            &interner,
+            &resolver,
+            make_identity_mapped(&interner)
+        ));
     }
 
     #[test]
