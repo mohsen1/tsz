@@ -90,6 +90,98 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn interface_declarations_have_only_admitted_builtin_computed_names(
+        declarations: &[(NodeIndex, &NodeArena)],
+        delegate_binder: &BinderState,
+    ) -> bool {
+        declarations.iter().all(|(decl_idx, arena)| {
+            if !is_builtin_lib_declaration_arena(arena) {
+                return false;
+            }
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            interface.members.nodes.iter().copied().all(|member_idx| {
+                let Some(member_node) = arena.get(member_idx) else {
+                    return false;
+                };
+                let name_idx = arena
+                    .get_signature(member_node)
+                    .map(|signature| signature.name)
+                    .or_else(|| arena.get_accessor(member_node).map(|accessor| accessor.name));
+                let Some(name_idx) = name_idx else {
+                    return true;
+                };
+                let Some(name_node) = arena.get(name_idx) else {
+                    return false;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return true;
+                }
+                let Some(computed) = arena.get_computed_property(name_node) else {
+                    return false;
+                };
+                Self::computed_name_is_admitted_builtin_well_known_symbol(
+                    arena,
+                    delegate_binder,
+                    computed.expression,
+                )
+            })
+        })
+    }
+
+    fn computed_name_is_admitted_builtin_well_known_symbol(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if Self::binder_has_same_arena_symbol_value_declaration(arena, delegate_binder) {
+            return false;
+        }
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        if arena.get_identifier_text(access.expression) != Some("Symbol") {
+            return false;
+        }
+        matches!(
+            arena.get_identifier_text(access.name_or_argument),
+            Some("iterator" | "asyncIterator")
+        )
+    }
+
+    fn binder_has_same_arena_symbol_value_declaration(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+    ) -> bool {
+        let Some(sym_id) = delegate_binder.file_locals.get("Symbol") else {
+            return false;
+        };
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.flags & symbol_flags::VALUE == 0 {
+            return false;
+        }
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            if let Some(arenas) = delegate_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                return arenas
+                    .iter()
+                    .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), arena));
+            }
+            arena.get(decl_idx).is_some()
+        })
+    }
+
     pub(super) fn source_file_type_node_is_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,

@@ -75,10 +75,22 @@ impl<'a> CheckerState<'a> {
                 record_complex_reason(DirectCrossFileInterfaceComplexReason::SourceFileShape);
                 return None;
             }
-        } else if !allow_complex_declarations && (has_heritage || has_computed_names) {
-            record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
-            heritage_or_computed_reason();
-            return None;
+        } else if !allow_complex_declarations {
+            if has_heritage {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                heritage_or_computed_reason();
+                return None;
+            }
+            if has_computed_names
+                && !Self::interface_declarations_have_only_admitted_builtin_computed_names(
+                    &declarations,
+                    delegate_binder,
+                )
+            {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                heritage_or_computed_reason();
+                return None;
+            }
         }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);

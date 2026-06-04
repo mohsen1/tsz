@@ -75,6 +75,10 @@ include!("cross_file_direct/interface_methods.rs");
 mod actual_lib_tests;
 
 #[cfg(test)]
+#[path = "cross_file_direct_computed_symbol_tests.rs"]
+mod computed_symbol_tests;
+
+#[cfg(test)]
 #[path = "cross_file_direct_tests.rs"]
 mod tests;
 
