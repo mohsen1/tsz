@@ -11,12 +11,14 @@ use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
 mod deprecation_helpers;
 mod extends;
+mod lib_offsets;
 mod lib_resolution;
 
 use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
     resolve_extends_path,
 };
+use lib_offsets::find_lib_entry_offset;
 
 pub use lib_resolution::{
     LibReference, core_lib_name_for_target, default_lib_dir, default_lib_name_for_target,
@@ -4261,19 +4263,6 @@ fn validate_lib_values(
         for &idx in invalid_indices.iter().rev() {
             lib_array.remove(idx);
         }
-    }
-}
-
-/// Find the byte offset of a specific lib entry string within the source text.
-/// Searches for `"entry"` within the lib array section.
-fn find_lib_entry_offset(source: &str, entry: &str) -> u32 {
-    let search = format!("\"{entry}\"");
-    // Look for the lib array first
-    let lib_pos = source.find("\"lib\"").unwrap_or(0);
-    if let Some(pos) = source[lib_pos..].find(&search) {
-        (lib_pos + pos) as u32
-    } else {
-        0
     }
 }
 

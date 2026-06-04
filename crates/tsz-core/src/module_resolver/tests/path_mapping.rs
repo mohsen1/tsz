@@ -393,7 +393,8 @@ fn test_path_mapping_target_canonicalised_into_resolved_path() {
     // Rule covers `./X` (leading curdir), `./X/../Y` (embedded parent), and
     // non-wildcard `./X/../Y/Z` (no `*` in target). Each must produce a
     // resolved path with no surviving CurDir/ParentDir components.
-    let rows: &[(&str, &str, &str, &[&str], &str)] = &[
+    type PathMappingCanonicalizationRow<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str);
+    let rows: &[PathMappingCanonicalizationRow<'_>] = &[
         (
             "@app/*",
             "@app/",

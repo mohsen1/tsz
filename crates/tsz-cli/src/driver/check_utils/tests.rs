@@ -271,9 +271,9 @@ fn ts_directive_suppresses_next_line_from_template_substitution() {
     apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
 
     assert!(
-            diagnostics.is_empty(),
-            "Expected template-substitution @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
-        );
+        diagnostics.is_empty(),
+        "Expected template-substitution @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -313,9 +313,9 @@ fn ts_ignore_suppresses_jsdoc_at_type_ts2304_in_declaration_emit() {
     )];
     apply_ts_directive_suppression("repro.js", source, &mut diagnostics, true);
     assert!(
-            diagnostics.is_empty(),
-            "Expected @ts-ignore to suppress JSDoc @type TS2304 even during declaration emit, got: {diagnostics:?}"
-        );
+        diagnostics.is_empty(),
+        "Expected @ts-ignore to suppress JSDoc @type TS2304 even during declaration emit, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -351,9 +351,9 @@ fn ts_expect_error_uses_next_line_with_cr_only_line_endings() {
     apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
 
     assert!(
-            diagnostics.is_empty(),
-            "Expected CR-only @ts-expect-error to suppress the next-line diagnostic, got: {diagnostics:?}"
-        );
+        diagnostics.is_empty(),
+        "Expected CR-only @ts-expect-error to suppress the next-line diagnostic, got: {diagnostics:?}"
+    );
 }
 
 /// Anchor regression for TS2578.
@@ -646,15 +646,15 @@ fn declaration_extension_variants_do_not_require_imported_tslib_helpers() {
 #[test]
 fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
     let program = merged_program(&[
-            (
-                "/app/a.ts",
-                "declare var dec: any;\n@dec export class A {}\n",
-            ),
-            (
-                "/app/node_modules/tslib/index.d.ts",
-                "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
-            ),
-        ]);
+        (
+            "/app/a.ts",
+            "declare var dec: any;\n@dec export class A {}\n",
+        ),
+        (
+            "/app/node_modules/tslib/index.d.ts",
+            "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
+        ),
+    ]);
     let options = ResolvedCompilerOptions {
         import_helpers: true,
         checker: tsz_common::checker_options::CheckerOptions {
@@ -673,30 +673,30 @@ fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
     );
 
     assert!(
-            !diagnostics
-                .iter()
-                .any(|diag| diag.code == 2343 || diag.code == 2354),
-            "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
-        );
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2343 || diag.code == 2354),
+        "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
+    );
 }
 
 #[test]
 fn ambient_tslib_helper_comments_do_not_satisfy_missing_helpers() {
     let program = merged_program(&[
-            (
-                "main.ts",
-                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
-            ),
-            (
-                "node_modules/tslib/tslib.d.ts",
-                r#"declare module "tslib" {
+        (
+            "main.ts",
+            "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+        ),
+        (
+            "node_modules/tslib/tslib.d.ts",
+            r#"declare module "tslib" {
   // Mentioning __importStar in a comment should not provide any helper export.
   // export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
   export {};
 }
 "#,
-            ),
-        ]);
+        ),
+    ]);
     let mut options = ResolvedCompilerOptions {
         import_helpers: true,
         ..Default::default()
@@ -727,19 +727,19 @@ fn ambient_tslib_helper_comments_do_not_satisfy_missing_helpers() {
 #[test]
 fn ambient_tslib_helper_declarations_satisfy_async_helpers() {
     let program = merged_program(&[
-            (
-                "main.ts",
-                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
-            ),
-            (
-                "node_modules/tslib/tslib.d.ts",
-                r#"declare module "tslib" {
+        (
+            "main.ts",
+            "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+        ),
+        (
+            "node_modules/tslib/tslib.d.ts",
+            r#"declare module "tslib" {
   export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
   export declare function __generator(thisArg: any, body: any): any;
 }
 "#,
-            ),
-        ]);
+        ),
+    ]);
     let mut options = ResolvedCompilerOptions {
         import_helpers: true,
         ..Default::default()
@@ -754,9 +754,9 @@ fn ambient_tslib_helper_declarations_satisfy_async_helpers() {
     );
 
     assert!(
-            !diagnostics.iter().any(|diag| diag.code == 2343),
-            "Did not expect missing-helper diagnostics when ambient tslib declares async helpers. Got: {diagnostics:#?}"
-        );
+        !diagnostics.iter().any(|diag| diag.code == 2343),
+        "Did not expect missing-helper diagnostics when ambient tslib declares async helpers. Got: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -793,11 +793,11 @@ fn no_types_and_symbols_still_honors_project_local_tslib() {
     );
 
     assert!(
-            !diagnostics
-                .iter()
-                .any(|diag| diag.code == 2343 || diag.code == 2354),
-            "Did not expect tslib helper diagnostics when a project-local tslib exists. Got: {diagnostics:#?}"
-        );
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2343 || diag.code == 2354),
+        "Did not expect tslib helper diagnostics when a project-local tslib exists. Got: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -1374,9 +1374,9 @@ fn no_check_multiple_expect_error_directives_do_not_emit_ts2578() {
     );
     let diagnostics = collect_no_check_diags("a.ts", source);
     assert!(
-            !diagnostics.iter().any(|d| d.code == 2578),
-            "TS2578 must not fire for multiple unused directives under --noCheck, got: {diagnostics:#?}"
-        );
+        !diagnostics.iter().any(|d| d.code == 2578),
+        "TS2578 must not fire for multiple unused directives under --noCheck, got: {diagnostics:#?}"
+    );
 }
 
 fn check_directive_suppression(source: &str, codes_in: &[u32]) -> Vec<Diagnostic> {
@@ -1424,9 +1424,9 @@ fn apply_suppression_never_suppresses_js_only_syntactic_errors() {
         "TS8010 must not be suppressed, got: {remaining:#?}"
     );
     assert!(
-            !remaining.iter().any(|d| d.code == 2578),
-            "TS2578 must not be emitted when directive targets a JS syntactic diagnostic, got: {remaining:#?}"
-        );
+        !remaining.iter().any(|d| d.code == 2578),
+        "TS2578 must not be emitted when directive targets a JS syntactic diagnostic, got: {remaining:#?}"
+    );
 }
 
 #[test]

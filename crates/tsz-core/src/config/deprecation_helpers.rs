@@ -2,7 +2,7 @@ use tsz_common::diagnostics::data::diagnostic_messages;
 
 /// Returns true when `tsc 6.0.3` appends the migration-URL note for `option_key`.
 ///
-/// `tsc` only chains "Visit https://aka.ms/ts6" when the deprecated option has an
+/// `tsc` only chains "Visit <https://aka.ms/ts6>" when the deprecated option has an
 /// active migration target documented in the TS 6 migration guide (module-resolution
 /// overhaul, target upgrade). Options that are deprecated without a documented
 /// migration path (e.g. `allowSyntheticDefaultImports=false`, `esModuleInterop=false`)
