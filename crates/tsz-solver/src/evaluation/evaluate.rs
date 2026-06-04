@@ -44,6 +44,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 mod closed_eval;
+mod display_alias;
 mod support;
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -1681,14 +1682,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::Application(_))
             )
             && display_provenance::display_alias(self.interner, result).is_some();
-        // Variadic tuple aliases (`[T, ...A]`, `[...A, ...B]`) lose their alias
-        // symbol when instantiated via spreading, so tsc prints the resolved
-        // tuple structurally. Skip the repaint to match. Checked last so the
-        // resolver lookup is only paid when the earlier skips don't already fire.
-        if !skip_type_alias_repaint
-            && !keep_existing_conditional_branch_alias
-            && !self.suppress_spread_tuple_alias_repaint(result, display_origin)
-        {
+        if self.should_record_application_alias(
+            result,
+            display_origin,
+            skip_type_alias_repaint,
+            keep_existing_conditional_branch_alias,
+        ) {
             let priority = if prefer_application_display_alias
                 || (self.expand_application_display_alias_args
                     && matches!(
@@ -1810,9 +1809,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //    alias lets diagnostics show e.g. `Mapped2<K>` instead of the
                 //    expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
                 if evaluated_is_fresh
-                    && (evaluated_is_mapped
-                        || self.is_recursive_type_alias_application(original_type_id))
-                    && !self.suppress_spread_tuple_alias_repaint(evaluated, original_type_id)
+                    && self.should_store_structural_display_alias(
+                        evaluated,
+                        original_type_id,
+                        evaluated_is_mapped,
+                    )
                 {
                     self.interner
                         .store_display_alias_preferring_application(evaluated, original_type_id);
@@ -1843,104 +1844,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             },
             AliasApplicationPriority::PreferApplication,
         );
-    }
-
-    /// Classify an `Application`'s type-alias body for tuple display-alias
-    /// purposes.
-    ///
-    /// * `Some(true)`  — the alias body resolves to a *fixed* (non-spread)
-    ///   tuple literal, e.g. `Pair<A, B> = [A, B]`.
-    /// * `Some(false)` — the alias body resolves to something that yields a
-    ///   tuple through spreading or branch resolution: a spread/variadic tuple
-    ///   (`[T, ...A]`, `[...A, ...B]`) or a conditional/recursive alias that
-    ///   builds tuples (`Zip`, `Reverse`, …).
-    /// * `None`        — `application` is not a resolvable type-alias
-    ///   application; the caller keeps its existing behaviour.
-    fn application_alias_body_is_fixed_tuple(&self, application: TypeId) -> Option<bool> {
-        let TypeData::Application(app_id) = self.interner.lookup(application)? else {
-            return None;
-        };
-        let app = self.interner.type_application(app_id);
-        let def_id = self.resolve_application_def_id(app.base)?;
-        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
-        let inner = crate::type_queries::data::unwrap_readonly(self.interner, body);
-        Some(
-            matches!(self.interner.lookup(inner), Some(TypeData::Tuple(_)))
-                && !crate::type_queries::data::is_variadic_tuple(self.interner, inner),
-        )
-    }
-
-    /// True when a display-alias repaint of `evaluated` to the named
-    /// `application` form must be skipped.
-    ///
-    /// tsc keeps an alias symbol on a tuple result only when the alias body is
-    /// a fixed (non-spread) tuple literal (`Pair<A, B> = [A, B]`). Spread
-    /// tuple aliases (`Prepend`, `Concat`, …) and conditional/recursive
-    /// aliases that build tuples by spreading (`Zip`, `Reverse`, …) produce a
-    /// fresh tuple via `getSpreadType`, which carries no `aliasSymbol`, so tsc
-    /// prints the resolved tuple structurally (`[1, 2, 3]`). Mirror that here.
-    /// When the alias body cannot be resolved, fall back to the existing
-    /// behaviour and keep the repaint.
-    pub(in crate::evaluation) fn suppress_spread_tuple_alias_repaint(
-        &self,
-        evaluated: TypeId,
-        application: TypeId,
-    ) -> bool {
-        matches!(self.interner.lookup(evaluated), Some(TypeData::Tuple(_)))
-            && self.application_alias_body_is_fixed_tuple(application) == Some(false)
-    }
-
-    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
-        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
-            return false;
-        };
-        let app = self.interner.type_application(app_id);
-        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
-            return false;
-        };
-        if self.resolver.get_def_kind(def_id) != Some(DefKind::TypeAlias) {
-            return false;
-        }
-        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
-            return false;
-        };
-        let mut visited = FxHashSet::default();
-        self.type_reaches_alias_def(body, def_id, &mut visited)
-    }
-
-    fn type_reaches_alias_def(
-        &self,
-        type_id: TypeId,
-        target_def_id: DefId,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if type_id.is_intrinsic() || !visited.insert(type_id) {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Lazy(def_id))
-                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
-            {
-                return true;
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
-                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
-                {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-
-        let mut found = false;
-        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
-            if !found {
-                found = self.type_reaches_alias_def(child, target_def_id, visited);
-            }
-        });
-        found
     }
 
     /// Record a back-reference from an evaluated structural form to its
