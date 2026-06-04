@@ -1438,10 +1438,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Identifier-named namespaces are MODULE_DECLARATION nodes too, so skip them
                 // and keep walking; stop only when a string-literal MODULE_DECLARATION is found.
                 let mut current = NodeIndex(raw_idx as u32);
-                loop {
-                    let Some(parent_idx) = self.arena.parent_of(current) else {
-                        break;
-                    };
+                while let Some(parent_idx) = self.arena.parent_of(current) {
                     if parent_idx.is_none() {
                         break;
                     }
