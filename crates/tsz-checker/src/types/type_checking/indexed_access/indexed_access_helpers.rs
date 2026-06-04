@@ -444,13 +444,24 @@ impl<'a> CheckerState<'a> {
             if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
                 return None;
             }
-            if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                && let Some(name) = self.get_property_name(sig.name)
+            let name_node = self
+                .ctx
+                .arena
+                .get_signature(member_node)
+                .map(|sig| sig.name)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .map(|prop| prop.name)
+                });
+            if let Some(name_node) = name_node
+                && let Some(name) = self.get_property_name(name_node)
             {
                 let key_type = self
                     .ctx
                     .arena
-                    .get(sig.name)
+                    .get(name_node)
                     .filter(|name_node| name_node.kind == SyntaxKind::NumericLiteral as u16)
                     .and_then(|name_node| self.ctx.arena.get_literal(name_node))
                     .and_then(|lit| {
