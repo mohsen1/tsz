@@ -444,6 +444,8 @@ def build_json_report(
     allowlist: dict[str, AllowEntry],
     failures: list[str],
     git_context: Optional[dict[str, object]] = None,
+    warning_messages: Optional[list[str]] = None,
+    fail_on_warnings: bool = False,
 ) -> dict[str, object]:
     counts = grouped_counts(findings)
     summary = summarize_failures(failures)
@@ -457,12 +459,32 @@ def build_json_report(
     ]
     warning_count = len(exhausted_categories)
     allowlist_pressure_status = classify_allowlist_pressure(budget, exhausted_categories)
+    warnings = (
+        warning_messages if warning_messages is not None else warning_failures(file_summaries)
+    )
+    strict_warning_failed = fail_on_warnings and bool(warnings)
+    if failures:
+        status = "failed"
+    elif strict_warning_failed:
+        status = "warning_failed"
+    else:
+        status = "passed"
+    if strict_warning_failed:
+        strict_warning_status = "failed"
+    elif warnings:
+        strict_warning_status = "warn"
+    else:
+        strict_warning_status = "clear"
     return {
-        "ok": not failures,
-        "status": "failed" if failures else "passed",
+        "ok": not failures and not strict_warning_failed,
+        "status": status,
         "output_surgery_status": "failed" if failures else "passed",
         "warning_count": warning_count,
         "warning_status": "warn" if warning_count else "clear",
+        "fail_on_warnings": fail_on_warnings,
+        "strict_warning_status": strict_warning_status,
+        "warning_failures": warnings,
+        "warning_failure_count": len(warnings),
         "git_context": git_context if git_context is not None else build_git_context(),
         "total_findings": len(findings),
         "files_with_findings": len(counts),
@@ -567,7 +589,15 @@ def main(argv: list[str] | None = None) -> int:
     findings = scan()
     allowlist = load_allowlist()
     failures = audit(findings, allowlist)
-    json_report = build_json_report(findings, allowlist, failures)
+    file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
+    warnings = warning_failures(file_summaries)
+    json_report = build_json_report(
+        findings,
+        allowlist,
+        failures,
+        warning_messages=warnings,
+        fail_on_warnings=args.fail_on_warnings,
+    )
 
     if args.json_report is not None:
         write_json_report(args.json_report, json_report)
@@ -603,8 +633,6 @@ def main(argv: list[str] | None = None) -> int:
     if not args.json:
         pass_summary = format_pass_summary(findings, failures, allowlist)
         print(pass_summary)
-    file_summaries = build_file_summaries(grouped_counts(findings), allowlist)
-    warnings = warning_failures(file_summaries)
     if args.fail_on_warnings and warnings:
         print("\nOutput-surgery audit warnings failed by --fail-on-warnings:", file=sys.stderr)
         for warning in warnings:
