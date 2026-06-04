@@ -191,6 +191,34 @@ fn test_statement_starting_with_binary_operator_varies_with_operator_and_names()
 }
 
 #[test]
+fn test_statement_starting_with_assignment_operator_keeps_missing_left_binary() {
+    let cases = [
+        ("^= replacement;\n", SyntaxKind::CaretEqualsToken),
+        ("&&= fallback;\n", SyntaxKind::AmpersandAmpersandEqualsToken),
+        (
+            "??= defaultValue;\n",
+            SyntaxKind::QuestionQuestionEqualsToken,
+        ),
+    ];
+    for (source, op) in cases {
+        let ops = binary_ops_with_missing_left(source);
+        assert!(
+            ops.contains(&op),
+            "expected `<missing> {op:?} rhs` recovery for source {source:?}, got {ops:?}"
+        );
+    }
+}
+
+#[test]
+fn test_statement_starting_with_equals_recovers_to_rhs_expression() {
+    let ops = binary_ops_with_missing_left("= replacement;\n");
+    assert!(
+        !ops.contains(&SyntaxKind::EqualsToken),
+        "plain `=` statement recovery should resume at the RHS expression, got {ops:?}"
+    );
+}
+
+#[test]
 fn test_statement_starting_with_binary_operator_does_not_drop_operator() {
     // Regression guard: previously the parser skipped a leading binary operator
     // and produced just the right operand (`|| b` became `b`). Confirm the
