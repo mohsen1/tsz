@@ -356,13 +356,16 @@ impl Symbol {
     ///
     /// Script files (`is_external_module == false`) contribute every top-level
     /// declaration to the ambient global scope. External modules do not: a
-    /// reference to a module's top-level name from a *sibling* file is only
-    /// legal when the name was imported, so a module's pure type-only exports
-    /// (e.g. `export type`/`export interface`) must stay file-scoped — an
-    /// unqualified reference elsewhere is `TS2304`. Value-bearing exports,
-    /// module/namespace declarations, UMD exports, and global augmentations
-    /// remain cross-file visible because the CommonJS/export-assignment and
-    /// declaration-emit paths rely on reaching them by name across files.
+    /// module's top-level names — including its value exports — are reachable
+    /// from a *sibling* file only through an explicit `import`. An unqualified
+    /// reference elsewhere is `TS2304`, and the name must never silently bind
+    /// to a value export of an installed-but-unimported package (issue #12372:
+    /// a bare `Symbol` must resolve to the global `SymbolConstructor`, not to a
+    /// transitive package's exported `Symbol` function).
+    ///
+    /// The only ways an external module seeds the global scope are the ones
+    /// `tsc` honors: a UMD global (`export as namespace X`) and a `declare
+    /// global` augmentation. Everything else stays module-scoped.
     ///
     /// This single predicate governs both `program.globals` seeding and the
     /// `global_file_locals_index` cross-file fallback so the two tables agree.
@@ -370,15 +373,10 @@ impl Symbol {
     pub const fn is_cross_file_global(
         &self,
         is_external_module: bool,
-        is_declaration_file: bool,
         is_global_augmentation: bool,
     ) -> bool {
         let is_alias = self.has_any_flags(symbol_flags::ALIAS);
-        let has_value = self.has_any_flags(symbol_flags::VALUE) && self.is_exported;
-        let is_module_decl = self.has_any_flags(symbol_flags::MODULE);
-        (!is_alias && (!is_external_module || is_declaration_file || has_value || is_module_decl))
-            || self.is_umd_export
-            || is_global_augmentation
+        (!is_alias && !is_external_module) || self.is_umd_export || is_global_augmentation
     }
 
     /// Record a declaration and its stable source span.
