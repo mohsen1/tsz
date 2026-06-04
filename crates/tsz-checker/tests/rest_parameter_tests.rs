@@ -121,3 +121,47 @@ fn test_optional_rest_parameter_without_type_emits_ts2370() {
 
     assert!(has_error_ts2370(source));
 }
+
+// TS1013 was incorrectly emitted for trailing commas after rest parameters.
+// tsc has accepted trailing commas in parameter lists since TS 4.0 (TS#40707).
+// Regression tests ensuring TS1013 is NOT emitted.
+
+#[test]
+fn trailing_comma_after_rest_in_declare_function_is_accepted() {
+    let codes =
+        crate::test_utils::check_source_codes(r"declare function f(...args: number[],): void;");
+    assert!(
+        !codes.contains(&1013),
+        "TS1013 must not fire for trailing comma after rest parameter: {codes:?}"
+    );
+}
+
+#[test]
+fn trailing_comma_after_rest_with_preceding_params_is_accepted() {
+    let codes = crate::test_utils::check_source_codes(
+        r"declare function g(a: string, ...rest: boolean[],): void;",
+    );
+    assert!(
+        !codes.contains(&1013),
+        "TS1013 must not fire for trailing comma after rest (with leading params): {codes:?}"
+    );
+}
+
+#[test]
+fn trailing_comma_after_rest_in_arrow_function_is_accepted() {
+    let codes = crate::test_utils::check_source_codes(r"const f = (...args: string[],) => args;");
+    assert!(
+        !codes.contains(&1013),
+        "TS1013 must not fire for trailing comma after rest in arrow function: {codes:?}"
+    );
+}
+
+#[test]
+fn trailing_comma_after_rest_in_method_signature_is_accepted() {
+    let codes =
+        crate::test_utils::check_source_codes(r"interface I { method(...args: number[],): void; }");
+    assert!(
+        !codes.contains(&1013),
+        "TS1013 must not fire for trailing comma after rest in method signature: {codes:?}"
+    );
+}
