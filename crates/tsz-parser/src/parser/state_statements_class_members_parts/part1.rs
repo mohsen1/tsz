@@ -854,7 +854,7 @@ impl ParserState {
 
     /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
     /// at the position of the `declare` modifier in the given modifier list.
-    fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
+    pub(super) fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)

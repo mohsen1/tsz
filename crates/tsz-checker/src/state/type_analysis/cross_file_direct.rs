@@ -58,7 +58,7 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
-pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
     arena
         .source_files
         .first()
@@ -77,3 +77,7 @@ mod actual_lib_tests;
 #[cfg(test)]
 #[path = "cross_file_direct_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_source_option_bag_tests.rs"]
+mod source_option_bag_tests;

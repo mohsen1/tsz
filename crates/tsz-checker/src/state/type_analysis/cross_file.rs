@@ -1,5 +1,7 @@
 use crate::state::CheckerState;
 
+use crate::state_type_analysis::cross_file_direct::is_direct_lowering_source_file_arena;
+
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;

@@ -693,7 +693,8 @@ impl<'a> CheckerState<'a> {
                         delegate_binder,
                         symbol_arena,
                         false,
-                        symbol_type_cache_from_symbol_arena,
+                        symbol_type_cache_from_symbol_arena
+                            || is_direct_lowering_source_file_arena(symbol_arena),
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
