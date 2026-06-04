@@ -7,7 +7,66 @@
 use crate::context::CheckerContext;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 
+/// Decide whether a freshly produced diagnostic should replace an already
+/// emitted one that collides with it on the dedup key.
+///
+/// The two diagnostics are only ever compared here when they tie on
+/// location/code/message (`compare_skip_related_information` is `Equal`) but
+/// carry different related ("see also") information. Such pairs are genuinely
+/// distinct in rendered output, yet the dedup key cannot tell them apart, so
+/// "keep whichever was produced first" makes the surviving diagnostic — and
+/// therefore its sorted position — depend on relation traversal / solver
+/// memoization order. That is the non-determinism the canonical comparator's
+/// related-information tiebreaker is meant to remove but cannot, because dedup
+/// drops one entry before the final sort ever runs.
+///
+/// Resolve it deterministically: prefer the diagnostic that carries the richer
+/// elaboration (more related entries, so no "see also" context is lost to a
+/// shorter equivalent path), and break ties on equal-length related lists with
+/// the same canonical order [`Diagnostic::compare`] would impose. The result is
+/// independent of which path reached the diagnostic first.
+pub(crate) fn prefers_candidate_diagnostic(existing: &Diagnostic, candidate: &Diagnostic) -> bool {
+    debug_assert!(
+        existing.compare_skip_related_information(candidate).is_eq(),
+        "collision reconciliation requires matching location/code/message"
+    );
+    match candidate
+        .related_information
+        .len()
+        .cmp(&existing.related_information.len())
+    {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => candidate.compare(existing).is_lt(),
+    }
+}
+
 impl<'a> CheckerContext<'a> {
+    /// Deterministically reconcile a dedup-key collision against the already
+    /// emitted diagnostic list. Only diagnostics that carry related information
+    /// can outrank an existing entry, so plain (related-free) re-derivations —
+    /// the overwhelmingly common collision — short-circuit before any scan.
+    fn reconcile_related_information_collision(&mut self, candidate: Diagnostic) {
+        if candidate.related_information.is_empty() {
+            // A related-free diagnostic can never carry more "see also" context
+            // than an existing entry it ties with, so it cannot win; leaving the
+            // existing entry in place preserves the established dedup behavior.
+            return;
+        }
+        for existing in &mut self.diagnostics {
+            if !existing
+                .compare_skip_related_information(&candidate)
+                .is_eq()
+            {
+                continue;
+            }
+            if prefers_candidate_diagnostic(existing, &candidate) {
+                *existing = candidate;
+            }
+            return;
+        }
+    }
+
     fn diagnostic_dedup_key_from_parts(&self, start: u32, code: u32, message: &str) -> (u32, u32) {
         if code == 2318 && start == 0 {
             use std::hash::{Hash, Hasher};
@@ -227,6 +286,11 @@ impl<'a> CheckerContext<'a> {
         let key = self.diagnostic_dedup_key(&diag);
 
         if self.diagnostic_indices.emitted.contains(&key) {
+            // The dedup key already exists. When this candidate ties on
+            // location/code/message but carries different related information,
+            // pick the surviving entry deterministically instead of keeping
+            // whichever relation path produced its diagnostic first.
+            self.reconcile_related_information_collision(diag);
             return;
         }
         if diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
@@ -295,5 +359,76 @@ impl<'a> CheckerContext<'a> {
             return message;
         }
         format!("Type '{right} | NonNullable<{inner}>' is not assignable{suffix}")
+    }
+}
+
+#[cfg(test)]
+mod collision_reconciliation_tests {
+    use super::prefers_candidate_diagnostic;
+    use crate::diagnostics::Diagnostic;
+
+    fn base() -> Diagnostic {
+        Diagnostic::error(
+            "a.ts",
+            10,
+            4,
+            "Type 'A' is not assignable to type 'B'.",
+            2322,
+        )
+    }
+
+    #[test]
+    fn richer_related_information_is_preferred() {
+        let lean = base();
+        let rich = base().with_related("a.ts", 0, 1, "'B' is declared here.");
+        // The richer elaboration wins regardless of which side is the incumbent.
+        assert!(prefers_candidate_diagnostic(&lean, &rich));
+        assert!(!prefers_candidate_diagnostic(&rich, &lean));
+    }
+
+    #[test]
+    fn equal_length_related_breaks_tie_canonically() {
+        // Two equally rich elaborations that blame different "see also"
+        // locations must resolve to the canonically smaller one, independent of
+        // which was produced first.
+        let earlier = base().with_related("a.ts", 5, 1, "'A' is declared here.");
+        let later = base().with_related("a.ts", 99, 1, "'A' is declared here.");
+        assert!(prefers_candidate_diagnostic(&later, &earlier));
+        assert!(!prefers_candidate_diagnostic(&earlier, &later));
+    }
+
+    #[test]
+    fn identical_diagnostics_do_not_replace() {
+        let a = base().with_related("a.ts", 5, 1, "'A' is declared here.");
+        let b = base().with_related("a.ts", 5, 1, "'A' is declared here.");
+        assert!(!prefers_candidate_diagnostic(&a, &b));
+        assert!(!prefers_candidate_diagnostic(&b, &a));
+    }
+
+    #[test]
+    fn selection_is_order_independent() {
+        // Whichever order three equivalent-but-distinct diagnostics arrive in,
+        // the deterministic winner is the same one.
+        let mut variants = [
+            base().with_related("a.ts", 30, 1, "'A' is declared here."),
+            base().with_related("a.ts", 10, 1, "'A' is declared here."),
+            base().with_related("a.ts", 20, 1, "'A' is declared here."),
+        ];
+        let fold_winner = |order: &[Diagnostic]| -> Diagnostic {
+            let mut winner = order[0].clone();
+            for cand in &order[1..] {
+                if prefers_candidate_diagnostic(&winner, cand) {
+                    winner = cand.clone();
+                }
+            }
+            winner
+        };
+        let baseline = fold_winner(&variants);
+        variants.reverse();
+        assert_eq!(fold_winner(&variants), baseline);
+        variants.swap(0, 2);
+        assert_eq!(fold_winner(&variants), baseline);
+        // The canonical winner is the smallest related position.
+        assert_eq!(baseline.related_information[0].start, 10);
     }
 }
