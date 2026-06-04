@@ -473,6 +473,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(super) fn type_literal_ast_key_space_accepts_index(
+        &mut self,
+        object_type_node: NodeIndex,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(keyof_type) = self.type_literal_keyof_from_node(object_type_node) else {
+            return false;
+        };
+        let index_for_check = self.evaluate_type_with_env(index_type);
+        if self
+            .indexed_access_key_space_relation_outcome(index_for_check, keyof_type)
+            .related
+            || self
+                .indexed_access_key_space_relation_outcome(index_type, keyof_type)
+                .related
+        {
+            return true;
+        }
+        crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_for_check)
+            .or_else(|| {
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    index_type,
+                )
+            })
+            .is_some_and(|constraint| {
+                let constraint = self.evaluate_type_with_env(constraint);
+                self.indexed_access_key_space_relation_outcome(constraint, keyof_type)
+                    .related
+            })
+    }
+
     pub(super) fn type_literal_member_values_accept_index(
         &mut self,
         type_node_idx: NodeIndex,

@@ -318,6 +318,53 @@ type T2<K extends 'a'|'b'> = T1<K>[K];
 }
 
 #[test]
+fn test_type_literal_selector_tuple_indices_skip_value_expansion() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type SwitchShape = ['on' | 'off', 'left' | 'right'];
+type Selector<Modes extends SwitchShape> = {
+    on: {
+        left: { readonly ok: Modes[0] },
+        right: { readonly ok: Modes[1] },
+    },
+    off: {
+        left: { ok?: Modes[0] },
+        right: { ok?: Modes[1] },
+    },
+}[Modes[0]][Modes[1]];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Tuple-constrained selector indices should satisfy the type-literal key space without TS2536.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_literal_selector_mismatched_key_still_reports_property_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Selector = {
+    on: {
+        left: 1,
+        right: 2,
+    },
+    off: {
+        left: 3,
+        right: 4,
+    },
+}['other']['left'];
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Mismatched concrete selector key must still report a property error.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_remapped_mapped_type_template_index_emits_ts2536_and_ts2344() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
