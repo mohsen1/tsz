@@ -20,6 +20,7 @@ permalink: /install.html
   .install-warning strong { color: var(--text, #1f2328); }
   .install-page section { margin: 2.25rem 0; }
   .install-page h2 { font-size: 1.15rem; margin: 0 0 .5rem; letter-spacing: .01em; }
+  .install-page .section-intro { color: var(--text-secondary, #59636e); margin: 0 0 .75rem; }
   .install-page h2 .platform-icon { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -.18em; margin-right: .4em; opacity: .9; }
   .install-page pre {
     position: relative;
@@ -80,12 +81,13 @@ permalink: /install.html
     Diagnostics, inference, and emit may differ from TypeScript today.
     We publish a daily <code>latest</code> PGO-optimized build, and the default installer tries that first when one is available for your target.
     Try it for experimentation; do not rely on it for production type-checking.
-    Bug reports welcome at
-    <a href="https://github.com/mohsen1/tsz/issues">github.com/mohsen1/tsz/issues</a>.
+    Feedback and bug reports are welcome in GitHub Discussions at
+    <a href="https://github.com/mohsen1/tsz/discussions">github.com/mohsen1/tsz/discussions</a>.
   </div>
 
   <section>
     <h2>Try it on your project</h2>
+    <p class="section-intro">If your project uses TypeScript, you can quickly test if <code>tsz</code> can work in your project by running:</p>
     <pre><button type="button" class="copy-btn" data-copy-target="try-tsz" aria-live="polite">Copy</button><code id="try-tsz">npx try-tsz</code></pre>
   </section>
 

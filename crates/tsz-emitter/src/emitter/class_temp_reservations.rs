@@ -155,9 +155,19 @@ impl<'a> Printer<'a> {
 
         let legacy_computed_temps =
             self.estimate_legacy_decorator_computed_prefix_temp_count(class_idx, class);
+        let needs_class_expression_static_comma_temp =
+            self.file_level_class_expression_needs_static_comma_temp(class_idx, class);
+        let static_comma_computed_temps =
+            if needs_class_expression_static_comma_temp && !self.ctx.options.legacy_decorators {
+                self.estimate_class_expression_static_comma_computed_temp_count(class)
+            } else {
+                0
+            };
         let static_initializer_nodes = self.class_static_initializer_nodes_for_temp_plan(class);
         if static_initializer_nodes.is_empty() {
-            return legacy_computed_temps;
+            return legacy_computed_temps
+                + usize::from(needs_class_expression_static_comma_temp)
+                + static_comma_computed_temps;
         }
 
         let externalized_static_initializers = self.ctx.options.legacy_decorators
@@ -174,8 +184,115 @@ impl<'a> Printer<'a> {
                 .any(|idx| contains_super_reference(self.arena, *idx));
 
         legacy_computed_temps
+            + usize::from(needs_class_expression_static_comma_temp)
+            + static_comma_computed_temps
             + usize::from(needs_class_reference)
             + usize::from(needs_super_reference)
+    }
+
+    fn file_level_class_expression_needs_static_comma_temp(
+        &self,
+        class_idx: NodeIndex,
+        class: &ClassData,
+    ) -> bool {
+        if self
+            .arena
+            .get(class_idx)
+            .is_none_or(|node| node.kind != super::syntax_kind_ext::CLASS_EXPRESSION)
+        {
+            return false;
+        }
+
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        let has_static_field_comma_expr =
+            target_needs_field_lowering && target_needs_static_block_lowering && {
+                class.members.nodes.iter().any(|&member_idx| {
+                    let Some(member) = self.arena.get(member_idx) else {
+                        return false;
+                    };
+                    if member.kind != super::syntax_kind_ext::PROPERTY_DECLARATION {
+                        return false;
+                    }
+                    let Some(prop) = self.arena.get_property_decl(member) else {
+                        return false;
+                    };
+                    if !self.arena.is_static(&prop.modifiers)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, super::SyntaxKind::AbstractKeyword)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, super::SyntaxKind::DeclareKeyword)
+                        || crate::transforms::private_fields_es5::is_private_identifier(
+                            self.arena, prop.name,
+                        )
+                    {
+                        return false;
+                    }
+                    crate::transforms::emit_utils::class_field_decl_has_runtime_state(
+                        self.arena, prop,
+                    )
+                })
+            };
+        let has_static_block_comma_expr = target_needs_static_block_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == super::syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                })
+            });
+
+        has_static_field_comma_expr || has_static_block_comma_expr
+    }
+
+    fn estimate_class_expression_static_comma_computed_temp_count(
+        &self,
+        class: &ClassData,
+    ) -> usize {
+        let mut count = 0;
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != super::syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&prop.modifiers, super::SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, super::SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(computed_expr) = self.legacy_computed_name_expression_needing_temp(prop.name)
+            else {
+                continue;
+            };
+            let is_private = self
+                .arena
+                .get(prop.name)
+                .is_some_and(|name| name.kind == super::SyntaxKind::PrivateIdentifier as u16);
+            let has_accessor = self
+                .arena
+                .has_modifier(&prop.modifiers, super::SyntaxKind::AccessorKeyword);
+            let property_is_erased = prop.initializer.is_none()
+                && !is_private
+                && !has_accessor
+                && !self.no_init_property_is_runtime_materialized(prop);
+            if !property_is_erased || !self.is_computed_name_expr_side_effect_free(computed_expr) {
+                count += 1;
+            }
+        }
+        count
     }
 
     fn estimate_legacy_decorator_computed_prefix_temp_count(
