@@ -1491,8 +1491,8 @@ impl ParserState {
 
     /// Construct a class member after modifiers have been scanned and classified.
     ///
-    /// Dispatches to constructor, get/set accessor, index signature, mapped-type
-    /// member, and ordinary method/property declaration paths.
+    /// Dispatches to constructor, get/set accessor, index signature, and
+    /// ordinary method/property declaration paths.
     fn construct_class_member(
         &mut self,
         start_pos: u32,
@@ -1590,11 +1590,6 @@ impl ParserState {
             let sig = self.parse_index_signature_with_modifiers(mods.modifiers, start_pos);
             self.parse_semicolon();
             return sig;
-        }
-
-        // Handle mapped type member in class body: [P in K]: T (TS 4.1+)
-        if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start() {
-            return self.parse_mapped_type_member();
         }
 
         // `function foo() {}` inside a class body is handled by
