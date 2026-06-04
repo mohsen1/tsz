@@ -50,7 +50,13 @@ fn es5_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit(source, ScriptTarget::ES5);
 
     assert!(
-        output.contains("_b = _a.c, _c = _a.c,\n        _d[_b] = 123,"),
+        output.contains("var _a, _b, _c, _d;"),
+        "ES5 static-initializer class-expression temps should share the IIFE hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.bar = (_b = /** @class */ (function () {\n            function Inner() {\n                this[_d] = 456;\n            }\n            return Inner;\n        }()),\n        _c = _a.c,\n        _d = _a.c,\n        _b[_c] = 123,\n        _b);"
+        ),
         "ES5 computed names should evaluate against the enclosing static alias before static assignment.\nOutput:\n{output}"
     );
     assert!(
@@ -67,7 +73,13 @@ fn es5_define_nested_class_computed_names_use_enclosing_static_this_alias() {
     let output = emit_with_define(source, ScriptTarget::ES5, true);
 
     assert!(
-        output.contains("_b = _a.c, _c = _a.c,\n            Object.defineProperty(_d, _b, {"),
+        output.contains("var _a, _b, _c, _d;"),
+        "ES5 define-mode static-initializer class-expression temps should share the IIFE hoist group in tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "value: (_b = /** @class */ (function () {\n                function Inner() {\n                    Object.defineProperty(this, _d, {\n                        enumerable: true,\n                        configurable: true,\n                        writable: true,\n                        value: 456\n                    });\n                }\n                return Inner;\n            }()),\n            _c = _a.c,\n            _d = _a.c,\n            Object.defineProperty(_b, _c, {"
+        ),
         "ES5 define-mode static computed field should use the enclosing static alias for key evaluation.\nOutput:\n{output}"
     );
     assert!(

@@ -121,11 +121,13 @@ impl<'a> Printer<'a> {
         );
 
         for init_expr in computed_init_exprs {
-            self.write(",");
-            self.write_line();
-            self.increase_indent();
-            self.write(&self.render_es5_class_ir_comma_expression(init_expr));
-            self.decrease_indent();
+            for init_expr in Self::flatten_es5_class_computed_init_expr(init_expr) {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(&self.render_es5_class_ir_comma_expression(init_expr));
+                self.decrease_indent();
+            }
         }
 
         if let Some(name) = set_function_name {
@@ -253,6 +255,27 @@ impl<'a> Printer<'a> {
         }
         printer.emit(expr);
         printer.take_output()
+    }
+
+    fn flatten_es5_class_computed_init_expr(node: &IRNode) -> Vec<&IRNode> {
+        let expr = match node {
+            IRNode::ExpressionStatement(inner) => inner.as_ref(),
+            other => other,
+        };
+
+        match expr {
+            IRNode::BinaryExpr {
+                left,
+                operator,
+                right,
+            } if operator.as_ref() == "," => {
+                let mut items = Self::flatten_es5_class_computed_init_expr(left);
+                items.extend(Self::flatten_es5_class_computed_init_expr(right));
+                items
+            }
+            IRNode::CommaExpr(items) | IRNode::CommaExprMultiline(items) => items.iter().collect(),
+            _ => vec![expr],
+        }
     }
 
     pub(in crate::emitter) fn emit_es5_static_class_expression_statements(
