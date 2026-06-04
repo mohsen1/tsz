@@ -903,10 +903,14 @@ export const unset = Symbol.for('@ts-pattern/unset');
 
     let program = merge_bind_results(parse_and_bind_parallel_with_libs(files, &lib_files));
 
-    // The unimported module's `Symbol` export must not pollute the global scope.
+    // The unimported module's value exports must not pollute the global scope.
+    // `Type` does not collide with any lib global, so its presence in `globals`
+    // is a direct witness of the leak. (`Symbol` legitimately stays in globals
+    // via the lib's `declare var Symbol`; the bug was the module export
+    // *overwriting* that lib binding.)
     assert!(
-        !program.globals.has("Symbol"),
-        "unimported external-module value export `Symbol` leaked into program globals"
+        !program.globals.has("Type"),
+        "unimported external-module value export `Type` leaked into program globals"
     );
 
     let options = CheckerOptions {
