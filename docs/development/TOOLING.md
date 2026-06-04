@@ -271,11 +271,12 @@ posts comments on its own — it only reads checked-in artifacts.
 **Closure pattern for stale regression issues.** When the helper reports
 `stale: passing in current snapshot`, close the regression issue with
 `not planned (stale)` and paste the helper output as the closing comment.
-When it reports `stale: accepted-regression entry no longer fails`, also
-open a follow-up to drop the entry from
-`scripts/conformance/conformance-accepted-regressions.txt`. When it reports
-`aggregate: no single snapshot row`, reply with the dashboard categories
-the helper points to instead of pretending a single row exists.
+When it reports `stale: accepted-regression entry no longer fails`, treat that
+as checked-in snapshot evidence only: first verify exact-head aggregate CI no
+longer lists the test in shard failures, then open a follow-up to drop the entry
+from `scripts/conformance/conformance-accepted-regressions.txt`. When it reports
+`aggregate: no single snapshot row`, reply with the dashboard categories the
+helper points to instead of pretending a single row exists.
 
 #### `scripts/conformance/conformance.sh`
 
