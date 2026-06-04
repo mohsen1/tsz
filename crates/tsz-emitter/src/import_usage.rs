@@ -39,6 +39,26 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
     false
 }
 
+/// Check if `haystack` contains `ident` as a standalone identifier in a
+/// non-binding position.
+pub fn contains_identifier_value_occurrence(haystack: &str, ident: &str) -> bool {
+    if ident.is_empty() {
+        return false;
+    }
+
+    let mut search_from = 0usize;
+    while let Some(rel) = haystack[search_from..].find(ident) {
+        let pos = search_from + rel;
+        if is_standalone_identifier_at(haystack, ident, pos)
+            && !identifier_occurrence_is_binding(haystack, pos)
+        {
+            return true;
+        }
+        search_from = pos + ident.len();
+    }
+    false
+}
+
 /// Check if `haystack` contains `ident` as a value reference before a local
 /// binding shadows it. A duplicate `import <ident> = ...` declaration does not
 /// count as shadowing because `TypeScript` still treats later value references

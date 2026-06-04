@@ -219,6 +219,26 @@ fn single_line_constructor_body_with_return() {
 }
 
 #[test]
+fn bodyless_optional_class_methods_emit_empty_bodies_for_recovery() {
+    let output = emit_ts_with_options(
+        "class C {\n    x()?: number;\n}\nclass C2<T> {\n    x()?: T;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("class C {\n    x() { }\n}"),
+        "Recovered optional class methods should keep an empty runtime body.\nOutput: {output}"
+    );
+    assert!(
+        output.contains("class C2 {\n    x() { }\n}"),
+        "Recovered generic optional class methods should erase types and keep an empty runtime body.\nOutput: {output}"
+    );
+}
+
+#[test]
 fn object_literal_accessor_empty_body_has_space_braces() {
     let source = "export const t = {\n    set setter(v) {},\n};";
     let output = emit_ts(source);

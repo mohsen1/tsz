@@ -362,6 +362,7 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
                         self.arena.get_method_decl(member_node).is_some_and(|m| {
                             m.body.is_none()
+                                && !self.is_recovered_optional_bodyless_class_method(member_node)
                                 && !self.has_recovered_declaration_trailing_comma(member_node)
                         })
                     }

@@ -15,8 +15,9 @@
 //! boundaries where the emitter's value-usage decision changes.
 
 use super::{
-    contains_identifier_occurrence, name_appears_in_decorator_metadata_type,
-    strip_qualified_accesses_for_names, strip_type_declaration_lines, strip_type_only_content,
+    contains_identifier_occurrence, contains_identifier_value_occurrence,
+    name_appears_in_decorator_metadata_type, strip_qualified_accesses_for_names,
+    strip_type_declaration_lines, strip_type_only_content,
 };
 
 // ----------------------------------------------------------------------
@@ -67,6 +68,18 @@ fn contains_identifier_occurrence_empty_needle_is_false() {
 #[test]
 fn contains_identifier_occurrence_empty_haystack() {
     assert!(!contains_identifier_occurrence("", "foo"));
+}
+
+#[test]
+fn contains_identifier_value_occurrence_ignores_bindings() {
+    assert!(!contains_identifier_value_occurrence(
+        "for (const _ of []) { }\nfor (const _ in []) { }\nnamespace _ns { let _; }",
+        "_",
+    ));
+    assert!(contains_identifier_value_occurrence(
+        "for (const _ of []) { }\nconsole.log(_);",
+        "_",
+    ));
 }
 
 #[test]

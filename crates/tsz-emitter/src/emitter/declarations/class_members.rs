@@ -168,6 +168,57 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn is_recovered_optional_bodyless_class_method(
+        &self,
+        node: &Node,
+    ) -> bool {
+        let Some(method) = self.arena.get_method_decl(node) else {
+            return false;
+        };
+        if method.body.is_some() || method.question_token {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let search_start = if let Some(ref tp) = method.type_parameters {
+            tp.nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.end)
+        } else if method.name.is_some() {
+            self.arena.get(method.name).map_or(node.pos, |n| n.end)
+        } else {
+            node.pos
+        } as usize;
+        let search_end = if method.type_annotation.is_some() {
+            self.arena
+                .get(method.type_annotation)
+                .map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        } as usize;
+        let bytes = text.as_bytes();
+        let search_start = search_start.min(bytes.len());
+        let search_end = search_end.min(bytes.len());
+        if search_start >= search_end {
+            return false;
+        }
+
+        let Some(close_paren_offset) = bytes[search_start..search_end]
+            .iter()
+            .rposition(|&byte| byte == b')')
+        else {
+            return false;
+        };
+        let mut cursor = search_start + close_paren_offset + 1;
+        while cursor < search_end && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        cursor < search_end && bytes[cursor] == b'?'
+    }
+
     pub(in crate::emitter) fn emit_method_declaration(&mut self, node: &Node) {
         let Some(method) = self.arena.get_method_decl(node) else {
             return;
@@ -183,11 +234,17 @@ impl<'a> Printer<'a> {
         let is_quoted_constructor_name =
             self.class_member_emit_depth > 0 && self.is_quoted_constructor_method_name(method.name);
 
-        // Skip method declarations without bodies (TypeScript-only overloads)
+        // Skip method declarations without bodies (TypeScript-only overloads).
+        // Recovered optional class methods like `x()?: number;` are syntax
+        // errors, but tsc keeps a runtime empty method body for them.
         if method.body.is_none() {
             // Keep parse-recovery emit for invalid generator member `*() {}`.
             if method.asterisk_token && has_recovery_missing_name {
                 self.write("*() { }");
+            } else if self.class_member_emit_depth > 0
+                && self.is_recovered_optional_bodyless_class_method(node)
+            {
+                self.emit_recovered_object_method_without_body(node);
             } else if self.has_recovered_declaration_trailing_comma(node) {
                 self.emit_recovered_object_method_without_body(node);
             } else {
