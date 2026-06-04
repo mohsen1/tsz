@@ -630,7 +630,12 @@ def show_failure_families(data, top=20, include_stale_detail=False):
         print_stale_failure_family_guard(detail_summary, public_summary)
         return
 
-    print_emit_freshness_note(data)
+    if freshness_status["state"] == "aggregate-match":
+        print(emit_freshness_status_line_from_status(freshness_status))
+        print()
+    else:
+        print_emit_freshness_note(data)
+
     for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
         families = collect_failures_by_family(data, surface)
         rows = sorted(

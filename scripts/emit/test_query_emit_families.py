@@ -463,6 +463,33 @@ after
 
         self.assertEqual(heading, "Declaration: 25 failures/timeouts")
 
+    def test_aggregate_match_failure_families_warn_row_freshness_unproven(self):
+        summary = {
+            "jsPass": 13459,
+            "jsTotal": 13530,
+            "dtsPass": 1644,
+            "dtsTotal": 1669,
+        }
+        data = {
+            "summary": dict(summary),
+            "results": [
+                make_result("typeGuardsInFunction", js_error="+1/-1 lines"),
+            ],
+        }
+        original = self.mod.emit_summary_from_readme
+        self.mod.emit_summary_from_readme = lambda: dict(summary)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.mod.show_failure_families(data)
+        finally:
+            self.mod.emit_summary_from_readme = original
+
+        text = out.getvalue()
+        self.assertIn("Emit detail freshness: aggregate-match", text)
+        self.assertIn("per-row freshness is not proven", text)
+        self.assertIn("JavaScript: 1 failures/timeouts", text)
+
     def test_stale_headline_summary_uses_public_aggregate(self):
         detail_summary = {
             "jsPass": 13094,
