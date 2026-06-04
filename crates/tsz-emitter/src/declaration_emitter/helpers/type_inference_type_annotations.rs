@@ -492,20 +492,135 @@ impl<'a> DeclarationEmitter<'a> {
             let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
                 .unwrap_or(decl_idx);
             let decl_node = source_arena.get(decl_idx)?;
-            let declared_type = source_arena.get_parameter(decl_node).and_then(|param| {
+            if let Some(declared_type) = source_arena.get_parameter(decl_node).and_then(|param| {
                 if param.type_annotation.is_some() {
                     Some(param.type_annotation)
                 } else {
                     None
                 }
-            })?;
+            }) {
+                return self.type_literal_member_declared_type_annotation_text(
+                    source_arena,
+                    declared_type,
+                    &member_name,
+                );
+            }
 
+            let declared_type = self
+                .declared_or_asserted_variable_type_node_from_arena(source_arena, decl_node)
+                .or_else(|| {
+                    self.declared_or_asserted_property_type_node_from_arena(source_arena, decl_node)
+                })?;
             if let Some(type_text) = self.type_literal_member_declared_type_annotation_text(
                 source_arena,
                 declared_type,
                 &member_name,
             ) {
                 return Some(type_text);
+            }
+            let binder = self.binder?;
+            let declared_type_sym_id =
+                self.declaration_type_symbol_from_type_node(source_arena, declared_type)?;
+            let declared_type_sym_id = self
+                .resolve_portability_import_alias(declared_type_sym_id, binder)
+                .unwrap_or(declared_type_sym_id);
+            let declared_type_sym_id =
+                self.resolve_portability_declaration_symbol(declared_type_sym_id, binder);
+            self.type_member_declared_source_type_annotation_text(
+                declared_type_sym_id,
+                &member_name,
+            )
+        })
+    }
+
+    fn declared_or_asserted_variable_type_node_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        decl_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let decl = source_arena.get_variable_declaration(decl_node)?;
+        if decl.type_annotation.is_some() {
+            return Some(decl.type_annotation);
+        }
+        Self::explicit_asserted_type_node_from_arena(source_arena, decl.initializer)
+    }
+
+    fn declared_or_asserted_property_type_node_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        decl_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let decl = source_arena.get_property_decl(decl_node)?;
+        if decl.type_annotation.is_some() {
+            return Some(decl.type_annotation);
+        }
+        Self::explicit_asserted_type_node_from_arena(source_arena, decl.initializer)
+    }
+
+    fn type_member_declared_source_type_annotation_text(
+        &self,
+        type_sym_id: SymbolId,
+        member_name: &str,
+    ) -> Option<String> {
+        self.with_symbol_declarations(type_sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
+            let decl_node = source_arena.get(decl_idx)?;
+            let mut members: Vec<NodeIndex> = Vec::new();
+            if let Some(interface) = source_arena.get_interface(decl_node) {
+                members.extend(interface.members.nodes.iter().copied());
+            }
+            if let Some(class_decl) = source_arena.get_class(decl_node) {
+                members.extend(class_decl.members.nodes.iter().copied());
+            }
+            if let Some(type_alias) = source_arena.get_type_alias(decl_node)
+                && let Some(type_node) = source_arena.get(type_alias.type_node)
+                && type_node.kind == syntax_kind_ext::TYPE_LITERAL
+                && let Some(type_literal) = source_arena.get_type_literal(type_node)
+            {
+                members.extend(type_literal.members.nodes.iter().copied());
+            }
+
+            for member_idx in members {
+                let Some(member_node) = source_arena.get(member_idx) else {
+                    continue;
+                };
+                if let Some(signature) = source_arena.get_signature(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, signature.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && signature.type_annotation.is_some()
+                {
+                    return self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        signature.type_annotation,
+                    );
+                }
+                if let Some(prop_decl) = source_arena.get_property_decl(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, prop_decl.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && prop_decl.type_annotation.is_some()
+                {
+                    return self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        prop_decl.type_annotation,
+                    );
+                }
+                if let Some(accessor) = source_arena.get_accessor(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, accessor.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && accessor.type_annotation.is_some()
+                {
+                    return self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        accessor.type_annotation,
+                    );
+                }
             }
 
             None
