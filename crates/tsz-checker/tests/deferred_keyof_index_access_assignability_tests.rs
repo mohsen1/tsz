@@ -597,3 +597,93 @@ class Holder<K1 extends keyof Things, K2 extends keyof Things> {
             .collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #12450 — index parameter whose constraint is UNAVAILABLE at the
+// indexed-access relation site.
+//
+// `errorInfoForRelatedIndexTypesNoConstraintElaboration.ts` assigns `{}` to
+// `JSX.IntrinsicElements[T1]` (T1 bound by `keyof JSX.IntrinsicElements`).
+// tsc accepts it — every intrinsic element's prop type is all-optional, so
+// `{}` is assignable for any `T1`. tsz emitted a false TS2322 because the
+// indexed-access subtype fallback (`check_generic_index_access_subtype`) bailed
+// to `false` whenever the index type parameter reached it without its
+// constraint attached. The fix falls back to `keyof O` as the effective index
+// bound (an index into `O` ranges over `keyof O`) and runs the existing
+// all-keys-must-pass distribution. A genuinely unconstrained index parameter
+// reproduces the same `constraint == None` branch in a self-contained way (no
+// react16/JSX corpus needed).
+//
+// Structural rule: when `S` is assigned into a deferred `O[K]` whose index
+// bound is unavailable, `S` is accepted iff it is assignable to `O[k]` for
+// EVERY `k` in `keyof O`. The fallback only widens which keys are checked; it
+// never widens source acceptance, so required-property and distinct-key
+// mismatches keep their TS2322.
+
+/// `{}` assigned into `O[K]` where `K`'s constraint is unavailable and every
+/// value type of `O` is all-optional must NOT emit the false `'{}' is not
+/// assignable` TS2322. Two parameter spellings keep the rule structural
+/// (anti-hardcoding directive §25).
+#[test]
+fn empty_object_into_unavailable_constraint_index_all_optional_accepts_two_names() {
+    for (p1, p2) in [("T1", "T2"), ("Tag", "Other")] {
+        let source = format!(
+            r#"
+interface Things {{
+    a: {{ id?: string }};
+    b: {{ name?: number }};
+}}
+class Holder<{p1}, {p2}> {{
+    M() {{
+        let c1: Things[{p1}] = {{}};
+    }}
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        assert!(
+            !diags.iter().any(|d| {
+                d.code == 2322 && d.message_text.contains("Type '{}' is not assignable")
+            }),
+            "{{}} -> Things[{p1}] (unavailable-constraint index, all-optional values) must \
+             NOT emit the false '{{}} not assignable' TS2322; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Over-acceptance guard: the same unavailable-constraint index must STILL
+/// reject `{}` when at least one value type of `O` carries a required member,
+/// because the universally-quantified `K` could select that key.
+#[test]
+fn empty_object_into_unavailable_constraint_index_required_prop_rejects_two_names() {
+    for p1 in ["T1", "Tag"] {
+        let source = format!(
+            r#"
+interface Things {{
+    a: {{ id?: string }};
+    b: {{ req: string }};
+}}
+class Holder<{p1}, Other> {{
+    M() {{
+        let c1: Things[{p1}] = {{}};
+    }}
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        let assignability_errors = count(&diags, 2322) + count(&diags, 2741);
+        assert!(
+            assignability_errors >= 1,
+            "{{}} -> Things[{p1}] (unavailable-constraint index, one required-prop value) must \
+             still emit an assignability error; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}

@@ -386,9 +386,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if source is a subtype of an `IndexAccess` target where the index is generic.
     ///
     /// If `Target` is `Obj[K]` where `K` is generic, we check if `Source <: Obj[C]`
-    /// where `C` is the constraint of `K`.
+    /// where `C` is the **effective index bound** of `K`.
     /// Specifically, if `C` is a union of string literals `"a" | "b"`, we verify
-    /// `Source <: Obj["a"]` AND `Source <: Obj["b"]`.
+    /// `Source <: Obj["a"]` AND `Source <: Obj["b"]` (every key must accept the
+    /// source, since `K` is universally quantified over its bound).
+    ///
+    /// ## Effective index bound
+    /// The bound is `K`'s declared constraint when it is attached to the
+    /// type-parameter node. When it is *not* attached at this relation site
+    /// (`constraint == None`), the bound falls back to `keyof Obj`: for the
+    /// deferred access `Obj[K]` to be well-formed at all, `K` must range over
+    /// `keyof Obj`, so `keyof Obj` is the soundest upper bound to distribute
+    /// over. Bailing to `false` here instead would fabricate a spurious
+    /// `TS2322` — most visibly `{}` assigned to `JSX.IntrinsicElements[T]`,
+    /// where every element's prop type is all-optional so `{}` is in fact
+    /// assignable for any `T` (issue #12450). This fallback only widens *which*
+    /// keys are checked; the all-keys-must-pass loop below still rejects a
+    /// source that fails against any single value type, so required-property
+    /// and distinct-key mismatches keep their correct `TS2322`.
     pub(crate) fn check_generic_index_access_subtype(
         &mut self,
         source: TypeId,
@@ -414,9 +429,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        let Some(constraint) = t_param.constraint else {
-            return false;
-        };
+        // Use the declared constraint when present; otherwise fall back to
+        // `keyof Obj` as the effective bound (see the doc comment). `Obj[K]`
+        // only type-checks when `K extends keyof Obj`, so this is sound and
+        // never widens the source acceptance — only the set of keys checked.
+        let constraint = t_param
+            .constraint
+            .unwrap_or_else(|| self.interner.keyof(t_obj));
 
         // Evaluate the constraint to resolve any type aliases/applications
         let constraint = self.evaluate_type(constraint);
