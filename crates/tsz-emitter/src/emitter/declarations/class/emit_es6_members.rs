@@ -355,78 +355,69 @@ impl<'a> Printer<'a> {
 
             // Check if this member is erased (no runtime representation)
             if let Some(member_node) = self.arena.get(member_idx) {
-                let is_erased = if self
-                    .recovered_mapped_type_member_tail(member_node)
-                    .is_some()
-                {
-                    true
-                } else {
-                    match member_node.kind {
-                        // Bodyless methods are erased (abstract methods without body,
-                        // overload signatures). Abstract methods WITH a body (an error
-                        // in TS) are still emitted by tsc, so we must not erase them.
-                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                            self.arena.get_method_decl(member_node).is_some_and(|m| {
-                                m.body.is_none()
-                                    && !self
-                                        .is_recovered_optional_bodyless_class_method(member_node)
-                                    && !self.has_recovered_declaration_trailing_comma(member_node)
-                            })
-                        }
-                        // Abstract accessors without body are erased. Bodyless non-abstract
-                        // accessors (error case) are kept — tsc emits them as `{}`.
-                        // Abstract accessors WITH a body (error case) are also kept.
-                        k if k == syntax_kind_ext::GET_ACCESSOR
-                            || k == syntax_kind_ext::SET_ACCESSOR =>
-                        {
-                            self.arena.get_accessor(member_node).is_some_and(|a| {
-                                self.arena
-                                    .has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword)
-                                    && a.body.is_none()
-                            })
-                        }
-                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                            if let Some(p) = self.arena.get_property_decl(member_node) {
-                                // Abstract properties: erased
-                                if self
-                                    .arena
-                                    .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
-                                {
-                                    true
-                                } else {
-                                    // Type-only properties (no initializer, not private, not accessor): erased.
-                                    // Native class-field emit keeps uninitialised properties only
-                                    // when the target can represent class fields in the class body.
-                                    if self.ctx.options.use_define_for_class_fields
-                                        && target_supports_native_fields
-                                    {
-                                        false
-                                    } else {
-                                        let is_private = self.arena.get(p.name).is_some_and(|n| {
-                                            n.kind == SyntaxKind::PrivateIdentifier as u16
-                                        });
-                                        let has_accessor = self.arena.has_modifier(
-                                            &p.modifiers,
-                                            SyntaxKind::AccessorKeyword,
-                                        );
-                                        p.initializer.is_none() && !is_private && !has_accessor
-                                    }
-                                }
-                            } else {
-                                false
-                            }
-                        }
-                        // Bodyless constructor overloads are erased
-                        k if k == syntax_kind_ext::CONSTRUCTOR => self
-                            .arena
-                            .get_constructor(member_node)
-                            .is_some_and(|c| c.body.is_none()),
-                        // Index signatures are TypeScript-only
-                        k if k == syntax_kind_ext::INDEX_SIGNATURE => true,
-                        // Semicolon class elements are preserved in JS output (valid JS syntax)
-                        k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => false,
-                        _ => false,
+                let is_erased = match member_node.kind {
+                    // Bodyless methods are erased (abstract methods without body,
+                    // overload signatures). Abstract methods WITH a body (an error
+                    // in TS) are still emitted by tsc, so we must not erase them.
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.is_recovered_optional_bodyless_class_method(member_node)
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
                     }
+                    // Abstract accessors without body are erased. Bodyless non-abstract
+                    // accessors (error case) are kept — tsc emits them as `{}`.
+                    // Abstract accessors WITH a body (error case) are also kept.
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena.get_accessor(member_node).is_some_and(|a| {
+                            self.arena
+                                .has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword)
+                                && a.body.is_none()
+                        })
+                    }
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        if let Some(p) = self.arena.get_property_decl(member_node) {
+                            // Abstract properties: erased
+                            if self
+                                .arena
+                                .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
+                            {
+                                true
+                            } else {
+                                // Type-only properties (no initializer, not private, not accessor): erased.
+                                // Native class-field emit keeps uninitialised properties only
+                                // when the target can represent class fields in the class body.
+                                if self.ctx.options.use_define_for_class_fields
+                                    && target_supports_native_fields
+                                {
+                                    false
+                                } else {
+                                    let is_private = self.arena.get(p.name).is_some_and(|n| {
+                                        n.kind == SyntaxKind::PrivateIdentifier as u16
+                                    });
+                                    let has_accessor = self
+                                        .arena
+                                        .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword);
+                                    p.initializer.is_none() && !is_private && !has_accessor
+                                }
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    // Bodyless constructor overloads are erased
+                    k if k == syntax_kind_ext::CONSTRUCTOR => self
+                        .arena
+                        .get_constructor(member_node)
+                        .is_some_and(|c| c.body.is_none()),
+                    // Index signatures are TypeScript-only
+                    k if k == syntax_kind_ext::INDEX_SIGNATURE => true,
+                    // Semicolon class elements are preserved in JS output (valid JS syntax)
+                    k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => false,
+                    _ => false,
                 };
                 if is_erased {
                     // When an erased property has a computed name whose expression

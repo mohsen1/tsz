@@ -88,7 +88,6 @@ impl<'a> Printer<'a> {
             auto_accessor_instance_inits,
             auto_accessor_static_inits,
         } = after;
-        let recovered_mapped_type_member_tails = self.recovered_mapped_type_member_tails(class);
 
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
@@ -525,7 +524,6 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            self.emit_recovered_mapped_type_member_comma_items(&recovered_mapped_type_member_tails);
             self.write(",");
             self.write_line();
             self.increase_indent();
@@ -726,7 +724,6 @@ impl<'a> Printer<'a> {
             if let Some(name) = class_expr_set_function_name.as_ref() {
                 self.emit_class_expr_set_function_name_comma_item(temp, name);
             }
-            self.emit_recovered_mapped_type_member_comma_items(&recovered_mapped_type_member_tails);
             self.write(",");
             self.write_line();
             self.increase_indent();
@@ -1040,7 +1037,6 @@ impl<'a> Printer<'a> {
                 static_initializer_super_base,
             );
             self.scoped_class_expression_self_alias = prev_self_alias;
-            self.emit_recovered_mapped_type_member_comma_items(&recovered_mapped_type_member_tails);
             self.write(",");
             self.write_line();
             self.increase_indent();
@@ -1083,16 +1079,6 @@ impl<'a> Printer<'a> {
                 static_initializer_super_base,
             );
             self.scoped_class_expression_self_alias = prev_self_alias;
-        }
-    }
-
-    fn emit_recovered_mapped_type_member_comma_items(&mut self, tails: &[String]) {
-        for tail in tails {
-            self.write(",");
-            self.write_line();
-            self.increase_indent();
-            self.write(tail);
-            self.decrease_indent();
         }
     }
 }

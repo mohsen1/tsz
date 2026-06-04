@@ -1154,7 +1154,6 @@ impl<'a> Printer<'a> {
             && !emit_assignment_static_elements_as_statements
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
-                || self.class_has_recovered_mapped_type_member_tail(class)
                 || has_static_computed_method_or_accessor);
         let preplanned_class_expr_temp = if needs_static_comma_expr
             && private_class_alias.is_none()
