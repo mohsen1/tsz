@@ -133,6 +133,83 @@ export type And<B1 extends Boolean, B2 extends Boolean> = {
 }
 
 #[test]
+fn imported_numeric_boolean_alias_validates_type_argument_constraints_with_libs() {
+    let diagnostics = compile_entry_file_with_es5_lib(
+        &[
+            (
+                "Any/Key.ts",
+                "export type Key = string | number | symbol;\n",
+            ),
+            ("Boolean/_Internal.ts", "export type Boolean = 0 | 1;\n"),
+            (
+                "List/List.ts",
+                "export interface List<A = any> extends ReadonlyArray<A> {}\n",
+            ),
+            (
+                "List/ObjectOf.ts",
+                r#"
+import {List} from './List';
+
+export type ObjectOf<L extends List> = {
+    [K in keyof L]: L[K]
+};
+"#,
+            ),
+            (
+                "Object/Either.ts",
+                r#"
+import {Boolean} from '../Boolean/_Internal';
+import {Key} from '../Any/Key';
+
+type __Either<O, K extends Key> =
+    ({
+        [P in K & keyof O]: O[P]
+    }[K & keyof O]);
+
+type EitherStrict<O, K extends Key> = __Either<O, K>;
+type EitherLoose<O, K extends Key> = __Either<O, K>;
+
+export type _Either<O, K extends Key, strict extends Boolean> = {
+    1: EitherStrict<O, K>
+    0: EitherLoose<O, K>
+}[strict];
+
+export type Either<O, K extends Key, strict extends Boolean = 1> =
+    O extends unknown
+    ? _Either<O, K, strict>
+    : never;
+"#,
+            ),
+            (
+                "List/Either.ts",
+                r#"
+import {Key} from '../Any/Key';
+import {Boolean} from '../Boolean/_Internal';
+import {Either as OEither} from '../Object/Either';
+import {ObjectOf} from './ObjectOf';
+import {List} from './List';
+
+export type Either<strict extends Boolean = 1> = strict;
+export type UseZero = Either<0>;
+export type UseOne = Either<1>;
+export type UseGeneric<T extends Boolean> = Either<T>;
+export type UseImportedTarget<T extends Boolean> = OEither<{a: 1}, 'a', T>;
+export type ListEither<strict extends Boolean = 1> = OEither<{a: 1}, 'a', strict>;
+export type RealEither<L extends List, K extends Key, strict extends Boolean = 1> =
+    OEither<ObjectOf<L>, `${K & number}` | K, strict>;
+"#,
+            ),
+        ],
+        5,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2344),
+        "imported numeric Boolean alias should be used for type argument constraints: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn imported_string_aliases_index_nested_type_literal_maps() {
     let diagnostics = compile_entry_file(
         &[
