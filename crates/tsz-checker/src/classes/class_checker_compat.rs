@@ -790,6 +790,9 @@ impl<'a> CheckerState<'a> {
                                 ) && !self.generic_method_override_is_valid_specialization(
                                     derived_prop_type,
                                     base_prop_type,
+                                ) && !self.nongeneric_input_only_generic_override_is_valid(
+                                    derived_prop_type,
+                                    base_prop_type,
                                 ) && !this_poly_ok;
                             self.ctx.skip_callable_type_param_suppression.set(false);
                             mismatch
@@ -1457,6 +1460,9 @@ impl<'a> CheckerState<'a> {
                                 ) && !self.generic_method_override_is_valid_specialization(
                                     generic_override_source,
                                     base_prop_type_id,
+                                ) && !self.nongeneric_input_only_generic_override_is_valid(
+                                    generic_override_source,
+                                    base_prop_type_id,
                                 ) {
                                     let diagnostic_base_name = self
                                         .array_or_tuple_alias_target_text_for_name(&base_name)
@@ -1716,6 +1722,9 @@ impl<'a> CheckerState<'a> {
                                 base_method_type,
                                 *derived_member_idx,
                             ) && !self.generic_method_override_is_valid_specialization(
+                                derived_method_type,
+                                base_method_type,
+                            ) && !self.nongeneric_input_only_generic_override_is_valid(
                                 derived_method_type,
                                 base_method_type,
                             ) && !this_poly_ok

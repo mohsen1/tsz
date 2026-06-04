@@ -243,6 +243,9 @@ mod instantiation_expression_inline_utility_modifier_tests;
 #[path = "tests/instantiation_expression_lib_display_tests.rs"]
 mod instantiation_expression_lib_display_tests;
 #[cfg(test)]
+#[path = "tests/interface_extends_generic_override_variance_tests.rs"]
+mod interface_extends_generic_override_variance_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
