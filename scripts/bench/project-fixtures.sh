@@ -265,14 +265,14 @@ tsz_ensure_git_fixture() {
   mkdir -p "$(dirname "$dir")"
   if [[ ! -d "$dir/.git" ]]; then
     echo "Cloning ${name} fixture..."
-    rm -rf "$dir"
+    tsz_remove_fixture_dir "$name" "$dir"
     git clone --quiet --no-tags --depth 1 "$repo" "$dir"
   fi
 
   if [[ "$reclone_dirty" == "1" ]] \
     && [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
     echo "${name} fixture is dirty; recloning for reproducibility..."
-    rm -rf "$dir"
+    tsz_remove_fixture_dir "$name" "$dir"
     git clone --quiet --no-tags --depth 1 "$repo" "$dir"
   fi
 
@@ -285,6 +285,45 @@ tsz_ensure_git_fixture() {
       git -C "$dir" checkout --quiet --detach FETCH_HEAD
     fi
   fi
+}
+
+tsz_physical_path_for_maybe_missing() {
+  local path="$1"
+  local parent base parent_physical
+
+  [[ -n "$path" ]] || return 1
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  parent_physical="$(cd "$parent" && pwd -P)" || return 1
+  printf '%s/%s\n' "$parent_physical" "$base"
+}
+
+tsz_remove_fixture_dir() {
+  local name="$1"
+  local dir="$2"
+  local target root cwd home
+
+  target="$(tsz_physical_path_for_maybe_missing "$dir")" || {
+    echo "Refusing to remove ${name} fixture with unresolved path: $dir" >&2
+    return 1
+  }
+  root="$(cd "$TSZ_PROJECT_FIXTURES_ROOT" && pwd -P)"
+  home="${HOME:-}"
+  case "$target" in
+    ""|"/"|"$home"|"$root")
+      echo "Refusing to remove unsafe ${name} fixture path: $target" >&2
+      return 1
+      ;;
+  esac
+
+  cwd="$(pwd -P)"
+  case "$cwd" in
+    "$target"|"$target"/*)
+      cd "$root"
+      ;;
+  esac
+
+  rm -rf "$target"
 }
 
 tsz_rxjs_src_root() {
