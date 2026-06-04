@@ -173,6 +173,80 @@ export const TaggedItem = Tagged(Item);
 }
 
 #[test]
+fn test_anon_ctor_object_type_base_index_signature_precedes_local_members() {
+    // When the constructor constraint's instance type is `any`, it contributes
+    // an index signature (`[x: string]: any;`). `tsc` emits index signatures
+    // before named members, so the base index signature must precede the
+    // class's own named member even though local *named* members otherwise lead
+    // base *named* members. Binder names are deliberately unrelated to the
+    // earlier mixin baseline so the ordering rule stays structural.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function Decorate<Ctor extends abstract new (...args: any[]) => any>(baseCtor: Ctor) {
+    return class extends baseCtor {
+        traitMethod(): void {}
+    };
+}
+class RootBase {}
+export const Decorated = Decorate(RootBase);
+"#,
+    );
+
+    let index_pos = output
+        .find("[x: string]: any;")
+        .unwrap_or_else(|| panic!("Expected a base index signature in the output: {output}"));
+    let member_pos = output
+        .find("traitMethod(): void;")
+        .unwrap_or_else(|| panic!("Expected the local class member in the output: {output}"));
+    assert!(
+        index_pos < member_pos,
+        "Expected the base-constraint index signature to precede the local class member: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_orders_index_then_local_then_base_named_members() {
+    // Combined ordering: a base constraint that contributes both an index
+    // signature and a named member, alongside a local class member. `tsc`
+    // emits index signatures first, then named members with locals before
+    // base. Expected order: `[key: string]`, then local `own`, then base
+    // `shared`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Ctor<T = {}> = new (...args: any[]) => T;
+interface Indexed {
+    [key: string]: unknown;
+    shared(): void;
+}
+function Wrap<C extends Ctor<Indexed>>(Base: C) {
+    return class extends Base {
+        own(): void {}
+    };
+}
+class Holder {
+    [key: string]: unknown;
+    shared(): void {}
+}
+export const Wrapped = Wrap(Holder);
+"#,
+    );
+
+    let index_pos = output
+        .find("[key: string]: unknown;")
+        .unwrap_or_else(|| panic!("Expected the base index signature in the output: {output}"));
+    let own_pos = output
+        .find("own(): void;")
+        .unwrap_or_else(|| panic!("Expected the local class member in the output: {output}"));
+    let shared_pos = output
+        .find("shared(): void;")
+        .unwrap_or_else(|| panic!("Expected the base named member in the output: {output}"));
+    assert!(
+        index_pos < own_pos && own_pos < shared_pos,
+        "Expected ordering index signature -> local member -> base named member: {output}"
+    );
+}
+
+#[test]
 fn test_top_level_class_declaration_still_uses_eq_initializer_form() {
     // Negative case: regular class declarations (not inside an anonymous
     // constructor object type) must still emit `readonly name = value`

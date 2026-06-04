@@ -8,7 +8,119 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Rendered instance-type members, partitioned by member category so callers
+/// can reassemble them in TypeScript's structural emit order.
+///
+/// `tsc` builds the resolved members of a synthesized anonymous instance type
+/// (for example a mixin/constructor object type) and prints index signatures
+/// before named members, with locally declared members preceding members
+/// inherited from a base/constraint. Keeping the two buckets separate lets the
+/// caller interleave its own class members with constraint members correctly:
+/// index signatures (own, then base) lead, then named members (own, then base).
+#[derive(Default)]
+pub(in crate::declaration_emitter) struct InstanceMemberGroups {
+    /// Index-signature member lines (`[x: string]: T;`), already indented.
+    pub index_signatures: String,
+    /// Named member lines (methods, properties, accessors), already indented.
+    pub named_members: String,
+}
+
+impl InstanceMemberGroups {
+    fn is_empty(&self) -> bool {
+        self.index_signatures.trim().is_empty() && self.named_members.trim().is_empty()
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
+    /// Renders `member_indices` into [`InstanceMemberGroups`], routing index
+    /// signatures and named members into separate buffers. `emit` is invoked
+    /// with the scratch emitter for the member's bucket; callers pre-filter out
+    /// constructors and static members before delegating here.
+    fn render_instance_member_groups<F>(
+        &self,
+        member_indices: impl IntoIterator<Item = NodeIndex>,
+        indent_level: u32,
+        recursive_reference: Option<&str>,
+        mut emit: F,
+    ) -> InstanceMemberGroups
+    where
+        F: FnMut(&mut DeclarationEmitter<'a>, NodeIndex),
+    {
+        let mut index_scratch = self.scratch_object_type_body_emitter(indent_level);
+        let mut named_scratch = self.scratch_object_type_body_emitter(indent_level);
+        if let Some(reference_text) = recursive_reference {
+            index_scratch.object_type_recursive_constructor_reference =
+                Some(reference_text.to_string());
+            named_scratch.object_type_recursive_constructor_reference =
+                Some(reference_text.to_string());
+        }
+        for member_idx in member_indices {
+            let is_index_signature = self
+                .arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::INDEX_SIGNATURE);
+            if is_index_signature {
+                emit(&mut index_scratch, member_idx);
+            } else {
+                emit(&mut named_scratch, member_idx);
+            }
+        }
+        InstanceMemberGroups {
+            index_signatures: index_scratch.writer.take_output(),
+            named_members: named_scratch.writer.take_output(),
+        }
+    }
+
+    /// Joins own and base member groups into a single instance-type body in
+    /// `tsc`'s structural order: index signatures (own, then base) precede named
+    /// members (own, then base). The result is trimmed of trailing whitespace.
+    fn join_instance_member_groups(
+        own: &InstanceMemberGroups,
+        base: &InstanceMemberGroups,
+    ) -> String {
+        let mut combined = String::with_capacity(
+            own.index_signatures.len()
+                + base.index_signatures.len()
+                + own.named_members.len()
+                + base.named_members.len(),
+        );
+        combined.push_str(&own.index_signatures);
+        combined.push_str(&base.index_signatures);
+        combined.push_str(&own.named_members);
+        combined.push_str(&base.named_members);
+        combined.truncate(combined.trim_end().len());
+        combined
+    }
+
+    /// Emits `class`'s static members into `static_scratch` and returns the
+    /// node indices of its non-static, non-constructor instance members in
+    /// declaration order, ready for [`Self::render_instance_member_groups`].
+    fn collect_constructor_instance_members(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+        static_scratch: &mut DeclarationEmitter<'a>,
+    ) -> Vec<NodeIndex> {
+        class
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                    return false;
+                }
+                if self.class_member_is_static(member_idx) {
+                    static_scratch.emit_class_member(member_idx);
+                    return false;
+                }
+                true
+            })
+            .collect()
+    }
+
     pub(in crate::declaration_emitter) fn call_expression_returned_local_class_constructor_text(
         &self,
         expr_idx: NodeIndex,
@@ -232,39 +344,24 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.indent_level + 2
         };
-        let base_members = base_constraint_idx.and_then(|constraint_idx| {
-            self.constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
-                .map(|members| {
-                    (
-                        members,
-                        self.constructor_constraint_base_members_precede_class_members(
-                            constraint_idx,
-                        ),
-                    )
-                })
-        });
-        let mut instance_scratch = self.scratch_object_type_body_emitter(instance_indent);
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
-        if let Some((base_members, true)) = base_members.as_ref() {
-            instance_scratch.write(base_members);
-        }
-        for member_idx in class.members.nodes.iter().copied() {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            if self.class_member_is_static(member_idx) {
-                static_scratch.emit_class_member(member_idx);
-            } else {
-                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
-            }
-        }
-        if let Some((base_members, false)) = base_members.as_ref() {
-            instance_scratch.write(base_members);
-        }
-        let members = instance_scratch.writer.take_output();
+        let instance_member_indices =
+            self.collect_constructor_instance_members(class, &mut static_scratch);
+        let own_groups = self.render_instance_member_groups(
+            instance_member_indices,
+            instance_indent,
+            None,
+            |s, idx| s.emit_class_member_for_constructor_instance_type(idx),
+        );
+        let base_groups = base_constraint_idx
+            .and_then(|constraint_idx| {
+                self.constructor_constraint_base_instance_members_text(
+                    constraint_idx,
+                    instance_indent,
+                )
+            })
+            .unwrap_or_default();
+        let members = Self::join_instance_member_groups(&own_groups, &base_groups);
         let members = Self::strip_abstract_member_modifiers(members.trim_end());
         let members = members.as_str();
         let static_members = static_scratch.writer.take_output();
@@ -482,34 +579,24 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let mut instance_scratch = self.scratch_object_type_body_emitter(self.indent_level + 2);
+        let instance_indent = self.indent_level + 2;
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
         if let Some(reference_text) = recursive_reference_text {
-            let reference_text = reference_text.to_string();
-            instance_scratch.object_type_recursive_constructor_reference =
-                Some(reference_text.clone());
-            static_scratch.object_type_recursive_constructor_reference = Some(reference_text);
+            static_scratch.object_type_recursive_constructor_reference =
+                Some(reference_text.to_string());
         }
-        for member_idx in class.members.nodes.iter().copied() {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            if self.class_member_is_static(member_idx) {
-                static_scratch.emit_class_member(member_idx);
-            } else {
-                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
-            }
-        }
-        if let Some(base_instance_members) =
-            self.class_expression_extends_parameter_instance_members(expr_idx, class)
-        {
-            instance_scratch.write(&base_instance_members);
-        }
-        let instance_members = instance_scratch.writer.take_output();
-        let mut instance_members = instance_members.trim_end().to_string();
+        let instance_member_indices =
+            self.collect_constructor_instance_members(class, &mut static_scratch);
+        let own_groups = self.render_instance_member_groups(
+            instance_member_indices,
+            instance_indent,
+            recursive_reference_text,
+            |s, idx| s.emit_class_member_for_constructor_instance_type(idx),
+        );
+        let base_groups = self
+            .class_expression_extends_parameter_instance_members(expr_idx, class)
+            .unwrap_or_default();
+        let mut instance_members = Self::join_instance_member_groups(&own_groups, &base_groups);
         let static_members = static_scratch.writer.take_output();
         let mut static_members = Self::strip_static_prefix_from_class_expression_static_members(
             static_members.trim_end(),
@@ -691,7 +778,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
-    ) -> Option<String> {
+    ) -> Option<InstanceMemberGroups> {
         let enclosing_func = self.enclosing_function_for_node(expr_idx)?;
         let base_type_text = self.class_expression_extends_parameter_type_text(expr_idx, class)?;
         let constraint_idx = self.type_param_constraint_idx(enclosing_func, &base_type_text)?;
@@ -710,19 +797,10 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         constraint_idx: NodeIndex,
         indent_level: u32,
-    ) -> Option<String> {
+    ) -> Option<InstanceMemberGroups> {
         let instance_type_idx =
             self.constructor_constraint_instance_type_node_idx(constraint_idx)?;
         self.instance_type_node_members_text_at(instance_type_idx, indent_level)
-    }
-
-    fn constructor_constraint_base_members_precede_class_members(
-        &self,
-        constraint_idx: NodeIndex,
-    ) -> bool {
-        self.constructor_constraint_instance_type_node_idx(constraint_idx)
-            .and_then(|instance_type_idx| self.arena.get(instance_type_idx))
-            .is_some_and(|node| self.type_node_is_any(node))
     }
 
     fn constructor_constraint_instance_type_node_idx(
@@ -884,12 +962,15 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_idx: NodeIndex,
         indent_level: u32,
-    ) -> Option<String> {
+    ) -> Option<InstanceMemberGroups> {
         let node = self.arena.get(type_idx)?;
 
         if self.type_node_is_any(node) {
             let indent_str = "    ".repeat(indent_level as usize);
-            return Some(format!("{indent_str}[x: string]: any;\n"));
+            return Some(InstanceMemberGroups {
+                index_signatures: format!("{indent_str}[x: string]: any;\n"),
+                named_members: String::new(),
+            });
         }
 
         if let Some(type_ref) = self.arena.get_type_ref(node) {
@@ -901,20 +982,25 @@ impl<'a> DeclarationEmitter<'a> {
         if node.kind == syntax_kind_ext::TYPE_LITERAL
             && let Some(type_literal) = self.arena.get_type_literal(node)
         {
-            let mut scratch = self.scratch_object_type_body_emitter(indent_level);
-            for member_idx in type_literal.members.nodes.iter().copied() {
-                scratch.emit_interface_member(member_idx);
-            }
-            let output = scratch.writer.take_output();
-            if !output.trim().is_empty() {
-                return Some(output);
+            let groups = self.render_instance_member_groups(
+                type_literal.members.nodes.iter().copied(),
+                indent_level,
+                None,
+                |s, idx| s.emit_interface_member(idx),
+            );
+            if !groups.is_empty() {
+                return Some(groups);
             }
         }
 
         None
     }
 
-    fn symbol_instance_members_text(&self, sym_id: SymbolId, indent_level: u32) -> Option<String> {
+    fn symbol_instance_members_text(
+        &self,
+        sym_id: SymbolId,
+        indent_level: u32,
+    ) -> Option<InstanceMemberGroups> {
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
         for decl_idx in symbol.declarations.iter().copied() {
@@ -922,31 +1008,31 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if let Some(class) = self.arena.get_class(decl_node) {
-                let mut scratch = self.scratch_object_type_body_emitter(indent_level);
-                for member_idx in class.members.nodes.iter().copied() {
-                    let Some(member_node) = self.arena.get(member_idx) else {
-                        continue;
-                    };
-                    if member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                        || self.class_member_is_static(member_idx)
-                    {
-                        continue;
-                    }
-                    scratch.emit_class_member(member_idx);
-                }
-                let output = scratch.writer.take_output();
-                if !output.trim().is_empty() {
-                    return Some(output);
+                let instance_member_indices =
+                    class.members.nodes.iter().copied().filter(|&member_idx| {
+                        self.arena.get(member_idx).is_some_and(|member_node| {
+                            member_node.kind != syntax_kind_ext::CONSTRUCTOR
+                        }) && !self.class_member_is_static(member_idx)
+                    });
+                let groups = self.render_instance_member_groups(
+                    instance_member_indices,
+                    indent_level,
+                    None,
+                    |s, idx| s.emit_class_member(idx),
+                );
+                if !groups.is_empty() {
+                    return Some(groups);
                 }
             }
             if let Some(interface) = self.arena.get_interface(decl_node) {
-                let mut scratch = self.scratch_object_type_body_emitter(indent_level);
-                for member_idx in interface.members.nodes.iter().copied() {
-                    scratch.emit_interface_member(member_idx);
-                }
-                let output = scratch.writer.take_output();
-                if !output.trim().is_empty() {
-                    return Some(output);
+                let groups = self.render_instance_member_groups(
+                    interface.members.nodes.iter().copied(),
+                    indent_level,
+                    None,
+                    |s, idx| s.emit_interface_member(idx),
+                );
+                if !groups.is_empty() {
+                    return Some(groups);
                 }
             }
         }
