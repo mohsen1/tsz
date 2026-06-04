@@ -1,0 +1,236 @@
+
+type SelectType<T> = T;
+type DrainOuterGeneric<T> = [T] extends [unknown] ? T : never;
+type Nullable<T> = { [K in keyof T]: T[K] | null };
+type ShallowRecord<K extends keyof any, T> = DrainOuterGeneric<{ [P in K]: T }>;
+
+type AnyColumn<DB, TB extends keyof DB> = {
+  [T in TB]: keyof DB[T]
+}[TB] & string;
+
+type ExtractColumnType<DB, TB extends keyof DB, C> = {
+  [T in TB]: C extends keyof DB[T] ? DB[T][C] : never
+}[TB];
+
+type AnyColumnWithTable<DB, TB extends keyof DB> = {
+  [T in TB]: `${T & string}.${keyof DB[T] & string}`
+}[TB];
+
+type AnyAliasedColumn<DB, TB extends keyof DB> =
+  `${AnyColumn<DB, TB>} as ${string}`;
+
+type AnyAliasedColumnWithTable<DB, TB extends keyof DB> =
+  `${AnyColumnWithTable<DB, TB>} as ${string}`;
+
+interface AliasedExpression<T, A extends string> {
+  expressionType?: T;
+  alias: A;
+}
+
+interface ExpressionWrapper<DB, TB extends keyof DB, T> {
+  $castTo<C>(): ExpressionWrapper<DB, TB, C>;
+  as<A extends string>(alias: A): AliasedExpression<T, A>;
+}
+
+interface ExpressionBuilder<DB, TB extends keyof DB> {
+  ref<RE extends StringReference<DB, TB>>(
+    reference: RE,
+  ): ExpressionWrapper<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, RE>>;
+}
+
+type StringReference<DB, TB extends keyof DB> =
+  | AnyColumn<DB, TB>
+  | AnyColumnWithTable<DB, TB>;
+
+type ExtractTypeFromReferenceExpression<DB, TB extends keyof DB, RE> =
+  SelectType<ExtractTypeFromStringReference<DB, TB, RE>>;
+
+type ExtractTypeFromStringReference<DB, TB extends keyof DB, RE> =
+  RE extends `${infer T}.${infer C}`
+    ? T extends TB
+      ? C extends keyof DB[T]
+        ? DB[T][C]
+        : never
+      : never
+    : RE extends AnyColumn<DB, TB>
+      ? ExtractColumnType<DB, TB, RE>
+      : unknown;
+
+type AliasedExpressionFactory<DB, TB extends keyof DB> = (
+  eb: ExpressionBuilder<DB, TB>,
+) => AliasedExpression<any, any>;
+
+type AliasedExpressionOrFactory<DB, TB extends keyof DB> =
+  | AliasedExpression<any, any>
+  | AliasedExpressionFactory<DB, TB>;
+
+type AnyAliasedTable<DB> = `${keyof DB & string} as ${string}`;
+type TableExpression<DB, TB extends keyof DB> =
+  | keyof DB & string
+  | AnyAliasedTable<DB>
+  | AliasedExpressionOrFactory<DB, TB>;
+
+type TableExpressionOrList<DB, TB extends keyof DB> =
+  | TableExpression<DB, TB>
+  | ReadonlyArray<TableExpression<DB, TB>>;
+
+type ExtractAliasFromTableExpression<DB, TE> = TE extends string
+  ? TE extends `${string} as ${infer TA}`
+    ? TA
+    : TE extends keyof DB
+      ? TE
+      : never
+  : TE extends AliasedExpression<any, infer QA>
+    ? QA
+    : TE extends (qb: any) => AliasedExpression<any, infer QA>
+      ? QA
+      : never;
+
+type ExtractRowTypeFromTableExpression<DB, TE, A extends keyof any> =
+  TE extends `${infer T} as ${infer TA}`
+    ? TA extends A
+      ? T extends keyof DB
+        ? DB[T]
+        : never
+      : never
+    : TE extends A
+      ? TE extends keyof DB
+        ? DB[TE]
+        : never
+      : never;
+
+type From<DB, TE> = DrainOuterGeneric<{
+  [C in keyof DB | ExtractAliasFromTableExpression<DB, TE>]:
+    C extends ExtractAliasFromTableExpression<DB, TE>
+      ? ExtractRowTypeFromTableExpression<DB, TE, C>
+      : C extends keyof DB
+        ? DB[C]
+        : never
+}>;
+
+type FromTables<DB, TB extends keyof DB, TE> =
+  TB | ExtractAliasFromTableExpression<DB, TE>;
+
+type SelectExpression<DB, TB extends keyof DB> =
+  | AnyAliasedColumnWithTable<DB, TB>
+  | AnyAliasedColumn<DB, TB>
+  | AnyColumnWithTable<DB, TB>
+  | AnyColumn<DB, TB>
+  | AliasedExpressionOrFactory<DB, TB>;
+
+type ExtractAliasFromSelectExpression<SE> = SE extends string
+  ? SE extends `${string}.${infer C} as ${infer A}`
+    ? A
+    : SE extends `${string}.${infer C}`
+      ? C
+      : SE
+  : SE extends AliasedExpression<any, infer EA>
+    ? EA
+    : SE extends (qb: any) => AliasedExpression<any, infer EA>
+      ? EA
+      : never;
+
+type ExtractTypeFromSelectExpression<DB, TB extends keyof DB, SE> =
+  SE extends string
+    ? ExtractTypeFromStringSelectExpression<DB, TB, SE>
+    : SE extends (eb: any) => AliasedExpression<infer O, any>
+      ? O
+      : SE extends AliasedExpression<infer O, any>
+        ? O
+        : never;
+
+type ExtractTypeFromStringSelectExpression<DB, TB extends keyof DB, SE> =
+  SE extends `${infer T}.${infer C} as ${string}`
+    ? T extends TB
+      ? C extends keyof DB[T]
+        ? DB[T][C]
+        : never
+      : never
+    : SE extends `${infer C} as ${string}`
+      ? C extends AnyColumn<DB, TB>
+        ? ExtractColumnType<DB, TB, C>
+        : never
+      : SE extends `${infer T}.${infer C}`
+        ? T extends TB
+          ? C extends keyof DB[T]
+            ? DB[T][C]
+            : never
+          : never
+        : SE extends AnyColumn<DB, TB>
+          ? ExtractColumnType<DB, TB, SE>
+          : never;
+
+type KyselySelection<DB, TB extends keyof DB, SE> = {
+  [E in SE as ExtractAliasFromSelectExpression<E>]:
+    SelectType<ExtractTypeFromSelectExpression<DB, TB, E>>
+};
+
+type CallbackSelection<DB, TB extends keyof DB, CB> =
+  CB extends (eb: any) => ReadonlyArray<infer SE>
+    ? KyselySelection<DB, TB, SE>
+    : never;
+
+interface JoinBuilder<DB, TB extends keyof DB> {
+  onRef(lhs: AnyColumnWithTable<DB, TB>, op: string, rhs: AnyColumnWithTable<DB, TB>): JoinBuilder<DB, TB>;
+  on(lhs: AnyColumnWithTable<DB, TB>, op: string, rhs: unknown): JoinBuilder<DB, TB>;
+}
+
+type JoinCallback<DB, TB extends keyof DB, TE> = (
+  join: JoinBuilder<From<DB, TE>, FromTables<DB, TB, TE>>,
+) => JoinBuilder<From<DB, TE>, FromTables<DB, TB, TE>>;
+
+interface SelectQueryBuilder<DB, TB extends keyof DB, O> {
+  innerJoin<TE extends TableExpression<DB, TB>>(
+    table: TE,
+    k1: AnyColumnWithTable<From<DB, TE>, FromTables<DB, TB, TE>>,
+    k2: AnyColumnWithTable<From<DB, TE>, FromTables<DB, TB, TE>>,
+  ): SelectQueryBuilderWithInnerJoin<DB, TB, O, TE>;
+  innerJoin<TE extends TableExpression<DB, TB>>(
+    table: TE,
+    callback: JoinCallback<DB, TB, TE>,
+  ): SelectQueryBuilderWithInnerJoin<DB, TB, O, TE>;
+  leftJoin<TE extends TableExpression<DB, TB>>(
+    table: TE,
+    callback: JoinCallback<DB, TB, TE>,
+  ): SelectQueryBuilderWithLeftJoin<DB, TB, O, TE>;
+  $if<O2>(
+    condition: boolean,
+    callback: (qb: this) => SelectQueryBuilder<any, any, O & O2>,
+  ): SelectQueryBuilder<DB, TB, O & Partial<Omit<O2, keyof O>>>;
+  where(lhs: AnyColumnWithTable<DB, TB>, op: string, rhs: unknown): this;
+  select<SE extends SelectExpression<DB, TB>>(
+    selections: ReadonlyArray<SE>,
+  ): SelectQueryBuilder<DB, TB, O & KyselySelection<DB, TB, SE>>;
+  select<CB extends (eb: ExpressionBuilder<DB, TB>) => ReadonlyArray<SelectExpression<DB, TB>>>(
+    callback: CB,
+  ): SelectQueryBuilder<DB, TB, O & CallbackSelection<DB, TB, CB>>;
+}
+
+type SelectQueryBuilderWithInnerJoin<DB, TB extends keyof DB, O, TE> =
+  TE extends `${infer T} as ${infer A}`
+    ? T extends keyof DB
+      ? SelectQueryBuilder<DB & ShallowRecord<A, DB[T]>, TB | A, O>
+      : never
+    : never;
+
+type SelectQueryBuilderWithLeftJoin<DB, TB extends keyof DB, O, TE> =
+  TE extends `${infer T} as ${infer A}`
+    ? T extends keyof DB
+      ? SelectQueryBuilder<DB & ShallowRecord<A, Nullable<DB[T]>>, TB | A, O>
+      : never
+    : never;
+
+declare class QueryCreator<DB> {
+  selectFrom<TE extends TableExpressionOrList<DB, never>>(
+    from: TE,
+  ): SelectFrom<DB, never, TE>;
+}
+
+type SelectFrom<DB, TB extends keyof DB, TE> =
+  TE extends `${infer T} as ${infer A}`
+    ? T extends keyof DB
+      ? SelectQueryBuilder<DB & ShallowRecord<A, DB[T]>, TB | A, {}>
+      : never
+    : never;
+
+declare const withInternalKyselyTables: boolean;

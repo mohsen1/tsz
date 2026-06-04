@@ -420,6 +420,19 @@ impl<'a> CheckerState<'a> {
             // diagnostics (issue #12144).  The inner worklist guards inside
             // `ensure_refs_resolved` still bound the work per statement.
             crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+            // Likewise reset the session's generic-instantiation fuel between
+            // top-level statements. This budget (`MAX_GLOBAL_INSTANTIATION_FUEL`)
+            // is cumulative per file, so a statement that performs heavy generic
+            // Application evaluation (deep builder/query chains, large keyof
+            // unions) can exhaust it and leave `instantiation_limits_exceeded()`
+            // true for every following statement. When that happens, contextual
+            // typing of later callback arguments bails to `any`, which spuriously
+            // strips parameter context (TS7006) and then reports TS2347 on the
+            // now-"untyped" generic calls inside the callback (issue #10677). The
+            // per-context `MAX_INSTANTIATION_DEPTH` and session depth limit still
+            // bound the work performed within any single statement.
+            self.ctx.eval_session.reset_instantiation_fuel();
+            self.ctx.depth_exceeded.set(false);
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {
                 self.ctx.is_unreachable = true;
