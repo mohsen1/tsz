@@ -731,6 +731,8 @@ impl<'a> ClassES5Emitter<'a> {
         override_name: Option<&str>,
         mut ir: IRNode,
     ) -> String {
+        Self::lift_private_storage_from_iife_body(&mut ir);
+
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,
@@ -768,6 +770,91 @@ impl<'a> ClassES5Emitter<'a> {
             output.push_str(&recovery_emit);
         }
         output
+    }
+
+    fn lift_private_storage_from_iife_body(ir: &mut IRNode) {
+        let IRNode::ES5ClassIIFE {
+            body,
+            weakmap_decls,
+            weakmap_inits,
+            post_weakmap_statements,
+            ..
+        } = ir
+        else {
+            return;
+        };
+
+        let Some(return_pos) = body
+            .iter()
+            .rposition(|node| matches!(node, IRNode::ReturnStatement(_)))
+        else {
+            return;
+        };
+
+        let mut init_start = return_pos;
+        while init_start > 0
+            && matches!(
+                &body[init_start - 1],
+                IRNode::ExpressionStatement(expr)
+                    if matches!(expr.as_ref(), IRNode::Raw(_))
+            )
+        {
+            init_start -= 1;
+        }
+
+        let Some(decl_pos) = init_start.checked_sub(1) else {
+            return;
+        };
+        let Some(decl_names) = Self::plain_var_decl_names(&body[decl_pos]) else {
+            return;
+        };
+
+        let init_texts: Vec<String> = body[init_start..return_pos]
+            .iter()
+            .filter_map(|node| {
+                let IRNode::ExpressionStatement(expr) = node else {
+                    return None;
+                };
+                let IRNode::Raw(text) = expr.as_ref() else {
+                    return None;
+                };
+                Some(text.to_string())
+            })
+            .collect();
+
+        body.drain(decl_pos..return_pos);
+        weakmap_decls.extend(decl_names);
+
+        if let Some((first_init, trailing_statements)) = init_texts.split_first() {
+            let existing_inits = std::mem::take(weakmap_inits);
+            weakmap_inits.push(first_init.clone());
+            weakmap_inits.extend(existing_inits);
+
+            if !trailing_statements.is_empty() {
+                let existing_statements = std::mem::take(post_weakmap_statements);
+                post_weakmap_statements.extend(trailing_statements.iter().cloned());
+                post_weakmap_statements.extend(existing_statements);
+            }
+        }
+    }
+
+    fn plain_var_decl_names(node: &IRNode) -> Option<Vec<String>> {
+        let IRNode::VarDeclList(decls) = node else {
+            return None;
+        };
+
+        let mut names = Vec::with_capacity(decls.len());
+        for decl in decls {
+            let IRNode::VarDecl { name, initializer } = decl else {
+                return None;
+            };
+            if initializer.is_some() {
+                return None;
+            }
+            names.push(name.to_string());
+        }
+
+        (!names.is_empty()).then_some(names)
     }
 
     pub fn wrap_tc39_es5_class_decorated_output(

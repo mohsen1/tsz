@@ -163,3 +163,37 @@ fn export_alias_before_es2015_class_keeps_native_class_export_order() {
         "ES2015 native class output should keep the direct class export before the later alias assignment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn es5_commonjs_exported_class_private_storage_hoists_before_preamble() {
+    let source = "export class Box {\n    #value: unknown;\n}\n";
+    let output = emit_commonjs(source, ScriptTarget::ES5, false);
+
+    let marker_pos = output
+        .find("Object.defineProperty(exports, \"__esModule\", { value: true });")
+        .expect("CommonJS ES module marker should be emitted");
+    let export_init_pos = output
+        .find("exports.Box = void 0;")
+        .expect("CommonJS export initializer should be emitted");
+    let class_pos = output
+        .find("var Box = /** @class */")
+        .expect("ES5 class IIFE should be emitted");
+    let export_assign_pos = output
+        .find("exports.Box = Box;")
+        .expect("CommonJS export assignment should follow the class");
+    let storage_pos = output
+        .find("var _Box_value;")
+        .expect("private storage var should be emitted before the preamble");
+    let storage_init_pos = output
+        .find("_Box_value = new WeakMap();")
+        .expect("private storage init should follow the export assignment");
+
+    assert!(
+        storage_pos < marker_pos
+            && marker_pos < export_init_pos
+            && export_init_pos < class_pos
+            && class_pos < export_assign_pos
+            && export_assign_pos < storage_init_pos,
+        "Private storage declarations for exported ES5 classes should hoist before the CJS preamble.\nOutput:\n{output}"
+    );
+}

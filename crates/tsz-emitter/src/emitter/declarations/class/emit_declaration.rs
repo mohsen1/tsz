@@ -3,8 +3,8 @@ use super::class_has_self_references;
 use super::replace_identifier;
 use crate::emitter::core::PropertyNameEmit;
 use crate::transforms::private_fields_es5::{
-    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
-    collect_private_fields_with_reserved,
+    collect_enclosing_source_binding_names, collect_private_members_with_reserved,
+    make_unique_private_name, private_helper_base,
 };
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
@@ -1070,32 +1070,7 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
-        let mut decls = Vec::new();
-        if class_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-            let mut used_private_names =
-                collect_enclosing_source_binding_names(self.arena, class_idx);
-            for field in collect_private_fields_with_reserved(
-                self.arena,
-                class_idx,
-                class_name,
-                &mut used_private_names,
-            ) {
-                decls.push(field.weakmap_name);
-            }
-            for accessor in collect_private_accessors_with_reserved(
-                self.arena,
-                class_idx,
-                class_name,
-                &mut used_private_names,
-            ) {
-                if let Some(name) = accessor.get_var_name {
-                    decls.push(name);
-                }
-                if let Some(name) = accessor.set_var_name {
-                    decls.push(name);
-                }
-            }
-        }
+        let mut decls = self.es5_class_private_storage_decls(class_idx, class_name, class_data);
 
         let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
         let mut auto_accessor_storage_reserved = false;
@@ -1152,6 +1127,74 @@ impl<'a> Printer<'a> {
 
             if self.es5_computed_name_needs_temp(name_node) {
                 decls.push(next_es5_temp_name(&mut temp_name_index));
+            }
+        }
+
+        decls
+    }
+
+    fn es5_class_private_storage_decls(
+        &self,
+        class_idx: NodeIndex,
+        class_name: &str,
+        class_data: &ClassData,
+    ) -> Vec<String> {
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        let (fields, methods, accessors) = collect_private_members_with_reserved(
+            self.arena,
+            class_idx,
+            class_name,
+            &mut used_private_names,
+        );
+
+        let mut decls = Vec::new();
+        let has_instance_private_brand = methods.iter().any(|method| !method.is_static)
+            || accessors.iter().any(|accessor| !accessor.is_static);
+        if has_instance_private_brand {
+            decls.push(make_unique_private_name(
+                &private_helper_base(class_name, "instances"),
+                &mut used_private_names,
+            ));
+        }
+
+        let mut emitted_accessor_entries = rustc_hash::FxHashSet::default();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(field) = fields.iter().find(|field| field.member_idx == member_idx)
+                    {
+                        decls.push(field.weakmap_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = methods
+                        .iter()
+                        .find(|method| method.member_idx == member_idx)
+                    {
+                        decls.push(method.fn_var_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some((entry_idx, accessor)) = accessors
+                        .iter()
+                        .enumerate()
+                        .find(|(_, accessor)| accessor.member_indices.contains(&member_idx))
+                    {
+                        if !emitted_accessor_entries.insert(entry_idx) {
+                            continue;
+                        }
+                        if let Some(name) = accessor.get_var_name.as_ref() {
+                            decls.push(name.clone());
+                        }
+                        if let Some(name) = accessor.set_var_name.as_ref() {
+                            decls.push(name.clone());
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
