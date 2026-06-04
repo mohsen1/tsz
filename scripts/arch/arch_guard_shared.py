@@ -582,6 +582,18 @@ FILE_LINE_LIMIT_CHECKS = [
         2048,
     ),
     (
+        "Emitter boundary: emitter/expressions/core/private_fields.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "core"
+        / "private_fields.rs",
+        2006,
+    ),
+    (
         "Checker boundary: types/property_access_type/resolve.rs size ratchet",
         ROOT
         / "crates"
@@ -704,7 +716,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "class_type"
         / "constructor.rs",
-        2688,
+        2690,
     ),
     (
         "Solver boundary: diagnostics/format/compound.rs size ratchet",
@@ -1228,7 +1240,13 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # boundary re-exports already used throughout the checker; the new
         # call site walks the `extends` chain and substitutes inherited
         # member types via `instantiate_type`. No new quarantine entry.
-        3237,
+        #
+        # Ratcheted down by 6 after the index-signature key-type validity
+        # check moved to `query_boundaries::index_signature` (PR #12371/
+        # #12468): `classify_index_sig_param_type` and the resolved-key
+        # `resolved_index_key_type_is_valid` query each use solver calls
+        # rather than direct `query_boundaries::common` access.
+        3231,
     ),
 ]
 
