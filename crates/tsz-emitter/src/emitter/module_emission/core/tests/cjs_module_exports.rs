@@ -22,6 +22,36 @@ fn emit_commonjs_es_module_interop(source: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn emit_es2015_module(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn es2015_attached_reference_before_elided_import_is_stripped() {
+    let source = r#"/// <reference path="/.lib/react16.d.ts" />
+import * as React from "react";
+
+type Props = React.ComponentProps<any>;
+"#;
+
+    let output = emit_es2015_module(source);
+
+    assert!(
+        !output.contains("<reference"),
+        "Reference attached to an elided import should be stripped.\nOutput:\n{output}"
+    );
+    assert_eq!(output.trim(), "export {};");
+}
+
 #[test]
 fn commonjs_unused_classic_jsx_factory_name_elides_namespace_import_without_jsx() {
     let source = r#"import * as React from "react";

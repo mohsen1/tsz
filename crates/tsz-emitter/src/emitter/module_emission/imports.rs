@@ -91,9 +91,9 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        let appears_in_value_haystack = names
-            .iter()
-            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name));
+        let appears_in_value_haystack = names.iter().any(|name| {
+            crate::import_usage::contains_identifier_value_occurrence(&value_haystack, name)
+        });
         if appears_in_value_haystack {
             return true;
         }
@@ -350,7 +350,7 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &local_name) {
             return true;
         }
         // Under `--emitDecoratorMetadata`, decorated-member type
@@ -393,7 +393,7 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &local_name) {
             return true;
         }
         // Under `--emitDecoratorMetadata`, decorated-member type annotations are
@@ -448,8 +448,10 @@ impl<'a> Printer<'a> {
                 if jsx_factory_roots.iter().any(|root| root == &local_name) {
                     return true;
                 }
-                if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
-                {
+                if crate::import_usage::contains_identifier_value_occurrence(
+                    &value_haystack,
+                    &local_name,
+                ) {
                     return true;
                 }
                 // Under `--emitDecoratorMetadata`, decorated-member type
@@ -489,7 +491,7 @@ impl<'a> Printer<'a> {
             &self.ctx.options.external_const_enum_bindings,
         );
 
-        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+        if crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &name)
             || (self.ctx.options.emit_decorator_metadata
                 && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &name))
         {
@@ -521,7 +523,7 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
-        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+        crate::import_usage::contains_identifier_value_occurrence(&value_haystack, &name)
     }
 
     /// Check if an external import-equals alias is only value-used through a
