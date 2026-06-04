@@ -9,12 +9,34 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn application_base_for_property_mismatch_display(&self, type_id: TypeId) -> Option<TypeId> {
-        crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-            .or_else(|| {
-                let alias = self.ctx.types.get_display_alias(type_id)?;
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            })
-            .map(|(base, _)| base)
+        // Resolve to the application form, either directly or through the type's
+        // display alias (the structural value may carry an `Id<…>` alias).
+        let (app_type, base) = if let Some((base, _)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        {
+            (type_id, base)
+        } else {
+            let alias = self.ctx.types.get_display_alias(type_id)?;
+            let (base, _) =
+                crate::query_boundaries::common::application_info(self.ctx.types, alias)?;
+            (alias, base)
+        };
+        // Homomorphic/structural mapped-type aliases (`Partial<X>`, `Readonly<X>`,
+        // a user `type F<T> = { [K in keyof T]… }`, or recursive ones like
+        // `type Id<T> = { [K in keyof T]: Id<T[K]> }`) are NOT nominal generic
+        // references. tsc elaborates their mismatches structurally — drilling
+        // into `Types of property 'p'` / `The types of 'a.b'` chains — rather
+        // than collapsing to a single covariant type-argument line. Excluding
+        // them here routes the four call sites that gate the type-argument fast
+        // path into the structural property-chain elaboration instead.
+        if crate::query_boundaries::common::application_base_is_mapped_type(
+            self.ctx.types,
+            &self.ctx,
+            app_type,
+        ) {
+            return None;
+        }
+        Some(base)
     }
 
     fn should_render_nested_application_property_mismatch(
