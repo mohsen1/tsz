@@ -39,3 +39,57 @@ fn commonjs_top_level_using_anonymous_default_legacy_class_uses_assignment_outpu
         "Top-level using should not rely on rewriting a rendered variable declaration.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn commonjs_top_level_using_named_plain_class_exports_direct_assignment() {
+    let source = "export {};\nusing before = null;\nexport class C {}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.C = C = class C {"),
+        "Top-level using should print named class exports directly as an assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C {\n};\nexports.C = C;"),
+        "Top-level using should not emit then patch a separate class export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_top_level_using_named_plain_class_exports_direct_assignment() {
+    let source = "export {};\nusing before = null;\nexport class C {}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports_1(\"C\", C = class C {"),
+        "System top-level using should print named class exports directly inside exports_1.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C {\n};\nexports_1(\"C\", C);"),
+        "System top-level using should not emit then patch a separate class export.\nOutput:\n{output}"
+    );
+}
