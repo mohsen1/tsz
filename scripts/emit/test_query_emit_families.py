@@ -196,7 +196,7 @@ after
         self.assertEqual(status["state"], "different-domain")
         self.assertEqual(status["jsTotalDelta"], 470)
 
-    def test_freshness_status_reports_current_detail(self):
+    def test_freshness_status_reports_aggregate_match_detail(self):
         summary = {
             "jsPass": 13459,
             "jsTotal": 13530,
@@ -204,11 +204,27 @@ after
             "dtsTotal": 1669,
         }
         status = self.mod.emit_freshness_status(summary, dict(summary))
-        self.assertEqual(status["state"], "current")
+        self.assertEqual(status["state"], "aggregate-match")
+
+    def test_freshness_status_line_does_not_overstate_row_freshness(self):
+        line = self.mod.emit_freshness_status_line_from_status(
+            {
+                "state": "aggregate-match",
+                "jsPassDelta": 0,
+                "dtsPassDelta": 0,
+                "jsTotalDelta": 0,
+                "dtsTotalDelta": 0,
+            }
+        )
+
+        self.assertIn("aggregate-match", line)
+        self.assertIn("per-row freshness is not proven", line)
+        self.assertNotIn("current", line)
 
     def test_current_detail_requirement_requires_matching_aggregates(self):
-        self.assertTrue(self.mod.emit_detail_is_current({"state": "current"}))
+        self.assertTrue(self.mod.emit_detail_is_current({"state": "aggregate-match"}))
         for state in (
+            "current",
             "stale",
             "detail-ahead",
             "different-domain",
@@ -237,7 +253,7 @@ after
         status = self.mod.emit_freshness_status(detail_summary, public_summary)
         self.assertIn(
             status["state"],
-            ("current", "detail-ahead"),
+            ("aggregate-match", "detail-ahead"),
             "committed scripts/emit/emit-detail.json is "
             f"'{status['state']}' relative to the README emit aggregate "
             f"({status}); refresh emit-detail.json + emit-snapshot.json from "
