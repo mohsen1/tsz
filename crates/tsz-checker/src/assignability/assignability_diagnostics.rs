@@ -3,8 +3,8 @@ use crate::query_boundaries::assignability::{
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type, suppress_raw_excess_property_failure_if_needed,
 };
-use crate::query_boundaries::common as assignability_diagnostic_common;
-use crate::query_boundaries::common::type_param_info;
+use crate::query_boundaries::diagnostics as assignability_diagnostic_common;
+use crate::query_boundaries::diagnostics::type_param_info;
 use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn generic_indexed_access_argument_surface_inner(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::contains_generic_indexed_access_surface(
+        crate::query_boundaries::diagnostics::contains_generic_indexed_access_surface(
             self.ctx.types,
             type_id,
         )
@@ -209,7 +209,7 @@ impl<'a> CheckerState<'a> {
             .get(source_idx)
             .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
         let is_fresh =
-            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source);
+            crate::query_boundaries::diagnostics::is_fresh_object_type(self.ctx.types, source);
         if !(is_direct_literal || is_fresh) {
             return false;
         }
@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
         // checks structural shape, not mutability. If the source is Readonly<T>,
         // try checking T against the target.
         if let Some(inner) =
-            crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
+            crate::query_boundaries::diagnostics::readonly_inner_type(self.ctx.types, source)
             && self.satisfies_relation_outcome(inner, target).related
         {
             return true;
@@ -432,10 +432,10 @@ impl<'a> CheckerState<'a> {
                 && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let evaluated_target_prop_type = self.evaluate_type_with_env(target_prop_type);
-                if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                if crate::query_boundaries::diagnostics::type_is_conditional_type_result_with_unresolved_inference(
                     self.ctx.types,
                     target_prop_type,
-                ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                ) || crate::query_boundaries::diagnostics::type_is_conditional_type_result_with_unresolved_inference(
                     self.ctx.types,
                     evaluated_target_prop_type,
                 ) {
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let evaluated_target = self.evaluate_type_for_assignability(target);
         let target_has_single_rest_tuple = |ty| {
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, ty)
+            crate::query_boundaries::diagnostics::tuple_elements(self.ctx.types, ty)
                 .is_some_and(|elements| elements.len() == 1 && elements[0].rest)
         };
         if !target_has_single_rest_tuple(target) && !target_has_single_rest_tuple(evaluated_target)
@@ -835,9 +835,10 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> Option<bool> {
-        use crate::query_boundaries::common::TypeResolver;
+        use crate::query_boundaries::diagnostics::TypeResolver;
         let target = self.evaluate_type_for_assignability(target);
-        let target_def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, target)?;
+        let target_def_id =
+            crate::query_boundaries::diagnostics::enum_def_id(self.ctx.types, target)?;
         if !self.ctx.is_numeric_enum(target_def_id) {
             return None;
         }
@@ -845,7 +846,7 @@ impl<'a> CheckerState<'a> {
         let source_literal = self.literal_type_from_initializer(source_idx);
         let source_is_number_like = source == TypeId::NUMBER
             || source_literal.is_some_and(|lit| {
-                crate::query_boundaries::common::is_number_literal(self.ctx.types, lit)
+                crate::query_boundaries::diagnostics::is_number_literal(self.ctx.types, lit)
             });
         if !source_is_number_like {
             return None;
@@ -854,7 +855,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.is_enum_type(target, self.ctx.types) {
             if let Some(source_literal) = source_literal {
                 let structural_target =
-                    crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
+                    crate::query_boundaries::diagnostics::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
                 return Some(
                     self.numeric_enum_assignment_relation_outcome(
@@ -868,17 +869,19 @@ impl<'a> CheckerState<'a> {
         }
 
         let target_member =
-            crate::query_boundaries::common::enum_member_type(self.ctx.types, target);
+            crate::query_boundaries::diagnostics::enum_member_type(self.ctx.types, target);
         let target_literal = target_member.and_then(|member| {
-            crate::query_boundaries::common::literal_value(self.ctx.types, member)
+            crate::query_boundaries::diagnostics::literal_value(self.ctx.types, member)
         });
 
         target_member?;
 
         match source_literal {
             Some(source_literal) => {
-                let source_val =
-                    crate::query_boundaries::common::literal_value(self.ctx.types, source_literal);
+                let source_val = crate::query_boundaries::diagnostics::literal_value(
+                    self.ctx.types,
+                    source_literal,
+                );
                 match (source_val, target_literal) {
                     (
                         Some(tsz_solver::LiteralValue::Number(source_num)),
@@ -1323,9 +1326,10 @@ impl<'a> CheckerState<'a> {
         let resolved_source = self.evaluate_type_for_assignability(source);
 
         // Check call signatures first
-        if let Some(return_type) =
-            crate::query_boundaries::common::return_type_for_type(self.ctx.types, resolved_source)
-            && return_type != TypeId::VOID
+        if let Some(return_type) = crate::query_boundaries::diagnostics::return_type_for_type(
+            self.ctx.types,
+            resolved_source,
+        ) && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
             && self.return_relation_outcome(return_type, target).related
@@ -1335,7 +1339,7 @@ impl<'a> CheckerState<'a> {
 
         // Check construct signatures — use get_construct_signatures directly
         // which handles Callable types and intersections.
-        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+        if let Some(sigs) = crate::query_boundaries::diagnostics::construct_signatures_for_type(
             self.ctx.types,
             resolved_source,
         ) && let Some(first_sig) = sigs.first()
@@ -1406,11 +1410,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        crate::query_boundaries::common::type_may_display_iterator_protocol(self.ctx.types, source)
-            && crate::query_boundaries::common::type_may_display_iterator_protocol(
-                self.ctx.types,
-                target,
-            )
+        crate::query_boundaries::diagnostics::type_may_display_iterator_protocol(
+            self.ctx.types,
+            source,
+        ) && crate::query_boundaries::diagnostics::type_may_display_iterator_protocol(
+            self.ctx.types,
+            target,
+        )
     }
 
     fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -1449,7 +1455,7 @@ impl<'a> CheckerState<'a> {
 
     fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
         let (base, args) = self.application_info_or_display_alias(type_id)?;
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        let def_id = crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, base)
             .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
         let iterator_result_def =
             self.resolve_entity_name_text_to_def_id_for_lowering("IteratorResult")?;
@@ -1488,24 +1494,70 @@ impl<'a> CheckerState<'a> {
     }
 
     fn iterator_result_return_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
-        let target_display = self.format_type(target);
-        let Some(target_return) = function_return_display(&target_display) else {
+        let Some(target_return) = self.callable_return_type_for_iterator_diagnostic(target) else {
             return false;
         };
-        let Some((target_name, target_args)) = parse_simple_type_application_display(target_return)
-        else {
+        let target_return = self.evaluate_type_for_assignability(target_return);
+        let Some(target_args) = self.iterator_result_application_args(target_return) else {
             return false;
         };
-        if target_name != "IteratorResult" || target_args.get(1).copied() != Some("unknown") {
+        if target_args
+            .get(1)
+            .copied()
+            .is_none_or(|return_type| !self.type_evaluates_to(return_type, TypeId::UNKNOWN))
+        {
             return false;
         }
 
-        let source_display = self.format_type(source);
-        let Some(source_return) = function_return_display(&source_display) else {
+        let Some(source_return) = self.callable_return_type_for_iterator_diagnostic(source) else {
             return false;
         };
-        source_return.contains("done: boolean")
-            || (source_return.contains("done: true") && !source_return.contains("value: undefined"))
+        self.iterator_result_return_source_has_broad_done(source_return)
+    }
+
+    fn callable_return_type_for_iterator_diagnostic(&mut self, type_id: TypeId) -> Option<TypeId> {
+        crate::query_boundaries::diagnostics::return_type_for_type(self.ctx.types, type_id).or_else(
+            || {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                crate::query_boundaries::diagnostics::return_type_for_type(
+                    self.ctx.types,
+                    evaluated,
+                )
+            },
+        )
+    }
+
+    fn iterator_result_return_source_has_broad_done(&mut self, type_id: TypeId) -> bool {
+        let type_id = self.evaluate_type_for_assignability(type_id);
+        if let Some(members) =
+            crate::query_boundaries::diagnostics::union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&member| self.iterator_result_return_source_has_broad_done(member));
+        }
+
+        let Some(shape) = object_shape_for_type(self.ctx.types, type_id) else {
+            return false;
+        };
+        let done_name = self.ctx.types.intern_string("done");
+        let value_name = self.ctx.types.intern_string("value");
+        let Some(done_prop) = shape.properties.iter().find(|prop| prop.name == done_name) else {
+            return false;
+        };
+        let done_type = self.evaluate_type_for_assignability(done_prop.type_id);
+        if done_type == TypeId::BOOLEAN {
+            return true;
+        }
+        if done_type != TypeId::BOOLEAN_TRUE {
+            return false;
+        }
+
+        !shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == value_name)
+            .is_some_and(|prop| self.type_evaluates_to(prop.type_id, TypeId::UNDEFINED))
     }
 }
 

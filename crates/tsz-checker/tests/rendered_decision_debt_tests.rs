@@ -357,6 +357,33 @@ fn index_access_type_parameter_ts2719_uses_declared_param_names() {
 }
 
 #[test]
+fn iterator_result_return_mismatch_uses_structural_return_surface() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/assignability/assignability_diagnostics.rs"
+    ))
+    .expect("assignability diagnostics source should be readable");
+    let start = source
+        .find("fn iterator_result_return_display_mismatch")
+        .expect("iterator-result return mismatch helper should exist");
+    let body = &source[start..];
+    let end = body
+        .find("\n}\n\nfn parse_simple_type_application_display")
+        .expect("iterator-result return mismatch helper block should end before display parser");
+    let helper_body = &body[..end];
+
+    assert!(
+        !helper_body.contains("format_type(") && !helper_body.contains("function_return_display("),
+        "IteratorResult return mismatch should inspect callable return/object shape, not rendered type text"
+    );
+    assert!(
+        helper_body.contains("iterator_result_application_args")
+            && helper_body.contains("iterator_result_return_source_has_broad_done"),
+        "IteratorResult return mismatch should route through structural IteratorResult and source-return helpers"
+    );
+}
+
+#[test]
 fn missing_property_nominal_requalification_avoids_bare_rendered_name_comparison() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
