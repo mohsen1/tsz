@@ -1,0 +1,1477 @@
+use super::*;
+
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
+
+#[test]
+fn test_normalize_numeric_literal_unchanged() {
+    assert_eq!(DeclarationEmitter::normalize_numeric_literal("42"), "42");
+    assert_eq!(
+        DeclarationEmitter::normalize_numeric_literal("3.14"),
+        "3.14"
+    );
+    assert_eq!(DeclarationEmitter::normalize_numeric_literal("0"), "0");
+}
+
+#[test]
+fn test_normalize_numeric_literal_large_integer() {
+    // Very large integers should be normalized through f64 round-trip
+    let result = DeclarationEmitter::normalize_numeric_literal(
+        "123456789123456789123456789123456789123456789123456789",
+    );
+    assert!(
+        result.contains("e+"),
+        "Expected scientific notation for very large number: {result}"
+    );
+}
+
+#[test]
+fn test_format_js_number_infinity() {
+    assert_eq!(
+        DeclarationEmitter::format_js_number(f64::INFINITY),
+        "Infinity"
+    );
+    assert_eq!(
+        DeclarationEmitter::format_js_number(f64::NEG_INFINITY),
+        "-Infinity"
+    );
+}
+
+#[test]
+fn test_format_js_number_nan() {
+    assert_eq!(DeclarationEmitter::format_js_number(f64::NAN), "NaN");
+}
+
+#[test]
+fn test_format_js_number_integers() {
+    assert_eq!(DeclarationEmitter::format_js_number(0.0), "0");
+    assert_eq!(DeclarationEmitter::format_js_number(42.0), "42");
+    assert_eq!(DeclarationEmitter::format_js_number(-1.0), "-1");
+}
+
+#[test]
+fn test_format_js_number_floats() {
+    assert_eq!(DeclarationEmitter::format_js_number(3.15), "3.15");
+    assert_eq!(DeclarationEmitter::format_js_number(0.5), "0.5");
+}
+
+#[test]
+fn test_large_separated_numeric_literal_declaration_emit() {
+    let output = emit_dts(
+        r#"
+export type X = 0x8000_0000_0000_0000;
+export type Y = 0x7fff_ffff_ffff_ffff;
+export const y: 0x8000_0000_0000_0000 = 0 as any;
+"#,
+    );
+
+    assert!(
+        output.contains("export type X = 9223372036854776000;"),
+        "Expected large separated hex literal type X to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export type Y = 9223372036854776000;"),
+        "Expected large separated hex literal type Y to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: 9223372036854776000;"),
+        "Expected large separated hex literal annotation to use JS number text: {output}"
+    );
+    assert!(
+        !output.contains("9223372036854775807"),
+        "Declaration output must not saturate through i64::MAX: {output}"
+    );
+}
+
+#[test]
+fn logical_or_function_expression_initializer_drops_unreachable_right_type() {
+    let output = emit_dts(
+        r#"
+var left = (() => 1) || "";
+var renamed = (function() { return "value"; }) || false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var left: () => number;"),
+        "Expected always-truthy arrow function left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var renamed: () => string;"),
+        "Expected always-truthy function expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("string | (() => number)") && !output.contains("false | (() => string)"),
+        "Right operands of always-truthy function expressions should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_object_producing_initializer_drops_unreachable_right_type() {
+    let output = emit_dts_with_binding(
+        r#"
+var objectLeft = ({ value: 1 }) || "";
+var arrayLeft = ([1, 2]) || false;
+var classLeft = (class Box {}) || undefined;
+class C {
+    private p: string;
+}
+class D {
+    private q: string;
+}
+var newLeft = new C() || new D();
+"#,
+    );
+
+    assert!(
+        output.contains("declare var objectLeft: {\n    value: number;\n};"),
+        "Expected object literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var arrayLeft: number[];"),
+        "Expected array literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var classLeft: {\n    new (): {};\n};"),
+        "Expected class expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("undefined |"),
+        "Right operand of always-truthy class expression should not be emitted: {output}"
+    );
+    assert!(
+        output.contains("declare var newLeft: C;"),
+        "Expected new-expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("C | D"),
+        "Right operand of always-truthy new expression should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_chained_new_expression_initializer_keeps_first_truthy_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class Box<T> {
+    private value: T;
+}
+namespace Nested {
+    export class Box<T> {
+        private nested: T;
+    }
+}
+var first = new Box<string>() || new Nested.Box<number>() || (() => 1);
+"#,
+    );
+
+    assert!(
+        output.contains("declare var first: Box<string>;"),
+        "Expected the first always-truthy new expression to determine chained `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("Nested.Box<number>") && !output.contains("() => number"),
+        "Unreachable later operands should not be emitted for chained new-expression `||`: {output}"
+    );
+}
+
+#[test]
+fn logical_or_sometimes_truthy_initializer_keeps_right_type() {
+    let output = emit_dts(
+        r#"
+var kept = ("" as string) || 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var kept: string | number;"),
+        "Sometimes-truthy left operands must still include the reachable right operand: {output}"
+    );
+}
+
+#[test]
+fn test_rest_parameter_in_function() {
+    let output = emit_dts("export function sum(...nums: number[]): number { return 0; }");
+    assert!(
+        output.contains("...nums: number[]"),
+        "Expected rest parameter: {output}"
+    );
+}
+
+#[test]
+fn test_flat_map_callback_returning_array_subclass_flattens_element_type() {
+    let output = emit_dts(
+        r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(value => value as Foo);
+interface Foo extends Array<string> {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const bar: string[];"),
+        "flatMap callback returning Array subclass should emit flattened element type: {output}"
+    );
+}
+
+#[test]
+fn test_array_literal_of_function_expressions_drops_optional_param_subtypes() {
+    // Regression for narrowingUnionToUnion: when inferring an array element
+    // union from `[(x: T) => …, (x?: T) => …, …]` literals, the optional-
+    // parameter form is a structural subtype of the required-parameter
+    // form, so tsc's UnionReduction.Subtype drops the `?` arm. Mirror that
+    // text-side: any function-typed arm whose only difference from another
+    // arm is one or more `?:` parameters should be removed.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value?: string) => {},
+    (value: number) => {},
+    (value?: number) => {},
+];
+"#,
+    );
+    let elem_text = output
+        .lines()
+        .find(|line| line.contains("TEST_CASES:"))
+        .expect("TEST_CASES line missing");
+    assert!(
+        elem_text.contains("((value: string) => void)"),
+        "Expected required-param string arm to remain: {output}"
+    );
+    assert!(
+        elem_text.contains("((value: number) => void)"),
+        "Expected required-param number arm to remain: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: string)"),
+        "Optional-param string arm should be subsumed by required-param sibling: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: number)"),
+        "Optional-param number arm should be subsumed by required-param sibling: {output}"
+    );
+}
+
+#[test]
+fn test_array_literal_of_function_expressions_paren_wraps_each_arm() {
+    // Regression for narrowingUnionToUnion: when an array literal contains
+    // multiple function expressions that don't all share an identical type,
+    // each function-typed union arm must be parenthesized so the trailing
+    // `=>` does not bind across the `|`. Without parens around each arm,
+    // `(a: A) => void | (a: B) => void` parses as
+    // `(a: A) => (void | (a: B) => void)`.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value: number) => {},
+];
+"#,
+    );
+    assert!(
+        output.contains("(((value: string) => void) | ((value: number) => void))[]"),
+        "Expected each function-typed union arm to be parenthesized: {output}"
+    );
+}
+
+#[test]
+fn test_call_signature_in_interface() {
+    let output = emit_dts(
+        r#"
+    export interface Callable {
+        (x: number): string;
+    }
+    "#,
+    );
+    assert!(
+        output.contains("(x: number): string;"),
+        "Expected call signature: {output}"
+    );
+}
+
+#[test]
+fn test_construct_signature_in_interface() {
+    let output = emit_dts(
+        r#"
+    export interface Constructable {
+        new (name: string): object;
+    }
+    "#,
+    );
+    assert!(
+        output.contains("new (name: string): object;"),
+        "Expected construct signature: {output}"
+    );
+}
+
+#[test]
+fn test_type_predicate_in_function() {
+    let output = emit_dts(
+        r#"
+    export function isString(x: unknown): x is string {
+        return typeof x === "string";
+    }
+    "#,
+    );
+    assert!(
+        output.contains("x is string"),
+        "Expected type predicate: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_declared_conditional_call_preserves_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    return pick(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function wrap<T>(value: T): T extends () => infer R ? R : never;"
+        ),
+        "Expected exported function to reuse declared helper conditional return type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_mapped_infer_call_expands_alias_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export type Boxed<T> = { value: T extends number ? T : string };
+export declare function read<T>(value: T): T extends { [K in keyof Boxed<infer U>]: Boxed<infer U>[K] } ? U : never;
+export function unwrap<T>(value: T) {
+    return read(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function unwrap<T>(value: T): T extends {\n    value: infer U extends number ? infer U : string;\n} ? U : never;"
+        ),
+        "Expected mapped alias helper return type to expand in declaration scope: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_shadowed_helper_does_not_borrow_top_level_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    function pick(value: T) {
+        return pick(value);
+    }
+    return pick(value);
+}
+"#,
+    );
+
+    let wrap_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrap"))
+        .unwrap_or_else(|| panic!("Expected exported wrap declaration: {output}"));
+    assert!(
+        !wrap_decl.contains("infer R"),
+        "Expected shadowed local helper call not to reuse top-level pick return type: {output}"
+    );
+}
+
+#[test]
+fn test_self_recursive_exported_function_does_not_stack_overflow() {
+    // A directly self-recursive exported function must not cause infinite
+    // recursion in the return-type inferrer; it should fall back without crashing.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function loop(n: number): number {
+    return loop(n - 1);
+}
+export function identity(s: string): string {
+    return identity(s);
+}
+"#,
+    );
+    assert!(
+        output.contains("declare function loop"),
+        "Self-recursive loop must appear in declarations: {output}"
+    );
+    assert!(
+        output.contains("declare function identity"),
+        "Self-recursive identity must appear in declarations: {output}"
+    );
+}
+
+#[test]
+fn test_non_recursive_callee_still_infers_primitive_return() {
+    // When the callee is NOT self-recursive, the return type should still
+    // be inferred from the callee's body — proving the guard only fires for
+    // genuine self-calls and does not regress the happy path.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function helper(): string {
+    return "hello";
+}
+export function wrapper() {
+    return helper();
+}
+export function wrapper2() {
+    function inner() {
+        return "world";
+    }
+    return inner();
+}
+"#,
+    );
+    let wrapper_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrapper("))
+        .unwrap_or_else(|| panic!("Expected wrapper declaration: {output}"));
+    assert!(
+        wrapper_decl.contains("string"),
+        "Non-recursive callee return type should still be inferred as string: {output}"
+    );
+    let wrapper2_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrapper2("))
+        .unwrap_or_else(|| panic!("Expected wrapper2 declaration: {output}"));
+    assert!(
+        wrapper2_decl.contains("string"),
+        "Non-recursive inner callee return type should still be inferred as string: {output}"
+    );
+}
+
+#[test]
+fn test_default_parameter_values_omitted() {
+    let output = emit_dts(
+        r#"
+    export function greet(name: string = "world"): void {}
+    "#,
+    );
+    // Default values should be stripped; parameter should remain with its type
+    assert!(
+        output.contains("name"),
+        "Expected parameter name preserved: {output}"
+    );
+    // The default value itself should not appear in the .d.ts
+    assert!(
+        !output.contains("\"world\""),
+        "Default value should be stripped from .d.ts: {output}"
+    );
+}
+
+#[test]
+fn test_using_declaration_emits_const() {
+    let output = emit_dts(r#"export using x: Disposable = getResource();"#);
+    // `using` declarations emit as `const` in .d.ts
+    assert!(
+        output.contains("const x"),
+        "Expected using declaration to emit as const: {output}"
+    );
+}
+
+#[test]
+fn test_void_body_function_infers_void_return() {
+    let output = emit_dts(
+        r#"
+    export function doNothing() {
+        console.log("hi");
+    }
+    "#,
+    );
+    assert!(
+        output.contains("void"),
+        "Expected void return type for function with no return: {output}"
+    );
+}
+
+#[test]
+fn test_side_effect_import_preserved() {
+    let output = emit_dts(r#"import "./polyfill";"#);
+    assert!(
+        output.contains("import \"./polyfill\""),
+        "Expected side-effect import to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_literal_type_alias() {
+    let output = emit_dts("export type Direction = 'up' | 'down' | 'left' | 'right';");
+    assert!(
+        output.contains("'up'") || output.contains("\"up\""),
+        "Expected string literal type: {output}"
+    );
+}
+
+#[test]
+fn test_keyof_type() {
+    let output = emit_dts("export type Keys<T> = keyof T;");
+    assert!(output.contains("keyof T"), "Expected keyof type: {output}");
+}
+
+#[test]
+fn test_indexed_access_typeof_object_is_parenthesized() {
+    let output = emit_dts(
+        r#"
+const a = { a: "value of a" } as const;
+export type Value = typeof a["a"];
+"#,
+    );
+    assert!(
+        output.contains("export type Value = (typeof a)[\"a\"];"),
+        "typeof object in indexed access needs parens: {output}"
+    );
+}
+
+#[test]
+fn test_keyof_indexed_access_drops_unnecessary_source_parens() {
+    let output = emit_dts(
+        r#"
+type A = { a: { b: string } };
+export type Keys = keyof (A["a"]);
+"#,
+    );
+    assert!(
+        output.contains("export type Keys = keyof A[\"a\"];"),
+        "keyof indexed access should not retain source-only parens: {output}"
+    );
+}
+
+#[test]
+fn test_readonly_array_type() {
+    let output = emit_dts("export type ReadonlyArr = readonly number[];");
+    assert!(
+        output.contains("readonly number[]"),
+        "Expected readonly array type: {output}"
+    );
+}
+
+#[test]
+fn test_parenthesized_function_type_in_array() {
+    let output = emit_dts("export type FnArray = ((x: number) => void)[];");
+    assert!(
+        output.contains("((x: number) => void)[]"),
+        "Expected parenthesized function type in array: {output}"
+    );
+}
+
+#[test]
+fn test_computed_symbol_property() {
+    let output = emit_dts(
+        r#"
+    export interface Iterable {
+        [Symbol.iterator](): Iterator<any>;
+    }
+    "#,
+    );
+    assert!(
+        output.contains("[Symbol.iterator]"),
+        "Expected computed Symbol property: {output}"
+    );
+}
+
+#[test]
+fn test_export_equals() {
+    let output = emit_dts(
+        r#"
+    declare const myLib: { version: string };
+    export = myLib;
+    "#,
+    );
+    assert!(
+        output.contains("export = myLib;"),
+        "Expected export = : {output}"
+    );
+}
+
+#[test]
+fn test_export_equals_import_equals_keeps_namespace_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace m3 {
+        export namespace m2 {
+            export interface connectModule {
+                (res, req, next): void;
+            }
+            export interface connectExport {
+                use: (mod: connectModule) => connectExport;
+                listen: (port: number) => void;
+            }
+        }
+
+        export var server: {
+            (): m2.connectExport;
+            test1: m2.connectModule;
+            test2(): m2.connectModule;
+        };
+    }
+
+    import m = m3;
+    export = m;
+    "#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace m3")
+        .expect("Expected namespace dependency to be preserved");
+    let import_pos = output
+        .find("import m = m3;")
+        .expect("Expected import equals alias to be emitted");
+    let export_pos = output
+        .find("export = m;")
+        .expect("Expected export assignment to be emitted");
+
+    assert!(
+        namespace_pos < import_pos && import_pos < export_pos,
+        "Expected namespace, import alias, and export assignment to preserve source order: {output}"
+    );
+}
+
+#[test]
+fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace m {
+        export namespace c {
+            export class c {
+            }
+        }
+    }
+
+    import a = m.c;
+    import b = a;
+    export = b;
+    "#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace m")
+        .expect("Expected namespace dependency to be preserved");
+    let first_import_pos = output
+        .find("import a = m.c;")
+        .expect("Expected first import equals alias to be emitted");
+    let second_import_pos = output
+        .find("import b = a;")
+        .expect("Expected chained import equals alias to be emitted");
+    let export_pos = output
+        .find("export = b;")
+        .expect("Expected export assignment to be emitted");
+
+    assert!(
+        namespace_pos < first_import_pos
+            && first_import_pos < second_import_pos
+            && second_import_pos < export_pos,
+        "Expected namespace, import chain, and export assignment to preserve source order: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace x {
+        export class c {
+            foo(a: number) {
+                return a;
+            }
+        }
+    }
+
+    export namespace m2 {
+        export namespace m3 {
+            export import c = x.c;
+            export var cProp = new c();
+        }
+    }
+
+    export var d = new m2.m3.c();
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare var d: x.c;"),
+        "Expected exported variable to use the import-equals target type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_import_equals_annotation_preserves_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace m1 {
+        export namespace inner {
+            export class c1 {}
+        }
+        import alias = inner;
+        export declare const value: alias.c1;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("import alias = inner;"),
+        "Expected import-equals alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("const value: alias.c1;"),
+        "Expected exported annotation to preserve the local alias: {output}"
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace N {
+        export class C {}
+    }
+    import A = N;
+    import B = N;
+    export declare const x: A.C;
+    export declare const y: B.C;
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare const x: A.C;"),
+        "Expected x annotation to preserve alias A: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: B.C;"),
+        "Expected y annotation to preserve alias B: {output}"
+    );
+}
+
+#[test]
+fn test_import_type_with_resolution_mode_attributes_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import type { RequireInterface } from "pkg" with { "resolution-mode": "require" };
+    import { type RequireInterface as Req } from "pkg" with { "resolution-mode": "require" };
+
+    export interface LocalInterface extends RequireInterface {}
+    export interface Loc extends Req {}
+    "#,
+    );
+
+    assert!(
+        output.contains(
+            r#"import type { RequireInterface } from "pkg" with { "resolution-mode": "require" };"#
+        ),
+        "Expected type-only import attributes to be preserved: {output}"
+    );
+    assert!(
+        output.contains(
+            r#"import { type RequireInterface as Req } from "pkg" with { "resolution-mode": "require" };"#
+        ),
+        "Expected named import attributes to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_import_type_alias_is_preserved_with_usage_analysis() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import { type RequireInterface as Req } from "pkg";
+
+    export interface Loc extends Req {}
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"import { type RequireInterface as Req } from "pkg";"#),
+        "Expected aliased type import to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_import_type_is_preserved_with_usage_analysis() {
+    let source = r#"
+    import * as ns from "pkg";
+    export const value = ns;
+    "#;
+    let (parser, root) = parse_test_source(source);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
+                return Some(var_stmt);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_variable(clause_node)
+        })
+        .expect("missing variable statement");
+    let decl_list_idx = var_stmt.declarations.nodes[0];
+    let decl_list = parser
+        .arena
+        .get(decl_list_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl_idx = decl_list.declarations.nodes[0];
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let ns_sym_id = binder
+        .file_locals
+        .get("ns")
+        .expect("expected namespace import symbol");
+
+    let interner = TypeInterner::new();
+    let namespace_type = interner.module_namespace(SymbolRef(ns_sym_id.0));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.name.0, namespace_type);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(r#"import * as ns from "pkg";"#),
+        "Expected namespace import to be preserved: {output}"
+    );
+    assert!(
+        output.contains("export declare const value: typeof ns;"),
+        "Expected exported value to use the namespace import alias type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    import * as ns from "pkg";
+    export const value = ns;
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"import * as ns from "pkg";"#),
+        "Expected namespace import to survive usage analysis: {output}"
+    );
+    assert!(
+        output.contains("export declare const value: typeof ns;"),
+        "Expected exported namespace import initializer to emit typeof alias: {output}"
+    );
+}
+
+#[test]
+fn test_json_module_imports_infer_declaration_shapes() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+    "name": "pkg",
+    "version": "0.0.1",
+    "type": "module",
+    "default": "misedirection"
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export const name = pkg.name;
+import * as ns from "./package.json" with { type: "json" };
+export const thing = ns;
+export const name2 = ns.default.name;
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains("export declare const name: string;"),
+        "Expected default JSON import property access to infer the property type: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare const thing: {\n    default: {\n        name: string;\n        version: string;\n        type: string;\n        default: string;\n    };\n};"
+        ),
+        "Expected namespace JSON import value to inline the JSON module namespace shape: {output}"
+    );
+    assert!(
+        output.contains("export declare const name2: string;"),
+        "Expected namespace JSON default property access to infer the nested property type: {output}"
+    );
+    assert!(
+        !output.contains("import * as ns from \"./package.json\";"),
+        "Expected JSON namespace import to be elided once its type is inlined: {output}"
+    );
+}
+
+#[test]
+fn test_json_module_imports_survive_when_alias_is_public_surface() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-public-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(dir.join("package.json"), r#"{ "name": "pkg" }"#).expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export type Pkg = typeof pkg;
+export { pkg };
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains(r#"import pkg from "./package.json";"#),
+        "Expected public JSON import alias to survive declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export type Pkg = typeof pkg;"),
+        "Expected type query to keep referencing the JSON import alias: {output}"
+    );
+    assert!(
+        output.contains("export { pkg };"),
+        "Expected value export specifier to keep referencing the JSON import alias: {output}"
+    );
+}
+
+#[test]
+fn test_call_expression_recovers_return_type_from_callee_type() {
+    let source = r#"
+    export const a = helper.x();
+    "#;
+    let (parser, root) = parse_test_source(source);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
+                return Some(var_stmt);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_variable(clause_node)
+        })
+        .expect("missing variable statement");
+    let decl_list_idx = var_stmt.declarations.nodes[0];
+    let decl_list = parser
+        .arena
+        .get(decl_list_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl_idx = decl_list.declarations.nodes[0];
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+    let call = parser
+        .arena
+        .get(decl.initializer)
+        .and_then(|node| parser.arena.get_call_expr(node))
+        .expect("missing call expression");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let callee_type = interner.function(FunctionShape::new(Vec::new(), TypeId::STRING));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(call.expression.0, callee_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export declare const a: string;"),
+        "Expected call expression to recover return type from callee type: {output}"
+    );
+}
+
+#[test]
+fn test_source_call_uses_cached_generic_return_alias_arguments() {
+    let source = r#"
+    type Boxified<T> = { [P in keyof T]: { value: T[P] } };
+    type A = { a: string };
+    type B = { b: string };
+    function boxify<T>(obj: T) {
+        throw new Error();
+    }
+    function f1(x: A | B | undefined) {
+        return boxify(x);
+    }
+    "#;
+    let (parser, root) = parse_test_source(source);
+
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = parser.arena.get_call_expr(node)?;
+            (parser.arena.get_identifier_text(call.expression) == Some("boxify"))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing boxify call");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let boxified_sym = binder
+        .file_locals
+        .get("Boxified")
+        .expect("missing Boxified symbol");
+    let boxify_sym = binder
+        .file_locals
+        .get("boxify")
+        .expect("missing boxify symbol");
+
+    let interner = TypeInterner::new();
+    let type_param = tsz_solver::types::TypeParamInfo::simple(interner.intern_string("T"));
+    let boxified_def = DefId(7010);
+    let return_type = interner.application(
+        interner.lazy(boxified_def),
+        vec![interner.type_param(type_param)],
+    );
+    let function_type = interner.function(FunctionShape {
+        type_params: vec![type_param],
+        params: Vec::new(),
+        this_type: None,
+        return_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(boxified_def, boxified_sym);
+    type_cache.symbol_types.insert(boxify_sym, function_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected source call return type");
+
+    assert_eq!(type_text, "Boxified<A | B | undefined>");
+}
+
+#[test]
+fn test_function_returning_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+type A = { a: string };
+type B = { b: string };
+type C = { c: string };
+declare function boxify<T>(obj: T): Boxified<T>;
+function f1(x: A | B | C | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+declare function wrap<Value>(value: Value): Wrapped<Value>;
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function f1(x: A | B | C | undefined): Boxified<A | B | C | undefined>;"
+        ),
+        "Expected inferred return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper type parameters and mapped keys to preserve the alias too: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | C | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}
+
+#[test]
+fn function_returning_mapped_parameter_preserves_source_surface() {
+    let output = emit_dts(
+        r#"
+export function makeRecord<Value, Key extends string>(obj: { [Field in Key]: Value }) {
+    return obj;
+}
+
+export function makeDictionary<Value>(obj: { [name: string]: Value }) {
+    return obj;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function makeRecord<Value, Key extends string>(obj: {\n    [Field in Key]: Value;\n}): { [Field in Key]: Value; };"
+        ),
+        "Expected returned mapped parameter to keep its public source surface: {output}"
+    );
+    assert!(
+        !output.contains("makeDictionary<Value>(obj: {\n    [name: string]: Value;\n}): { [name: string]: Value })"),
+        "Non-mapped index signatures should not use the mapped-parameter source fast path: {output}"
+    );
+}
+
+#[test]
+fn test_nested_mapped_type_as_clause_formats_multiline() {
+    let output = emit_dts(
+        r#"
+export type TN5<T, U> = keyof { [K in keyof T as keyof { [P in K as T[P] extends U ? K : never]: true }]: string };
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export type TN5<T, U> = keyof {\n    [K in keyof T as keyof {\n        [P in K as T[P] extends U ? K : never]: true;\n    }]: string;\n};"
+        ),
+        "Expected nested mapped type in remap clause to use structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn test_function_returning_remapped_keyof_parameter_expands_literal_return() {
+    use tsz_solver::types::{ConditionalType, MappedType, TypeParamInfo};
+
+    let source = r#"
+type KeysExtendedBy<T, U> = keyof { [K in keyof T as U extends T[K] ? K : never]: T[K] };
+interface M {
+    a: boolean;
+    b: number;
+}
+function f(x: KeysExtendedBy<M, number>) {
+    return x;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let f_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("f"))
+                .map(|_| NodeIndex(idx as u32))
+        })
+        .expect("missing f function");
+    let f_node = parser.arena.get(f_idx).expect("missing f node");
+    let f = parser
+        .arena
+        .get_function(f_node)
+        .expect("missing f function data");
+    let param_idx = f.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing f parameter");
+
+    let keys_sym = binder
+        .file_locals
+        .get("KeysExtendedBy")
+        .expect("missing KeysExtendedBy symbol");
+    let m_sym = binder.file_locals.get("M").expect("missing M symbol");
+
+    let interner = TypeInterner::new();
+    let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+    let u_param = TypeParamInfo::simple(interner.intern_string("U"));
+    let k_param = TypeParamInfo::simple(interner.intern_string("K"));
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let k_type = interner.type_param(k_param);
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: interner.keyof(t_type),
+        name_type: Some(interner.conditional(ConditionalType {
+            check_type: u_type,
+            extends_type: interner.index_access(t_type, k_type),
+            true_type: k_type,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        })),
+        template: interner.index_access(t_type, k_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let alias_body = interner.keyof(mapped);
+    let alias_def = DefId(7021);
+    let m_def = DefId(7023);
+    let m_type = interner.object_with_flags(
+        vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::BOOLEAN),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        ObjectFlags::PRESERVE_DECLARATION_ORDER,
+    );
+    let m_lazy = interner.lazy(m_def);
+    let alias_app = interner.application(interner.lazy(alias_def), vec![m_lazy, TypeId::NUMBER]);
+    let function_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(interner.intern_string("x"), alias_app)],
+        alias_app,
+    ));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(alias_def, keys_sym);
+    type_cache.def_to_symbol.insert(m_def, m_sym);
+    type_cache.def_types.insert(alias_def.0, alias_body);
+    type_cache.def_types.insert(m_def.0, m_type);
+    type_cache
+        .def_type_params
+        .insert(alias_def.0, vec![t_param, u_param]);
+    type_cache.node_types.insert(f_idx.0, function_type);
+    type_cache.node_types.insert(f.name.0, function_type);
+    type_cache
+        .node_types
+        .insert(param.type_annotation.0, alias_app);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function f(x: KeysExtendedBy<M, number>): \"b\";"),
+        "Expected returned remapped-key alias parameter to emit the evaluated literal key: {output}"
+    );
+}
+
+#[test]
+fn test_function_returning_remapped_keyof_parameter_expands_renamed_literal_return() {
+    use tsz_solver::types::{ConditionalType, MappedType, TypeParamInfo};
+
+    let source = r#"
+type SelectKeys<Shape, Value> = keyof { [Prop in keyof Shape as Value extends Shape[Prop] ? Prop : never]: Shape[Prop] };
+interface Recordish {
+    yes: string;
+    no: boolean;
+}
+function g(item: SelectKeys<Recordish, string>) {
+    return item;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let g_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("g"))
+                .map(|_| NodeIndex(idx as u32))
+        })
+        .expect("missing g function");
+    let g_node = parser.arena.get(g_idx).expect("missing g node");
+    let g = parser
+        .arena
+        .get_function(g_node)
+        .expect("missing g function data");
+    let param_idx = g.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing g parameter");
+
+    let select_sym = binder
+        .file_locals
+        .get("SelectKeys")
+        .expect("missing SelectKeys symbol");
+    let recordish_sym = binder
+        .file_locals
+        .get("Recordish")
+        .expect("missing Recordish symbol");
+
+    let interner = TypeInterner::new();
+    let shape_param = TypeParamInfo::simple(interner.intern_string("Shape"));
+    let value_param = TypeParamInfo::simple(interner.intern_string("Value"));
+    let prop_param = TypeParamInfo::simple(interner.intern_string("Prop"));
+    let shape_type = interner.type_param(shape_param);
+    let value_type = interner.type_param(value_param);
+    let prop_type = interner.type_param(prop_param);
+    let mapped = interner.mapped(MappedType {
+        type_param: prop_param,
+        constraint: interner.keyof(shape_type),
+        name_type: Some(interner.conditional(ConditionalType {
+            check_type: value_type,
+            extends_type: interner.index_access(shape_type, prop_type),
+            true_type: prop_type,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        })),
+        template: interner.index_access(shape_type, prop_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let alias_body = interner.keyof(mapped);
+    let alias_def = DefId(7022);
+    let recordish_def = DefId(7024);
+    let recordish_type = interner.object_with_flags(
+        vec![
+            PropertyInfo::new(interner.intern_string("yes"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("no"), TypeId::BOOLEAN),
+        ],
+        ObjectFlags::PRESERVE_DECLARATION_ORDER,
+    );
+    let recordish_lazy = interner.lazy(recordish_def);
+    let alias_app = interner.application(
+        interner.lazy(alias_def),
+        vec![recordish_lazy, TypeId::STRING],
+    );
+    let function_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("item"),
+            alias_app,
+        )],
+        alias_app,
+    ));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(alias_def, select_sym);
+    type_cache
+        .def_to_symbol
+        .insert(recordish_def, recordish_sym);
+    type_cache.def_types.insert(alias_def.0, alias_body);
+    type_cache.def_types.insert(recordish_def.0, recordish_type);
+    type_cache
+        .def_type_params
+        .insert(alias_def.0, vec![shape_param, value_param]);
+    type_cache.node_types.insert(g_idx.0, function_type);
+    type_cache.node_types.insert(g.name.0, function_type);
+    type_cache
+        .node_types
+        .insert(param.type_annotation.0, alias_app);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function g(item: SelectKeys<Recordish, string>): \"yes\";"),
+        "Expected renamed type and mapped parameters to use the evaluated literal key: {output}"
+    );
+}
+
+#[test]
+fn test_function_returning_implemented_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+function boxify<T>(obj: T): Boxified<T> {
+    return obj as any;
+}
+type A = { a: string };
+type B = { b: string };
+function f1(x: A | B | undefined) {
+    return boxify(x);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(x: A | B | undefined): Boxified<A | B | undefined>;"),
+        "Expected implemented helper return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}

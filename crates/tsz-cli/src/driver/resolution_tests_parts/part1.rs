@@ -1,0 +1,1482 @@
+use super::*;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use tsz::config::{CompilerOptions, resolve_compiler_options};
+
+use tsz::emitter::ModuleKind;
+
+#[test]
+fn test_module_resolution_file_exists_cache_is_per_cache() {
+    use std::fs;
+
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let candidate = dir.path().join("late.ts");
+
+    let mut cache = ModuleResolutionCache::default();
+    assert!(!cache.file_exists(&candidate));
+
+    fs::write(&candidate, "export {};").unwrap();
+    assert!(
+        !cache.file_exists(&candidate),
+        "file-existence misses are a per-resolution-run snapshot"
+    );
+
+    let mut fresh_cache = ModuleResolutionCache::default();
+    assert!(
+        fresh_cache.file_exists(&candidate),
+        "file-existence misses must not leak across resolution caches"
+    );
+}
+
+#[test]
+fn test_preserve_symlinks_keeps_symlink_path_identity() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_preserve_symlinks");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("real")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(dir.join("real/index.d.ts"), "export interface Box {}").unwrap();
+    symlink(dir.join("real"), dir.join("linked")).unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import type { Box } from '../linked';\nexport type T = Box;",
+    )
+    .unwrap();
+
+    let symlink_path = dir.join("linked/index.d.ts");
+    let real_path = canonicalize_or_owned(&dir.join("real/index.d.ts"));
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    let preserve_options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut preserve_cache = ModuleResolutionCache::default();
+    let preserved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "../linked",
+        &preserve_options,
+        &dir,
+        &mut preserve_cache,
+        &known_files,
+    );
+    assert_eq!(preserved, Some(symlink_path));
+
+    let realpath_options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: false,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut realpath_cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "../linked",
+        &realpath_options,
+        &dir,
+        &mut realpath_cache,
+        &known_files,
+    );
+    assert_eq!(resolved, Some(real_path));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_normalize_resolved_path_preserves_symlink_ancestor_identity() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_symlink_ancestor");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("core/node_modules/package-a")).unwrap();
+    fs::write(
+        dir.join("core/node_modules/package-a/index.d.ts"),
+        "export interface Box {}",
+    )
+    .unwrap();
+    symlink(
+        dir.join("core/node_modules/package-a"),
+        dir.join("package-a"),
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: false,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let symlinked_path = dir.join("package-a/index.d.ts");
+    assert_eq!(
+        normalize_resolved_path(&symlinked_path, &options),
+        symlinked_path,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_resolve_module_specifier_from_node_modules_package_finds_sibling_package() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_node_modules_sibling");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/baz")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/baz/index.d.ts"),
+        "export { T } from \"foo\";",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/foo/index.d.ts"),
+        "export type T = number;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    let resolved = resolve_module_specifier(
+        &dir.join("node_modules/baz/index.d.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/foo/index.d.ts")
+        ))
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_normalize_resolved_path_collapses_segments_for_symlinked_package_identity() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_symlink_segment_normalization");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("core/node_modules/package-a/types")).unwrap();
+    fs::write(
+        dir.join("core/node_modules/package-a/index.d.ts"),
+        "export interface Box {}",
+    )
+    .unwrap();
+    symlink(
+        dir.join("core/node_modules/package-a"),
+        dir.join("package-a"),
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: false,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let raw_path = dir.join("package-a/./types/../index.d.ts");
+    let normalized_path = dir.join("package-a/index.d.ts");
+    assert_eq!(
+        normalize_resolved_path(&raw_path, &options),
+        normalized_path,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_js_target_substitutes_dts() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_js_target");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","version":"0.0.1","exports":"./entrypoint.js"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/pkg/entrypoint.d.ts"), "export {};").unwrap();
+    fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "pkg",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entrypoint.d.ts"),
+        )),
+        "exports target with .js should resolve to an adjacent declaration file"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_exports_target_cannot_escape_package_root() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    fs::write(
+        root.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./leak":"../leak.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("node_modules/leak.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/index.ts"),
+        "import { value } from 'pkg/leak';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "pkg/leak",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "exports target escaping the package root must not resolve"
+    );
+}
+
+#[test]
+fn test_package_imports_absolute_target_is_invalid() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    let abs_target = root.join("abs.d.ts").to_string_lossy().into_owned();
+    fs::write(root.join("abs.d.ts"), "export declare const value: number;").unwrap();
+    fs::write(
+        root.join("package.json"),
+        serde_json::json!({
+            "name": "app",
+            "imports": {
+                "#abs": abs_target
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(root.join("src/index.ts"), "import { value } from '#abs';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "#abs",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, None, "absolute imports target must not resolve");
+}
+
+#[test]
+fn test_duplicate_package_redirects_prefer_stable_lexical_root_when_depth_ties() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_tie_break");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/@types/react")).unwrap();
+    fs::create_dir_all(dir.join("tests/node_modules/@types/react")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/@types/react/package.json"),
+        r#"{"name":"@types/react","version":"16.4.6"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("tests/node_modules/@types/react/package.json"),
+        r#"{"name":"@types/react","version":"16.4.6"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/@types/react/index.d.ts"),
+        "declare global {}",
+    )
+    .unwrap();
+    fs::write(dir.join("tests/node_modules/@types/react/index.d.ts"), "").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let redirects = build_duplicate_package_redirects(
+        &[
+            dir.join("node_modules/@types/react/index.d.ts")
+                .display()
+                .to_string(),
+            dir.join("tests/node_modules/@types/react/index.d.ts")
+                .display()
+                .to_string(),
+        ],
+        &options,
+    );
+
+    let root_index = canonicalize_or_owned(&dir.join("node_modules/@types/react/index.d.ts"));
+    let tests_index =
+        canonicalize_or_owned(&dir.join("tests/node_modules/@types/react/index.d.ts"));
+
+    assert_eq!(
+        redirects.get(&tests_index),
+        Some(&root_index),
+        "same-depth duplicate packages should deterministically redirect to the lexical root copy"
+    );
+    assert!(
+        !redirects.contains_key(&root_index),
+        "canonical root package file should not redirect away"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Stand up three duplicate-package copies at the given `node_modules`
+/// sub-paths, each tagged with `name`/`version` so
+/// `build_duplicate_package_redirects` groups them. Returns the per-copy
+/// `index.d.ts` paths in input order.
+fn make_duplicate_package_copies(
+    dir: &Path,
+    name: &str,
+    version: &str,
+    relative_roots: [&str; 3],
+) -> [PathBuf; 3] {
+    let pkg_json = format!(r#"{{"name":"{name}","version":"{version}"}}"#);
+    let mut indices: [PathBuf; 3] = Default::default();
+    for (i, rel) in relative_roots.iter().enumerate() {
+        let pkg_dir = dir.join(rel);
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("package.json"), &pkg_json).unwrap();
+        std::fs::write(pkg_dir.join("index.d.ts"), "export {};").unwrap();
+        indices[i] = pkg_dir.join("index.d.ts");
+    }
+    indices
+}
+
+fn dup_pkg_resolver_options() -> ResolvedCompilerOptions {
+    ResolvedCompilerOptions {
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_duplicate_package_redirects_flatten_chains_to_final_canonical_root() {
+    // Three duplicate package copies at three distinct depths. Iteration over
+    // the package-roots set is hash-order, so any intermediate "winner" must
+    // not leave a stale redirect pointing at it: every non-canonical copy
+    // must rewrite directly to the depth-1 canonical, regardless of which
+    // order the build pass visited them.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_chain");
+    let _ = fs::remove_dir_all(&dir);
+
+    let [file1, file2, file3] = make_duplicate_package_copies(
+        &dir,
+        "pkg",
+        "2.3.4",
+        [
+            "node_modules/pkg",
+            "node_modules/host/node_modules/pkg",
+            "node_modules/host/node_modules/sub/node_modules/pkg",
+        ],
+    );
+
+    let options = dup_pkg_resolver_options();
+
+    let redirects = build_duplicate_package_redirects(
+        &[
+            file1.display().to_string(),
+            file2.display().to_string(),
+            file3.display().to_string(),
+        ],
+        &options,
+    );
+
+    let canonical1 = canonicalize_or_owned(&file1);
+    let canonical2 = canonicalize_or_owned(&file2);
+    let canonical3 = canonicalize_or_owned(&file3);
+
+    assert!(
+        !redirects.contains_key(&canonical1),
+        "the depth-1 canonical copy must never redirect away from itself, got: {redirects:?}"
+    );
+    assert_eq!(
+        redirects.get(&canonical2),
+        Some(&canonical1),
+        "depth-2 copy must redirect directly to the depth-1 canonical (no chains), got: {redirects:?}"
+    );
+    assert_eq!(
+        redirects.get(&canonical3),
+        Some(&canonical1),
+        "depth-3 copy must redirect directly to the depth-1 canonical (no chains), got: {redirects:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_duplicate_package_redirects_deterministic_across_input_orders() {
+    // The redirect map must be a pure function of the input file set: shuffling
+    // the input order must produce the same redirect map. This guards against
+    // hash-set iteration order leaking into the canonical-root choice.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_duplicate_package_determinism");
+    let _ = fs::remove_dir_all(&dir);
+
+    let [file1_path, file2_path, file3_path] = make_duplicate_package_copies(
+        &dir,
+        "det-pkg",
+        "0.1.0",
+        [
+            "node_modules/det-pkg",
+            "node_modules/wrap/node_modules/det-pkg",
+            "node_modules/wrap/node_modules/inner/node_modules/det-pkg",
+        ],
+    );
+
+    let options = dup_pkg_resolver_options();
+
+    let file1 = file1_path.display().to_string();
+    let file2 = file2_path.display().to_string();
+    let file3 = file3_path.display().to_string();
+
+    // The pure-function property is "any reordering yields the same map".
+    // Three representative orderings cover the regression: sorted, reversed,
+    // and a rotation that visits the depth-3 (deepest) copy first — the
+    // ordering that originally exposed the stale-chain redirect bug.
+    let permutations = [
+        [file1.clone(), file2.clone(), file3.clone()],
+        [file3.clone(), file2.clone(), file1.clone()],
+        [file3, file1, file2],
+    ];
+
+    let mut maps = Vec::new();
+    for inputs in &permutations {
+        let map = build_duplicate_package_redirects(inputs, &options);
+        let mut entries: Vec<(PathBuf, PathBuf)> = map.into_iter().collect();
+        entries.sort();
+        maps.push(entries);
+    }
+    let first = &maps[0];
+    for (i, m) in maps.iter().enumerate().skip(1) {
+        assert_eq!(
+            first, m,
+            "duplicate-package redirects must not depend on input order; permutation {i} diverged"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_runtime_targets_substitute_matching_declaration_sidecars() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_sidecars");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{
+            "name":"pkg",
+            "type":"module",
+            "exports":{
+                ".":"./index.js",
+                "./mjs":"./entry.mjs",
+                "./cjs":"./entry.cjs"
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/pkg/index.d.ts"), "export {};").unwrap();
+    fs::write(dir.join("node_modules/pkg/entry.d.mts"), "export {};").unwrap();
+    fs::write(dir.join("node_modules/pkg/entry.d.cts"), "export = 1;").unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import 'pkg'; import 'pkg/mjs'; import 'pkg/cjs';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/index.d.ts"),
+        ))
+    );
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg/mjs",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entry.d.mts"),
+        ))
+    );
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg/cjs",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/pkg/entry.d.cts"),
+        ))
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_directory_key_does_not_expose_arbitrary_subpaths() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_directory_key");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/inner/package.json"),
+        r#"{
+            "name":"inner",
+            "type":"module",
+            "exports":{
+                "./":"./"
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/other.d.ts"),
+        "export interface Thing {}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/inner/index.d.ts"),
+        "export const x: number;\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { Thing } from 'inner/other';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/other",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "a bare './' exports entry should not expose arbitrary package subpaths"
+    );
+
+    let resolved_index = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/index.js",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(
+        resolved_index,
+        Some(canonicalize_or_owned(
+            &dir.join("node_modules/inner/index.d.ts"),
+        )),
+        "a bare './' exports entry should still expose explicit file-like subpaths"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_root_types_js_is_ignored_for_module_resolution() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_package_types_js_ignored");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/foo/package.json"),
+        r#"{"name":"foo","types":"foo.js"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/foo/foo.js"), "module.exports = {};").unwrap();
+    fs::write(dir.join("src/index.ts"), "import 'foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "package.json types entries should not resolve runtime JS files"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_root_main_js_still_resolves_for_module_resolution() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_package_main_js_runtime");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/foo/package.json"),
+        r#"{"name":"foo","main":"foo.js"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/foo/foo.js"), "module.exports = {};").unwrap();
+    fs::write(dir.join("src/index.ts"), "import 'foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        allow_js: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(&dir.join("node_modules/foo/foo.js"))),
+        "package.json main entries should still resolve runtime JS files"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_extensionless_json");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(dir.join("src/index.ts"), "import data = require('./data');").unwrap();
+    fs::write(dir.join("src/data.json"), "{\"value\": 42}").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_json_module: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "./data",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        None,
+        "extensionless relative imports should not fall through to data.json"
+    );
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "./data.json",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(&dir.join("src/data.json"))),
+        "explicit .json imports should still resolve when resolveJsonModule is enabled"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_dynamic_imports() {
+    let text = r#"import("./foo").then(x => x);"#;
+    let path = Path::new("test.mts");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./foo".to_string()),
+        "Should find dynamic import specifier './foo', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_plain_require_calls() {
+    let text = r#"const data = require("./data.json");"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./data.json".to_string()),
+        "Should find require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
+    let text = r#"const data = require ("./data.json");"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./data.json".to_string()),
+        "Should find spaced require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_jsdoc_import_tags() {
+    let text = r#"
+// @ts-check
+/** @import { "a,b" as CommaName } from "./dep" */
+/** @type {CommaName} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./dep".to_string()),
+        "Should find JSDoc @import specifier './dep', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"const data = require("./data.json");"#;
+    let file_name = "test.js".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./data.json"),
+        "Should find CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_export_import_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"export import dep = require("./dep");"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./dep"),
+        "Should find exported CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"import("./foo").then(x => x);"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let dynamic_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .collect();
+    assert_eq!(
+        dynamic_imports.len(),
+        1,
+        "Should find exactly one DynamicImport, got: {specifiers:?}"
+    );
+    assert_eq!(dynamic_imports[0].0, "./foo");
+}
+
+#[test]
+fn test_collect_module_specifiers_import_defer_has_dynamic_import_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"import.defer("./foo.js").then(x => x);"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let dynamic_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .collect();
+    assert_eq!(
+        dynamic_imports.len(),
+        1,
+        "Should find exactly one import.defer DynamicImport, got: {specifiers:?}"
+    );
+    assert_eq!(dynamic_imports[0].0, "./foo.js");
+}
+
+#[test]
+fn test_module_specifier_detects_type_json_import_attribute() {
+    let text = r#"import data from "./data.json" with { type: "json" };"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let (specifier, specifier_idx, _, _) = specifiers
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import specifier");
+
+    assert_eq!(specifier, "./data.json");
+    assert!(
+        module_specifier_has_type_json_import_attribute(&arena, *specifier_idx),
+        "Expected the JSON module specifier to carry a type=json import attribute"
+    );
+}
+
+#[test]
+fn test_collect_module_requests_from_text_carries_type_json_attribute() {
+    let path = Path::new("test.mts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"import data from "./data.json" with { type: "json" };"#,
+    );
+    let (_, _, _, has_type_json_attribute) = requests
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import request");
+
+    assert!(
+        *has_type_json_attribute,
+        "Expected source-discovery module requests to retain type=json import attributes"
+    );
+}
+
+#[test]
+fn test_collect_module_requests_from_text_skips_non_relative_ambient_declaration_names() {
+    let path = Path::new("types.d.ts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#,
+    );
+    let specifiers: Vec<_> = requests
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+
+    assert!(
+        !specifiers.contains(&"*.css"),
+        "ambient wildcard declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"virtual:asset"),
+        "bare ambient declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"pkg"),
+        "ambient declaration names are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"./augment"),
+        "relative module augmentation names can target concrete files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_skips_declaration_file_ambient_names() {
+    let text = r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "*.css"),
+        "ambient wildcard declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers
+            .iter()
+            .any(|specifier| specifier == "virtual:asset"),
+        "ambient bare declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "pkg"),
+        "ambient declaration names are not driver lookups in declaration files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "./augment"),
+        "relative augmentation names still need source-file-specific lookup: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_keeps_bare_source_augmentation_targets() {
+    let text = r#"
+export {};
+declare module "pkg" {
+  export const value: number;
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("source.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let external_specifiers: Vec<_> =
+        collect_module_specifiers_for_check(&arena, source_file, true)
+            .into_iter()
+            .map(|(specifier, _, _, _)| specifier)
+            .collect();
+    assert!(
+        external_specifiers
+            .iter()
+            .any(|specifier| specifier == "pkg"),
+        "external source augmentations need lookup for TS2664: {external_specifiers:?}"
+    );
+
+    let script_specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, false)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+    assert!(
+        !script_specifiers.iter().any(|specifier| specifier == "pkg"),
+        "script ambient declarations should not become driver lookups: {script_specifiers:?}"
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_collects_static_imports_and_reexports() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import "./setup";
+import type { Widget } from "./types";
+import view from "./view";
+export { Widget } from "./types";
+export * from "./shared";
+export interface LocalOnly {}
+"#,
+    )
+    .expect("simple static module syntax should not need the source-discovery parser");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (
+                "./setup",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            ("./view", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+            (
+                "./shared",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_preserves_opposite_quote_specifier_values() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import quotedSingle from "'pkg'";
+export { quotedDouble } from '"pkg"';
+"#,
+    )
+    .expect("opposite quote characters are literal specifier contents");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("'pkg'", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                r#""pkg""#,
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_falls_back_for_escaped_static_specifiers() {
+    let text = r#"
+import "./d\u0065p";
+export { value } from "./r\u0065exp";
+"#;
+    assert!(
+        collect_simple_module_requests_from_text(text).is_none(),
+        "escaped module specifiers must fall back so the parser can decode them"
+    );
+
+    let requests = collect_module_requests_from_text(std::path::Path::new("index.ts"), text);
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, _)| (specifier.as_str(), *kind))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("./dep", tsz::module_resolver::ImportKind::EsmImport),
+            ("./reexp", tsz::module_resolver::ImportKind::EsmReExport),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_handles_ambient_modules_conservatively() {
+    let simple = collect_simple_module_requests_from_text(
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+"#,
+    )
+    .expect("ambient declarations without body imports can stay on the scanner path");
+    let specifiers: Vec<_> = simple
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+    assert_eq!(specifiers, vec!["./augment"]);
+
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#
+        )
+        .is_none(),
+        "real dependencies inside ambient module bodies fall back to the parser path"
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_falls_back_for_mode_sensitive_forms() {
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"import data from "./data.json" with { type: "json" };"#
+        )
+        .is_none()
+    );
+    assert!(
+        collect_simple_module_requests_from_text(r#"const loader = import("./lazy");"#).is_none()
+    );
+    assert!(collect_simple_module_requests_from_text(r#"require("./cjs");"#).is_none());
+}
+
+#[test]
+fn test_collect_module_specifiers_mixed_import_kinds() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"
+import { foo } from "./static-import";
+import("./dynamic-import");
+export { bar } from "./re-export";
+"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let static_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        static_imports.contains(&"./static-import"),
+        "Should find static import, got: {static_imports:?}"
+    );
+
+    let dynamic_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        dynamic_imports.contains(&"./dynamic-import"),
+        "Should find dynamic import, got: {dynamic_imports:?}"
+    );
+
+    let re_exports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmReExport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        re_exports.contains(&"./re-export"),
+        "Should find re-export, got: {re_exports:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_re_exports_inside_ambient_module_blocks() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"
+declare module "baz" {
+  export { T } from "foo";
+}
+"#;
+    let file_name = "index.d.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let re_exports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmReExport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        re_exports.contains(&"foo"),
+        "Should find ambient module re-export, got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_extracts_resolution_mode_override() {
+    use tsz::module_resolver::ImportingModuleKind;
+
+    let text = r#"import type { Foo } from "pkg" with { "resolution-mode": "import" };"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    assert_eq!(
+        specifiers.len(),
+        1,
+        "Expected exactly one import: {specifiers:?}"
+    );
+    assert_eq!(specifiers[0].0, "pkg");
+    assert_eq!(specifiers[0].3, Some(ImportingModuleKind::Esm));
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_import_type_dependencies() {
+    use tsz::module_resolver::ImportKind;
+
+    let text = r#"export type SomeType = import("./inner").SomeType;"#;
+    let file_name = "index.d.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let import_types: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+
+    assert!(
+        import_types.contains(&"./inner"),
+        "Should find import type dependency './inner', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_extracts_import_type_resolution_mode_override() {
+    use tsz::module_resolver::{ImportKind, ImportingModuleKind};
+
+    let text =
+        r#"export type SomeType = import("pkg", { with: { "resolution-mode": "require" } }).Foo;"#;
+    let file_name = "index.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+
+    let import_types: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::EsmImport)
+        .collect();
+
+    assert_eq!(
+        import_types.len(),
+        1,
+        "Expected one import type, got: {specifiers:?}"
+    );
+    assert_eq!(import_types[0].0, "pkg");
+    assert_eq!(import_types[0].3, Some(ImportingModuleKind::CommonJs));
+}

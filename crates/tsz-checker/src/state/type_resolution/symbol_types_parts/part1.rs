@@ -1,0 +1,1149 @@
+impl<'a> CheckerState<'a> {
+    pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
+        let local_alias_for_augmentation = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+        let local_alias_symbol = self
+            .ctx
+            .resolve_dynamic_symbol_file_index(sym_id)
+            .is_none()
+            .then(|| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+            })
+            .flatten();
+        let current_non_import_symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
+        let symbol_meta = local_alias_symbol
+            .or(current_non_import_symbol)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .map(|symbol| {
+                (
+                    symbol.escaped_name.clone(),
+                    symbol.flags,
+                    symbol.declarations.clone(),
+                    symbol.value_declaration,
+                )
+            });
+        if let Some((name, flags, _, _)) = symbol_meta.as_ref() {
+            tracing::debug!(
+                sym_id = sym_id.0,
+                name = %name,
+                flags = *flags,
+                "type_reference_symbol_type: ENTRY"
+            );
+        }
+        if !self.ctx.enter_recursion() {
+            return TypeId::ERROR;
+        }
+
+        if local_alias_symbol.is_none()
+            && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+        {
+            if let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+                self.ctx.leave_recursion();
+                return result;
+            }
+            if let Some((result, _)) =
+                self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)
+            {
+                self.ctx.leave_recursion();
+                return result;
+            }
+        }
+
+        if let Some((ref name, flags, ref declarations, _)) = symbol_meta
+            && name == "BuiltinIteratorReturn"
+            && (flags & symbol_flags::TYPE_ALIAS) != 0
+            && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
+        {
+            self.ctx.leave_recursion();
+            return self.builtin_iterator_return_intrinsic_type();
+        }
+
+        if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
+            // class+interface merged symbols (with or without namespace blocks) resolve
+            // in type position to the class instance type. `get_class_instance_type_inner`
+            // already merges interface declarations into the instance shape, so the
+            // class branch correctly returns a type that carries both the class's own
+            // members and the merged-interface members. Without this, routing through
+            // the interface branch silently drops class instance members for merged
+            // class+interface+namespace symbols (the interface path filters to
+            // interface declarations only).
+            if flags & symbol_flags::CLASS != 0 {
+                let instance_type_opt = self.class_instance_type_with_params_from_symbol(sym_id);
+
+                if let Some((instance_type, params)) = instance_type_opt {
+                    // Register the instance type name even when cross-file delegation
+                    // produces a different TypeId than the local class-instance path.
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, escaped_name);
+                    if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+                        self.ctx.insert_def_type_params(def_id, params);
+                    }
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(instance_type, def_id);
+                    if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id) {
+                        self.ctx
+                            .class_decl_miss_cache
+                            .borrow_mut()
+                            .remove(&instance_type);
+                        self.ctx
+                            .class_instance_type_to_decl
+                            .insert(instance_type, class_idx);
+                    }
+                    self.ctx
+                        .register_class_instance_in_envs(def_id, instance_type);
+
+                    self.ctx.leave_recursion();
+                    return instance_type;
+                }
+
+                // Fallback: if instance type couldn't be computed, return Lazy
+                let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                self.ctx.leave_recursion();
+                return lazy_type;
+            }
+            let has_interface_decl = declarations.iter().copied().any(|decl_idx| {
+                let arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+                arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+            });
+            if flags & symbol_flags::INTERFACE != 0 || has_interface_decl {
+                if !declarations.is_empty() {
+                    // Preserve interface names in errors while caching the structural
+                    // type for checking. Merged interface+namespace symbols need the
+                    // interface declarations, not the namespace value type.
+                    let is_merged_with_namespace =
+                        flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
+                    let should_force_interface_decl_path =
+                        has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
+                    // Cross-file interface symbols can share SymbolIds with locals, so
+                    // resolve them through the symbol's home arena first.
+                    let prefer_cross_file_interface = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx);
+
+                    let mut structural_type = if prefer_cross_file_interface {
+                        let delegated = self.delegate_cross_arena_interface_type(sym_id);
+                        delegated.unwrap_or_else(|| {
+                            if is_merged_with_namespace || should_force_interface_decl_path {
+                                // Compute the interface type directly, bypassing
+                                // get_type_of_symbol which would return the namespace
+                                // type for merged symbols.
+                                self.compute_interface_type_from_declarations(sym_id)
+                            } else {
+                                self.get_type_of_symbol(sym_id)
+                            }
+                        })
+                    } else if is_merged_with_namespace || should_force_interface_decl_path {
+                        // Compute the interface type directly, bypassing get_type_of_symbol
+                        // which would return the namespace type for merged symbols.
+                        self.compute_interface_type_from_declarations(sym_id)
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
+                    // If local structural resolution fails, delegate to the symbol's
+                    // home arena instead of silently degrading imported types.
+                    if (structural_type == TypeId::UNKNOWN || structural_type == TypeId::ERROR)
+                        && let Some(delegate_type) =
+                            self.delegate_cross_arena_interface_type(sym_id)
+                    {
+                        structural_type = delegate_type;
+                    }
+
+                    // Step 1.25: Apply module augmentations to the structural type.
+                    // If this symbol was reached via an import alias, merge augmentation
+                    // members into the base type. This ensures ALL access paths — type
+                    // references, Application evaluation, and value-position prototype
+                    // access — see the augmented members.
+                    if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::UNKNOWN
+                        && let Some(local_sym) = self.ctx.binder.get_symbol(sym_id)
+                        && let Some(module_specifier) = local_sym.import_module.as_ref()
+                    {
+                        let aug_name = local_sym
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&local_sym.escaped_name);
+                        structural_type = self.apply_module_augmentations(
+                            module_specifier,
+                            aug_name,
+                            structural_type,
+                        );
+                    }
+
+                    // Cache generic interface params with canonical symbol extraction;
+                    // local NodeIndex lookups can collide with lib/cross-file nodes.
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    if self.ctx.get_def_type_params(def_id).is_none() {
+                        let params =
+                            self.get_reference_type_params_for_symbol(sym_id, escaped_name);
+                        if !params.is_empty() {
+                            self.ctx.insert_def_type_params(def_id, params);
+                        }
+                    }
+
+                    // Ensure the DefId→TypeId mapping exists even when symbol_types
+                    // cache hits skip TypeEnvironment registration for cross-file libs.
+                    //
+                    // Skip when structural_type is Lazy(def_id) — the cycle-breaker
+                    // placeholder returned while this symbol is actively being resolved.
+                    // Persisting Lazy(X) → X creates a self-loop: evaluate looks up X,
+                    // finds Lazy(X), and loops; the cycle guard returns Lazy(X) unchanged,
+                    // leaving no contextual type for empty array literals (false `never[]`).
+                    let is_self_referential_lazy = crate::query_boundaries::common::lazy_def_id(
+                        self.ctx.types,
+                        structural_type,
+                    ) == Some(def_id);
+
+                    if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::ANY
+                        && structural_type != TypeId::UNKNOWN
+                        && !is_self_referential_lazy
+                    {
+                        if prefer_cross_file_interface {
+                            // Refresh stale local cache entries from cross-file
+                            // SymbolId collisions, but keep valid entries that may
+                            // include heritage merging delegation cannot reproduce.
+                            let should_overwrite =
+                                self.ctx.symbol_types.get(&sym_id).is_none_or(|&cached| {
+                                    cached == TypeId::ERROR || cached == TypeId::UNKNOWN
+                                });
+                            if should_overwrite {
+                                self.ctx.symbol_types.insert(sym_id, structural_type);
+                            }
+                        }
+                        // Always register even when an entry exists: evicts stale
+                        // `Lazy(DefId)` entries in resolve_cache (via body-change
+                        // detection inside `register_def_in_envs`) that cause false
+                        // TS2353 for inherited properties of F-bounded interfaces.
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        self.ctx.register_def_auto_params_in_envs(
+                            def_id,
+                            structural_type,
+                            type_params,
+                        );
+                    }
+
+                    // For merged interface+namespace symbols, return the structural type
+                    // directly instead of Lazy wrapper. The Lazy wrapper causes property
+                    // access to incorrectly classify the type as a namespace value,
+                    // blocking interface member resolution.
+                    //
+                    // Also return structural type for interfaces with index signatures
+                    // (ObjectWithIndex) — Lazy causes issues with flow analysis there.
+                    //
+                    // Also return Unknown directly when cross-file interface resolution
+                    // fails — wrapping in Lazy(DefId) would create an unresolvable ref.
+                    if is_merged_with_namespace
+                        || should_force_interface_decl_path
+                        || query::is_object_with_index_type(self.ctx.types, structural_type)
+                        || structural_type == TypeId::UNKNOWN
+                    {
+                        // For interfaces with index signatures (e.g. String, Array),
+                        // register type → DefId so the TypeFormatter can display the
+                        // interface name instead of the full structural expansion.
+                        // Skip for namespace-merged and forced paths to avoid incorrect
+                        // name associations.
+                        if !is_merged_with_namespace
+                            && !should_force_interface_decl_path
+                            && structural_type != TypeId::ERROR
+                            && structural_type != TypeId::UNKNOWN
+                        {
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(structural_type, def_id);
+                        }
+                        self.ctx.leave_recursion();
+                        return structural_type;
+                    }
+
+                    // Return Lazy wrapper for regular interfaces
+                    // But if the interface has default type parameters, create an Application
+                    // type with the default arguments applied (matching tsc behavior).
+                    //
+                    // Also register structural_type → DefId so the TypeFormatter can
+                    // display the interface name even when Lazy types are evaluated to
+                    // their structural form (e.g., in union members `D | E` where the
+                    // solver may evaluate each member during subtype checks).
+                    if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::UNKNOWN
+                        && structural_type != TypeId::ANY
+                    {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(structural_type, def_id);
+                    }
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    let all_have_defaults =
+                        !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some());
+                    if all_have_defaults {
+                        let default_args: Vec<TypeId> = type_params
+                            .iter()
+                            .map(|p| p.default.unwrap_or(TypeId::ERROR))
+                            .collect();
+                        let lazy_type = self.ctx.types.lazy(def_id);
+                        let app_type = self.ctx.types.application(lazy_type, default_args);
+                        self.ctx.leave_recursion();
+                        return app_type;
+                    }
+                    let lazy_type = self.ctx.types.lazy(def_id);
+                    self.ctx.leave_recursion();
+                    return lazy_type;
+                }
+                if value_declaration.is_some() {
+                    let result = self.get_type_of_interface(value_declaration);
+                    self.ctx.leave_recursion();
+                    return result;
+                }
+            }
+
+            // For type aliases, resolve the body type using the correct arena.
+            // Search declarations[] for the actual type alias decl (merged symbols
+            // may have value_declaration pointing to a var decl, not the type alias).
+            let has_type_alias_decl = declarations.iter().any(|&d| {
+                let arena = self
+                    .ctx
+                    .binder
+                    .arena_for_declaration_or(sym_id, d, self.ctx.arena);
+                arena
+                    .get(d)
+                    .and_then(|n| {
+                        if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            // Verify name matches to prevent NodeIndex collisions
+                            let type_alias = arena.get_type_alias(n)?;
+                            let name = arena.get_identifier_text(type_alias.name)?;
+                            Some(name == escaped_name.as_str())
+                        } else {
+                            Some(false)
+                        }
+                    })
+                    .unwrap_or(false)
+            });
+            let should_attempt_type_alias_resolution = has_type_alias_decl
+                || ((flags & symbol_flags::TYPE_ALIAS) != 0
+                    && (value_declaration.is_some() || !declarations.is_empty()));
+            if should_attempt_type_alias_resolution
+                && (has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0)
+            {
+                if let Some(keyof_type) =
+                    self.keyof_array_to_enum_alias_type(sym_id, escaped_name, declarations)
+                {
+                    self.ctx
+                        .register_resolved_type(sym_id, keyof_type, Vec::new());
+                    self.ctx.leave_recursion();
+                    return keyof_type;
+                }
+                let alias_body_is_keyof_type_query = declarations.iter().any(|&d| {
+                    let arena = self
+                        .ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, d, self.ctx.arena);
+                    arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                let type_alias = arena.get_type_alias(n)?;
+                                let type_node = arena.get(type_alias.type_node)?;
+                                if type_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+                                    return Some(false);
+                                }
+                                let operator = arena.get_type_operator(type_node)?;
+                                let operand = arena.get(operator.type_node)?;
+                                Some(
+                                    operator.operator == SyntaxKind::KeyOfKeyword as u16
+                                        && operand.kind == syntax_kind_ext::TYPE_QUERY,
+                                )
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                });
+                // Return structural type directly for type aliases (not Lazy) so
+                // conditional types are fully resolved during assignability checking.
+                let mut structural_type =
+                    if self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .is_some_and(|file_idx| {
+                            file_idx != self.ctx.current_file_idx
+                                && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+                        })
+                        && let Some((delegate_type, _)) =
+                            self.delegate_cross_arena_symbol_resolution(sym_id)
+                        && delegate_type != TypeId::UNKNOWN
+                        && delegate_type != TypeId::ERROR
+                    {
+                        delegate_type
+                    } else if alias_body_is_keyof_type_query {
+                        self.type_reference_symbol_type_with_params(sym_id).0
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
+                if (structural_type == TypeId::ANY
+                    || structural_type == TypeId::UNKNOWN
+                    || structural_type == TypeId::ERROR)
+                    && let Some((delegate_type, _)) =
+                        self.delegate_cross_arena_symbol_resolution(sym_id)
+                    && delegate_type != TypeId::UNKNOWN
+                    && delegate_type != TypeId::ERROR
+                {
+                    structural_type = delegate_type;
+                }
+                let preserve_deferred_keyof =
+                    crate::query_boundaries::state::checking::keyof_target(
+                        self.ctx.types,
+                        structural_type,
+                    )
+                    .is_some();
+                let structural_type = if structural_type != TypeId::ERROR
+                    && structural_type != TypeId::UNKNOWN
+                    && !preserve_deferred_keyof
+                    && !query::is_union_or_intersection(self.ctx.types, structural_type)
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        structural_type,
+                    ) {
+                    let evaluated = self.evaluate_type_with_env(structural_type);
+                    if matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
+                        structural_type
+                    } else {
+                        evaluated
+                    }
+                } else {
+                    structural_type
+                };
+                // Register for alias-name formatting in diagnostics
+                self.ctx
+                    .register_resolved_type(sym_id, structural_type, Vec::new());
+                self.ctx.leave_recursion();
+                return structural_type;
+            }
+        }
+        // ALIAS: resolve to target so type position (e.g., `x: b`) gets the instance type.
+        if let Some((_, flags, _, _)) = symbol_meta.as_ref()
+            && flags & symbol_flags::ALIAS != 0
+        {
+            let mut visited = AliasCycleTracker::new();
+            let alias_result = self.resolve_alias_symbol(sym_id, &mut visited);
+            let is_default_import_alias = self
+                .get_cross_file_symbol(sym_id)
+                .and_then(|symbol| symbol.import_name.as_deref())
+                == Some("default");
+            if let Some(target_sym_id) = alias_result
+                && target_sym_id != sym_id
+            {
+                let target_flags = self
+                    .get_cross_file_symbol(target_sym_id)
+                    .map(|s| s.flags)
+                    .unwrap_or(0);
+                if is_default_import_alias && target_flags & symbol_flags::VALUE != 0 {
+                    let value_type = self.get_type_of_symbol(target_sym_id);
+                    if let Some(instance_type) =
+                        self.instance_type_from_constructor_type(value_type)
+                    {
+                        self.ctx.leave_recursion();
+                        return instance_type;
+                    }
+                }
+                if target_flags & symbol_flags::VALUE != 0
+                    && target_flags & symbol_flags::TYPE_ALIAS == 0
+                    && let Some(type_alias_sym_id) =
+                        self.same_named_type_alias_for_value_symbol(target_sym_id)
+                {
+                    self.ctx.leave_recursion();
+                    return self.type_reference_symbol_type(type_alias_sym_id);
+                }
+                if target_flags & symbol_flags::CLASS != 0
+                    || target_flags & symbol_flags::INTERFACE != 0
+                    || target_flags & symbol_flags::TYPE_ALIAS != 0
+                    || target_flags & symbol_flags::ENUM != 0
+                    || target_flags & symbol_flags::TYPE_PARAMETER != 0
+                {
+                    if target_sym_id == sym_id
+                        && self
+                            .ctx
+                            .resolve_symbol_file_index(target_sym_id)
+                            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                        && let Some((result, _)) =
+                            self.delegate_cross_arena_symbol_resolution(target_sym_id)
+                    {
+                        self.ctx.leave_recursion();
+                        return result;
+                    }
+                    let alias_augmentation_target =
+                        local_alias_for_augmentation.and_then(|alias_symbol| {
+                            alias_symbol.import_module.as_ref().map(|module_specifier| {
+                                let aug_name = alias_symbol
+                                    .import_name
+                                    .as_deref()
+                                    .unwrap_or(&alias_symbol.escaped_name)
+                                    .to_string();
+                                (module_specifier.clone(), aug_name)
+                            })
+                        });
+                    self.ctx.leave_recursion();
+                    let mut result = self.type_reference_symbol_type(target_sym_id);
+                    if result != TypeId::ERROR
+                        && result != TypeId::UNKNOWN
+                        && let Some((module_specifier, aug_name)) = alias_augmentation_target
+                    {
+                        result =
+                            self.apply_module_augmentations(&module_specifier, &aug_name, result);
+                    }
+                    return result;
+                }
+
+                // For synthetic default exports whose value_declaration is a property
+                // access expression (e.g., `export default C.B` where B is both a
+                // static property and an interface), resolve the type meaning of the
+                // property access.
+                if target_flags & symbol_flags::EXPORT_VALUE != 0
+                    && let Some(type_id) =
+                        self.resolve_default_export_property_type_meaning(target_sym_id)
+                {
+                    self.ctx.leave_recursion();
+                    return type_id;
+                }
+            }
+
+            let current_flags = self
+                .get_cross_file_symbol(sym_id)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+            if current_flags & symbol_flags::EXPORT_VALUE != 0
+                && let Some(type_id) = self.resolve_default_export_property_type_meaning(sym_id)
+            {
+                self.ctx.leave_recursion();
+                return type_id;
+            }
+
+            // Fallback: resolve_alias_symbol may fail for cross-file default imports
+            // when the relative module specifier doesn't match the binder's module_exports
+            // keys. Also retry for default imports when local alias resolution lands
+            // on a runtime-only target symbol so we can still inspect the synthetic
+            // default export's type meaning (e.g., `export default C.B` where B is
+            // both a static property and an interface).
+            let should_try_cross_file_default = alias_result.is_none()
+                || alias_result == Some(sym_id)
+                || (is_default_import_alias
+                    && alias_result.is_some_and(|target_sym_id| {
+                        let target_flags = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+                        target_flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::EXPORT_VALUE)
+                            == 0
+                    }));
+            if should_try_cross_file_default {
+                let cross_file_result = self.resolve_import_alias_cross_file(sym_id);
+                if let Some(target_sym_id) = cross_file_result {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags & symbol_flags::VALUE != 0
+                        && target_flags & symbol_flags::TYPE_ALIAS == 0
+                        && let Some(type_alias_sym_id) =
+                            self.same_named_type_alias_for_value_symbol(target_sym_id)
+                    {
+                        self.ctx.leave_recursion();
+                        return self.type_reference_symbol_type(type_alias_sym_id);
+                    }
+                    if target_flags & symbol_flags::CLASS != 0
+                        || target_flags & symbol_flags::INTERFACE != 0
+                        || target_flags & symbol_flags::TYPE_ALIAS != 0
+                        || target_flags & symbol_flags::ENUM != 0
+                        || target_flags & symbol_flags::TYPE_PARAMETER != 0
+                    {
+                        if target_sym_id == sym_id
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some((result, _)) =
+                                self.delegate_cross_arena_symbol_resolution(target_sym_id)
+                        {
+                            self.ctx.leave_recursion();
+                            return result;
+                        }
+                        self.ctx.leave_recursion();
+                        return self.type_reference_symbol_type(target_sym_id);
+                    }
+                    if target_flags & symbol_flags::EXPORT_VALUE != 0 {
+                        let prop_result =
+                            self.resolve_default_export_property_type_meaning(target_sym_id);
+                        if let Some(type_id) = prop_result {
+                            self.ctx.leave_recursion();
+                            return type_id;
+                        }
+                    }
+                }
+            }
+        }
+
+        let result = self.get_type_of_symbol(sym_id);
+        // TYPE_ALIAS + ALIAS merge: prefer the type alias body in type reference position
+        let result = self
+            .ctx
+            .import_type_alias_types
+            .get(&sym_id)
+            .copied()
+            .unwrap_or(result);
+        self.ctx.leave_recursion();
+        result
+    }
+
+    fn same_named_type_alias_for_value_symbol(&self, value_sym_id: SymbolId) -> Option<SymbolId> {
+        let value_symbol = self.get_cross_file_symbol(value_sym_id)?;
+        let file_idx = self.ctx.resolve_symbol_file_index(value_sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        binder
+            .symbols
+            .find_all_by_name(&value_symbol.escaped_name)
+            .iter()
+            .copied()
+            .find_map(|candidate_id| {
+                if candidate_id == value_sym_id {
+                    return None;
+                }
+                let candidate = binder.symbols.get(candidate_id)?;
+                if candidate.flags & symbol_flags::TYPE_ALIAS == 0
+                    || candidate.escaped_name != value_symbol.escaped_name
+                {
+                    return None;
+                }
+                self.ctx.register_symbol_file_target(candidate_id, file_idx);
+                Some(candidate_id)
+            })
+    }
+
+    fn keyof_array_to_enum_alias_type(
+        &self,
+        sym_id: SymbolId,
+        escaped_name: &str,
+        declarations: &[NodeIndex],
+    ) -> Option<TypeId> {
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+
+        let type_alias = declarations.iter().copied().find_map(|decl_idx| {
+            let node = arena.get(decl_idx)?;
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return None;
+            }
+            let type_alias = arena.get_type_alias(node)?;
+            let name = arena.get_identifier_text(type_alias.name)?;
+            (name == escaped_name).then_some(type_alias)
+        })?;
+
+        let type_node = arena.get(type_alias.type_node)?;
+        if type_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return None;
+        }
+        let operator = arena.get_type_operator(type_node)?;
+        if operator.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return None;
+        }
+        let operand = arena.get(operator.type_node)?;
+        if operand.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let type_query = arena.get_type_query(operand)?;
+        let expr_name = arena.skip_parenthesized_and_assertions(type_query.expr_name);
+        let expr_node = arena.get(expr_name)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let value_sym_id = binder.resolve_identifier(arena, expr_name)?;
+        let value_symbol = binder.get_symbol(value_sym_id)?;
+        if value_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
+            return None;
+        }
+        let value_decl = if value_symbol.value_declaration.is_some() {
+            value_symbol.value_declaration
+        } else {
+            value_symbol.primary_declaration()?
+        };
+        let value_node = arena.get(value_decl)?;
+        if value_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !arena.is_const_variable_declaration(value_decl)
+        {
+            return None;
+        }
+        let variable = arena.get_variable_declaration(value_node)?;
+        let initializer = arena.skip_parenthesized_and_assertions(variable.initializer);
+        let call_node = arena.get(initializer)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = arena.get_call_expr(call_node)?;
+        let callee_name = expression_name_text_in_arena(arena, call.expression)?;
+        if callee_name != "arrayToEnum" && !callee_name.ends_with(".arrayToEnum") {
+            return None;
+        }
+
+        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let arg = arena.skip_parenthesized_and_assertions(first_arg);
+        let arg_node = arena.get(arg)?;
+        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let array = arena.get_literal_expr(arg_node)?;
+        let mut members = Vec::new();
+        for &element in &array.elements.nodes {
+            let element = arena.skip_parenthesized_and_assertions(element);
+            let element_node = arena.get(element)?;
+            if (element_node.kind == SyntaxKind::StringLiteral as u16
+                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(lit) = arena.get_literal(element_node)
+            {
+                members.push(self.ctx.types.literal_string(&lit.text));
+            }
+        }
+
+        (!members.is_empty()).then(|| self.ctx.types.union(members))
+    }
+
+    /// For `export default C.B`, returns the type meaning (interface/alias) of `B`, not its value meaning.
+    fn resolve_default_export_property_type_meaning(
+        &mut self,
+        target_sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+
+        let symbol = self.get_cross_file_symbol(target_sym_id)?;
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return None;
+        }
+
+        // Find the arena containing the value declaration (may be cross-file).
+        let file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
+        let arena: &NodeArena = if let Some(file_idx) = file_idx {
+            self.ctx.get_arena_for_file(file_idx as u32)
+        } else {
+            self.ctx.arena
+        };
+
+        let node = arena.get(value_decl)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = arena.get_access_expr(node)?;
+        let name_node = arena.get(access.name_or_argument)?;
+        let name_ident = arena.get_identifier(name_node)?;
+        let member_name = &name_ident.escaped_text;
+
+        // Resolve the base expression (e.g., `C`) to its symbol.
+        let base_node = arena.get(access.expression)?;
+        let base_ident = arena.get_identifier(base_node)?;
+        let base_name = &base_ident.escaped_text;
+
+        // Look up the base symbol in the source file's binder.
+        let source_binder = if let Some(file_idx) = file_idx {
+            self.ctx.get_binder_for_file(file_idx)?
+        } else {
+            self.ctx.binder
+        };
+
+        let base_sym_id = source_binder.file_locals.get(base_name)?;
+        let base_symbol = source_binder.get_symbol_with_libs(base_sym_id, &lib_binders)?;
+
+        let symbol_named_member =
+            |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<SymbolId> {
+                if let Some(exports) = symbol.exports.as_ref()
+                    && let Some(sym_id) = exports.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                if let Some(members) = symbol.members.as_ref()
+                    && let Some(sym_id) = members.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                None
+            };
+
+        let mut member_sym_id = symbol_named_member(base_symbol, member_name)?;
+        let mut member_symbol = source_binder.get_symbol_with_libs(member_sym_id, &lib_binders)?;
+        if !member_symbol
+            .has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
+        {
+            // Namespace-merge fallback: for `export default C.B`, the merged class symbol
+            // can surface the static VALUE member (`C.B: number`) first, while the type
+            // meaning lives on the split namespace symbol (`namespace C { export interface B }`).
+            // Mirror the `export =` namespace-merge fallback and search sibling symbols
+            // with the same base name for a TYPE-meaning member.
+            for &candidate_sym_id in source_binder.get_symbols().find_all_by_name(base_name) {
+                if candidate_sym_id == base_sym_id {
+                    continue;
+                }
+                let Some(candidate_symbol) =
+                    source_binder.get_symbol_with_libs(candidate_sym_id, &lib_binders)
+                else {
+                    continue;
+                };
+                if !candidate_symbol.has_any_flags(
+                    symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE,
+                ) {
+                    continue;
+                }
+                let Some(candidate_member_id) = symbol_named_member(candidate_symbol, member_name)
+                else {
+                    continue;
+                };
+                let Some(candidate_member_symbol) =
+                    source_binder.get_symbol_with_libs(candidate_member_id, &lib_binders)
+                else {
+                    continue;
+                };
+                if !candidate_member_symbol.has_any_flags(
+                    symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS,
+                ) {
+                    continue;
+                }
+                member_sym_id = candidate_member_id;
+                member_symbol = candidate_member_symbol;
+                break;
+            }
+            if !member_symbol.has_any_flags(
+                symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS,
+            ) {
+                return None;
+            }
+        }
+
+        // Record cross-file symbol tracking if necessary.
+        if let Some(file_idx) = file_idx {
+            self.ctx
+                .register_symbol_file_target(member_sym_id, file_idx);
+        }
+
+        // Cross-file: delegate to ensure the correct arena context; direct calls cause NodeIndex collisions.
+        if file_idx.is_some() {
+            if member_symbol.has_any_flags(symbol_flags::CLASS)
+                && let Some((instance_type, params)) =
+                    self.delegate_cross_arena_class_instance_type(member_sym_id)
+            {
+                let def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+                    self.ctx.insert_def_type_params(def_id, params);
+                }
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(instance_type, def_id);
+                if let Some(class_idx) = self.get_class_declaration_from_symbol(member_sym_id) {
+                    self.ctx
+                        .class_decl_miss_cache
+                        .borrow_mut()
+                        .remove(&instance_type);
+                    self.ctx
+                        .class_instance_type_to_decl
+                        .insert(instance_type, class_idx);
+                }
+                self.ctx
+                    .register_class_instance_in_envs(def_id, instance_type);
+                return Some(instance_type);
+            }
+            if let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id) {
+                return Some(delegate_type);
+            }
+        }
+
+        Some(self.type_reference_symbol_type(member_sym_id))
+    }
+
+    /// Fallback alias resolution for cross-file imports when `resolve_alias_symbol` can't find the target.
+    pub(crate) fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name);
+
+        // Local import aliases resolve relative to the current file even if a
+        // same-number cross-file target has already been registered for `sym_id`.
+        // SymbolIds are per binder, so imported aliases can collide numerically
+        // with their target after lib merging.
+        let source_file_idx = if self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.has_any_flags(symbol_flags::ALIAS))
+        {
+            self.ctx.current_file_idx
+        } else {
+            self.ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx)
+        };
+
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let file_name = &target_arena.source_files.first()?.file_name;
+
+        // Try module_exports first (keyed by filename), then file_locals.
+        let target_sym_id = target_binder
+            .module_exports
+            .get(file_name)
+            .and_then(|exports| exports.get(import_name))
+            .or_else(|| target_binder.file_locals.get(import_name))?;
+
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_idx);
+        Some(target_sym_id)
+    }
+
+    /// Bypasses `get_type_of_symbol` to get the interface type directly from declarations.
+    /// Needed for merged interface+namespace symbols where `get_type_of_symbol` returns the namespace type.
+    pub(crate) fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
+        use tsz_lowering::TypeLowering;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return TypeId::ERROR;
+        };
+        let declarations = symbol.declarations.clone();
+
+        if declarations.is_empty() {
+            return TypeId::ERROR;
+        }
+
+        if self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .is_some_and(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
+            && let Some(delegated) = self.delegate_cross_arena_interface_type(sym_id)
+        {
+            return delegated;
+        }
+
+        let local_interface_decls: Vec<_> = declarations
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
+                    && !self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| {
+                            arenas
+                                .iter()
+                                .any(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                        })
+            })
+            .collect();
+        if local_interface_decls.len() == declarations.len() && !self.ctx.is_declaration_file() {
+            let mut merged = TypeId::ERROR;
+            for decl_idx in local_interface_decls {
+                let interface_type = self.get_type_of_interface(decl_idx);
+                merged = if merged == TypeId::ERROR {
+                    interface_type
+                } else {
+                    self.merge_interface_types(merged, interface_type)
+                };
+            }
+            if merged != TypeId::ERROR {
+                self.ctx.symbol_instance_types.insert(sym_id, merged);
+            }
+            return merged;
+        }
+
+        // Multi-lib built-ins (Map, Set, WeakMap, …) span several NodeArenas; each declaration
+        // must be lowered with the arena that owns it. collect_lib_decls_with_arenas_in_contexts
+        // always returns ≥1 pair per declaration (falling back to ctx.arena), so we scan for a
+        // pair whose arena ptr differs from ctx.arena before committing to the multi-arena path.
+        // Lifetime note: arena refs inside cross_arena_declarations borrow from lib_ctxs,
+        // so the clone must outlive the Vec.
+        let lib_ctxs = self.ctx.lib_contexts.clone();
+        let cross_arena_declarations =
+            if Self::in_cross_arena_interface_delegation() && !lib_ctxs.is_empty() {
+                let decls_with_arenas =
+                crate::types_domain::queries::lib_decls::collect_lib_decls_with_arenas_in_contexts(
+                    self.ctx.binder,
+                    sym_id,
+                    &declarations,
+                    self.ctx.arena,
+                    &lib_ctxs,
+                    None,
+                );
+                let deduped =
+                    crate::types_domain::queries::lib_decls::dedup_decl_arenas(&decls_with_arenas);
+                let ctx_arena_ptr = self.ctx.arena as *const tsz_parser::parser::NodeArena;
+                if deduped
+                    .iter()
+                    .any(|(_, a)| !std::ptr::eq(*a as *const _, ctx_arena_ptr))
+                {
+                    deduped
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+        // Pre-compute computed property names that the lowering can't resolve from AST alone.
+        // This handles cases like `[k]` where k is a `const` unique symbol variable.
+        let computed_names = if cross_arena_declarations.is_empty() {
+            self.precompute_computed_property_names(&declarations)
+        } else {
+            self.precompute_computed_property_names_in_arenas(&cross_arena_declarations)
+        };
+        let computed_symbol_names = if cross_arena_declarations.is_empty() {
+            self.precompute_symbol_named_computed_property_names(&declarations)
+        } else {
+            self.precompute_symbol_named_computed_property_names_in_arenas(
+                &cross_arena_declarations,
+            )
+        };
+        let prewarmed_type_params = if cross_arena_declarations.is_empty() {
+            self.prewarm_member_type_reference_params(&declarations)
+        } else {
+            self.prewarm_member_type_reference_params_in_arenas(&cross_arena_declarations)
+        };
+
+        let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
+        let mut params = Vec::new();
+        let mut updates = Vec::new();
+        if cross_arena_declarations.is_empty()
+            && first_decl.is_some()
+            && let Some(node) = self.ctx.arena.get(first_decl)
+            && let Some(interface) = self.ctx.arena.get_interface(node)
+        {
+            (params, updates) = self.push_type_parameters(&interface.type_parameters);
+        }
+
+        let type_param_bindings = self.get_type_param_bindings();
+        let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+        let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
+        let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            self.resolve_actual_lib_name_to_def_id_for_cross_arena(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
+                .or_else(|| {
+                    resolve_name_to_lib_symbol(
+                        type_name,
+                        self.ctx.binder,
+                        self.ctx.global_file_locals_index.as_deref(),
+                        self.ctx
+                            .all_binders
+                            .as_ref()
+                            .map(|binders| binders.as_ref().as_slice()),
+                        &self.ctx.lib_contexts,
+                    )
+                    .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                })
+        };
+        // For the single-arena path all declarations share self.ctx.arena, so
+        // the (NodeIndex, arena_ptr) key always resolves to the same arena.
+        let single_arena_ptr = self.ctx.arena as *const NodeArena as usize;
+        let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+            computed_names.get(&(expr_idx, single_arena_ptr)).copied()
+        };
+        let computed_symbol_name_resolver =
+            |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, single_arena_ptr));
+        let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+            prewarmed_type_params
+                .get(&def_id)
+                .cloned()
+                .or_else(|| self.ctx.get_def_type_params(def_id))
+        };
+        let lowering = TypeLowering::with_hybrid_resolver(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &def_id_resolver,
+            &value_resolver,
+        )
+        .with_type_param_bindings(type_param_bindings)
+        .with_computed_name_resolver(&computed_name_resolver)
+        .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+        .with_name_def_id_resolver(&name_resolver);
+        let lowering = if (self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty())
+            || Self::in_cross_arena_interface_delegation()
+        {
+            lowering.prefer_name_def_id_resolution()
+        } else {
+            lowering
+        };
+        let interface_type = if cross_arena_declarations.is_empty() {
+            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+        } else {
+            lowering
+                .lower_merged_interface_declarations_with_symbol(
+                    &cross_arena_declarations,
+                    Some(sym_id),
+                )
+                .0
+        };
+        // Seed a partial structural interface type before heritage merging so
+        // recursive interface/namespace resolution can reuse the current shape
+        // instead of re-entering the full lowering + heritage pipeline.
+        self.ctx
+            .symbol_instance_types
+            .insert(sym_id, interface_type);
+
+        self.pop_type_parameters(updates);
+        let _ = params; // params are not needed for this path
+
+        let merged = self.merge_interface_heritage_types(&declarations, interface_type);
+        self.ctx.symbol_instance_types.insert(sym_id, merged);
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(merged, def_id);
+        merged
+    }
+}

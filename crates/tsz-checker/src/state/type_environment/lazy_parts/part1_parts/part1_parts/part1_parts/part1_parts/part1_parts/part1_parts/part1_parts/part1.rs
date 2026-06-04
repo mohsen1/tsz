@@ -1,0 +1,1485 @@
+impl<'a> CheckerState<'a> {
+    fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
+        use crate::query_boundaries::state::type_environment::{
+            contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
+        };
+
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        if use_cache && let Some(cached) = self.ctx.lookup_env_eval_cache(type_id) {
+            if cached.depth_exceeded {
+                self.ctx.depth_exceeded.set(true);
+            }
+            return cached.result;
+        }
+
+        // Depth guard: evaluate_type_with_env_impl can recurse through
+        // ensure_relation_input_ready → resolve_and_insert_def_type →
+        // get_type_of_symbol → evaluate_type_with_env_impl, causing
+        // unbounded stack growth on cross-referencing module augmentations
+        // (e.g., react + create-emotion-styled). Uses thread-local counter
+        // because cross-arena delegation resets per-context counters.
+        let eval_depth = EVAL_ENV_DEPTH.get();
+        if eval_depth >= 5 {
+            return type_id;
+        }
+        EVAL_ENV_DEPTH.set(eval_depth + 1);
+
+        // Set this_type on the TypeEnvironment so the evaluator can resolve `keyof this`
+        // and similar constructs that depend on the enclosing class type.
+        let class_this_type = self.current_this_type();
+        let mut set_this_type = false;
+        if class_this_type.is_some()
+            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+        {
+            env.set_this_type(class_this_type);
+            set_this_type = true;
+        }
+
+        // Only resolve refs when not already inside an evaluate_type_with_env_impl
+        // call AND not inside symbol resolution. Nested evaluation or active symbol
+        // resolution can trigger compute_type_of_symbol → merge_interface_heritage_types,
+        // which creates large merged types that cause OOM in the solver's evaluator
+        // (module augmentations like react + create-emotion-styled).
+        if eval_depth == 0
+            && self.ctx.symbol_resolution_depth.get() == 0
+            && self.ctx.heritage_merge_depth.get() == 0
+            && REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL
+        {
+            self.ensure_relation_input_ready(type_id);
+        } else if eval_depth == 0 {
+            // Even during symbol resolution, resolve TypeQuery symbols (typeof X)
+            // into the type environment so the evaluator can resolve them.
+            // This is safe because it only calls get_type_of_symbol for the
+            // referenced variable (not heritage chains), preventing the issue
+            // where `Parameters<typeof x>` produces a deferred conditional
+            // because `typeof x` can't be resolved during type alias processing.
+            self.resolve_type_queries_for_eval(type_id);
+        }
+
+        // The intermediate seed/persist memo is a *speed-only* optimization: it
+        // pre-seeds a fresh evaluator's per-run cache with already-computed
+        // `(key -> value)` pairs and saves drained intermediates for later
+        // runs. Because each call re-marshals the entire growing persistent
+        // cache, that round-trip is O(cache_size) per call and O(N^2) across a
+        // file with many alias-sharing positions. Once the cache exceeds a
+        // structural soft cap the marshalling dominates the memo benefit, so we
+        // skip it. Skipping never changes results — the deterministic evaluator
+        // recomputes the same sub-term values — only the authoritative
+        // top-level result memo (`use_cache`) below affects correctness.
+        let seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
+
+        let mut depth_exceeded = false;
+        let first_pass_silent_bailed;
+        let result = {
+            // First pass: evaluate with TypeEnvironment resolver.
+            let env = self.ctx.type_env.borrow();
+            // PERF: Only collect seed entries when cache is non-empty. The
+            // helper returns an owned Vec so no RefCell borrow overlaps
+            // evaluate_type_with_cache.
+            let seed_iter = if seed_persist {
+                self.ctx.env_eval_cache_seed_entries()
+            } else {
+                Vec::new()
+            };
+            let has_seed = !seed_iter.is_empty();
+            let eval_result = evaluate_type_with_cache(
+                self.ctx.types,
+                &*env,
+                type_id,
+                seed_iter.into_iter(),
+                has_seed,
+                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // First pass uses the limited `TypeEnvironment` resolver, which
+                // can leave residue (unresolved Lazy/IndexAccess/Mapped). Do NOT
+                // let it populate the resolver-independent application-eval cache,
+                // or sibling reads would observe under-resolved results. Writes
+                // are reserved for the authoritative full-resolver second pass.
+                None,
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    seed_persist,
+                ),
+            );
+            if eval_result.depth_exceeded {
+                depth_exceeded = true;
+                self.ctx.depth_exceeded.set(true);
+            }
+            first_pass_silent_bailed = eval_result.silent_depth_bailed;
+            // Persist intermediate evaluation results to the shared cache.
+            // Skip entries whose result contains unbound `infer` types or type queries.
+            if seed_persist {
+                self.persist_eval_cache_entries(eval_result.cache_entries);
+            }
+            eval_result.result
+        };
+
+        // Second pass with CheckerContext as resolver: the first pass uses
+        // TypeEnvironment which has limited Lazy resolution. If the result still
+        // contains unresolved IndexAccess or Mapped types, retry with the full
+        // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
+        // get_type_of_symbol.
+        //
+        // If the first pass silently bailed on structural depth AND made no
+        // progress on the root (`result == type_id`), running the same walk with
+        // a more powerful resolver hits the same structural protection limit at
+        // the same shape — it burns roughly the same time without producing a
+        // better answer. Recursive `ts-toolbelt` patterns like `ComputeDeep<A,
+        // Seen>` and `_Invert<O>` reach this condition; before this gate the
+        // redundant pass dominated their type-check time. The second pass still
+        // runs when first-pass progress was made (`result != type_id`), since
+        // the more powerful resolver may then lower sub-terms further.
+        let first_pass_made_no_progress = first_pass_silent_bailed && result == type_id;
+        let first_pass_unresolved_application = result != type_id
+            && crate::query_boundaries::spread::contains_unresolved_application(
+                self.ctx.types,
+                result,
+            );
+        if first_pass_unresolved_application {
+            self.resolve_unresolved_application_bodies(result);
+        }
+        let needs_resolver_pass = !first_pass_made_no_progress
+            && (query::index_access_types(self.ctx.types, result).is_some()
+                || query::mapped_type_id(self.ctx.types, result).is_some()
+                || (contains_lazy_or_recursive(self.ctx.types, result)
+                    && (crate::query_boundaries::common::string_intrinsic_components(
+                        self.ctx.types,
+                        result,
+                    )
+                    .is_some()
+                        || crate::query_boundaries::common::is_template_literal_type(
+                            self.ctx.types,
+                            result,
+                        )))
+                // When the first pass leaves an
+                // `Application(UnresolvedTypeName(...), args)` residue from
+                // cross-file lowering, retry with `CheckerContext` as the
+                // resolver. CheckerContext can walk the merged binder graph
+                // via `resolve_unresolved_type_name`, recover the alias's
+                // `DefId`, and let the application expand normally.
+                || crate::query_boundaries::spread::contains_unresolved_application(
+                    self.ctx.types,
+                    result,
+                )
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
+        let final_result = if needs_resolver_pass {
+            // Recompute the speed-only seed/persist gate after the first pass:
+            // persisting first-pass intermediates can push the cache over the
+            // structural cap, so the second pass must not reuse a stale `true`
+            // decision and then drain entries that will be discarded.
+            let second_pass_seed_persist = use_cache && self.ctx.env_eval_seed_persist_enabled();
+            let seed_iter = if second_pass_seed_persist && !first_pass_unresolved_application {
+                self.ctx.env_eval_cache_seed_entries()
+            } else {
+                Vec::new()
+            };
+            let has_seed = !seed_iter.is_empty();
+            let eval_result = evaluate_type_with_cache(
+                self.ctx.types,
+                &self.ctx,
+                if first_pass_unresolved_application {
+                    result
+                } else {
+                    type_id
+                },
+                seed_iter.into_iter(),
+                has_seed,
+                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // Second pass uses the authoritative full `CheckerContext`
+                // resolver, so its application expansions are safe to memoize in
+                // the per-file application-eval cache.
+                Some(self.ctx.types),
+                crate::query_boundaries::state::type_environment::CacheEntryCollection::when_enabled(
+                    second_pass_seed_persist,
+                ),
+            );
+            if eval_result.depth_exceeded {
+                depth_exceeded = true;
+                self.ctx.depth_exceeded.set(true);
+            }
+            if second_pass_seed_persist {
+                self.persist_eval_cache_entries(eval_result.cache_entries);
+            }
+            if eval_result.result == type_id {
+                result
+            } else {
+                eval_result.result
+            }
+        } else {
+            result
+        };
+
+        // Same Infer guard for the top-level result: don't cache results
+        // containing unbound infer types from partially-evaluated conditional types.
+        if use_cache
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
+            && !contains_infer_types_db(self.ctx.types, final_result)
+            && !contains_type_query_db(self.ctx.types, final_result)
+        {
+            self.ctx
+                .cache_env_eval_result(type_id, final_result, depth_exceeded);
+        }
+
+        // Restore the this_type to avoid leaking class context into other checks.
+        if set_this_type && let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.set_this_type(None);
+        }
+
+        EVAL_ENV_DEPTH.set(eval_depth);
+        final_result
+    }
+
+    fn resolve_unresolved_application_bodies(&mut self, type_id: TypeId) {
+        let names = crate::query_boundaries::spread::collect_unresolved_application_names(
+            self.ctx.types,
+            type_id,
+        );
+        let declaring_file_idx = self.unresolved_application_declaring_file_idx(type_id);
+        for name in names {
+            let Some(def_id) = declaring_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .resolve_unresolved_type_name_from_file(name.as_str(), file_idx)
+                })
+                .or_else(|| TypeResolver::resolve_unresolved_type_name(&self.ctx, name.as_str()))
+            else {
+                continue;
+            };
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.insert_unresolved_resolution(name.clone(), def_id);
+            }
+            if self.ctx.definition_store.get_body(def_id).is_some() {
+                continue;
+            }
+            let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+                continue;
+            };
+            let Some((body, params)) = self.delegate_cross_arena_symbol_resolution(sym_id) else {
+                continue;
+            };
+            let params = if params.is_empty() {
+                self.ctx.get_def_type_params(def_id).unwrap_or_default()
+            } else {
+                params
+            };
+            self.ctx
+                .register_def_auto_params_in_envs(def_id, body, params);
+        }
+    }
+
+    fn unresolved_application_declaring_file_idx(&self, type_id: TypeId) -> Option<usize> {
+        let owner_def_id =
+            crate::query_boundaries::spread::application_or_display_alias_lazy_def_id(
+                self.ctx.types,
+                type_id,
+            )?;
+        self.ctx
+            .definition_store
+            .get(owner_def_id)
+            .and_then(|info| info.file_id)
+            .map(|file_idx| file_idx as usize)
+    }
+
+    /// Persist evaluator cache entries to the shared `env_eval_cache`.
+    ///
+    /// Filters out entries that would poison the cache:
+    /// - Entries containing unbound `infer` types (from partially-evaluated conditionals)
+    /// - Entries containing type query references
+    /// - Union→Application entries (incomplete evaluation artifacts)
+    fn persist_eval_cache_entries(&self, entries: Vec<(TypeId, TypeId)>) {
+        self.ctx.persist_env_eval_cache_entries(entries);
+    }
+
+    /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to prevent stack overflow when resolving
+    /// long Lazy alias chains (e.g., a chain of re-exported type aliases across modules).
+    pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
+        // Cycle guard: evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
+        // → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution
+        // can form an infinite mutual recursion on recursive type aliases like
+        // `type Box2 = Box<Box2 | number>`. Track types currently being resolved and
+        // bail out if we re-enter with the same type.
+        if !self.ctx.type_resolution_visiting.insert(type_id) {
+            return type_id;
+        }
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.evaluate_type_with_resolution_inner(type_id)
+        });
+        self.ctx.type_resolution_visiting.remove(&type_id);
+        result
+    }
+
+    fn evaluate_type_with_resolution_inner(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = match query::classify_for_type_resolution(self.ctx.types, type_id) {
+            query::TypeResolutionKind::Lazy(def_id) => {
+                // When a bare Lazy(DefId) represents a generic interface/class with
+                // all-defaulted type parameters (e.g., `Int32Array` which is
+                // `Int32Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike>`),
+                // wrap it in Application(Lazy, defaults) and evaluate that instead.
+                // In tsc, bare `Int32Array` in type position always means
+                // `Int32Array<ArrayBufferLike>`. Without this, overload resolution
+                // fails because assignability compares against the raw interface
+                // with unresolved type parameters.
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id)
+                    && !type_params.is_empty()
+                    && type_params.iter().all(|p| p.default.is_some())
+                {
+                    let default_args: Vec<tsz_solver::TypeId> = type_params
+                        .iter()
+                        .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
+                        .collect();
+                    let app = self.ctx.types.application(type_id, default_args);
+                    let evaluated = self.evaluate_application_type(app);
+                    return self.prune_impossible_object_union_members_with_env(evaluated);
+                }
+
+                // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
+                // Prefer `resolve_and_insert_def_type` to ensure class instance mapping is respected
+                // and the environment contains a concrete type for the definition.
+                let resolved = if let Some(resolved) = self.resolve_and_insert_def_type(def_id) {
+                    resolved
+                } else if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    type_id
+                };
+                if resolved == type_id {
+                    return type_id;
+                }
+
+                // Guard: when a global interface (Function, Object, RegExp, Date,
+                // Error, etc.) resolves to an empty Object shape via cross-file
+                // delegation, it means the interface members were not fully
+                // populated. Preserve the original Lazy(DefId) so the subtype
+                // checker can recognise it via `is_boxed_def_id` and apply the
+                // correct intrinsic semantics (e.g., callable source ⊂ Function).
+                // Without this guard, `number` becomes assignable to the empty
+                // `{}` object, silencing TS2345/TS2769 errors.
+                if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
+                    self.ctx.types.as_type_database(),
+                    resolved,
+                ) {
+                    let shape = self.ctx.types.object_shape(shape_id);
+                    if shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                    {
+                        // Narrow to Function only. Extending this guard to Object
+                        // re-enters the same cross-file resolution path for any
+                        // `{}`-shaped anonymous type (e.g. `Record<string, unknown>`
+                        // members inside recursive mapped types), causing quadratic
+                        // blow-up on patterns like `Definition<T[K]>`.
+                        use crate::query_boundaries::common::IntrinsicKind;
+                        let db = self.ctx.types.as_type_database();
+                        if db.is_boxed_def_id(def_id, IntrinsicKind::Function) {
+                            return type_id;
+                        }
+                    }
+                }
+
+                // FIX: Detect identity loop by comparing DefId, not TypeId.
+                // When get_type_of_symbol hits a circular reference, it returns a Lazy placeholder
+                // for the same symbol. Even though the TypeId might be different (due to fresh interning),
+                // the DefId should be the same. This detects the cycle and breaks infinite recursion.
+                // This happens in cases like: class C { static { C.#x; } static #x = 123; }
+                let resolved_def_id = query::lazy_def_id(self.ctx.types, resolved);
+                if resolved_def_id == Some(def_id) {
+                    return type_id;
+                }
+                // Recursively resolve if still Lazy (handles Lazy chains)
+                if query::lazy_def_id(self.ctx.types, resolved).is_some() {
+                    self.evaluate_type_with_resolution(resolved)
+                } else {
+                    // Further evaluate compound types (IndexAccess, KeyOf, Mapped, etc.)
+                    // that need reduction. E.g., type NameType = Person["name"] resolves
+                    // to IndexAccess(Person, "name") which must be evaluated to "string".
+                    self.evaluate_type_for_assignability(resolved)
+                }
+            }
+            query::TypeResolutionKind::Application => self.evaluate_application_type(type_id),
+            query::TypeResolutionKind::Resolved => type_id,
+        };
+
+        self.prune_impossible_object_union_members_with_env(resolved)
+    }
+
+    pub(crate) fn prune_impossible_object_union_members_with_env(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        // Guard against infinite mutual recursion: evaluate → prune → evaluate members → prune.
+        // Pruning calls evaluate_type_with_resolution on each union member, which can resolve
+        // to new unions that get pruned again. Since pruning is a speculative optimization
+        // (removing provably-impossible union members), skipping nested calls is always safe.
+        if self.ctx.pruning_union_members {
+            return type_id;
+        }
+        self.ctx.pruning_union_members = true;
+        let result = self.prune_impossible_object_union_members_inner(type_id);
+        self.ctx.pruning_union_members = false;
+        result
+    }
+
+    fn prune_impossible_object_union_members_inner(&mut self, type_id: TypeId) -> TypeId {
+        let Some(members) =
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let total_members = members.len();
+
+        let retained: Vec<_> = members
+            .into_iter()
+            .filter(|&member| {
+                !self.intersection_has_impossible_literal_discriminants_with_env(member)
+                    && !self.object_member_has_impossible_required_property_with_env(member)
+            })
+            .collect();
+
+        match retained.len() {
+            0 => TypeId::NEVER,
+            len if len == total_members => type_id,
+            1 => retained[0],
+            _ => self.ctx.types.union_preserve_members(retained),
+        }
+    }
+
+    fn intersection_has_impossible_literal_discriminants_with_env(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::state::checking::intersection_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let mut discriminants: rustc_hash::FxHashMap<tsz_common::Atom, Vec<TypeId>> =
+            rustc_hash::FxHashMap::default();
+
+        for member in members {
+            let evaluated_member = self.evaluate_type_with_resolution(member);
+            let Some(shape) = crate::query_boundaries::state::checking::object_shape(
+                self.ctx.types,
+                evaluated_member,
+            ) else {
+                continue;
+            };
+
+            for prop in &shape.properties {
+                if !crate::query_boundaries::state::checking::is_unit_type(
+                    self.ctx.types,
+                    prop.type_id,
+                ) {
+                    continue;
+                }
+
+                let seen = discriminants.entry(prop.name).or_default();
+                if seen.iter().any(|&other| {
+                    !self.diagnostic_subtype_outcome(prop.type_id, other).related
+                        && !self.diagnostic_subtype_outcome(other, prop.type_id).related
+                }) {
+                    return true;
+                }
+                if !seen.contains(&prop.type_id) {
+                    seen.push(prop.type_id);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn object_member_has_impossible_required_property_with_env(&mut self, type_id: TypeId) -> bool {
+        let evaluated_type = self.evaluate_type_with_resolution(type_id);
+        let Some(shape) =
+            crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_type)
+        else {
+            return false;
+        };
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional && self.type_is_impossible_unit_intersection_with_env(prop.type_id)
+        })
+    }
+
+    fn type_is_impossible_unit_intersection_with_env(&mut self, type_id: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_resolution(type_id);
+        if evaluated == TypeId::NEVER {
+            return true;
+        }
+
+        let Some(members) = crate::query_boundaries::state::checking::intersection_members(
+            self.ctx.types,
+            evaluated,
+        ) else {
+            return false;
+        };
+
+        let mut units = Vec::new();
+        for member in members {
+            let evaluated_member = self.evaluate_type_with_resolution(member);
+            if !crate::query_boundaries::state::checking::is_unit_type(
+                self.ctx.types,
+                evaluated_member,
+            ) {
+                continue;
+            }
+
+            if units.iter().any(|&other| {
+                !self
+                    .diagnostic_subtype_outcome(evaluated_member, other)
+                    .related
+                    && !self
+                        .diagnostic_subtype_outcome(other, evaluated_member)
+                        .related
+            }) {
+                return true;
+            }
+
+            if !units.contains(&evaluated_member) {
+                units.push(evaluated_member);
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_env_impl(type_id, true)
+    }
+
+    /// Prefer full environment evaluation before the lighter application evaluator.
+    ///
+    /// Imported conditional aliases can materialize nested application bases
+    /// that the lighter application evaluator cannot resolve by itself.
+    pub(crate) fn evaluate_property_access_receiver_type(&mut self, type_id: TypeId) -> TypeId {
+        let env_evaluated = self.evaluate_type_with_env(type_id);
+        if env_evaluated != type_id
+            && env_evaluated != TypeId::ANY
+            && env_evaluated != TypeId::ERROR
+        {
+            env_evaluated
+        } else {
+            self.evaluate_application_type(type_id)
+        }
+    }
+
+    /// Resolve `TypeQuery` symbols in a type into the type environment.
+    ///
+    /// This is a lightweight alternative to `ensure_relation_input_ready` that only
+    /// resolves `typeof X` references. It's safe to call during symbol resolution
+    /// because it only triggers `get_type_of_symbol` for the referenced variables
+    /// (not full heritage chain resolution that can cause OOM).
+    ///
+    /// This fixes the case where `Parameters<typeof x>` evaluates during type alias
+    /// processing: the evaluator needs `typeof x` resolved in the `TypeEnvironment` to
+    /// correctly evaluate the conditional type, but `ensure_relation_input_ready` is
+    /// skipped because we're inside symbol resolution.
+    fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {
+        let type_queries = collect_type_queries(self.ctx.types, type_id);
+        for symbol_ref in type_queries {
+            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let _ = self.get_type_of_symbol(sym_id);
+            let value_type = self
+                .ctx
+                .symbol_types
+                .get(&sym_id)
+                .copied()
+                .unwrap_or(TypeId::ERROR);
+            // When circular resolution causes ERROR (e.g. `let Anon = class<T> {}` and
+            // `typeof Anon` appears in the class body), inserting ERROR into the TypeEnvironment
+            // would poison all TypeQuery resolutions for this symbol. Instead, build a minimal
+            // provisional constructor Callable so the solver can satisfy `InstanceType<typeof Anon<T>>`
+            // without a false-positive TS2322.
+            let effective_type = if value_type == TypeId::ERROR {
+                self.try_provisional_class_expr_ctor_type(sym_id)
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                value_type
+            };
+            if effective_type != TypeId::ERROR
+                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+            {
+                env.insert(tsz_solver::SymbolRef(sym_id.0), effective_type);
+            }
+        }
+    }
+
+    /// Build a minimal provisional constructor callable for a class expression variable
+    /// that is currently being circularly resolved.
+    ///
+    /// When `let Anon = class<T> {}` is computed and `typeof Anon` appears inside the
+    /// class body (e.g. as `InstanceType<(typeof Anon<T>)>`), `get_type_of_symbol` hits
+    /// a circular reference and returns `TypeId::ERROR`. The provisional callable has one
+    /// construct signature per class type-parameter count, returning `any`, so the
+    /// conditional `typeof Anon<T> extends abstract new (...) => infer R ? R : any`
+    /// resolves to `any` instead of staying deferred.
+    fn try_provisional_class_expr_ctor_type(&self, sym_id: SymbolId) -> Option<TypeId> {
+        use tsz_parser::parser::base::NodeIndex;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::{CallSignature, CallableShape, TypeParamInfo};
+
+        // Only handle VARIABLE symbols (class declarations already return Lazy on circular ref).
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::VARIABLE)
+            || symbol.has_any_flags(symbol_flags::CLASS)
+        {
+            return None;
+        }
+
+        // Get the variable's primary declaration node.
+        let decl_idx = symbol.primary_declaration()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+
+        if var_decl.initializer == NodeIndex::NONE {
+            return None;
+        }
+
+        // Check if the initializer is a class expression.
+        let init_node = self.ctx.arena.get(var_decl.initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+
+        // Count the class type parameters so the provisional sig has the right arity.
+        let class_data = self.ctx.arena.get_class(init_node)?;
+        let n_type_params = class_data
+            .type_parameters
+            .as_ref()
+            .map(|tp| tp.nodes.len())
+            .unwrap_or(0);
+
+        // Build provisional type params with placeholder names.
+        let prov_type_params: Vec<TypeParamInfo> = (0..n_type_params)
+            .map(|i| {
+                let name = self.ctx.types.intern_string(&format!("$$prov{i}"));
+                TypeParamInfo::simple(name)
+            })
+            .collect();
+
+        // Build construct signature: `new<$$prov0, ...>() => any`.
+        // The return type is `any` so `InstanceType<typeof Anon<T>>` reduces to `any`
+        // during circular resolution, which is assignable to everything.
+        let construct_sig = CallSignature {
+            type_params: prov_type_params,
+            params: Vec::new(),
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_method: false,
+        };
+
+        let callable = self.ctx.types.factory().callable(CallableShape {
+            construct_signatures: vec![construct_sig],
+            call_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        Some(callable)
+    }
+
+    pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_env_impl(type_id, false)
+    }
+
+    /// Evaluate a type for TS2589 detection at type alias definition sites.
+    ///
+    /// Like `evaluate_type_with_env_uncached` but uses an evaluator that flags
+    /// `depth_exceeded` when cycle detection fires on an Application type.
+    /// This catches self-referential conditional types that produce the same
+    /// Application TypeId on each expansion.
+    ///
+    /// Returns true if depth was exceeded (TS2589 should be emitted).
+    pub(crate) fn evaluate_type_for_ts2589_check(
+        &mut self,
+        type_id: TypeId,
+        alias_def_id: tsz_solver::def::DefId,
+    ) -> bool {
+        let env = self.ctx.type_env.borrow();
+        // First try: evaluate with flag that detects Application cycles
+        let eval_result =
+            crate::query_boundaries::state::type_environment::evaluate_type_for_ts2589(
+                self.ctx.types,
+                &*env,
+                type_id,
+            );
+        if eval_result.depth_exceeded {
+            return true;
+        }
+
+        // Second check: a concrete self-application of the alias can survive the
+        // first evaluation because the evaluator leaves a recursive reference in a
+        // non-tail position (a function return or object/mapped property, e.g. the
+        // `Curry<T, R>` inside `(h: H) => Curry<T, R>`) deferred — so a residual
+        // `Application(alias, args)` is the norm, not proof of infinite expansion.
+        // It is divergence evidence only when it makes no *progress*: at a use site
+        // (the checked type is itself a concrete application of the alias) compare
+        // the structural argument weight of the input against each residual. A
+        // residual whose argument weight is strictly larger than the input grows on
+        // every step along an unbounded dimension (a template-literal string that
+        // gains characters, a tuple that gains elements) and is genuinely
+        // divergent. A residual that stays the same size or shrinks is *not* proof
+        // of divergence:
+        //   * it may shrink along a dimension the coarse metric scores flat — a
+        //     numeric depth counter (`N` -> `Exclude<N, 0>`) or a structural descent
+        //     into `T[K]` — and so terminate at a base case (e.g. `DeepObject<T, N>`);
+        //   * or it may tie a finite knot the way `tsc` defers recursive object and
+        //     mapped-property references (`{ [K in keyof T]: Rec<T[K]> }`), which is
+        //     accepted, not flagged.
+        // The same-identity stall (`Foo<unknown>` -> `Foo<unknown>`) that this check
+        // once caught here is already detected earlier as an Application cycle
+        // (`eval_result.depth_exceeded`), and any residual the weight metric cannot
+        // see is still bounded by the per-`DefId` instantiation-depth limit, so
+        // requiring strict growth here only removes false positives. When there is
+        // no input application to compare against (the definition-site pass evaluates
+        // the conditional body directly), any surviving concrete self-reference stays
+        // divergent, preserving definition-site TS2589.
+        let result = eval_result.result;
+        if result != type_id && result != TypeId::ERROR {
+            let db = self.ctx.types.as_type_database();
+            let residuals = crate::query_boundaries::state::type_environment::collect_concrete_applications_with_def(
+                db,
+                result,
+                alias_def_id,
+            );
+            match crate::query_boundaries::state::type_environment::self_application_arg_weight(
+                db,
+                type_id,
+                alias_def_id,
+            ) {
+                None => return !residuals.is_empty(),
+                Some(input_weight) => {
+                    let diverges = residuals.iter().any(|&residual| {
+                        crate::query_boundaries::state::type_environment::self_application_arg_weight(
+                            db,
+                            residual,
+                            alias_def_id,
+                        )
+                        .is_none_or(|residual_weight| residual_weight > input_weight)
+                    });
+                    if diverges {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {
+        // First try file_locals (includes user-defined globals and merged lib symbols)
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            return Some(self.type_reference_symbol_type(sym_id));
+        }
+        // Then try using get_global_type to check lib binders
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+        {
+            return Some(self.type_reference_symbol_type(sym_id));
+        }
+        // Fall back to resolve_lib_type_by_name for lowering types from lib contexts
+        self.resolve_lib_type_by_name(name)
+    }
+
+    /// When `type_id` is a union with at least one `Application` member, evaluate
+    /// those application members through the type environment and return the
+    /// rebuilt union. Returns `None` when `type_id` is not such a union or no
+    /// application member made progress, so callers can fall through to their
+    /// normal resolution path.
+    fn resolve_union_application_members(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::state::type_environment::is_application_type;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        if !members
+            .iter()
+            .any(|&m| is_application_type(self.ctx.types, m))
+        {
+            return None;
+        }
+        let mut changed = false;
+        let resolved: Vec<TypeId> = members
+            .iter()
+            .map(|&member| {
+                if is_application_type(self.ctx.types, member) {
+                    let evaluated = self.evaluate_application_type_for_property_access(member);
+                    if evaluated != member {
+                        changed = true;
+                    }
+                    evaluated
+                } else {
+                    member
+                }
+            })
+            .collect();
+        changed.then(|| self.ctx.types.union(resolved))
+    }
+
+    /// Like [`Self::resolve_type_for_property_access`] but always materializes an
+    /// eligible lib-interface `Lazy` receiver instead of leaving it lazy. Used by
+    /// the property-access path when the lazy single-member fast path missed
+    /// (e.g. a heritage-inherited member) and the full structural shape is needed.
+    pub(crate) fn resolve_type_for_property_access_force(&mut self, type_id: TypeId) -> TypeId {
+        use rustc_hash::FxHashSet;
+        self.ensure_relation_input_ready(type_id);
+        let mut visited = FxHashSet::default();
+        self.resolve_type_for_property_access_inner(type_id, &mut visited)
+    }
+
+    pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
+        use rustc_hash::FxHashSet;
+
+        // A union whose members are `Application(Lazy(DefId), …)` instantiations
+        // of generic lib references (e.g. `Int32Array | Uint8Array`) keeps those
+        // members opaque under the solver's environment-free evaluator, hiding
+        // the referenced interface's members and index signatures. Such unions
+        // arise from narrowing or constraint-position substitution, where the
+        // members are interned in their raw application form rather than the
+        // resolved object form a directly-declared union would carry. Resolve
+        // the application members through the type environment first so property
+        // and element access see the interface shape; the recursion then runs
+        // the normal per-member resolution on the resolved union. This precedes
+        // the per-id resolve cache, which can otherwise return a stale identity
+        // entry recorded on an earlier pass before the members were resolvable.
+        if let Some(resolved) = self.resolve_union_application_members(type_id) {
+            return self.resolve_type_for_property_access(resolved);
+        }
+
+        // Lazy single-member fast path: a bare `Lazy(DefId)` reference to a
+        // simple lib interface is left unresolved here so the property-access
+        // member lookup can resolve only the accessed member instead of
+        // materializing the interface's full shape (e.g. `document.title`).
+        // The named-property lookup sites re-resolve the single member via
+        // `try_lazy_lib_member_property_access`; any consumer needing the full
+        // shape (keyof/spread/relation) still calls `ensure_relation_input_ready`
+        // on the bare Lazy itself. Eligibility is gated by the
+        // `TSZ_DISABLE_LAZY_MEMBER_ACCESS` kill-switch.
+        if self.lazy_lib_member_receiver_def_id(type_id).is_some() {
+            return type_id;
+        }
+
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&type_id)
+        {
+            return cached;
+        }
+
+        // Fast path: already property-access-ready types do not need relation-input
+        // preparation or recursive resolution. Cache the identity result to avoid
+        // redundant classification checks on subsequent accesses with the same type.
+        if matches!(
+            query::classify_for_property_access_resolution(self.ctx.types, type_id),
+            query::PropertyAccessResolutionKind::Resolved
+                | query::PropertyAccessResolutionKind::FunctionLike
+        ) {
+            self.ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow_mut()
+                .insert(type_id, type_id);
+            return type_id;
+        }
+
+        self.ensure_relation_input_ready(type_id);
+
+        let mut visited = FxHashSet::default();
+        let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
+        // Use entry().or_insert() to avoid overwriting a value that evaluate_application_type
+        // may have stored in this cache during the inner call above. For homomorphic mapped
+        // types over union constraints (e.g. `T extends [number] | readonly [string]`),
+        // evaluate_application_type correctly produces a union of the mapped members, but
+        // resolve_type_for_property_access_inner strips ReadonlyType wrappers, causing both
+        // union members to deduplicate to a single tuple — losing the readonly variant.
+        //
+        // Return the *cache entry* (i.e. whichever value won the entry/or_insert race),
+        // not the local `result`. Otherwise the first caller would see the stripped
+        // tuple while every subsequent caller sees the correct cached union, which
+        // makes type-checking results depend on call order. The fix keeps both caller
+        // paths in sync with whatever evaluate_application_type pre-populated.
+        *self
+            .ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow_mut()
+            .entry(type_id)
+            .or_insert(result)
+    }
+
+    pub(crate) fn resolve_type_for_property_access_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> TypeId {
+        use tsz_binder::SymbolId;
+        let factory = self.ctx.types.factory();
+
+        if !visited.insert(type_id) {
+            return type_id;
+        }
+
+        // Recursion depth check to prevent stack overflow
+        if !self.ctx.enter_recursion() {
+            return type_id;
+        }
+
+        let classification =
+            query::classify_for_property_access_resolution(self.ctx.types, type_id);
+        let result = match classification {
+            query::PropertyAccessResolutionKind::Lazy(def_id) => {
+                // A bare reference to a generic type whose parameters all have
+                // defaults is still an instantiation in type position. Property
+                // access must see the instantiated body, not the raw alias body,
+                // or nested member signatures can leak unsubstituted parameters
+                // (for example `Chainable<Config = {}>["option"]` retaining
+                // `keyof Config` in its conditional key parameter).
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id)
+                    && !type_params.is_empty()
+                    && type_params.iter().all(|p| p.default.is_some())
+                    && let Some(default_args) =
+                        fill_application_defaults(self.ctx.types, &[], &type_params)
+                {
+                    let app = self.ctx.types.application(type_id, default_args);
+                    let evaluated = self.evaluate_application_type(app);
+                    if evaluated != type_id && evaluated != app {
+                        let resolved =
+                            self.resolve_type_for_property_access_inner(evaluated, visited);
+                        self.ctx.leave_recursion();
+                        return resolved;
+                    }
+                }
+
+                // First consult the type environment. Cross-file interface and
+                // alias references commonly register their structural body there
+                // even when the current binder cannot re-compute the symbol.
+                let env_resolved = if let Ok(env) = self.ctx.type_env.try_borrow() {
+                    TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                } else {
+                    None
+                };
+                if let Some(resolved) = env_resolved
+                    && resolved != type_id
+                {
+                    let resolved = self.resolve_type_for_property_access_inner(resolved, visited);
+                    self.ctx.leave_recursion();
+                    return resolved;
+                }
+
+                // Resolve lazy type from definition store
+                let body_opt = self.ctx.definition_store.get_body(def_id);
+                if let Some(body) = body_opt {
+                    if body == type_id {
+                        type_id
+                    } else {
+                        self.resolve_type_for_property_access_inner(body, visited)
+                    }
+                } else {
+                    // Definition not found in store - try to resolve via symbol lookup.
+                    // Use def_to_symbol_id_with_fallback to handle cross-context DefIds
+                    // (e.g., Lazy types created in lib-file child checkers whose
+                    // def_to_symbol mappings aren't in the main context).
+                    let sym_id_opt = self.ctx.def_to_symbol_id_with_fallback(def_id);
+                    if let Some(sym_id) = sym_id_opt {
+                        // Enums in value position behave like objects (runtime enum object).
+                        // For numeric enums, this includes a number index signature for reverse mapping.
+                        // This is the same logic as Ref branch above - check for ENUM flags
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if symbol.has_any_flags(symbol_flags::ENUM)
+                                && let Some(enum_object) = self.enum_object_type(sym_id)
+                            {
+                                if enum_object != type_id {
+                                    let r = self.resolve_type_for_property_access_inner(
+                                        enum_object,
+                                        visited,
+                                    );
+                                    self.ctx.leave_recursion();
+                                    return r;
+                                }
+                                self.ctx.leave_recursion();
+                                return enum_object;
+                            }
+
+                            // Classes in type position should resolve to instance type,
+                            // not constructor type. This matches the behavior of
+                            // resolve_lazy() in context.rs which checks
+                            // symbol_instance_types for CLASS symbols.
+                            // Without this, contextually typed parameters like:
+                            //   var f: (a: A) => void = (a) => a.foo;
+                            // would fail because get_type_of_symbol returns the
+                            // constructor type (Callable), not the instance type.
+                            if symbol.has_any_flags(symbol_flags::CLASS) {
+                                // Try the symbol-indexed cache first (populated
+                                // after class building completes).
+                                let cached = self.ctx.symbol_instance_types.get(&sym_id).copied();
+
+                                // Fallback: check the node-indexed cache for
+                                // in-progress class builds.  During
+                                // get_class_instance_type_inner, the partial
+                                // instance type (properties + placeholder
+                                // methods) is cached in class_instance_type_cache
+                                // before method signatures are processed.  This
+                                // lets Lazy(DefId) resolve to the partial type so
+                                // property access on self-referential parameters
+                                // (e.g. `p.x` where `p: Point` inside class
+                                // Point) can find properties.
+                                let from_node_cache = if cached.is_none() {
+                                    symbol.primary_declaration().and_then(|idx| {
+                                        self.ctx.class_instance_type_cache.get(&idx).copied()
+                                    })
+                                } else {
+                                    None
+                                };
+
+                                // If neither cache has it, try building via
+                                // class_instance_type_from_symbol (will create
+                                // the instance type if the class isn't in the
+                                // resolution set).
+                                let from_build = if cached.is_none() && from_node_cache.is_none() {
+                                    self.class_instance_type_from_symbol(sym_id)
+                                } else {
+                                    None
+                                };
+
+                                let instance_type = cached.or(from_node_cache).or(from_build);
+                                if let Some(instance_type) = instance_type {
+                                    if instance_type != type_id {
+                                        let r = self.resolve_type_for_property_access_inner(
+                                            instance_type,
+                                            visited,
+                                        );
+                                        self.ctx.leave_recursion();
+                                        return r;
+                                    }
+                                    self.ctx.leave_recursion();
+                                    return instance_type;
+                                }
+                            }
+                        }
+
+                        let resolved = self.get_type_of_symbol(sym_id);
+                        if resolved == type_id {
+                            type_id
+                        } else {
+                            self.resolve_type_for_property_access_inner(resolved, visited)
+                        }
+                    } else {
+                        type_id
+                    }
+                }
+            }
+            query::PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
+                let resolved = self.get_type_of_symbol(SymbolId(sym_ref.0));
+                if resolved == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(resolved, visited)
+                }
+            }
+            query::PropertyAccessResolutionKind::Application(_app_id) => {
+                // For property access on Application types (e.g., Box<number>),
+                // we need to expand the Application to its concrete type.
+                // This is critical for unions like `Box<number> | Box<string>`
+                // where the solver can't resolve Lazy bases in Application types.
+                let evaluated = self.evaluate_application_type_for_property_access(type_id);
+                if evaluated != type_id {
+                    self.resolve_type_for_property_access_inner(evaluated, visited)
+                } else {
+                    type_id
+                }
+            }
+            query::PropertyAccessResolutionKind::TypeParameter { constraint: _ } => {
+                // Don't resolve type parameters to their constraints here.
+                // The solver's PropertyAccessEvaluator handles TypeParameter
+                // by recursing into the constraint with skip_this_binding=true,
+                // preserving ThisType for the checker to substitute with the
+                // correct receiver (the type parameter, not the constraint).
+                type_id
+            }
+            query::PropertyAccessResolutionKind::NeedsEvaluation => {
+                let evaluated = self.evaluate_type_with_env(type_id);
+                if evaluated == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(evaluated, visited)
+                }
+            }
+            query::PropertyAccessResolutionKind::Union(members) => {
+                // Each union member must be resolved with a fresh visited set.
+                // Without this, when two union branches contain the same Application type
+                // (e.g., `Foo<number> & { a: string } | Foo<number> & { b: number }`),
+                // the visited set from the first branch prevents the Application from
+                // being evaluated in the second branch, causing false TS2339 errors.
+                let resolved_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let mut branch_visited = visited.clone();
+                        self.resolve_type_for_property_access_inner(member, &mut branch_visited)
+                    })
+                    .collect();
+                factory.union_preserve_members(resolved_members)
+            }
+            query::PropertyAccessResolutionKind::Intersection(members) => {
+                let resolved_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
+                    .collect();
+                factory.intersection(resolved_members)
+            }
+            query::PropertyAccessResolutionKind::Readonly(inner) => {
+                self.resolve_type_for_property_access_inner(inner, visited)
+            }
+            query::PropertyAccessResolutionKind::FunctionLike => {
+                // Function/Callable types already handle function properties
+                // (call, apply, bind, toString, length, prototype, arguments, caller)
+                // through resolve_function_property in the solver. Creating an
+                // intersection with the Function interface is redundant and harmful:
+                // when the Function Lazy type can't be resolved by the solver,
+                // property access falls back to ANY, masking PropertyNotFound errors
+                // (e.g., this.instanceProp in static methods succeeds instead of
+                // emitting TS2339).
+                type_id
+            }
+            query::PropertyAccessResolutionKind::Resolved => type_id,
+        };
+
+        self.ctx.leave_recursion();
+        result
+    }
+
+    /// Resolve a lazy type (type alias) to its body type.
+    ///
+    /// This function resolves `TypeData::Lazy(DefId)` types by looking up the
+    /// definition's body in the definition store. This is necessary for
+    /// type aliases like `type Tuple = [string, number]` where the reference
+    /// to `Tuple` is stored as a lazy type.
+    ///
+    /// The function handles recursive type aliases by checking if the body
+    /// is itself a lazy type and resolving it recursively.
+    pub fn resolve_lazy_type(&mut self, type_id: TypeId) -> TypeId {
+        // Fast path: non-lazy types don't need resolution or cycle detection.
+        if lazy_def_id(self.ctx.types, type_id).is_none() {
+            return type_id;
+        }
+        use rustc_hash::FxHashSet;
+
+        let mut visited = FxHashSet::default();
+        self.resolve_lazy_type_inner(type_id, &mut visited)
+    }
+
+    /// For union types whose members are Lazy(DefId) references, resolve each
+    /// member so that downstream consumers (e.g., the solver's `this` type
+    /// checking in union call resolution) can inspect their callable shapes.
+    ///
+    /// The solver's `NoopResolver` can't resolve Lazy types, so this resolution
+    /// must happen in the checker before passing types to the solver.
+    pub(crate) fn resolve_lazy_members_in_union(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common;
+        let Some(members) = common::union_members(self.ctx.types, type_id) else {
+            return type_id;
+        };
+        let mut changed = false;
+        let resolved_members: Vec<_> = members
+            .iter()
+            .map(|&member| {
+                let resolved = self.resolve_lazy_type(member);
+                let resolved = self.evaluate_application_type(resolved);
+                if resolved != member {
+                    changed = true;
+                }
+                resolved
+            })
+            .collect();
+        if !changed {
+            return type_id;
+        }
+        self.ctx.types.union(resolved_members)
+    }
+
+    fn resolve_lazy_type_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> TypeId {
+        // Prevent infinite loops in circular type aliases
+        if !visited.insert(type_id) {
+            return type_id;
+        }
+
+        // Check if this is a lazy type
+        if let Some(def_id) = lazy_def_id(self.ctx.types, type_id) {
+            // First, check the type_env for the resolved type.
+            // This is critical for class types: the type_env's resolve_lazy returns
+            // the instance type (via class_instance_types), while get_type_of_symbol
+            // returns the constructor type. Since Lazy(DefId) in type position should
+            // resolve to the instance type, we must check type_env first.
+            {
+                let env = self.ctx.type_env.borrow();
+                if let Some(resolved) = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                    && resolved != type_id
+                {
+                    drop(env);
+                    // Register resolved type → DefId so TypeFormatter can recover
+                    // the named display (e.g., "Num" instead of structural expansion).
+                    // Only register for interfaces and classes — NOT type aliases.
+                    // tsc expands type alias bodies in error messages but preserves
+                    // interface/class names.
+                    if resolved != TypeId::ERROR
+                        && resolved != TypeId::ANY
+                        && resolved != TypeId::UNKNOWN
+                        && self
+                            .ctx
+                            .definition_store
+                            .find_def_for_type(resolved)
+                            .is_none()
+                        && self.ctx.definition_store.get(def_id).is_some_and(|def| {
+                            matches!(
+                                def.kind,
+                                tsz_solver::def::DefKind::Interface
+                                    | tsz_solver::def::DefKind::Class
+                            )
+                        })
+                    {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(resolved, def_id);
+                    }
+                    return self.resolve_lazy_type_inner(resolved, visited);
+                }
+                drop(env);
+            }
+
+            // Try to look up the definition's body in the definition store
+            if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                // Recursively resolve in case the body is also a lazy type
+                return self.resolve_lazy_type_inner(body, visited);
+            }
+
+            // If not in the definition store or type_env, try to resolve via symbol lookup
+            // This handles type aliases that are resolved through compute_type_of_symbol
+            let sym_id_opt = self.ctx.def_to_symbol_id(def_id);
+            if let Some(sym_id) = sym_id_opt {
+                // Trigger type computation for this symbol first.
+                // For CLASS symbols, this populates symbol_instance_types as a side effect.
+                let resolved = self.get_type_of_symbol(sym_id);
+
+                // For CLASS symbols in type position, prefer the instance type over the
+                // constructor type. get_type_of_symbol returns the constructor (value-side)
+                // type, but Lazy(DefId) in type position means the instance type.
+                if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
+                    && instance_type != type_id
+                {
+                    return self.resolve_lazy_type_inner(instance_type, visited);
+                }
+
+                // Only recurse if the resolved type is different from the original
+                if resolved != type_id {
+                    return self.resolve_lazy_type_inner(resolved, visited);
+                }
+            }
+
+            // Fourth fallback: resolve lib interface types by name.
+            //
+            // When a lib interface (e.g., ProxyConstructor) is referenced in a type
+            // annotation (e.g., `declare var Proxy: ProxyConstructor`), the Lazy(DefId)
+            // may not have a SymbolId mapping or type_env entry if the lib file's
+            // checker context didn't propagate them to the main context. The
+            // DefinitionStore still has the name, so we can materialize the interface
+            // type through the lib type resolution system.
+            if self.ctx.has_lib_loaded()
+                && let Some(def_info) = self.ctx.definition_store.get(def_id)
+                && matches!(
+                    def_info.kind,
+                    tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::TypeAlias
+                )
+            {
+                let name = self.ctx.types.resolve_atom(def_info.name);
+                drop(def_info);
+                if let Some(lib_type) = self.resolve_lib_type_by_name(&name)
+                    && lib_type != type_id
+                    && lib_type != TypeId::ERROR
+                    && lib_type != TypeId::ANY
+                {
+                    // Re-check the type_env: resolve_lib_type_by_name
+                    // materializes the interface and registers it in
+                    // the type_env as a side effect.
+                    let env = self.ctx.type_env.borrow();
+                    if let Some(resolved) =
+                        TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                        && resolved != type_id
+                    {
+                        drop(env);
+                        return self.resolve_lazy_type_inner(resolved, visited);
+                    }
+                    drop(env);
+                    // If type_env still doesn't have it, use the lib type directly
+                    return self.resolve_lazy_type_inner(lib_type, visited);
+                }
+            }
+        }
+
+        // Handle unions and intersections - resolve each member
+        // Only create a new union/intersection if members actually changed
+        if let Some(resolved) = crate::query_boundaries::common::map_compound_members_if_changed(
+            self.ctx.types,
+            type_id,
+            |member| self.resolve_lazy_type_inner(member, visited),
+        ) {
+            return resolved;
+        }
+
+        type_id
+    }
+
+    /// Get keyof a type - extract the keys of an object type.
+    /// Ensure all symbols referenced in Application types are resolved in the `type_env`.
+    /// This walks the type structure and calls `get_type_of_symbol` for any Application base symbols.
+    pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
+        use rustc_hash::FxHashSet;
+
+        if self.ctx.application_symbols_resolved.contains(&type_id) {
+            return;
+        }
+        if !self.ctx.application_symbols_resolution_set.insert(type_id) {
+            return;
+        }
+
+        // Check global fuel first - if exhausted from a previous call, bail immediately.
+        let fuel = APP_SYMBOL_RESOLUTION_FUEL.get();
+        if fuel >= MAX_APP_SYMBOL_RESOLUTION_FUEL {
+            self.ctx.application_symbols_resolution_set.remove(&type_id);
+            return;
+        }
+
+        // Bail out when nested too deeply. Uses thread-local counter because
+        // cross-arena delegation creates child CheckerContexts that would reset
+        // a per-context counter to 0.
+        let depth = APP_SYMBOL_RESOLUTION_DEPTH.get();
+        if depth >= MAX_APP_SYMBOL_RESOLUTION_DEPTH {
+            self.ctx.application_symbols_resolution_set.remove(&type_id);
+            return;
+        }
+
+        let is_outermost = depth == 0;
+        if is_outermost {
+            // Reset fuel for each top-level resolution
+            APP_SYMBOL_RESOLUTION_FUEL.set(0);
+        }
+        APP_SYMBOL_RESOLUTION_DEPTH.set(depth + 1);
+
+        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+        let fully_resolved = self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
+        self.ctx.application_symbols_resolution_set.remove(&type_id);
+        APP_SYMBOL_RESOLUTION_DEPTH.set(depth);
+        if fully_resolved {
+            self.ctx.application_symbols_resolved.extend(visited);
+        }
+    }
+
+    pub(crate) fn insert_type_env_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        resolved: TypeId,
+    ) -> bool {
+        use tsz_solver::SymbolRef;
+
+        if resolved == TypeId::ANY || resolved == TypeId::ERROR {
+            return true;
+        }
+
+        // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
+        // Skipping all Lazy types breaks alias chains (type A = B).
+        let current_def_id = self.ctx.get_existing_def_id(sym_id);
+        if let Some(target_def_id) = query::lazy_def_id(self.ctx.types, resolved)
+            && Some(target_def_id) == current_def_id
+        {
+            return true; // Skip self-recursive alias (A -> A)
+        }
+
+        let symbol_ref = SymbolRef(sym_id.0);
+        let def_id = current_def_id;
+
+        // Reuse cached params already in the environment when available.
+        let mut cached_env_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
+        let mut symbol_already_registered = false;
+        let mut def_already_registered = def_id.is_none();
+        if let Ok(env) = self.ctx.type_env.try_borrow() {
+            symbol_already_registered = env.contains(symbol_ref);
+            cached_env_params = env.get_params(symbol_ref).map(|s| s.to_vec());
+            if let Some(def_id) = def_id {
+                def_already_registered = env.contains_def(def_id);
+            }
+        }
+        let had_env_params = cached_env_params.is_some();
+        let type_params = if let Some(params) = cached_env_params {
+            params
+        } else if let Some(def_id) = def_id {
+            match self.ctx.get_def_type_params(def_id) {
+                Some(params)
+                    if !params.is_empty()
+                        && params
+                            .iter()
+                            .all(|param| param.constraint.is_none() && param.default.is_none()) =>
+                {
+                    self.get_type_params_for_symbol(sym_id)
+                }
+                Some(params) => params,
+                None => self.get_type_params_for_symbol(sym_id),
+            }
+        } else {
+            self.get_type_params_for_symbol(sym_id)
+        };
+
+        if let Some(def_id) = def_id
+            && !type_params.is_empty()
+        {
+            self.ctx.insert_def_type_params(def_id, type_params.clone());
+        }
+
+        // Already fully registered with params (or not generic), nothing to do.
+        if symbol_already_registered
+            && def_already_registered
+            && (had_env_params || type_params.is_empty())
+        {
+            return true;
+        }
+
+        // Use try_borrow_mut to avoid panic if type_env is already borrowed.
+        // This can happen during recursive type resolution.
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if type_params.is_empty() {
+                env.insert(symbol_ref, resolved);
+                if let Some(def_id) = def_id {
+                    env.insert_def(def_id, resolved);
+                }
+            } else {
+                env.insert_with_params(symbol_ref, resolved, type_params.clone());
+                if let Some(def_id) = def_id {
+                    env.insert_def_with_params(def_id, resolved, type_params);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+}

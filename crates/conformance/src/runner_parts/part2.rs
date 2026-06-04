@@ -1,0 +1,1345 @@
+impl Runner {
+    fn parse_shard_spec(&self) -> anyhow::Result<Option<(usize, usize)>> {
+        let Some(spec) = self.args.shard.as_deref() else {
+            return Ok(None);
+        };
+        let Some((index, count)) = spec.split_once('/') else {
+            anyhow::bail!("--shard must be formatted as index/count, got {spec:?}");
+        };
+        let index = index
+            .parse::<usize>()
+            .with_context(|| format!("invalid --shard index in {spec:?}"))?;
+        let count = count
+            .parse::<usize>()
+            .with_context(|| format!("invalid --shard count in {spec:?}"))?;
+        if count == 0 {
+            anyhow::bail!("--shard count must be greater than zero");
+        }
+        if index >= count {
+            anyhow::bail!("--shard index {index} must be less than count {count}");
+        }
+        Ok(Some((index, count)))
+    }
+
+    fn absolutize_binary_path(path: &Path) -> String {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+
+        std::fs::canonicalize(&absolute)
+            .unwrap_or(absolute)
+            .to_string_lossy()
+            .to_string()
+    }
+
+    fn resolve_tsz_binary(configured: &str) -> String {
+        // Prefer the workspace fast-build binary when the default "tsz" is used.
+        // This avoids accidentally running a stale PATH-installed binary and
+        // producing misleading parity deltas.
+        if configured == "tsz" {
+            let local_fast = Path::new("./.target/dist-fast/tsz");
+            if local_fast.is_file() {
+                return Self::absolutize_binary_path(local_fast);
+            }
+        }
+        let configured_path = Path::new(configured);
+        if configured_path.components().count() > 1 || configured_path.is_absolute() {
+            return Self::absolutize_binary_path(configured_path);
+        }
+        configured.to_string()
+    }
+
+    /// Create a new runner
+    pub fn new(args: Args) -> anyhow::Result<Self> {
+        // Load cache
+        let cache_path = Path::new(&args.cache_file);
+        let cache = if cache_path.exists() {
+            load_cache(cache_path)
+                .with_context(|| format!("Failed to load cache from {}", args.cache_file))?
+        } else {
+            warn!("Cache file not found, starting with empty cache");
+            HashMap::new()
+        };
+
+        info!("Loaded {} cached TSC results", cache.len());
+
+        let tsz_binary = Self::resolve_tsz_binary(&args.tsz_binary);
+
+        Ok(Self {
+            args,
+            tsz_binary,
+            cache: Arc::new(cache),
+            stats: Arc::new(TestStats::default()),
+            error_freq: Arc::new(ErrorFrequency::default()),
+            problems: Arc::new(ProblemTests::default()),
+        })
+    }
+
+    /// Run all tests
+    pub async fn run(&self) -> anyhow::Result<TestStats> {
+        let test_files = self.discover_tests()?;
+
+        if test_files.is_empty() {
+            warn!("No test files found!");
+            return Ok(TestStats::default());
+        }
+
+        info!("Found {} test files", test_files.len());
+
+        // Set up concurrency control
+        let concurrency_limit = self.args.workers;
+        let semaphore = Arc::new(Semaphore::new(concurrency_limit));
+
+        // Server mode does NOT own every test: tests whose directives match
+        // has_unsupported_server_options (jsx, moduleResolution, paths,
+        // baseUrl, types, typeRoots — see options_convert.rs) set
+        // use_server = false in run_test() and fall through to the CLI path.
+        // If we skip the batch pool, those tests degrade to per-test
+        // subprocess spawning, which is much slower than the batch pool they
+        // would have used otherwise.
+        //
+        // So always create the batch pool unless --no-batch is set. When
+        // server mode is also active, the two pools coexist: server-eligible
+        // tests use the server pool, server-incompatible tests use the batch
+        // pool. The cost (idle batch processes when most tests run on the
+        // server) is small compared to the subprocess-per-test cost it
+        // avoids.
+        let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
+            info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
+            None
+        } else {
+            info!(
+                "Creating batch process pool with {} workers",
+                concurrency_limit
+            );
+            match ProcessPool::new(
+                &self.tsz_binary,
+                concurrency_limit,
+                self.args.max_compilations_per_worker,
+                self.args.max_worker_rss_mb * 1024 * 1024,
+            )
+            .await
+            {
+                Ok(pool) => Some(Arc::new(pool)),
+                Err(e) => {
+                    warn!(
+                        "Failed to create batch pool: {}. Falling back to subprocess mode.",
+                        e
+                    );
+                    None
+                }
+            }
+        };
+
+        // Server pool is additive: it handles tests whose options are all
+        // server-compatible. The batch pool created above stays available
+        // for tests with unsupported server options.
+        let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
+            let server_bin = self.args.resolved_server_binary();
+            match ServerPool::new(
+                &server_bin,
+                concurrency_limit,
+                self.args.max_compilations_per_worker,
+                self.args.max_worker_rss_mb * 1024 * 1024,
+            )
+            .await
+            {
+                Ok(sp) => {
+                    info!(
+                        "Server pool ready: {} workers using {}",
+                        concurrency_limit, server_bin
+                    );
+                    Some(Arc::new(sp))
+                }
+                Err(e) => {
+                    warn!("Failed to create server pool: {e}. CLI batch pool handles all tests.");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Process tests in parallel
+        let start = Instant::now();
+
+        // Base path for relative display (current working directory)
+        let base_path: PathBuf = std::env::current_dir().unwrap_or_default();
+
+        let error_code_filter = self.args.error_code;
+        let timeout_secs = self.args.timeout;
+        let print_fingerprints = self.args.print_fingerprints;
+        let write_diff_artifacts = self.args.write_diff_artifacts;
+        let diff_artifacts_dir = PathBuf::from(&self.args.diff_artifacts_dir);
+        let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
+        let timed_tests = Arc::new(std::sync::Mutex::new(Vec::<TimedTest>::new()));
+
+        stream::iter(test_files)
+            .for_each_concurrent(Some(concurrency_limit), |path| {
+                let permit = std::sync::Arc::clone(&semaphore);
+                let cache = std::sync::Arc::clone(&self.cache);
+                let stats = std::sync::Arc::clone(&self.stats);
+                let error_freq = std::sync::Arc::clone(&self.error_freq);
+                let problems = std::sync::Arc::clone(&self.problems);
+                let tsz_binary = self.tsz_binary.clone();
+                let pool = pool.clone();
+                let server_pool = server_pool.clone();
+                let verbose = self.args.is_verbose();
+                let print_test = self.args.print_test;
+                let print_test_files = self.args.print_test_files;
+                let base = base_path.clone();
+                let test_dir = test_dir.clone();
+                let diff_artifacts_dir = diff_artifacts_dir.clone();
+                let timed_tests = Arc::clone(&timed_tests);
+
+                async move {
+                    let _permit = permit.acquire().await.unwrap();
+                    let rel_path = relative_display(&path, &base);
+                    let test_start = Instant::now();
+
+                    match Self::run_test(
+                        &path,
+                        &test_dir,
+                        cache,
+                        tsz_binary,
+                        pool,
+                        server_pool,
+                        print_test_files,
+                        timeout_secs,
+                    )
+                    .await
+                    {
+                        Ok((result, file_preview)) => {
+                            timed_tests.lock().unwrap().push(TimedTest {
+                                file: rel_path.replace('\\', "/"),
+                                elapsed_ms: test_start.elapsed().as_millis(),
+                            });
+                            use std::fmt::Write;
+
+                            // Update stats
+                            stats.total.fetch_add(1, Ordering::SeqCst);
+
+                            // Buffer all output for this test so it prints atomically
+                            let mut buf = String::new();
+
+                            match result {
+                                TestResult::Pass => {
+                                    stats.passed.fetch_add(1, Ordering::SeqCst);
+                                    if print_test && !verbose {
+                                        writeln!(buf, "PASS {}", rel_path).ok();
+                                    }
+                                }
+                                TestResult::Fail(fail) => {
+                                    let TestResultFail {
+                                        expected,
+                                        actual,
+                                        missing,
+                                        extra,
+                                        missing_fingerprints,
+                                        extra_fingerprints,
+                                        expected_fingerprints,
+                                        actual_fingerprints,
+                                        options,
+                                        known_failure,
+                                    } = *fail;
+                                    stats.failed.fetch_add(1, Ordering::SeqCst);
+                                    if known_failure.is_some() {
+                                        stats.known_failures.fetch_add(1, Ordering::SeqCst);
+                                    }
+
+                                    // Track fingerprint-only failures: error codes match
+                                    // but fingerprints differ (position/message mismatch)
+                                    if known_failure.is_none()
+                                        && missing.is_empty()
+                                        && extra.is_empty()
+                                        && (!missing_fingerprints.is_empty()
+                                            || !extra_fingerprints.is_empty())
+                                    {
+                                        stats
+                                            .fingerprint_only
+                                            .fetch_add(1, Ordering::SeqCst);
+                                        problems
+                                            .fingerprint_only
+                                            .lock()
+                                            .unwrap()
+                                            .push(rel_path.clone());
+                                    }
+
+                                    // Show file preview for failing tests only
+                                    if let Some(preview) = &file_preview {
+                                        buf.push_str(preview);
+                                    }
+
+                                    // Filter by error code if specified
+                                    let should_print = match error_code_filter {
+                                        Some(code) => {
+                                            expected.contains(&code) || actual.contains(&code)
+                                        }
+                                        None => true,
+                                    };
+
+                                    if should_print {
+                                        if let Some(reason) = known_failure {
+                                            writeln!(buf, "XFAIL {} ({})", rel_path, reason).ok();
+                                        } else {
+                                            writeln!(buf, "FAIL {}", rel_path).ok();
+                                        }
+
+                                        if print_test {
+                                            let expected_str: Vec<String> = expected
+                                                .iter()
+                                                .map(|c| format!("TS{}", c))
+                                                .collect();
+                                            let actual_str: Vec<String> =
+                                                actual.iter().map(|c| format!("TS{}", c)).collect();
+                                            writeln!(buf, "  expected: [{}]", expected_str.join(", ")).ok();
+                                            writeln!(buf, "  actual:   [{}]", actual_str.join(", ")).ok();
+                                        }
+
+                                        if print_fingerprints {
+                                            if missing_fingerprints.is_empty() {
+                                                writeln!(buf, "  missing-fingerprints: []").ok();
+                                            } else {
+                                                writeln!(buf, "  missing-fingerprints:").ok();
+                                                for fingerprint in &missing_fingerprints {
+                                                    writeln!(buf, "    - {}", fingerprint.display_key()).ok();
+                                                }
+                                            }
+                                            if extra_fingerprints.is_empty() {
+                                                writeln!(buf, "  extra-fingerprints: []").ok();
+                                            } else {
+                                                writeln!(buf, "  extra-fingerprints:").ok();
+                                                for fingerprint in &extra_fingerprints {
+                                                    writeln!(buf, "    - {}", fingerprint.display_key()).ok();
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Record error frequencies
+                                    for code in &missing {
+                                        error_freq.record_missing(*code);
+                                    }
+                                    for code in &extra {
+                                        error_freq.record_extra(*code);
+                                    }
+                                    for fingerprint in &missing_fingerprints {
+                                        error_freq.record_missing_fingerprint(fingerprint.clone());
+                                    }
+                                    for fingerprint in &extra_fingerprints {
+                                        error_freq.record_extra_fingerprint(fingerprint.clone());
+                                    }
+
+                                    if write_diff_artifacts {
+                                        let artifact_name =
+                                            format!("{}.json", sanitize_artifact_name(&rel_path));
+                                        let artifact_path = diff_artifacts_dir.join(artifact_name);
+                                        if let Some(parent) = artifact_path.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        let payload = serde_json::json!({
+                                            "test": rel_path,
+                                            "expected_codes": expected,
+                                            "actual_codes": actual,
+                                            "missing_codes": missing,
+                                            "extra_codes": extra,
+                                            "missing_fingerprints": missing_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "extra_fingerprints": extra_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "expected_fingerprints": expected_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "actual_fingerprints": actual_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "options": options,
+                                        });
+                                        let _ = std::fs::write(
+                                            &artifact_path,
+                                            serde_json::to_string_pretty(&payload)
+                                                .unwrap_or_else(|_| "{}".to_string()),
+                                        );
+                                    }
+                                }
+                                TestResult::Skipped(reason) => {
+                                    stats.skipped.fetch_add(1, Ordering::SeqCst);
+                                    if verbose {
+                                        writeln!(buf, "SKIP {} ({})", rel_path, reason).ok();
+                                    }
+                                }
+                                TestResult::Crashed => {
+                                    stats.crashed.fetch_add(1, Ordering::SeqCst);
+                                    problems.crashed.lock().unwrap().push(rel_path.clone());
+                                    writeln!(buf, "CRASH {}", rel_path).ok();
+                                }
+                                TestResult::Timeout => {
+                                    stats.timeout.fetch_add(1, Ordering::SeqCst);
+                                    problems.timed_out.lock().unwrap().push(rel_path.clone());
+                                    writeln!(buf, "TIMEOUT {} (exceeded {}s)", rel_path, timeout_secs).ok();
+                                }
+                            }
+
+                            if !buf.is_empty() {
+                                print!("{}", buf);
+                            }
+                        }
+                        Err(e) => {
+                            timed_tests.lock().unwrap().push(TimedTest {
+                                file: rel_path.replace('\\', "/"),
+                                elapsed_ms: test_start.elapsed().as_millis(),
+                            });
+                            stats.total.fetch_add(1, Ordering::SeqCst);
+                            stats.failed.fetch_add(1, Ordering::SeqCst);
+                            println!("FAIL {} (ERROR: {})", rel_path, e);
+                        }
+                    }
+                }
+            })
+            .await;
+
+        let elapsed = start.elapsed();
+
+        // Print summary
+        let stats = &self.stats;
+        let error_freq = &self.error_freq;
+
+        // Re-print crashed and timed-out tests for easy visibility
+        let crashed_tests = self.problems.crashed.lock().unwrap();
+        let timed_out_tests = self.problems.timed_out.lock().unwrap();
+        if !crashed_tests.is_empty() {
+            println!();
+            println!("Crashed tests ({}):", crashed_tests.len());
+            for path in crashed_tests.iter() {
+                println!("  CRASH {}", path);
+            }
+        }
+        if !timed_out_tests.is_empty() {
+            println!();
+            println!("Timed out tests ({}):", timed_out_tests.len());
+            for path in timed_out_tests.iter() {
+                println!("  TIMEOUT {}", path);
+            }
+        }
+        drop(crashed_tests);
+        drop(timed_out_tests);
+
+        // Print fingerprint-only failures (same error codes, different positions/messages)
+        let fp_only_tests = self.problems.fingerprint_only.lock().unwrap();
+        if !fp_only_tests.is_empty() {
+            println!();
+            println!(
+                "Fingerprint-only failures ({}) — error codes match, position/message differs:",
+                fp_only_tests.len()
+            );
+            for path in fp_only_tests.iter() {
+                println!("  {}", path);
+            }
+        }
+        drop(fp_only_tests);
+
+        println!();
+        println!("{}", "=".repeat(60));
+        let evaluated = stats.evaluated();
+        println!(
+            "FINAL RESULTS: {}/{} passed ({:.1}%)",
+            stats.passed.load(Ordering::SeqCst),
+            evaluated,
+            stats.pass_rate()
+        );
+        println!("  Skipped: {}", stats.skipped.load(Ordering::SeqCst));
+        println!(
+            "  Known failures: {}",
+            stats.known_failures.load(Ordering::SeqCst)
+        );
+        println!("  Crashed: {}", stats.crashed.load(Ordering::SeqCst));
+        let timeout_count = stats.timeout.load(Ordering::SeqCst);
+        if timeout_count > 0 {
+            println!(
+                "  ⏱️  Timeout: {} (exceeded {}s limit)",
+                timeout_count, timeout_secs
+            );
+        } else {
+            println!("  Timeout: 0");
+        }
+        let fp_only_count = stats.fingerprint_only.load(Ordering::SeqCst);
+        println!("  Fingerprint-only: {}", fp_only_count);
+        println!("  Time: {:.1}s", elapsed.as_secs_f64());
+
+        // Print top error codes
+        let top_errors = error_freq.top_errors(10);
+        if !top_errors.is_empty() {
+            println!();
+            println!("Top Error Code Mismatches:");
+            for (code, missing, extra) in top_errors {
+                println!("  TS{}: missing={}, extra={}", code, missing, extra);
+            }
+        }
+
+        let top_fingerprint_errors = error_freq.top_fingerprint_errors(10);
+        if !top_fingerprint_errors.is_empty() {
+            println!();
+            println!("Top Diagnostic Fingerprint Mismatches:");
+            for (fingerprint, missing, extra) in top_fingerprint_errors {
+                println!(
+                    "  {} (missing={}, extra={})",
+                    fingerprint.display_key(),
+                    missing,
+                    extra
+                );
+            }
+        }
+
+        println!("{}", "=".repeat(60));
+
+        if let Some(path) = &self.args.timings_file {
+            let mut results = timed_tests.lock().unwrap().clone();
+            results.sort_by(|a, b| a.file.cmp(&b.file));
+            let payload = serde_json::json!({
+                "summary": {
+                    "total": results.len(),
+                    "elapsed_ms": elapsed.as_millis(),
+                },
+                "results": results
+                    .iter()
+                    .map(|result| serde_json::json!({
+                        "file": &result.file,
+                        "elapsed_ms": result.elapsed_ms,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            if let Some(parent) = Path::new(path).parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create timings directory {}", parent.display())
+                })?;
+            }
+            std::fs::write(path, serde_json::to_string(&payload)?)
+                .with_context(|| format!("failed to write timings file {path}"))?;
+        }
+
+        // Return a summary (note: this is before the final stats are cloned)
+        Ok(TestStats {
+            total: AtomicUsize::new(stats.total.load(Ordering::SeqCst)),
+            passed: AtomicUsize::new(stats.passed.load(Ordering::SeqCst)),
+            failed: AtomicUsize::new(stats.failed.load(Ordering::SeqCst)),
+            skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
+            crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
+            timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
+            known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
+            fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
+        })
+    }
+
+    /// Discover all test files recursively using walkdir
+    fn discover_tests(&self) -> anyhow::Result<Vec<PathBuf>> {
+        use walkdir::WalkDir;
+
+        let test_dir = &self.args.test_dir;
+        let mut files = Vec::new();
+
+        // Walk directory tree recursively
+        for entry in WalkDir::new(test_dir)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+        {
+            let path = entry.path();
+
+            // Skip directories
+            if path.is_dir() {
+                continue;
+            }
+
+            if is_appledouble_file(path) {
+                continue;
+            }
+
+            if !is_conformance_source_file(path) {
+                continue;
+            }
+
+            if !matches_path_filter(path, self.args.filter.as_deref()) {
+                continue;
+            }
+
+            files.push(path.to_path_buf());
+        }
+
+        // Sort for deterministic order
+        files.sort();
+
+        if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
+            let test_dir_path = std::path::Path::new(test_dir);
+            files = match self.args.shard_strategy {
+                ShardStrategy::Hash => files
+                    .into_iter()
+                    .filter_map(|path| {
+                        if stable_shard_for_path(&path, test_dir_path, shard_count) == shard_index {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                ShardStrategy::Weighted => {
+                    let weights = self
+                        .args
+                        .shard_weights
+                        .as_deref()
+                        .and_then(|path| load_json_weights(Path::new(path)));
+                    weighted_shard_files(
+                        files,
+                        test_dir_path,
+                        shard_index,
+                        shard_count,
+                        weights.as_ref(),
+                    )
+                }
+            };
+        }
+
+        // Apply offset (skip first N tests)
+        if self.args.offset > 0 {
+            if self.args.offset >= files.len() {
+                files.clear();
+            } else {
+                files = files.split_off(self.args.offset);
+            }
+        }
+
+        // Apply max limit
+        if files.len() > self.args.max {
+            files.truncate(self.args.max);
+        }
+
+        Ok(files)
+    }
+
+    /// Run a single test.
+    /// Returns `(result, file_preview)` where `file_preview` is the numbered
+    /// source listing when `print_test_files` is true.
+    async fn run_test(
+        path: &Path,
+        test_dir: &Path,
+        cache: Arc<crate::cache::TscCache>,
+        tsz_binary: String,
+        pool: Option<Arc<ProcessPool>>,
+        server_pool: Option<Arc<ServerPool>>,
+        print_test_files: bool,
+        timeout_secs: u64,
+    ) -> anyhow::Result<(TestResult, Option<String>)> {
+        // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
+        let bytes = tokio::fs::read(path).await?;
+        let key =
+            cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
+        let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
+
+        // Build file preview if requested (printed atomically by caller)
+        let mut file_preview: Option<String> = None;
+
+        match decode_source_text(&bytes) {
+            DecodedSourceText::Text(content) => {
+                if print_test_files {
+                    use std::fmt::Write;
+                    let mut buf = String::new();
+                    writeln!(buf, "\n--- {} ---", path.display()).ok();
+                    for (i, line) in content.lines().enumerate() {
+                        writeln!(buf, "{:4}: {}", i + 1, line).ok();
+                    }
+                    writeln!(buf, "---").ok();
+                    file_preview = Some(buf);
+                }
+
+                // Parse directives
+                let parsed = parse_test_file(&content)?;
+
+                // Check if should skip
+                if let Some(reason) = should_skip_test(&parsed.directives) {
+                    return Ok((TestResult::Skipped(reason), file_preview.take()));
+                }
+
+                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                    debug!("Cache hit for {}", path.display());
+
+                    // Cache hit - prepare test directory (fast sync I/O)
+                    let options = parsed.directives.options.clone();
+                    let expanded = expand_option_variants(&options);
+                    let mut option_variants =
+                        filter_incompatible_module_resolution_variants(expanded);
+                    if option_variants.is_empty() {
+                        option_variants = vec![options.clone()];
+                    }
+
+                    let mut all_codes = std::collections::HashSet::new();
+                    let mut all_fingerprints = std::collections::HashSet::new();
+                    let original_ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(std::string::ToString::to_string);
+
+                    // Determine if we should use server mode for this test
+                    let use_server = server_pool.is_some()
+                        && !crate::options_convert::has_unsupported_server_options(&options);
+
+                    if use_server {
+                        // SERVER MODE: send files + options as JSON, no temp dir.
+                        // This skips temp directory creation and filesystem I/O entirely.
+                        let server = server_pool.as_ref().unwrap();
+                        let mut files = HashMap::new();
+                        if parsed.directives.filenames.is_empty() {
+                            // Single-file test
+                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
+                            let name = format!("test.{ext}");
+                            let clean = tsz_wrapper::strip_directive_comments(&content);
+                            files.insert(name, clean);
+                        } else {
+                            // Multi-file test
+                            for (filename, file_content) in &parsed.directives.filenames {
+                                files.insert(filename.clone(), file_content.clone());
+                            }
+                        }
+
+                        let timeout = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+
+                        // Run first variant only (matching CLI behavior for comparison)
+                        let first_variant = option_variants.first().unwrap_or(&options);
+                        let outcome = server.check(files, first_variant, timeout).await?;
+
+                        match outcome {
+                            ServerOutcome::Done(codes) => {
+                                all_codes.extend(codes);
+                            }
+                            ServerOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                            ServerOutcome::Timeout => {
+                                return Ok((TestResult::Timeout, file_preview.take()));
+                            }
+                            ServerOutcome::Error(e) => {
+                                warn!("Server error for {}: {e}", path.display());
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                        }
+                    } else {
+                        // CLI MODE: existing variant loop with temp dirs.
+                        // Run each option variant (e.g. module=commonjs, module=system).
+                        // Only the FIRST variant's diagnostics are used for comparison
+                        // because the tsc cache was generated with first-value-only
+                        // semantics for multi-value options. Non-first variants still
+                        // run for crash/timeout detection but are skipped when time is
+                        // tight (>5s for the first variant) to avoid cumulative timeouts.
+                        let mut first_variant_slow = false;
+                        for (variant_idx, variant) in option_variants.into_iter().enumerate() {
+                            // Skip non-first variants when the first variant was slow —
+                            // the cumulative time of N slow variants would exceed the
+                            // timeout even though each individual variant is within bounds.
+                            if variant_idx > 0 && first_variant_slow {
+                                continue;
+                            }
+                            let content_clone = content.clone();
+                            let filenames = parsed.directives.filenames.clone();
+                            let variant_clone = variant.clone();
+                            let ext_clone = original_ext.clone();
+                            let key_order = parsed.directives.option_order.clone();
+                            let expected_error_codes = tsc_result.error_codes.clone();
+                            let ts_tests_lib_dir = ts_tests_lib_dir.clone();
+
+                            let prepared = tokio::task::spawn_blocking(move || {
+                                tsz_wrapper::prepare_test_dir_with_lib_dir(
+                                    &content_clone,
+                                    &filenames,
+                                    &variant_clone,
+                                    ext_clone.as_deref(),
+                                    &key_order,
+                                    Some(&expected_error_codes),
+                                    Some(&ts_tests_lib_dir),
+                                )
+                            })
+                            .await??;
+
+                            let variant_start = Instant::now();
+                            let compile_result = if let Some(ref pool) = pool {
+                                // Use batch pool — send project dir, read output
+                                let timeout_dur = if timeout_secs > 0 {
+                                    Duration::from_secs(timeout_secs)
+                                } else {
+                                    Duration::ZERO
+                                };
+                                match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                                    BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                        &output,
+                                        prepared.temp_dir.path(),
+                                        variant,
+                                    ),
+                                    BatchOutcome::Crashed => {
+                                        return Ok((TestResult::Crashed, file_preview.take()));
+                                    }
+                                    BatchOutcome::Timeout => {
+                                        match Self::compile_with_subprocess(
+                                            &tsz_binary,
+                                            &prepared.project_dir,
+                                            prepared.temp_dir.path(),
+                                            variant,
+                                            timeout_secs.saturating_mul(2).max(60),
+                                        )
+                                        .await?
+                                        {
+                                            Some(result) => result,
+                                            None => {
+                                                return Ok((
+                                                    TestResult::Timeout,
+                                                    file_preview.take(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Subprocess fallback — spawn fresh tsz per compilation
+                                // Set cwd to project dir so diagnostic file paths are
+                                // relative to project root (matching cache generator behavior)
+                                let child = tokio::process::Command::new(&tsz_binary)
+                                    .arg("--project")
+                                    .arg(&prepared.project_dir)
+                                    .arg("--noEmit")
+                                    .arg("--pretty")
+                                    .arg("false")
+                                    .current_dir(&prepared.project_dir)
+                                    .stdout(std::process::Stdio::piped())
+                                    .stderr(std::process::Stdio::piped())
+                                    .kill_on_drop(true)
+                                    .spawn()?;
+
+                                let output = if timeout_secs > 0 {
+                                    match tokio::time::timeout(
+                                        Duration::from_secs(timeout_secs),
+                                        child.wait_with_output(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(result) => result?,
+                                        Err(_) => {
+                                            return Ok((TestResult::Timeout, file_preview.take()));
+                                        }
+                                    }
+                                } else {
+                                    child.wait_with_output().await?
+                                };
+
+                                tsz_wrapper::parse_tsz_output(
+                                    &output,
+                                    prepared.temp_dir.path(),
+                                    variant,
+                                )
+                            };
+                            if compile_result.crashed {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+
+                            // Only accumulate diagnostics from the first variant.
+                            // The tsc cache uses first-value-only for multi-value
+                            // options (module, jsx, etc.), so comparing the union
+                            // of all variants against the cache produces false
+                            // "extra" diagnostics from non-first variants.
+                            if variant_idx == 0 {
+                                all_codes.extend(compile_result.error_codes);
+                                all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+                                // Mark first variant as slow if it took >3s — skip
+                                // remaining variants to avoid cumulative timeout.
+                                if variant_start.elapsed() > Duration::from_secs(3) {
+                                    first_variant_slow = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Filter out all error codes for JS files when checkJs is not enabled.
+                    // In tsc, JS files are only type-checked when checkJs is true;
+                    // without it, tsc produces no semantic errors for JS files.
+                    let is_js_file = {
+                        let p = path.to_string_lossy().to_lowercase();
+                        p.ends_with(".js")
+                            || p.ends_with(".jsx")
+                            || p.ends_with(".mjs")
+                            || p.ends_with(".cjs")
+                    };
+                    let check_js = options
+                        .get("checkJs")
+                        .or_else(|| options.get("checkjs"))
+                        .is_some_and(|v| v == "true");
+                    let allow_js = options
+                        .get("allowJs")
+                        .or_else(|| options.get("allowjs"))
+                        .is_some_and(|v| v == "true");
+                    if is_js_file && !check_js && !allow_js {
+                        // Preserve TS18003 (no inputs found) since it's a config-level
+                        // diagnostic that tsc emits regardless of JS checking mode.
+                        let had_18003 = all_codes.contains(&18003);
+                        let fps_18003: Vec<_> = all_fingerprints
+                            .iter()
+                            .filter(|fp| fp.code == 18003)
+                            .cloned()
+                            .collect();
+                        all_codes.clear();
+                        all_fingerprints.clear();
+                        if had_18003 {
+                            all_codes.insert(18003);
+                            all_fingerprints.extend(fps_18003);
+                        }
+                    }
+
+                    // Some multi-file conformance tests provide a tsconfig with allowJs and only JS inputs.
+                    // In that setup, TS18003 may be a harness artifact (tsz emits it but tsc doesn't).
+                    // Only strip TS18003 when tsc does NOT expect it.
+                    let tsc_expects_18003 = tsc_result.error_codes.contains(&18003);
+                    let has_tsconfig = parsed
+                        .directives
+                        .filenames
+                        .iter()
+                        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+                    let has_js_input_file = parsed.directives.filenames.iter().any(|(name, _)| {
+                        let lower = name.to_lowercase();
+                        lower.ends_with(".js")
+                            || lower.ends_with(".jsx")
+                            || lower.ends_with(".mjs")
+                            || lower.ends_with(".cjs")
+                    });
+                    if has_tsconfig && has_js_input_file && !tsc_expects_18003 {
+                        all_codes.remove(&18003);
+                        all_fingerprints.retain(|fp| fp.code != 18003);
+                    }
+                    let compile_result = tsz_wrapper::CompilationResult {
+                        error_codes: all_codes.into_iter().collect(),
+                        diagnostic_fingerprints: all_fingerprints.into_iter().collect(),
+                        crashed: false,
+                        options: options.clone(),
+                    };
+                    // Filter .lib/ diagnostics (see filter functions for explanation)
+                    let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
+
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
+                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
+                    // config-level deprecation warnings. These should not be compared as they are
+                    // compiler configuration diagnostics, not file-level type checking diagnostics.
+                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
+                    // stores in fingerprints but not in error_codes.
+                    tsc_error_codes.retain(|c| !is_project_config_diagnostic_code(*c));
+                    let tsc_fps: Vec<_> = tsc_fps
+                        .into_iter()
+                        .filter(|fp| !is_project_config_diagnostic_code(fp.code))
+                        .collect();
+                    compile_result
+                        .error_codes
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
+                    compile_result
+                        .diagnostic_fingerprints
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
+
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
+                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
+                    // config-level deprecation warnings. These should not be compared as they are
+                    // compiler configuration diagnostics, not file-level type checking diagnostics.
+                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
+                    // stores in fingerprints but not in error_codes.
+                    let tsc_error_codes: Vec<u32> = tsc_error_codes
+                        .into_iter()
+                        .filter(|c| !is_project_config_diagnostic_code(*c))
+                        .collect();
+                    compile_result
+                        .error_codes
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
+                    compile_result
+                        .diagnostic_fingerprints
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
+                    // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
+                    // and suppresses downstream errors caused by missing lib types.
+                    // tsz doesn't yet suppress these, so filter extra codes/fingerprints
+                    // that cascade from missing global types.
+                    let is_nolib = options
+                        .get("noLib")
+                        .or_else(|| options.get("nolib"))
+                        .is_some_and(|v| v == "true");
+                    let tsc_has_2318 =
+                        tsc_error_codes.contains(&2318) || tsc_fps.iter().any(|fp| fp.code == 2318);
+                    if is_nolib && tsc_has_2318 {
+                        // Under @noLib, tsc suppresses cascaded errors from missing
+                        // global types. Mirror that by restricting tsz's output to
+                        // codes tsc reports, plus TS2318 itself so fingerprint
+                        // comparison sees our "Cannot find global type" diagnostics.
+                        // (The tsc cache sometimes stores TS2318 only in fingerprints,
+                        // with an empty error_codes list — keep TS2318 in both cases.)
+                        let tsc_code_set: std::collections::HashSet<u32> =
+                            tsc_error_codes.iter().cloned().collect();
+                        compile_result
+                            .error_codes
+                            .retain(|c| tsc_code_set.contains(c) || *c == 2318);
+                        compile_result
+                            .diagnostic_fingerprints
+                            .retain(|fp| tsc_code_set.contains(&fp.code) || fp.code == 2318);
+                    }
+
+                    // If TSC expects only TS5024, tsz may emit extra diagnostics
+                    // from semantic checks that run after the invalid option failure.
+                    // Restrict comparison to TS5024 in this case.
+                    suppress_tsz_semantic_diagnostics_after_tsc_option_error(
+                        &tsc_error_codes,
+                        &mut compile_result,
+                    );
+
+                    let options_for_fail = compile_result.options.clone();
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
+                    );
+                    Ok((outcome, file_preview.take()))
+                } else {
+                    debug!("Cache miss for {}", path.display());
+
+                    // Cache miss - run tsz anyway (but we can't compare without TSC results)
+                    // Return Skipped with reason "no TSC cache"
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                }
+            }
+            DecodedSourceText::TextWithOriginalBytes(decoded_text, original_bytes) => {
+                if print_test_files {
+                    file_preview = Some(format!(
+                        "\n--- {} (UTF-16 BOM, {} bytes) ---\n",
+                        path.display(),
+                        original_bytes.len()
+                    ));
+                }
+
+                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                    // Parse directives from the decoded text so we get the correct
+                    // compiler options (target, strict, etc.) for the tsconfig.
+                    // Previously this was `HashMap::new()` which meant UTF-16 tests
+                    // ran with default (empty) options, missing deprecated-option
+                    // diagnostics like TS5107 for `target: es5`.
+                    let parsed_directives = parse_test_file(&decoded_text)?;
+                    let options = parsed_directives.directives.options;
+                    let original_ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(std::string::ToString::to_string);
+                    // Use the decoded text through the normal prepare_test_dir path
+                    // (which strips directive comments) instead of writing raw UTF-16
+                    // bytes. This ensures line numbers match tsc's expectations.
+                    let filenames = parsed_directives.directives.filenames;
+                    let key_order = parsed_directives.directives.option_order;
+                    let expected_error_codes = tsc_result.error_codes.clone();
+                    let prepared = tokio::task::spawn_blocking({
+                        let text = decoded_text.clone();
+                        let options = options.clone();
+                        let ext = original_ext.clone();
+                        let key_order = key_order.clone();
+                        let ts_tests_lib_dir = ts_tests_lib_dir.clone();
+                        move || {
+                            tsz_wrapper::prepare_test_dir_with_lib_dir(
+                                &text,
+                                &filenames,
+                                &options,
+                                ext.as_deref(),
+                                &key_order,
+                                Some(&expected_error_codes),
+                                Some(&ts_tests_lib_dir),
+                            )
+                        }
+                    })
+                    .await??;
+
+                    let compile_result = if let Some(ref pool) = pool {
+                        let timeout_dur = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                &output,
+                                prepared.temp_dir.path(),
+                                options,
+                            ),
+                            BatchOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                            BatchOutcome::Timeout => {
+                                match Self::compile_with_subprocess(
+                                    &tsz_binary,
+                                    &prepared.project_dir,
+                                    prepared.temp_dir.path(),
+                                    options,
+                                    timeout_secs.saturating_mul(2).max(60),
+                                )
+                                .await?
+                                {
+                                    Some(result) => result,
+                                    None => return Ok((TestResult::Timeout, file_preview.take())),
+                                }
+                            }
+                        }
+                    } else {
+                        let child = tokio::process::Command::new(&tsz_binary)
+                            .arg("--project")
+                            .arg(&prepared.project_dir)
+                            .arg("--noEmit")
+                            .arg("--pretty")
+                            .arg("false")
+                            .current_dir(&prepared.project_dir)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()?;
+
+                        let output = if timeout_secs > 0 {
+                            match tokio::time::timeout(
+                                Duration::from_secs(timeout_secs),
+                                child.wait_with_output(),
+                            )
+                            .await
+                            {
+                                Ok(result) => result?,
+                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
+                            }
+                        } else {
+                            child.wait_with_output().await?
+                        };
+
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
+                    };
+
+                    if compile_result.crashed {
+                        return Ok((TestResult::Crashed, file_preview.take()));
+                    }
+
+                    // Filter .lib/ diagnostics (see variant path for explanation)
+                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
+
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
+                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
+                    // config-level deprecation warnings. These should not be compared as they are
+                    // compiler configuration diagnostics, not file-level type checking diagnostics.
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
+                    let tsc_fps: Vec<_> = tsc_fps
+                        .into_iter()
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
+                        .collect();
+                    let compile_result = crate::tsz_wrapper::CompilationResult {
+                        error_codes: compile_result
+                            .error_codes
+                            .into_iter()
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
+                            .collect(),
+                        diagnostic_fingerprints: compile_result
+                            .diagnostic_fingerprints
+                            .into_iter()
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
+                            .collect(),
+                        ..compile_result
+                    };
+
+                    // UTF-16 path historically drops the resolved options from the
+                    // failure record — preserve that behavior by passing an empty map.
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        HashMap::new(),
+                    );
+                    Ok((outcome, file_preview.take()))
+                } else {
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                }
+            }
+            DecodedSourceText::Binary(binary) => {
+                if print_test_files {
+                    file_preview = Some(format!(
+                        "\n--- {} (binary, {} bytes) ---\n",
+                        path.display(),
+                        binary.len()
+                    ));
+                }
+
+                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                    let options: HashMap<String, String> = HashMap::new();
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("ts")
+                        .to_string();
+                    let prepared = tokio::task::spawn_blocking({
+                        let binary = binary.clone();
+                        let ext = ext.clone();
+                        let options = options.clone();
+                        move || tsz_wrapper::prepare_binary_test_dir(&binary, &ext, &options)
+                    })
+                    .await??;
+
+                    let compile_result = if let Some(ref pool) = pool {
+                        let timeout_dur = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                &output,
+                                prepared.temp_dir.path(),
+                                options,
+                            ),
+                            BatchOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()));
+                            }
+                            BatchOutcome::Timeout => {
+                                match Self::compile_with_subprocess(
+                                    &tsz_binary,
+                                    &prepared.project_dir,
+                                    prepared.temp_dir.path(),
+                                    options,
+                                    timeout_secs.saturating_mul(2).max(60),
+                                )
+                                .await?
+                                {
+                                    Some(result) => result,
+                                    None => return Ok((TestResult::Timeout, file_preview.take())),
+                                }
+                            }
+                        }
+                    } else {
+                        let child = tokio::process::Command::new(&tsz_binary)
+                            .arg("--project")
+                            .arg(&prepared.project_dir)
+                            .arg("--noEmit")
+                            .arg("--pretty")
+                            .arg("false")
+                            .current_dir(&prepared.project_dir)
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()?;
+
+                        let output = if timeout_secs > 0 {
+                            match tokio::time::timeout(
+                                Duration::from_secs(timeout_secs),
+                                child.wait_with_output(),
+                            )
+                            .await
+                            {
+                                Ok(result) => result?,
+                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
+                            }
+                        } else {
+                            child.wait_with_output().await?
+                        };
+
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
+                    };
+                    if compile_result.crashed {
+                        return Ok((TestResult::Crashed, file_preview.take()));
+                    }
+
+                    // Filter .lib/ diagnostics (see variant path for explanation)
+                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
+
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
+                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
+                    // config-level deprecation warnings. These should not be compared as they are
+                    // compiler configuration diagnostics, not file-level type checking diagnostics.
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
+                    let tsc_fps: Vec<_> = tsc_fps
+                        .into_iter()
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
+                        .collect();
+                    let compile_result = crate::tsz_wrapper::CompilationResult {
+                        error_codes: compile_result
+                            .error_codes
+                            .into_iter()
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
+                            .collect(),
+                        diagnostic_fingerprints: compile_result
+                            .diagnostic_fingerprints
+                            .into_iter()
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
+                            .collect(),
+                        ..compile_result
+                    };
+
+                    let options_for_fail = compile_result.options.clone();
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
+                    );
+                    Ok((outcome, file_preview.take()))
+                } else {
+                    debug!("Cache miss for {}", path.display());
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                }
+            }
+        }
+    }
+
+    async fn compile_with_subprocess(
+        tsz_binary: &str,
+        project_dir: &Path,
+        temp_dir: &Path,
+        options: HashMap<String, String>,
+        timeout_secs: u64,
+    ) -> anyhow::Result<Option<tsz_wrapper::CompilationResult>> {
+        let child = tokio::process::Command::new(tsz_binary)
+            .arg("--project")
+            .arg(project_dir)
+            .arg("--noEmit")
+            .arg("--pretty")
+            .arg("false")
+            .current_dir(project_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        let output = if timeout_secs > 0 {
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => return Ok(None),
+            }
+        } else {
+            child.wait_with_output().await?
+        };
+
+        Ok(Some(tsz_wrapper::parse_tsz_output(
+            &output, temp_dir, options,
+        )))
+    }
+}

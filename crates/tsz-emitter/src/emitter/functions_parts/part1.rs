@@ -1,0 +1,1336 @@
+use super::{ParamTransformPlan, Printer};
+
+use tsz_parser::parser::node::{FunctionData, Node};
+
+use tsz_parser::parser::syntax_kind_ext;
+
+use tsz_parser::parser::{NodeIndex, NodeList};
+
+use tsz_parser::syntax::transform_utils::contains_new_target_reference;
+
+impl<'a> Printer<'a> {
+    pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
+        let Some(func) = self.arena.get_function(node) else {
+            return;
+        };
+
+        // Consume the paren flag: when set, this function expression is the direct
+        // callee of an expression-statement call and should self-parenthesize to
+        // produce TSC-style `(function(){})()` instead of `(function(){}())`.
+        let self_paren = self.ctx.flags.paren_leftmost_function_or_object;
+        if self_paren {
+            self.ctx.flags.paren_leftmost_function_or_object = false;
+            self.open_paren();
+        }
+
+        let has_generator_asterisk = func.asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena.get(func.body).map_or(node.end, |body| body.pos),
+            );
+
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
+        if func.is_async && self.ctx.needs_async_lowering && !has_generator_asterisk {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_function_es5(func, &func_name, "this");
+            if self_paren {
+                self.close_paren();
+            }
+            return;
+        }
+
+        // Async generator: async function* f() → function f() { return __asyncGenerator(...) }
+        if func.is_async && self.ctx.needs_es2018_lowering && has_generator_asterisk {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_generator_lowered(func, &func_name);
+            if self_paren {
+                self.close_paren();
+            }
+            return;
+        }
+
+        if func.is_async {
+            self.write("async ");
+        }
+
+        let needs_new_target_capture =
+            self.ctx.target_es5 && self.function_body_contains_new_target(func);
+        let function_name =
+            self.function_expression_emit_name(_idx, func.name, needs_new_target_capture);
+
+        self.write("function");
+
+        if func.asterisk_token {
+            self.write("*");
+        }
+
+        // Name (if any)
+        if let Some(name) = function_name.as_deref() {
+            self.write_space();
+            self.write(name);
+        } else {
+            // Space before ( only for anonymous functions: function (x) vs function name(x)
+            self.write(" ");
+        }
+
+        // Parameters (without types for JavaScript)
+        // Map opening `(` to its source position
+        let open_paren_pos = {
+            let search_start = if func.name.is_some() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
+        // A comment in the source seam between the function name and `(`
+        // (e.g. `function copy /* <U> */(a, b)`) belongs right after the name,
+        // before `(`. Emit it here so it does not leak into the parameter list.
+        if func.name.is_some() {
+            self.emit_name_to_paren_seam_comments(func.name, node.end);
+        }
+        self.open_paren();
+        let search_start = func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if func.body.is_some() {
+            self.arena.get(func.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        // Increment function_scope_depth BEFORE parameters so that async arrow
+        // functions in parameter defaults see the correct scope depth (enables
+        // `__awaiter(this, ...)` instead of `__awaiter(void 0, ...)`)
+        self.function_scope_depth += 1;
+        self.emit_function_parameters_with_trailing_comments(
+            &func.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
+        self.close_paren();
+        self.write_space();
+
+        // Emit body - tsc never collapses multi-line function expression bodies
+        // to single lines. Single-line formatting is preserved via emit_block
+        // when the source was originally single-line.
+
+        // Push temp scope and block scope for function body - each function gets fresh variables.
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
+        self.ctx.block_scope_state.enter_scope();
+        self.push_temp_scope();
+        // Save/restore declared_namespace_names so enum/namespace names from the
+        // outer scope don't suppress declarations inside this function, and names
+        // declared inside don't leak to sibling functions at the outer scope.
+        let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+        self.prepare_logical_assignment_value_temps(func.body);
+        let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.flags.in_generator = func.asterisk_token;
+        // Regular functions have their own `arguments`, so turn off the rewrite flag
+        let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
+        self.ctx.rewrite_arguments_to_arguments_1 = false;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
+        for &param_idx in &func.parameters.nodes {
+            if let Some(param) = self.arena.get_parameter_at(param_idx) {
+                let name = self.get_identifier_text_idx(param.name);
+                if !name.is_empty() {
+                    self.namespace_exported_names.remove(name.as_str());
+                }
+            }
+        }
+        self.emit(func.body);
+        self.pop_commonjs_exported_var_parameter_shadow_names();
+        self.namespace_exported_names = prev_namespace_exported_names;
+        self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
+        self.ctx.flags.in_generator = prev_in_generator;
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
+        self.declared_namespace_names = prev_declared;
+        self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
+        self.function_scope_depth -= 1;
+        self.emitting_function_body_block = prev_emitting_function_body_block;
+        if self_paren {
+            self.close_paren();
+        }
+    }
+
+    pub(crate) fn function_body_contains_new_target(&self, func: &FunctionData) -> bool {
+        self.function_like_contains_new_target(func.body, &func.parameters.nodes)
+    }
+
+    pub(crate) fn function_like_contains_new_target(
+        &self,
+        body: NodeIndex,
+        parameters: &[NodeIndex],
+    ) -> bool {
+        (body.is_some() && contains_new_target_reference(self.arena, body))
+            || parameters.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                param.initializer.is_some()
+                    && contains_new_target_reference(self.arena, param.initializer)
+            })
+    }
+
+    pub(crate) fn ordinary_function_new_target_initializer(
+        &self,
+        function_name: Option<&str>,
+    ) -> String {
+        if let Some(function_name) = function_name
+            && !function_name.is_empty()
+        {
+            format!("this && this instanceof {function_name} ? this.constructor : void 0")
+        } else {
+            "this && this instanceof _a ? this.constructor : void 0".to_string()
+        }
+    }
+
+    pub(crate) fn function_expression_emit_name(
+        &self,
+        idx: NodeIndex,
+        explicit_name: NodeIndex,
+        needs_new_target_capture: bool,
+    ) -> Option<String> {
+        if explicit_name.is_some() {
+            return Some(self.get_identifier_text_idx(explicit_name));
+        }
+        if needs_new_target_capture {
+            self.infer_function_expression_name(idx)
+                .or_else(|| Some("_a".to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn infer_function_expression_name(&self, idx: NodeIndex) -> Option<String> {
+        let parent_idx = self.arena.parent_of(idx)?;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        match parent.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                .arena
+                .get_variable_declaration(parent)
+                .map(|decl| decl.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(parent)
+                .map(|prop| prop.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(parent)?;
+                if binary.right != idx {
+                    return None;
+                }
+                self.expression_name_for_named_evaluation(binary.left)
+            }
+            _ => None,
+        }
+    }
+
+    fn get_simple_identifier_text(&self, idx: NodeIndex) -> Option<String> {
+        self.arena.get(idx).and_then(|node| {
+            if node.is_identifier() {
+                Some(self.get_identifier_text_idx(idx))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn expression_name_for_named_evaluation(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.is_identifier() {
+            return Some(self.get_identifier_text_idx(idx));
+        }
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            if name_node.is_identifier() {
+                return Some(self.get_identifier_text_idx(access.name_or_argument));
+            }
+            if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                return self.get_string_literal_text(access.name_or_argument);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn push_new_target_capture_for_initializer(
+        &mut self,
+        initializer: String,
+    ) -> Option<String> {
+        let previous = self.current_new_target_substitution.take();
+        self.current_new_target_substitution = Some("_newTarget".into());
+        self.pending_new_target_capture_initializer = Some(initializer);
+        previous
+    }
+
+    pub(crate) fn restore_new_target_capture(&mut self, previous: Option<String>) {
+        self.current_new_target_substitution = previous;
+        self.pending_new_target_capture_initializer = None;
+    }
+
+    pub(crate) const fn has_pending_new_target_capture(&self) -> bool {
+        self.pending_new_target_capture_initializer.is_some()
+    }
+
+    pub(crate) fn emit_pending_new_target_capture(&mut self) {
+        let Some(initializer) = self.pending_new_target_capture_initializer.take() else {
+            return;
+        };
+        self.write("var _newTarget = ");
+        self.write(&initializer);
+        self.write(";");
+        self.write_line();
+    }
+
+    /// Check if a statement is a simple return statement (for single-line emission).
+    /// A return is "simple" if it has an expression AND the expression doesn't
+    /// contain multi-line constructs (like object literals with multiple properties).
+    pub(super) fn is_simple_return_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        if node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return false;
+        }
+        if let Some(ret) = self.arena.get_return_statement(node) {
+            if ret.expression.is_none() {
+                return false;
+            }
+            // Check if the return expression is multi-line in the source
+            if let Some(expr_node) = self.arena.get(ret.expression) {
+                // Object literals with multiple properties are multi-line
+                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && let Some(obj) = self.arena.get_literal_expr(expr_node)
+                    && obj.elements.nodes.len() > 1
+                    && !self.is_single_line(expr_node)
+                {
+                    return false;
+                }
+                // Also check source text - if the expression spans multiple lines, not simple
+                if !self.is_single_line(expr_node) {
+                    // For non-object expressions that span multiple lines
+                    if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Emit a block on a single line: { return expr; }
+    pub(super) fn emit_single_line_block(&mut self, block_idx: NodeIndex) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+
+        if block.statements.nodes.is_empty() {
+            self.write("{ }");
+            return;
+        }
+
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
+
+        self.write("{ ");
+        let var_insert_pos = is_function_body_block.then_some(self.writer.len());
+        for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+            if i > 0 {
+                self.write(" ");
+            }
+            self.emit(stmt_idx);
+        }
+        if let Some(byte_offset) = var_insert_pos {
+            let prologue = self.take_single_line_hoisted_temp_prologue();
+            if !prologue.is_empty() {
+                self.writer.insert_at(byte_offset, &prologue);
+            }
+        }
+        self.write(" }");
+    }
+
+    pub(super) fn emit_block_with_param_prologue(
+        &mut self,
+        block_idx: NodeIndex,
+        transforms: &ParamTransformPlan,
+    ) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
+        self.ctx.block_scope_state.enter_function_scope();
+        // Seed this function scope's visible value-binding names so a
+        // nested-block ES5 class/let/const lowering renames on collision
+        // regardless of declaration order within the function body.
+        self.seed_block_scope_value_binding_names(&block.statements);
+        self.skip_block_opening_line_comments(block_node, block);
+        self.emit_pending_new_target_capture();
+        self.emit_param_prologue(transforms);
+        let hoist_anchor = is_function_body_block.then(|| self.capture_hoist_anchor());
+
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
+            }
+        };
+        self.emit_block_statement_list_with_comments(
+            &stmts,
+            0,
+            block_close_pos,
+            is_function_body_block,
+        );
+
+        self.ctx.block_scope_state.exit_scope();
+        if let Some(anchor) = hoist_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
+        }
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit the statements of a downleveled async body block (the body that
+    /// becomes `__awaiter(this, ..., function* () { ... })`) through the shared
+    /// comment-aware per-statement loop.
+    ///
+    /// The naive `self.emit(stmt); self.write_line();` loops that previously
+    /// drove these wrappers dropped same-line trailing comments on body
+    /// statements (e.g. `const req = yield foo; // ONE`). Routing them through
+    /// `emit_block_statement_list_with_comments` preserves leading/trailing
+    /// comment handling and `comment_emit_idx` advancement exactly as the
+    /// canonical `emit_block` loop does.
+    ///
+    /// `block_idx` is the original async body block node. Directive prologues
+    /// (e.g. `"use strict"`) are not re-emitted here because the awaiter body
+    /// itself is not a fresh module/function-source boundary that introduces
+    /// one; any leading string-literal statement is emitted as an ordinary
+    /// statement, matching tsc.
+    pub(in crate::emitter) fn emit_async_body_block_statements(&mut self, block_idx: NodeIndex) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        // Position of the body block's closing `}`, used as the upper bound for
+        // trailing-comment scanning on the final statement (so the awaiter's own
+        // synthetic `})` does not steal the comment).
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
+            }
+        };
+        self.emit_block_statement_list_with_comments(&stmts, 0, block_close_pos, true);
+    }
+
+    fn skip_block_opening_line_comments(
+        &mut self,
+        block_node: &Node,
+        block: &tsz_parser::parser::node::BlockData,
+    ) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        // Search FORWARD from `block_node.pos` for the opening `{`. In the
+        // TypeScript AST, `node.pos` includes leading trivia, so the brace
+        // is at or after `node.pos`, never before it. The previous backward
+        // search either bailed out (block at offset 0) or found a `{` from
+        // an earlier construct in the file, causing comments belonging to
+        // that earlier brace to be incorrectly skipped. Mirrors the forward
+        // scan used in `emitter/statements/core.rs::emit_block`.
+        let start = block_node.pos as usize;
+        let end = std::cmp::min(block_node.end as usize, bytes.len());
+        let Some(offset) = bytes
+            .get(start..end)
+            .and_then(|slice| slice.iter().position(|&b| b == b'{'))
+        else {
+            return;
+        };
+        let open_brace = start + offset;
+
+        let mut line_end = open_brace;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+        let first_stmt_pos = block
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(block_node.end, |node| node.pos);
+        let skip_end = std::cmp::min(line_end as u32, first_stmt_pos);
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= open_brace as u32 && comment.end <= skip_end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Emit function parameters for JavaScript (no types)
+    pub(super) fn emit_function_parameters_js(&mut self, params: &[NodeIndex]) {
+        // Check if any parameter needs ES2018 object rest lowering
+        let needs_rest_lowering = self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
+            && self.any_param_has_object_rest(params);
+
+        // Clear any previous pending rest params
+        self.pending_object_rest_params.clear();
+        self.pending_object_rest_param_defaults.clear();
+
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let mut first = true;
+        let mut object_rest_temp_counter = 0u32;
+        let mut object_rest_temp_names = Vec::<String>::new();
+        let mut lowered_object_rest_param_seen = false;
+        for &param_idx in params {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                // Skip parameters with no name (parser error recovery artifacts).
+                // e.g., `function f(a,¬)` should emit `function f(a)`.
+                // But preserve rest parameters (`...`) even with missing names,
+                // matching tsc behavior: `function sum(...) { }`.
+                if param.name.is_none() && !param.dot_dot_dot_token {
+                    if let Some(recovered_name) =
+                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write(&recovered_name);
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                    }
+                    continue;
+                }
+                // Skip parameters where the name is an empty/missing identifier
+                // (parser error recovery for reserved-word names like `enum`,
+                // `class`, `while`, etc. or invalid characters like ¬).
+                // When a type annotation is present (e.g. `enum: string`),
+                // use the type source as a proxy name.  Do NOT fall back to
+                // the parameter's own source range — that range contains the
+                // reserved keyword, which must not be emitted as a parameter
+                // name in JS output.
+                if !param.dot_dot_dot_token
+                    && let Some(name_node) = self.arena.get(param.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.arena.get_identifier(name_node)
+                    && ident.escaped_text.is_empty()
+                {
+                    if self.parameter_starts_with_hard_reserved_keyword(param_node)
+                        && !self.parameter_starts_with_literal_reserved_keyword(param_node)
+                    {
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                        continue;
+                    }
+                    let Some(recovered_name) = self.recovered_parameter_name_from_type_only(param)
+                    else {
+                        continue;
+                    };
+                    if self.parameter_starts_with_literal_reserved_keyword(param_node) {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write(", ");
+                        self.write(&recovered_name);
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                        continue;
+                    }
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(&recovered_name);
+                    self.remove_namespace_exported_parameter_name(param_idx);
+                    continue;
+                }
+
+                // Skip `this` parameter - it's TypeScript-only and erased in JS emit.
+                // The parser may represent `this` as either a ThisKeyword token
+                // or as an Identifier with text "this".
+                if let Some(name_node) = self.arena.get(param.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                        continue;
+                    }
+                    if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(text) = self.source_text
+                    {
+                        // safe_slice: C → migrated. The "this" parameter must
+                        // be skipped; a silent empty fallback would let it
+                        // through and corrupt the parameter list. On a bad
+                        // span we conservatively keep the parameter (don't
+                        // continue) but log via tracing::debug! so the bug
+                        // surfaces in dev rather than malformed output.
+                        if let Ok(name_text) = crate::safe_slice::slice(
+                            text,
+                            name_node.pos as usize,
+                            name_node.end as usize,
+                        ) {
+                            if name_text.trim() == "this" {
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                let preserves_native_parameter_decorators =
+                    self.should_preserve_native_parameter_decorators(param);
+                if !first {
+                    if preserves_native_parameter_decorators {
+                        self.write(",");
+                    } else {
+                        self.write(", ");
+                    }
+                }
+                first = false;
+
+                // Emit leading comments before the parameter (e.g., inline JSDoc
+                // comments like `/** comment */ a`). tsc preserves these in JS output.
+                if self.pending_parameter_leading_comment_starts_line(param_node.pos)
+                    && !self.writer.is_at_line_start()
+                {
+                    self.write_line();
+                }
+                self.emit_comments_before_pos(param_node.pos);
+                if preserves_native_parameter_decorators {
+                    self.emit_native_parameter_decorators(param.modifiers.as_ref());
+                }
+
+                // ES2018 object rest lowering: replace destructuring param with a temp
+                if needs_rest_lowering && self.param_has_object_rest(param_idx) {
+                    lowered_object_rest_param_seen = true;
+                    let temp = self.next_object_rest_param_temp_name(
+                        &mut object_rest_temp_counter,
+                        &mut object_rest_temp_names,
+                    );
+                    if param.dot_dot_dot_token {
+                        self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
+                    }
+                    self.write(&temp);
+                    // Skip type annotation comments
+                    if param.type_annotation.is_some()
+                        && let Some(type_node) = self.arena.get(param.type_annotation)
+                    {
+                        self.skip_comments_in_range(type_node.pos, type_node.end);
+                    }
+                    if param.initializer.is_some() {
+                        self.write(" = ");
+                        self.emit(param.initializer);
+                    }
+                    self.pending_object_rest_params.push((temp, param.name));
+                    continue;
+                }
+
+                if param.dot_dot_dot_token {
+                    self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
+                }
+                self.emit_parameter_name_js(param.name);
+                self.remove_namespace_exported_parameter_name(param_idx);
+                // Skip type annotations — consume comments inside the erased range,
+                // but preserve trailing comments between the type and delimiter.
+                // e.g., `a: any/*2*/,` → `a /*2*/,`
+                //
+                // Note: in tsz's parser, type_node.end extends past trailing
+                // trivia into the delimiter (`,` or `)`), so we scan from
+                // type_node.pos to find the actual delimiter position.
+                if param.type_annotation.is_some()
+                    && let Some(type_node) = self.arena.get(param.type_annotation)
+                {
+                    // Find the delimiter (`,` or `)`) within the type annotation range.
+                    // The type node's range includes the delimiter, so scan from the start
+                    // to find it, properly handling nesting and string/comment literals.
+                    let delimiter_pos = if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut scan = type_node.pos as usize;
+                        let limit = type_node.end as usize;
+                        let mut depth = 0i32;
+                        let mut found = limit;
+                        while scan < limit {
+                            match bytes[scan] {
+                                b',' | b')' if depth == 0 => {
+                                    found = scan;
+                                    break;
+                                }
+                                b'(' | b'[' | b'{' | b'<' => {
+                                    depth += 1;
+                                    scan += 1;
+                                }
+                                b')' | b']' | b'}' | b'>' => {
+                                    depth -= 1;
+                                    scan += 1;
+                                }
+                                b'/' if scan + 1 < limit && bytes[scan + 1] == b'*' => {
+                                    scan += 2;
+                                    while scan + 1 < limit
+                                        && !(bytes[scan] == b'*' && bytes[scan + 1] == b'/')
+                                    {
+                                        scan += 1;
+                                    }
+                                    if scan + 1 < limit {
+                                        scan += 2;
+                                    }
+                                }
+                                b'/' if scan + 1 < limit && bytes[scan + 1] == b'/' => {
+                                    while scan < limit
+                                        && bytes[scan] != b'\n'
+                                        && bytes[scan] != b'\r'
+                                    {
+                                        scan += 1;
+                                    }
+                                }
+                                b'\'' | b'"' | b'`' => {
+                                    let q = bytes[scan];
+                                    scan += 1;
+                                    while scan < limit && bytes[scan] != q {
+                                        if bytes[scan] == b'\\' {
+                                            scan += 1;
+                                        }
+                                        scan += 1;
+                                    }
+                                    if scan < limit {
+                                        scan += 1;
+                                    }
+                                }
+                                _ => scan += 1,
+                            }
+                        }
+                        found as u32
+                    } else {
+                        type_node.end
+                    };
+                    // Skip comments inside the type annotation (before delimiter).
+                    // Using delimiter_pos ensures we don't consume trailing comments
+                    // like /*2*/ that should be preserved in the output.
+                    self.skip_comments_in_range(type_node.pos, delimiter_pos);
+                    // Emit trailing comments between erased type and delimiter
+                    if self.has_pending_comment_before(delimiter_pos) {
+                        self.write(" ");
+                        self.emit_comments_before_pos(delimiter_pos);
+                        self.pending_block_comment_space = false;
+                    }
+                }
+                let simple_param_name = self
+                    .arena
+                    .get(param.name)
+                    .is_some_and(|node| node.is_identifier())
+                    .then(|| self.get_identifier_text_idx(param.name))
+                    .filter(|name| !name.is_empty());
+                if lowered_object_rest_param_seen
+                    && param.initializer.is_some()
+                    && let Some(param_name) = simple_param_name
+                {
+                    self.pending_object_rest_param_defaults
+                        .push((param_name, param.initializer));
+                } else if param.initializer.is_some() {
+                    self.write(" = ");
+                    self.emit(param.initializer);
+                } else if self.parameter_has_missing_initializer(param_node, param) {
+                    self.write(" = ");
+                }
+
+                // Emit trailing comments between the parameter and its delimiter
+                // (`,` or `)`). For typed parameters, this is handled above via
+                // delimiter_pos. For untyped parameters, scan for the delimiter
+                // within the parameter node's range.
+                // e.g., `a /* comment */, b` → preserve comment before the comma.
+                if (param.type_annotation.is_none() || param.initializer.is_some())
+                    && let Some(text) = self.source_text
+                {
+                    // Scan from the end of the parameter name/initializer to
+                    // find the next `,` or `)`, bounded by param_node.end
+                    // to avoid scanning into arrow function bodies or other
+                    // unrelated syntax.
+                    let scan_start = if param.initializer.is_some()
+                        && let Some(init_node) = self.arena.get(param.initializer)
+                    {
+                        init_node.end as usize
+                    } else if let Some(name_node) = self.arena.get(param.name) {
+                        name_node.end as usize
+                    } else {
+                        param_node.end as usize
+                    };
+                    let bytes = text.as_bytes();
+                    let limit = std::cmp::min(param_node.end as usize, text.len());
+                    let mut scan = std::cmp::min(scan_start, limit);
+                    let mut found_delimiter = false;
+                    while scan < limit {
+                        match bytes[scan] {
+                            b',' | b')' => {
+                                found_delimiter = true;
+                                break;
+                            }
+                            b'/' if scan + 1 < limit && bytes[scan + 1] == b'*' => {
+                                scan += 2;
+                                while scan + 1 < limit
+                                    && !(bytes[scan] == b'*' && bytes[scan + 1] == b'/')
+                                {
+                                    scan += 1;
+                                }
+                                if scan + 1 < limit {
+                                    scan += 2;
+                                }
+                            }
+                            b'/' if scan + 1 < limit && bytes[scan + 1] == b'/' => {
+                                while scan < limit && bytes[scan] != b'\n' {
+                                    scan += 1;
+                                }
+                            }
+                            _ => scan += 1,
+                        }
+                    }
+                    if found_delimiter {
+                        let delimiter_pos = scan as u32;
+                        if self.has_pending_comment_before(delimiter_pos) {
+                            self.write(" ");
+                            self.emit_comments_before_pos(delimiter_pos);
+                            self.pending_block_comment_space = false;
+                        }
+                    }
+                }
+            }
+        }
+        self.namespace_exported_names = prev_namespace_exported_names;
+
+        // NOTE: Do NOT emit trailing comments here. Comments after the last
+        // parameter (e.g., `p3:any // OK`) appear on the same source line but
+        // logically follow the closing `)`. Since type annotations are erased,
+        // scanning from name_node.end would place these comments INSIDE the
+        // parameter list. The caller (statement-level comment emission) handles
+        // trailing comments after the whole function declaration.
+    }
+
+    fn should_preserve_native_parameter_decorators(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        self.ctx.options.target == tsz_common::ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && param.modifiers.as_ref().is_some_and(|modifiers| {
+                modifiers.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+    }
+
+    fn parameter_starts_with_hard_reserved_keyword(&self, node: &Node) -> bool {
+        self.parameter_start_keyword(node)
+            .is_some_and(tsz_scanner::token_is_reserved_word)
+    }
+
+    fn parameter_starts_with_literal_reserved_keyword(&self, node: &Node) -> bool {
+        matches!(
+            self.parameter_start_keyword(node),
+            Some(
+                tsz_scanner::SyntaxKind::NullKeyword
+                    | tsz_scanner::SyntaxKind::TrueKeyword
+                    | tsz_scanner::SyntaxKind::FalseKeyword
+            )
+        )
+    }
+
+    fn parameter_start_keyword(&self, node: &Node) -> Option<tsz_scanner::SyntaxKind> {
+        let source = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let bytes = source.as_bytes();
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+            end += 1;
+        }
+        let raw = crate::safe_slice::slice(source, start, end).ok()?.trim();
+        let token = tsz_scanner::string_to_token(raw);
+        tsz_scanner::token_is_keyword(token).then_some(token)
+    }
+
+    fn emit_native_parameter_decorators(&mut self, modifiers: Option<&NodeList>) {
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                continue;
+            };
+            if mod_node.kind != syntax_kind_ext::DECORATOR {
+                continue;
+            }
+            self.emit_decorator(mod_node);
+            self.write_line();
+        }
+    }
+
+    fn pending_parameter_leading_comment_starts_line(&self, pos: u32) -> bool {
+        if self.ctx.options.remove_comments || self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let comment = &self.all_comments[self.comment_emit_idx];
+        comment.end <= actual_start && comment.has_trailing_new_line
+    }
+
+    pub(in crate::emitter) fn register_pending_function_body_parameters(&mut self) {
+        let params = std::mem::take(&mut self.pending_function_body_parameters);
+        for param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.register_function_parameter_binding_name(param.name);
+        }
+    }
+
+    fn register_function_parameter_binding_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.is_identifier() {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                let name = self.arena.resolve_identifier_text(ident);
+                if !name.is_empty() && name != "this" {
+                    self.ctx.block_scope_state.register_function_parameter(name);
+                }
+            }
+        } else if matches!(
+            name_node.kind,
+            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        ) && let Some(pattern) = self.arena.get_binding_pattern(name_node)
+        {
+            for &elem_idx in &pattern.elements.nodes {
+                if let Some(elem_node) = self.arena.get(elem_idx)
+                    && let Some(elem) = self.arena.get_binding_element(elem_node)
+                {
+                    self.register_function_parameter_binding_name(elem.name);
+                }
+            }
+        }
+    }
+
+    fn next_object_rest_param_temp_name(
+        &self,
+        counter: &mut u32,
+        used: &mut Vec<String>,
+    ) -> String {
+        loop {
+            let current = *counter;
+            *counter += 1;
+
+            if current < 26 && (current == 8 || current == 13) {
+                continue;
+            }
+
+            let name = if current < 26 {
+                format!("_{}", (b'a' + current as u8) as char)
+            } else {
+                format!("_{}", current - 26)
+            };
+
+            if !self.file_identifiers.contains(&name) && !used.contains(&name) {
+                used.push(name.clone());
+                return name;
+            }
+        }
+    }
+
+    pub(super) fn emit_parameter(&mut self, node: &Node) {
+        let Some(param) = self.arena.get_parameter(node) else {
+            return;
+        };
+
+        if self.ctx.options.legacy_decorators
+            && let Some(modifiers) = param.modifiers.as_ref()
+        {
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind == syntax_kind_ext::DECORATOR {
+                    self.skip_comments_for_erased_node(mod_node);
+                }
+            }
+        }
+
+        if param.dot_dot_dot_token {
+            self.write("...");
+            if let Some(name_node) = self.arena.get(param.name) {
+                self.emit_comments_after_dot_dot_dot(node.pos, name_node.pos, false);
+            }
+        }
+
+        self.emit_parameter_name_js(param.name);
+
+        if param.question_token {
+            self.write("?");
+        }
+
+        if param.type_annotation.is_some() {
+            self.write(": ");
+            self.emit(param.type_annotation);
+        }
+
+        if param.initializer.is_some() {
+            self.write(" = ");
+            self.emit_expression(param.initializer);
+        } else if self.parameter_has_missing_initializer(node, param) {
+            self.write(" = ");
+        }
+    }
+
+    fn parameter_has_missing_initializer(
+        &self,
+        node: &Node,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+
+        fn skip_trivia(bytes: &[u8], mut index: usize, scan_end: usize) -> usize {
+            loop {
+                while index < scan_end && matches!(bytes[index], b' ' | b'\t' | b'\r' | b'\n') {
+                    index += 1;
+                }
+
+                if index + 1 < scan_end && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                    index += 2;
+                    while index + 1 < scan_end
+                        && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                    {
+                        index += 1;
+                    }
+                    if index + 1 < scan_end {
+                        index += 2;
+                    }
+                    continue;
+                }
+
+                if index + 1 < scan_end && bytes[index] == b'/' && bytes[index + 1] == b'/' {
+                    while index < scan_end && bytes[index] != b'\n' {
+                        index += 1;
+                    }
+                    continue;
+                }
+
+                return index;
+            }
+        }
+
+        let scan_end = node.end as usize;
+        let bytes = source_text.as_bytes();
+        if scan_end > bytes.len() {
+            return false;
+        }
+
+        let scan_start = param
+            .type_annotation
+            .into_option()
+            .and_then(|idx| self.arena.get(idx))
+            .map_or_else(
+                || {
+                    let name_end = self
+                        .arena
+                        .get(param.name)
+                        .map_or(node.pos, |name_node| name_node.end)
+                        as usize;
+                    if !param.question_token {
+                        return name_end;
+                    }
+
+                    let optional_token_start = skip_trivia(bytes, name_end, scan_end);
+                    if bytes.get(optional_token_start) == Some(&b'?') {
+                        optional_token_start + 1
+                    } else {
+                        name_end
+                    }
+                },
+                |type_node| type_node.end as usize,
+            );
+        if scan_start >= scan_end {
+            return false;
+        }
+
+        let index = skip_trivia(bytes, scan_start, scan_end);
+        if index >= scan_end {
+            return false;
+        }
+        match bytes.get(index) {
+            Some(b'=') if bytes.get(index + 1) == Some(&b'>') => false,
+            Some(b'=') => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn emit_function_parameters_with_trailing_comments(
+        &mut self,
+        params: &[NodeIndex],
+        open_paren_pos: u32,
+        search_start: u32,
+        search_end: u32,
+    ) {
+        self.emit_function_parameters_js(params);
+        self.map_closing_paren_backward(search_start, search_end);
+        if !params.is_empty() {
+            return;
+        }
+
+        let close_paren_pos = self
+            .pending_source_pos
+            .map(|source_pos| source_pos.pos)
+            .unwrap_or(search_end);
+
+        if let Some(recovered_name) =
+            self.recovered_empty_parameter_name_from_header(open_paren_pos, close_paren_pos)
+        {
+            self.write(&recovered_name);
+        }
+
+        let mut comment_start = open_paren_pos.saturating_add(1);
+        if let Some(source_text) = self.source_text {
+            let bytes = source_text.as_bytes();
+            let mut open_paren_pos_usize = open_paren_pos as usize;
+            while open_paren_pos_usize > 0 && bytes.get(open_paren_pos_usize) != Some(&b'(') {
+                open_paren_pos_usize = open_paren_pos_usize.saturating_sub(1);
+            }
+            if bytes.get(open_paren_pos_usize) == Some(&b'(') {
+                comment_start = open_paren_pos_usize
+                    .checked_add(1)
+                    .map_or(comment_start, |start| start as u32);
+            }
+        }
+        if comment_start < close_paren_pos {
+            self.emit_comments_in_range(comment_start, close_paren_pos, true, false);
+        }
+    }
+
+    fn recovered_parameter_name_from_type_or_range(
+        &self,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<String> {
+        let source = self.source_text?;
+
+        let raw = self
+            .arena
+            .get(param.type_annotation)
+            .and_then(|type_node| {
+                crate::safe_slice::slice(source, type_node.pos as usize, type_node.end as usize)
+                    .ok()
+            })
+            .or_else(|| {
+                self.arena.get(param_idx).and_then(|param_node| {
+                    crate::safe_slice::slice(
+                        source,
+                        param_node.pos as usize,
+                        param_node.end as usize,
+                    )
+                    .ok()
+                })
+            })?;
+
+        identifier_from_raw(raw)
+    }
+
+    /// Only consults the type annotation — never the parameter's own source range.
+    /// Required when the name is a synthesized empty node from reserved-keyword error
+    /// recovery: the parameter range contains the keyword and must not be emitted.
+    fn recovered_parameter_name_from_type_only(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let type_node = self.arena.get(param.type_annotation)?;
+        let raw = crate::safe_slice::slice(source, type_node.pos as usize, type_node.end as usize)
+            .ok()?;
+        identifier_from_raw(raw)
+    }
+
+    pub(in crate::emitter) fn recovered_empty_parameter_name_from_header(
+        &self,
+        open_paren_pos: u32,
+        close_paren_pos: u32,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let start = open_paren_pos.checked_add(1)? as usize;
+        let end = close_paren_pos as usize;
+        let raw = crate::safe_slice::slice(source, start, end).ok()?;
+        recovered_parameter_name_from_colon_header(raw)
+    }
+
+    pub(in crate::emitter) fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        let kind = name_node.kind;
+        let is_normal_binding_name = kind == tsz_scanner::SyntaxKind::Identifier as u16
+            || kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+            || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+
+        if is_normal_binding_name {
+            self.emit_decl_name(name_idx);
+            return;
+        }
+
+        // Recovery path: malformed parameter names like `yield`/`await`
+        // can be parsed as expressions. Preserve original text for JS parity.
+        if let Some(source) = self.source_text
+            && let Ok(raw) =
+                crate::safe_slice::slice(source, name_node.pos as usize, name_node.end as usize)
+        {
+            let text = raw.trim();
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        self.emit(name_idx);
+    }
+
+    pub(in crate::emitter) fn emit_recovered_async_await_arrow_parameter(
+        &mut self,
+        params: &[NodeIndex],
+    ) {
+        if self
+            .recovered_async_await_arrow_parameter_name(params)
+            .is_some()
+        {
+            self.write(", await");
+        }
+    }
+
+    fn recovered_async_await_arrow_parameter_name(&self, params: &[NodeIndex]) -> Option<&'a str> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let source_end = text.len().min(u32::MAX as usize) as u32;
+
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(init_node) = self.arena.get(param.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+                continue;
+            }
+
+            let mut pos = self.skip_trivia_forward(init_node.pos, source_end) as usize;
+            if bytes.get(pos..pos + "await".len()) != Some(b"await") {
+                continue;
+            }
+            pos += "await".len();
+            pos = self.skip_trivia_forward(pos as u32, source_end) as usize;
+            if bytes.get(pos) != Some(&b'=') || bytes.get(pos + 1) != Some(&b'>') {
+                continue;
+            }
+            pos = self.skip_trivia_forward((pos + 2) as u32, source_end) as usize;
+            let end = pos.checked_add("await".len())?;
+            if bytes.get(pos..end) != Some(b"await") {
+                continue;
+            }
+            let next = bytes.get(end).copied();
+            if next.is_some_and(|b| b == b'_' || b == b'$' || b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            return crate::safe_slice::slice(text, pos, end).ok();
+        }
+
+        None
+    }
+}
+
+fn first_identifier_token(s: &str) -> Option<String> {
+    s.split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn identifier_from_raw(raw: &str) -> Option<String> {
+    first_identifier_token(raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace()))
+}
+
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    first_identifier_token(raw.trim().strip_prefix(':')?)
+}

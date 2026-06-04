@@ -1,0 +1,969 @@
+/// Parser-emitted codes that tsc emits via grammarErrorOnNode in the checker.
+/// These should be suppressed when the file has parse errors, matching tsc behavior.
+/// Only includes codes confirmed to be checker-side grammar checks in tsc that
+/// our parser emits instead.
+const fn is_parser_grammar_code(code: u32) -> bool {
+    matches!(
+        code,
+        1014 // A rest parameter must be last in a parameter list
+        | 1017 // An index signature cannot have a rest parameter
+        | 1019 // An index signature parameter cannot have a question mark
+        | 1021 // An index signature must have a type annotation
+        | 1029 // '{0}' modifier must precede '{1}' modifier
+        | 1030 // '{0}' modifier already seen
+        | 1031 // '{0}' modifier cannot appear on class elements of this kind
+        | 1040 // '{0}' modifier cannot be used in an ambient context
+        | 1042 // 'async' modifier cannot be used here
+        | 1044 // '{0}' modifier cannot appear on a module or namespace element
+        | 1054 // A 'get' accessor cannot have parameters
+        | 1070 // '{0}' modifier cannot appear on a type member
+        | 1071 // An accessor must have a body (interface/ambient)
+        | 1089 // '{0}' modifier cannot appear on a constructor declaration
+        | 1090 // '{0}' modifier cannot appear on a parameter
+        | 1093 // Type annotation cannot appear on a constructor declaration
+        | 1095 // A 'set' accessor cannot have a return type annotation
+        | 1096 // An index signature must have exactly one parameter
+        | 1097 // '{0}' list cannot be empty
+        | 1113 // A 'default' clause cannot appear more than once in a 'switch' statement
+        | 1114 // Duplicate label
+        | 1123 // Variable declaration list cannot be empty
+        | 1162 // An object member cannot be declared optional
+        | 1163 // A 'yield' expression is only allowed in a generator body
+        | 1171 // A comma expression is not allowed in a computed property name
+        | 1172 // extends clause already seen
+        | 1174 // Classes can only extend a single class
+        | 1182 // A destructuring declaration must have an initializer
+        | 1184 // Modifiers cannot appear here
+        | 1191 // An import declaration cannot have modifiers
+        | 1197 // Catch clause variable cannot have an initializer
+        | 1200 // Line terminator not permitted before arrow
+        | 1206 // Decorators are not valid here
+        | 1210 // Code contained in a class is evaluated in strict mode
+        | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
+        | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1243 // '{0}' modifier cannot be used with '{1}' modifier
+        | 1275 // 'accessor' modifier can only appear on a property declaration
+        | 1276 // An 'accessor' property cannot be declared optional
+        | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
+        | 18037 // 'await' expression cannot be used inside a class static block
+        | 18041 // A 'return' statement cannot be used inside a class static block
+    )
+}
+
+/// Parse-error codes that tsc is known to emit for JavaScript files.
+/// tsc's parser is lenient with TypeScript-only syntax in JS files and its
+/// checker grammar checks (`grammarErrorOnNode`) are suppressed for TS-only
+/// constructs. Only these `TS1xxx` codes are legitimately emitted for JS.
+pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
+    matches!(
+        code,
+        1002 // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1005 // "{0}" expected (missing token)
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1016 // A required parameter cannot follow an optional parameter
+        | 1064 // The return type of an async function must be 'void' or 'Promise<T>'
+        | 1069 // Unexpected token; expected type parameter
+        | 1092 // Type parameters cannot appear on a constructor declaration
+        | 1093 // Type annotation cannot appear on a constructor declaration
+        | 1098 // Type parameter list cannot be empty
+        | 1100 // Invalid use of 'arguments' in strict mode
+        | 1101 // 'with' statements are not allowed in strict mode
+        | 1102 // SyntaxError (strict mode binding)
+        | 1104 // A 'continue' statement can only be used within an enclosing iteration statement
+        | 1105 // A 'break' statement can only be used within an enclosing iteration statement
+        | 1107 // Jump target cannot cross function boundary
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1111 // Private field must be declared in an enclosing class
+        | 1139 // Can not use 'JSDoc' type in TS
+        | 1141 // String literal expected
+        | 1163 // A 'yield' expression is only allowed in a generator body
+        // Note: TS1192 ("Module has no default export") is intentionally
+        // excluded — it is a semantic checker diagnostic that tsc routes
+        // through getSemanticDiagnostics, so unchecked JS files never see
+        // it (issue #3693).
+        | 1196 // Catch clause variable type annotation
+        | 1206 // Decorators are not valid here
+        | 8038 // Decorators may not appear after 'export' if they also appear before 'export'
+        | 1210 // Code contained in a class is evaluated in strict mode
+        | 1214 // Identifier expected; 'yield' is reserved in module strict mode
+        | 1215 // Identifier expected; 'await' is a reserved word
+        | 1223 // Constructor implementation is missing
+        | 1228 // A type predicate is only allowed in return type position
+        | 1262 // Identifier expected; 'await' at top level
+        | 1273 // '@typedef' tag should either have a type annotation or be followed by '@property' or '@member' tags
+        | 1274 // JSDoc '@typedef' tag should either have a type annotation or be followed by '@property' or '@member' tags
+        | 1277 // 'JSDoc' types may only appear in type positions
+        | 1308 // 'await' expressions are only allowed within async functions
+        | 1343 | 1344 // 1343 import.meta module support; 1344 unreachable code
+        | 1359 // Identifier expected; 'await' is reserved in async
+        | 1360 // '@satisfies' types can only be used in type positions
+        | 1382 // Unexpected token
+        | 1464 // Import assertion/attribute
+        | 1470 // 'import.meta' in a file building into CommonJS output
+        | 1473 // Module declaration names
+        | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
+        | 1489 // Duplicate identifier
+        | 17014 // JSX fragment has no corresponding closing tag
+        | 17002 // Expected corresponding JSX closing tag for '{0}'
+        | 2657 // JSX expressions must have one parent element
+        | 17008 // JSX element '{0}' has no corresponding closing tag
+        | 18030 // An optional chain cannot contain private identifiers
+        | 18012 // '#constructor' is a reserved word
+    )
+}
+
+/// Checker-emitted grammar codes outside the `TS1xxx` range that should be
+/// suppressed for JS files. tsc doesn't emit these for JavaScript because
+/// its parser handles the constructs leniently.
+pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool {
+    matches!(
+        code, 17012 // '{0}' is not a valid meta-property for keyword '{1}'
+    )
+}
+
+/// JS-only-syntactic diagnostic codes — those `TS8xxx` codes that tsc emits
+/// from `getJSSyntacticDiagnosticsForFile` (see `program.ts`) for TypeScript
+/// syntax appearing inside JavaScript source files. tsc routes these through
+/// `getSyntacticDiagnostics` and uses them to short-circuit
+/// `getSemanticDiagnostics` across the whole program in
+/// `emitFilesAndReportErrors`.
+///
+/// This list is a stricter subset of `is_js_grammar_diagnostic`. JSDoc-related
+/// `TS8xxx` codes (`TS8020`–`TS8039` save for `TS8038`) come from the checker
+/// and do **not** participate in the syntactic-skip-semantic gate.
+pub(super) const fn is_js_only_syntactic_diagnostic(code: u32) -> bool {
+    matches!(
+        code,
+        8002  // 'import ... =' can only be used in TypeScript files
+        | 8003  // 'export =' can only be used in TypeScript files
+        | 8004  // Type parameter declarations
+        | 8005  // 'implements' clauses
+        | 8006  // '{0}' declarations (interface, namespace, enum, import/export type)
+        | 8008  // Type aliases
+        | 8009  // The '{0}' modifier
+        | 8010  // Type annotations
+        | 8011  // Type arguments
+        | 8012  // Parameter modifiers
+        | 8013  // Non-null assertions
+        | 8016  // Type assertion expressions
+        | 8017  // Signature declarations
+        | 8037  // Type satisfaction expressions
+        | 8038 // Decorators may not appear after 'export'
+    )
+}
+
+/// True when a diagnostic should be retained even though the program contains
+/// a JS-only-syntactic diagnostic.
+///
+/// In tsc, `getSyntacticDiagnostics` (which contains the JS-only-syntactic
+/// codes for JS files) short-circuits `getSemanticDiagnostics` program-wide
+/// in `emitFilesAndReportErrors`. The only diagnostics that survive are the
+/// ones tsc routes through `getSyntacticDiagnostics` itself: structural parse
+/// failures, plus the codes contributed by `getJSSyntacticDiagnosticsForFile`.
+///
+/// tsz's emission map straddles parser and checker — many `TS1xxx` codes that
+/// `is_ts1xxx_allowed_in_js` legitimately accepts in JS files are nonetheless
+/// emitted from the *checker*'s grammar phase, so tsc would route them through
+/// `getSemanticDiagnostics` and drop them here. We honour that by keeping the
+/// broad `TS1xxx` allow-list and then explicitly excluding the checker/binder
+/// grammar checks tsc treats as semantic — break/continue (`TS1104`/`TS1105`)
+/// and the cross-function jump-target check (`TS1107`).
+pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: u32) -> bool {
+    if is_post_js_gate_suppressed_checker_grammar(code) {
+        return false;
+    }
+    is_real_syntax_error(code)
+        || is_ts1xxx_allowed_in_js(code)
+        || (code >= 8000 && code < 9000)
+        || matches!(code, 2427 | 2457)
+}
+
+/// Checker/binder grammar codes that tsc routes through `getSemanticDiagnostics`
+/// rather than `getSyntacticDiagnostics` — so when the JS-only-syntactic gate
+/// fires, tsc drops them program-wide. These codes appear in
+/// `is_ts1xxx_allowed_in_js` because tsc legitimately emits them for plain JS
+/// files when no syntactic gate-trigger is present, but once a gate-trigger
+/// fires they must be suppressed even though they are `TS1xxx`.
+const fn is_post_js_gate_suppressed_checker_grammar(code: u32) -> bool {
+    matches!(
+        code,
+        // The break/continue family — tsc's `checkBreakOrContinueStatement`
+        // emits these from the type checker.
+        1104 // A 'continue' statement can only be used within an enclosing iteration statement.
+        | 1105 // A 'break' statement can only be used within an enclosing iteration or switch statement.
+        | 1107 // Jump target cannot cross function boundary.
+    )
+}
+
+/// Pre-computed merged augmentation data shared across all per-file binders.
+/// Computing this once avoids `O(N_files²)` iteration in [`create_binder_from_bound_file`].
+pub(super) struct MergedAugmentations {
+    /// Cross-file merged module augmentations.
+    ///
+    /// Wrapped in `Arc` so per-file binders can share the merged map via
+    /// `Arc::clone` instead of deep-cloning the entire map into each binder.
+    pub module_augmentations:
+        std::sync::Arc<rustc_hash::FxHashMap<String, Vec<tsz::binder::ModuleAugmentation>>>,
+    /// Cross-file merged augmentation target modules.
+    ///
+    /// Wrapped in `Arc` so per-file binders can share the merged map via
+    /// `Arc::clone` instead of deep-cloning the entire map into each binder.
+    pub augmentation_target_modules:
+        std::sync::Arc<rustc_hash::FxHashMap<tsz::binder::SymbolId, String>>,
+    /// Cross-file merged global augmentations.
+    ///
+    /// Wrapped in `Arc` so per-file binders can share the merged map via
+    /// `Arc::clone` instead of deep-cloning the entire map into each binder.
+    pub global_augmentations:
+        std::sync::Arc<rustc_hash::FxHashMap<String, Vec<tsz::binder::GlobalAugmentation>>>,
+}
+
+impl MergedAugmentations {
+    /// Build merged augmentations from all files in the program. Call once per compilation.
+    pub fn from_program(program: &MergedProgram) -> Self {
+        let module_augmentation_keys = program
+            .files
+            .iter()
+            .map(|file| file.module_augmentations.len())
+            .sum();
+        let augmentation_target_count = program
+            .files
+            .iter()
+            .map(|file| file.augmentation_target_modules.len())
+            .sum();
+        let global_augmentation_keys = program
+            .files
+            .iter()
+            .map(|file| file.global_augmentations.len())
+            .sum();
+
+        let mut module_augmentations: rustc_hash::FxHashMap<
+            String,
+            Vec<tsz::binder::ModuleAugmentation>,
+        > = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            module_augmentation_keys,
+            Default::default(),
+        );
+        let mut augmentation_target_modules: rustc_hash::FxHashMap<tsz::binder::SymbolId, String> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(
+                augmentation_target_count,
+                Default::default(),
+            );
+        let mut global_augmentations: rustc_hash::FxHashMap<
+            String,
+            Vec<tsz::binder::GlobalAugmentation>,
+        > = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            global_augmentation_keys,
+            Default::default(),
+        );
+
+        for file in &program.files {
+            for (spec, augs) in file.module_augmentations.iter() {
+                module_augmentations
+                    .entry(spec.clone())
+                    .or_insert_with(|| Vec::with_capacity(augs.len()))
+                    .extend(augs.iter().map(|aug| {
+                        tsz::binder::ModuleAugmentation::with_arena(
+                            aug.name.clone(),
+                            aug.node,
+                            Arc::clone(&file.arena),
+                        )
+                    }));
+            }
+            for (&sym_id, module_spec) in file.augmentation_target_modules.iter() {
+                augmentation_target_modules.insert(sym_id, module_spec.clone());
+            }
+            for (name, decls) in file.global_augmentations.iter() {
+                global_augmentations
+                    .entry(name.clone())
+                    .or_insert_with(|| Vec::with_capacity(decls.len()))
+                    .extend(decls.iter().map(|aug| {
+                        tsz::binder::GlobalAugmentation::with_arena(
+                            aug.node,
+                            Arc::clone(&file.arena),
+                            aug.flags,
+                        )
+                    }));
+            }
+        }
+
+        Self {
+            module_augmentations: std::sync::Arc::new(module_augmentations),
+            augmentation_target_modules: std::sync::Arc::new(augmentation_target_modules),
+            global_augmentations: std::sync::Arc::new(global_augmentations),
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(super) fn create_binder_from_bound_file(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+) -> BinderState {
+    let augmentations = MergedAugmentations::from_program(program);
+    create_binder_from_bound_file_with_augmentations(file, program, file_idx, &augmentations)
+}
+
+pub(super) fn create_binder_from_bound_file_with_augmentations(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    augmentations: &MergedAugmentations,
+) -> BinderState {
+    // Share the program-wide `declaration_arenas` map via `Arc::clone` — O(1)
+    // instead of iterating the entire program-wide map per file and cloning
+    // matching entries. The previous filter kept ~99% of entries on large
+    // projects, so the per-file filtering was almost entirely wasted work:
+    // on a 6086-file project with ~100K declarations this was ~600M entry
+    // visits × a `SmallVec<[Arc<NodeArena>; 1]>` clone each.
+    //
+    // Consumers doing point lookups (~30 call sites) see the same data via
+    // `binder.declaration_arenas.get(&(sym_id, decl_idx))`. The three iter
+    // consumers that needed to enumerate every `NodeIndex` for a given
+    // `SymbolId` were rewritten to use the `sym_to_decl_indices` secondary
+    // index (point lookup) instead of a full `declaration_arenas` scan.
+    let declaration_arenas = Arc::clone(&program.declaration_arenas);
+    let sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+
+    // Share the program-wide symbol_arenas via Arc::clone — O(1) instead of
+    // building a per-file filtered map. The previous filter dropped entries
+    // where the symbol was already local (arena pointer equal to file.arena
+    // and no cross-file decl), but keeping them is harmless: consumers do
+    // point lookups (`binder.symbol_arenas.get(&sym_id)`), and the checker
+    // has no iter consumers of this map. Drops ~O(N_files × N_symbols)
+    // iteration on large repos.
+    let symbol_arenas = Arc::clone(&program.symbol_arenas);
+
+    // Merge per-file locals with program globals via the shared helper,
+    // which short-circuits to an O(1) `Arc::clone` when one side is empty
+    // (common for trivial declaration files with no top-level locals).
+    // The slow path pre-sizes to (locals + globals) to avoid rehashing
+    // during inserts.
+    let file_locals = program.build_merged_file_locals(file_idx);
+
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+        // underlying `FxHashMap<u32, SymbolId>`. Per-file binders consume this
+        // map read-only after construction (binder mutations during checking
+        // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+        // mutation ever does fire); sharing is safe.
+        Arc::clone(&file.node_symbols),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: augmentations.global_augmentations.clone(),
+            module_augmentations: augmentations.module_augmentations.clone(),
+            augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
+            module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            symbol_arenas,
+            declaration_arenas,
+            sym_to_decl_indices,
+            // Per-binder cross_file_node_symbols left empty intentionally.
+            // The program-wide outer map is stored once on ProgramContext and
+            // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
+            // it into every per-file binder scales outer-map allocation
+            // with N² — several hundred MB on large-ts-repo.
+            cross_file_node_symbols: Default::default(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            // Per-binder `flow_nodes` is an Arc clone (atomic increment)
+            // instead of a deep clone of the underlying `Vec<FlowNode>`.
+            // Each `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so
+            // the previous deep clone was allocation-heavy; on large
+            // repos it was paid ~2× per file (cross-file lookup +
+            // per-file checking binder).
+            flow_nodes: Arc::clone(&file.flow_nodes),
+            // Arc::clone is O(1); per-file binders share the same `node_flow`
+            // map as the `BoundFile` instead of deep-cloning the underlying
+            // `FxHashMap<u32, FlowNodeId>`. Per-file binders consume this map
+            // read-only after construction (binder mutations during checking
+            // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+            // mutation ever does fire); sharing is safe.
+            node_flow: Arc::clone(&file.node_flow),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
+            // Per-binder alias_partners left empty: every checker consumer
+            // routes through `ctx.alias_partner_for` /
+            // `alias_partners_contains`, which prefers the project-wide
+            // `program_alias_partners` Arc installed by ProgramContext::apply_to.
+            alias_partners: Default::default(),
+        },
+    );
+
+    // Per-binder declared_modules left empty: every checker consumer
+    // routes through `ctx.declared_modules_contains`, which prefers the
+    // project-wide `global_declared_modules` index built from the skeleton.
+    binder.declared_modules = Default::default();
+    // Restore is_external_module from BoundFile to preserve per-file state
+    binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    // Only the file-local semantic_defs are stored on the reconstructed
+    // binder. The cross-file / program-wide entries live in the shared
+    // `DefinitionStore` installed by `ProgramContext::apply_to`, which gates
+    // every consumer of `binder.semantic_defs` (`pre_populate_def_ids_*`,
+    // `resolve_cross_batch_heritage`) behind
+    // `!ctx.definition_store.is_fully_populated()`. In the parallel CLI
+    // path the shared store IS fully populated, so those consumers never
+    // read the binder's map — copying `program.semantic_defs` into each
+    // per-file binder was pure O(N · program_defs) waste (6%+ of total
+    // CPU on ts-toolbelt subsets, all of it in `SemanticDefEntry::drop`).
+    // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+    // underlying `FxHashMap<SymbolId, SemanticDefEntry>`. The previous deep
+    // clone was the largest single source of memory pressure on multi-file
+    // builds (e.g., 50-70 GB total virtual on the 6086-file large-ts-repo
+    // benchmark, multiplied across rayon worker threads). Cross-file lookup
+    // binders only read this map (post-construction), so sharing is safe.
+    binder.semantic_defs = Arc::clone(&file.semantic_defs);
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = tsz::binder::ScopeId(0);
+    }
+    // Reconstructed program binders already contain lib symbols remapped into the
+    // unified symbol arena, so preserve that invariant instead of falling back to
+    // legacy raw-lib lookup paths.
+    binder.set_lib_symbols_merged(true);
+    binder.lib_binders = program.lib_binders.clone();
+    // Track lib-originating symbols so unused checking can skip them
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
+
+    binder
+}
+
+/// Build a binder for cross-file symbol and type resolution.
+///
+/// Cross-file delegation can use entries from `CheckerContext::all_binders` for
+/// full semantic type computation, not just export-table lookups. Reuse the same
+/// binder construction path as a normal file check so delegated child checkers
+/// have access to the owning file's symbols, declaration arenas, and augmentations.
+pub(super) fn create_cross_file_lookup_binder_with_augmentations(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+    augmentations: &MergedAugmentations,
+) -> BinderState {
+    // Cross-file lookup binders never merge program-wide globals into their
+    // `file_locals`; consumers (e.g. `resolve_in_all_binders`) only walk the
+    // per-file local entries. Since #1535 made `SymbolTable` internally
+    // `Arc<FxHashMap<String, SymbolId>>`, plain `.clone()` is an O(1)
+    // atomic refcount bump — no fresh map allocation, no per-entry
+    // `String` clones. The previous manual rebuild paid `local_count` per
+    // file, multiplied by the rayon-parallel per-file binder build.
+    let file_locals = program
+        .file_locals
+        .get(file_idx)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+        // underlying `FxHashMap<u32, SymbolId>`. Per-file binders consume this
+        // map read-only after construction (binder mutations during checking
+        // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+        // mutation ever does fire); sharing is safe.
+        Arc::clone(&file.node_symbols),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: augmentations.global_augmentations.clone(),
+            module_augmentations: augmentations.module_augmentations.clone(),
+            augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
+            // Per-binder `module_exports` is left empty intentionally.
+            // The program-wide merged `module_exports` lives once on
+            // `ProgramContext` as `program_module_exports` and is read via
+            // `ctx.module_exports_for_module`. Cross-file lookup binders
+            // used to deep-clone the entire merged map (thousands of
+            // entries on large repos) into every one of N per-file
+            // binders.
+            module_exports: Default::default(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
+            // Per-binder re-export maps left empty intentionally. The
+            // program-wide merged re-export maps are stored once on
+            // `ProgramContext` and read via `ctx.reexports_for_file` /
+            // `wildcard_reexports_for_file`. Cloning them into every one
+            // of N cross-file lookup binders scales the per-file setup
+            // cost with total re-exports across the whole project —
+            // several GB on the large-ts-repo benchmark fixture.
+            reexports: Default::default(),
+            wildcard_reexports: Default::default(),
+            // Cross-file lookup binders only need local scopes/symbol ownership plus the
+            // merged export/augmentation tables. Cloning the full cross-program arena maps
+            // into every file binder makes all_binders setup scale with total declarations.
+            symbol_arenas: Default::default(),
+            declaration_arenas: Default::default(),
+            sym_to_decl_indices: Default::default(),
+            // See `create_binder_from_bound_file_with_augmentations` for
+            // the rationale: the program-wide map lives on ProgramContext.
+            cross_file_node_symbols: Default::default(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            // Per-binder `flow_nodes` is an Arc clone; see
+            // `create_binder_from_bound_file_with_augmentations` for
+            // the rationale.
+            flow_nodes: Arc::clone(&file.flow_nodes),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // `node_flow` map instead of deep-cloning the underlying
+            // `FxHashMap<u32, FlowNodeId>`. Per-file binders consume this map
+            // read-only after construction (binder mutations during checking
+            // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+            // mutation ever does fire); sharing is safe.
+            node_flow: Arc::clone(&file.node_flow),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
+            // See `create_binder_from_bound_file_with_augmentations`:
+            // consumers go through the project-wide accessor.
+            alias_partners: Default::default(),
+        },
+    );
+
+    // See `create_binder_from_bound_file_with_augmentations` for rationale.
+    binder.declared_modules = Default::default();
+    binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    // See `create_binder_from_bound_file_with_augmentations` for the
+    // rationale: the cross-file semantic_defs live in the shared
+    // `DefinitionStore`, not here.
+    // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+    // underlying `FxHashMap<SymbolId, SemanticDefEntry>`. The previous deep
+    // clone was the largest single source of memory pressure on multi-file
+    // builds (e.g., 50-70 GB total virtual on the 6086-file large-ts-repo
+    // benchmark, multiplied across rayon worker threads). Cross-file lookup
+    // binders only read this map (post-construction), so sharing is safe.
+    binder.semantic_defs = Arc::clone(&file.semantic_defs);
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = tsz::binder::ScopeId(0);
+    }
+    binder.set_lib_symbols_merged(true);
+    binder.lib_binders = program.lib_binders.clone();
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
+
+    binder
+}
+
+/// Length in bytes of a line break starting at `bytes[i]`, or `0` if there is
+/// no line break at that position. Recognizes `\n`, `\r`, `\r\n`, and the
+/// UTF-8 encodings of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+/// SEPARATOR), matching `tsz-scanner::is_line_break` and tsc's own line
+/// break recognition.
+fn line_break_len_at(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i) {
+        Some(&b'\n') => 1,
+        Some(&b'\r') => {
+            if bytes.get(i + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            }
+        }
+        Some(&0xE2)
+            if bytes.get(i + 1) == Some(&0x80)
+                && matches!(bytes.get(i + 2), Some(&0xA8) | Some(&0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
+    }
+}
+
+/// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
+fn build_line_starts(text: &str) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        let lb = line_break_len_at(bytes, i);
+        if lb > 0 {
+            starts.push((i + lb) as u32);
+            i += lb;
+        } else {
+            i += 1;
+        }
+    }
+    starts
+}
+
+/// Get the 0-based line number for a byte offset.
+fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
+    match line_starts.binary_search(&offset) {
+        Ok(exact) => exact as u32,
+        Err(insert) => insert.saturating_sub(1) as u32,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectiveKind {
+    ExpectError,
+    Ignore,
+}
+
+/// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
+const fn is_directive_separator(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b':' | b'*' | b'/'
+    )
+}
+
+const fn is_directive_leading_trivia_byte(b: u8) -> bool {
+    matches!(b, b'/' | b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b'*')
+}
+
+/// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
+/// Returns the directive kind and the byte offset of the directive marker
+/// within the comment text.
+fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, u32)> {
+    let bytes = comment.as_bytes();
+    let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
+        2
+    } else {
+        0
+    };
+
+    while pos < bytes.len() && is_directive_leading_trivia_byte(bytes[pos]) {
+        pos += 1;
+    }
+
+    for (kind, text) in [
+        (DirectiveKind::ExpectError, "@ts-expect-error"),
+        (DirectiveKind::Ignore, "@ts-ignore"),
+    ] {
+        if !comment[pos..].starts_with(text) {
+            continue;
+        }
+        let after = pos + text.len();
+        if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
+            return Some((kind, pos as u32));
+        }
+    }
+    None
+}
+
+/// A `@ts-expect-error` or `@ts-ignore` directive found in a source file comment.
+struct TsDirective {
+    /// True for `@ts-expect-error`, false for `@ts-ignore`.
+    is_expect_error: bool,
+    /// The 0-based line number that this directive suppresses (the line after the comment).
+    suppressed_line: u32,
+    /// Byte offset where an unused `@ts-expect-error` diagnostic should start.
+    unused_diagnostic_start: u32,
+    /// Byte length for an unused `@ts-expect-error` diagnostic.
+    unused_diagnostic_length: u32,
+}
+
+/// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
+fn find_ts_directives(text: &str) -> Vec<TsDirective> {
+    let line_starts = build_line_starts(text);
+    let mut directives = Vec::new();
+
+    for comment in tsz_common::comments::get_comment_ranges(text) {
+        let comment_text = comment.get_text(text);
+        let Some((kind, directive_offset)) = find_directive_in_text(comment_text) else {
+            continue;
+        };
+
+        let suppressed_line = if comment.is_multi_line {
+            let close_line = line_of_offset(&line_starts, comment.end.saturating_sub(1));
+            close_line + 1
+        } else {
+            let comment_line = line_of_offset(&line_starts, comment.pos);
+            comment_line + 1
+        };
+        let directive_start = comment.pos.saturating_add(directive_offset);
+        let directive_line = line_of_offset(&line_starts, directive_start) as usize;
+        let directive_line_start = line_starts
+            .get(directive_line)
+            .copied()
+            .unwrap_or(comment.pos);
+        let unused_diagnostic_start = if comment.is_multi_line && directive_line_start > comment.pos
+        {
+            directive_line_start
+        } else {
+            comment.pos
+        };
+
+        directives.push(TsDirective {
+            is_expect_error: kind == DirectiveKind::ExpectError,
+            suppressed_line,
+            unused_diagnostic_start,
+            unused_diagnostic_length: comment.end.saturating_sub(unused_diagnostic_start),
+        });
+    }
+
+    directives
+}
+
+/// Apply `@ts-expect-error` and `@ts-ignore` directive suppression to diagnostics.
+///
+/// 1. Finds all directive comments in the source text
+/// 2. Suppresses diagnostics on the line following each directive
+/// 3. Emits TS2578 for unused `@ts-expect-error` directives
+pub(super) fn apply_ts_directive_suppression(
+    file_name: &str,
+    source_text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    preserve_declaration_jsdoc_name_diagnostics: bool,
+) {
+    let directives = find_ts_directives(source_text);
+    if directives.is_empty() {
+        return;
+    }
+
+    let line_starts = build_line_starts(source_text);
+
+    // Check for @ts-nocheck — suppresses TS2578 for unused directives.
+    let has_ts_nocheck =
+        tsz_common::comments::has_ts_directive_in_leading_trivia(source_text, "@ts-nocheck");
+
+    let mut directive_used = vec![false; directives.len()];
+
+    // Suppress diagnostics on directive-targeted lines.
+    //
+    // tsc applies `@ts-ignore` and `@ts-expect-error` uniformly across the
+    // checking pipeline, including the JSDoc `@type` lookup that runs during
+    // checked-JS declaration emit. An earlier carve-out kept TS2304/TS2552
+    // alive on lines containing `@type {` to align a different fingerprint,
+    // but issue #3996 confirmed tsc actually suppresses those diagnostics.
+    // The `preserve_declaration_jsdoc_name_diagnostics` flag is now unused
+    // here; callers still pass it so the public signature stays stable while
+    // any deeper revisit of declaration-emit fingerprints lands.
+    let _ = preserve_declaration_jsdoc_name_diagnostics;
+    // tsc's `getSyntacticDiagnostics` path bypasses directive suppression, but
+    // syntactic diagnostics on the target line still make `@ts-expect-error`
+    // used. Keep those diagnostics while recording the directive hit.
+    diagnostics.retain(|diag| {
+        let diag_line = line_of_offset(&line_starts, diag.start);
+        for (idx, directive) in directives.iter().enumerate() {
+            if diag_line == directive.suppressed_line {
+                directive_used[idx] = true;
+                return is_ts_directive_unsuppressible_syntactic(diag.code);
+            }
+        }
+        true
+    });
+
+    // Emit TS2578 for unused @ts-expect-error directives.
+    //
+    // tsc anchors this diagnostic at the directive comment text, not at the
+    // enclosing line start. Same-line directives start at the `//` or `/*`
+    // opener, while directives inside multiline block comments start at the
+    // line containing the directive text.
+    if !has_ts_nocheck {
+        for (idx, directive) in directives.iter().enumerate() {
+            if directive.is_expect_error && !directive_used[idx] {
+                diagnostics.push(Diagnostic::error(
+                    file_name.to_string(),
+                    directive.unused_diagnostic_start,
+                    directive.unused_diagnostic_length,
+                    "Unused '@ts-expect-error' directive.".to_string(),
+                    2578,
+                ));
+            }
+        }
+    }
+}
+
+const fn is_ts_directive_unsuppressible_syntactic(code: u32) -> bool {
+    is_real_syntax_error(code) || is_js_only_syntactic_diagnostic(code)
+}
+
+/// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
+/// vs a grammar/semantic check emitted during parsing.
+///
+/// Real syntax errors indicate that the parser couldn't parse the source normally
+/// and had to recover. tsc propagates `ThisNodeHasError` flags from these errors
+/// to suppress cascading semantic errors like TS2304.
+///
+/// Grammar checks (e.g., strict mode violations, decorator errors) are emitted
+/// during parsing but don't indicate parse failure — tsc still emits TS2304 for
+/// undeclared names in these files.
+pub(super) const fn is_real_syntax_error(code: u32) -> bool {
+    matches!(
+        code,
+        1005  // '{0}' expected
+        // Note: TS1009 (Trailing comma not allowed) is intentionally excluded.
+        // It does not corrupt the AST enough to suppress semantic errors like
+        // TS2304. Files with only TS1009 parse errors (e.g., `extends A,`)
+        // still have valid identifiers that need name resolution.
+        //
+        // Note: TS1014 (A rest parameter must be last) is intentionally excluded.
+        // It is a grammar check, not a structural parse failure. The AST for
+        // `function f(...x, y)` is valid — both parameters are parsed correctly.
+        // tsc still emits TS7019/TS7006 alongside TS1014.
+        //
+        // Note: TS1047 (A rest parameter cannot be optional) is excluded for the
+        // same reason — the parameter is syntactically valid and should be type-checked.
+        | 1036 // Statements are not allowed in ambient contexts
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1126 // Unexpected end of text
+        | 1127 // Invalid character
+        | 1128 // Declaration or statement expected
+        | 1129 // '{' or ';' expected
+        | 1130 // '}' expected
+        | 1131 // Property assignment expected
+        | 1134 // Variable declaration expected
+        | 1135 // Argument expression expected
+        | 1136 // Property or signature expected
+        | 1137 // Expression or comma expected
+        | 1138 // Parameter declaration expected
+        | 1141 // Type parameter declaration expected
+        | 1146 // Declaration expected
+        | 1155 // 'const' declarations must be initialized
+        | 1160 // Unterminated template literal
+        | 1161 // Unterminated regular expression literal
+        | 1002 // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1006 // A file cannot have a reference to itself
+        | 1007 // The parser expected to find a '}'
+        | 1010 // 'while' expected
+        | 1011 // '(' or '<' expected
+        | 1012 // '{' expected
+        | 1035 // Only ambient modules can use quoted names
+        // Note: TS1101 ('with' statements are not allowed in strict mode) is intentionally
+        // excluded. It is a grammar check, not a structural parse failure. The parser
+        // accepts the with-statement and produces a valid AST; tsc still emits semantic
+        // errors like TS2410 alongside TS1101.
+        | 1103 // A character literal must contain exactly one character
+        | 1121 // Octal literals are not allowed in strict mode
+        | 1124 // Digit expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1147 // Import declarations in a namespace cannot reference a module
+        | 1164 // Computed property names are not allowed in enums
+        | 1185 // Merge conflict marker encountered
+        // Note: TS1191 (An import declaration cannot have modifiers) is intentionally
+        // excluded. It is a grammar constraint error, not a structural parse failure.
+        // The AST is fully valid — the import is parsed correctly. tsc still emits
+        // semantic errors like TS2323 alongside TS1191.
+        | 1313 // 'else' is not allowed after rest element
+        | 1351 // An identifier or keyword cannot immediately follow a numeric literal
+        | 1357 // A default clause cannot appear more than once
+        | 1378 // Top-level 'for await' loops are only allowed...
+        | 1432 // 'await' expressions are only allowed within async functions
+        | 1434 // Top-level 'await' expressions are only allowed...
+        | 1389 // '{0}' is not allowed as a variable declaration name
+        | 1382 // Unexpected token. Did you mean `{'>'}` or `&gt;`? (JSX)
+        | 1438 // Interface must be given a name (recovery creates invalid expression statements)
+        | 1442 // Identifier or expression expected (TS-only construct in JS)
+        | 1477 // Member must have an initializer
+    )
+}
+
+/// Classify a parse diagnostic as a **structural** parse error — one that causes
+/// actual AST malformation and error recovery, leading to cascading semantic errors.
+///
+/// This is a more restrictive subset of `is_real_syntax_error`. It excludes:
+/// - Grammar checks that don't affect AST structure (strict mode, trailing commas)
+/// - Contextual restrictions that don't cause parse recovery (import modifiers, etc.)
+///
+/// Used for the cascading suppression heuristic: semantic errors near structural
+/// parse failures are likely artifacts of error recovery and should be suppressed.
+pub(super) const fn is_structural_parse_error(code: u32) -> bool {
+    matches!(
+        code,
+        1002  // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1005 // '{0}' expected (missing token)
+        | 1007 // The parser expected to find a '}'
+        | 1010 // 'while' expected
+        | 1011 // '(' or '<' expected
+        | 1012 // '{' expected
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1124 // Digit expected
+        | 1126 // Unexpected end of text
+        | 1127 // Invalid character
+        | 1128 // Declaration or statement expected
+        | 1129 // '{' or ';' expected
+        | 1130 // '}' expected
+        | 1131 // Property assignment expected
+        | 1134 // Variable declaration expected
+        | 1135 // Argument expression expected
+        | 1136 // Property or signature expected
+        | 1137 // Expression or comma expected
+        | 1138 // Parameter declaration expected
+        | 1141 // Type parameter declaration expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1146 // Declaration expected
+        | 1155 // 'const' declarations must be initialized
+        | 1160 // Unterminated template literal
+        | 1161 // Unterminated regular expression literal
+        | 1185 // Merge conflict marker encountered
+        | 1313 // 'else' is not allowed after rest element
+        | 1351 // An identifier or keyword cannot immediately follow a numeric literal
+        | 1382 // Unexpected token in JSX
+        | 1441 // Cannot start a function call in a type annotation
+        | 1442 // Identifier or expression expected
+        | 1068 // Unexpected token. A constructor, method, accessor, or property was expected.
+    )
+}
+
+/// Parse error codes that should NOT cause `has_syntax_parse_errors` to suppress
+/// semantic diagnostics like TS7006/TS7019 (implicit any).
+///
+/// These are grammar/constraint errors on otherwise well-formed AST nodes:
+/// - TS1009: Trailing comma not allowed
+/// - TS1014: A rest parameter must be last in a parameter list
+/// - TS1047: A rest parameter cannot be optional
+/// - TS1048: A rest parameter cannot have an initializer
+/// - TS1185: Merge conflict marker encountered
+/// - TS1214: Identifier expected (strict mode reserved word)
+/// - TS1262: 'await' at top level
+/// - TS1359: 'await' in async context
+///
+/// tsc emits TS7006/TS7019 even in the presence of these errors because
+/// the parameter identity (name) is still valid and can be type-checked.
+pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
+    matches!(
+        code,
+        1009  // Trailing comma not allowed
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1047 // A rest parameter cannot be optional
+        | 1048 // A rest parameter cannot have an initializer
+        | 1185 // Merge conflict marker
+        | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
+        | 1214 // Identifier expected (strict mode reserved word)
+        | 1262 // 'await' at top level
+        | 1359 // 'await' in async context
+        | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
+        | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
+        | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
+        | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
+        | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
+        | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
+    )
+}
+
+/// Semantic diagnostic codes (>= 2000) that tsc allows through for plain JS files.
+/// Mirrors tsc's `plainJSErrors` set from `program.ts`.
+pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
+    matches!(
+        code,
+        2451  // Cannot redeclare block-scoped variable '{0}'
+        | 2492 // Cannot redeclare identifier '{0}' in catch clause
+        | 2528 // A module cannot have multiple default exports
+        | 2752 // The first export default is here
+        | 2753 // Another export default is here
+        | 2801 // This condition will always return true since this '{0}' is always defined
+        | 2803 // Cannot assign to private method '{0}'. Private methods are not writable
+        | 2839 // This condition will always return '{0}' since JS compares objects by reference
+        | 2845 // This condition will always return '{0}'
+        | 18013 // Property '{0}' is not accessible outside class '{1}' (private identifier)
+    )
+}

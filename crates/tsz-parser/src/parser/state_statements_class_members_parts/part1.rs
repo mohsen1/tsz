@@ -1,0 +1,1450 @@
+impl ParserState {
+    /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
+    pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
+        let mut modifiers = Vec::new();
+
+        // State tracking for TS1028 (duplicates) and TS1029 (ordering)
+        let mut seen_accessibility = false;
+        let mut seen_static = false;
+        let mut seen_abstract = false;
+        let mut seen_readonly = false;
+        let mut seen_override = false;
+        let mut seen_accessor = false;
+        let mut seen_async = false;
+        let mut seen_declare = false;
+
+        loop {
+            if self.should_stop_class_member_modifier() {
+                break;
+            }
+            let start_pos = self.token_pos();
+
+            // Before consuming token, check for TS1028 (duplicate accessibility) and TS1029 (wrong order)
+            let current_kind = self.token();
+
+            if matches!(
+                current_kind,
+                SyntaxKind::PublicKeyword
+                    | SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+            ) {
+                if seen_accessibility {
+                    // tsc silently accepts duplicate/mixed accessibility on property
+                    // declarations (e.g., `public public p1;`) — no TS1028 emitted.
+                    // But for methods/constructors (e.g., `public public Foo()`,
+                    // `public public constructor()`), tsc emits TS1028.
+                    //
+                    // Detect method/constructor context with two-token lookahead:
+                    // if the token after the duplicate keyword is `constructor`, or
+                    // an identifier/keyword followed by `(` or `<`, this is a method.
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token(); // skip duplicate accessibility keyword
+                    let token_after = self.current_token;
+                    let is_method_context = if token_after == SyntaxKind::ConstructorKeyword {
+                        true
+                    } else {
+                        // Look one more ahead to check for `(` or `<`
+                        self.next_token();
+                        let token_after_name = self.current_token;
+                        matches!(
+                            token_after_name,
+                            SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken
+                        )
+                    };
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if is_method_context {
+                        // Method/constructor context — emit TS1028
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Accessibility modifier already seen.",
+                            diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+                        );
+                    }
+                    // For property context, silently accept the duplicate modifier
+                }
+                // TS1029: accessibility must come after certain modifiers
+                if seen_static
+                    || seen_abstract
+                    || seen_readonly
+                    || seen_override
+                    || seen_accessor
+                    || seen_async
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let current_mod = match current_kind {
+                        SyntaxKind::PublicKeyword => "public",
+                        SyntaxKind::PrivateKeyword => "private",
+                        SyntaxKind::ProtectedKeyword => "protected",
+                        _ => "accessibility",
+                    };
+                    let conflicting_mod = if seen_static {
+                        "static"
+                    } else if seen_abstract {
+                        "abstract"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_override {
+                        "override"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
+                    self.parse_error_at_current_token(
+                        &format!(
+                            "'{current_mod}' modifier must precede '{conflicting_mod}' modifier."
+                        ),
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_accessibility = true;
+            } else if current_kind == SyntaxKind::StaticKeyword {
+                // Check for duplicate static modifier
+                // In tsc 6.0+, duplicate `static` in class members emits TS1434
+                // (Unexpected keyword or identifier) because the second `static`
+                // is treated as a potential property name rather than a duplicate modifier.
+                if seen_static {
+                    use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
+                // TS1029: static must come after accessibility, before certain others.
+                // `static` with `abstract` is illegal in either order; the checker
+                // emits TS1243 for that pair, so do not also emit an ordering error.
+                if seen_readonly || seen_override || seen_accessor || seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_override {
+                        "override"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
+                    self.parse_error_at_current_token(
+                        &format!("'static' modifier must precede '{other}' modifier."),
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_static = true;
+            } else if current_kind == SyntaxKind::AbstractKeyword {
+                // Check for duplicate abstract modifier
+                if seen_abstract {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'abstract' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                if seen_readonly || seen_override || seen_accessor || seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_override {
+                        "override"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
+                    self.parse_error_at_current_token(
+                        &format!("'abstract' modifier must precede '{other}' modifier."),
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_abstract = true;
+            } else if current_kind == SyntaxKind::ReadonlyKeyword {
+                // Check for duplicate readonly modifier
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                if seen_accessor {
+                    // Auto-accessor properties cannot be readonly. tsc emits
+                    // TS1243 (cannot-be-used-with) here, not TS1029
+                    // (must-precede), because no ordering of these two
+                    // modifiers is legal.
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier cannot be used with 'accessor' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                } else if seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier must precede 'async' modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_readonly = true;
+            } else if current_kind == SyntaxKind::OverrideKeyword {
+                // Check for duplicate override modifier
+                if seen_override {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'override' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                // TS1040: 'override' modifier cannot be used in an ambient context
+                // Handles `declare override` ordering (override after declare on same member)
+                if seen_declare {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'override' modifier cannot be used in an ambient context.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                    );
+                }
+                if seen_accessor || seen_async || seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_accessor {
+                        "accessor"
+                    } else if seen_async {
+                        "async"
+                    } else {
+                        "readonly"
+                    };
+                    self.parse_error_at_current_token(
+                        &format!("'override' modifier must precede '{other}' modifier."),
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_override = true;
+            } else if current_kind == SyntaxKind::AccessorKeyword {
+                // Check for duplicate accessor modifier
+                if seen_accessor {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                // Auto-accessor properties cannot be combined with `readonly`
+                // or `declare` in either order — tsc emits TS1243 on the
+                // accessor keyword when readonly/declare was seen first.
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier cannot be used with 'readonly' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                }
+                if seen_declare {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier cannot be used with 'declare' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                }
+                if seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier must precede 'async' modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_accessor = true;
+            } else if current_kind == SyntaxKind::AsyncKeyword {
+                // Check for duplicate async modifier
+                if seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'async' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                seen_async = true;
+            }
+
+            let modifier = match current_kind {
+                SyntaxKind::StaticKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::StaticKeyword, start_pos)
+                }
+                SyntaxKind::PublicKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::PublicKeyword, start_pos)
+                }
+                SyntaxKind::PrivateKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::PrivateKeyword, start_pos)
+                }
+                SyntaxKind::ProtectedKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::ProtectedKeyword, start_pos)
+                }
+                SyntaxKind::ReadonlyKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::ReadonlyKeyword, start_pos)
+                }
+                SyntaxKind::AbstractKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::AbstractKeyword, start_pos)
+                }
+                SyntaxKind::OverrideKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::OverrideKeyword, start_pos)
+                }
+                SyntaxKind::AsyncKeyword => {
+                    // TS1040: 'async' modifier cannot be used in an ambient context
+                    if self.in_ambient_context() {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'async' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::AsyncKeyword, start_pos)
+                }
+                SyntaxKind::DeclareKeyword => {
+                    // TS1040: 'override' modifier cannot be used in an ambient context
+                    // When `override` precedes `declare`, report at `declare` position
+                    if seen_override {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'override' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
+                    // Auto-accessor properties cannot be `declare`d. When
+                    // `accessor` precedes `declare`, tsc emits TS1243 on the
+                    // declare keyword.
+                    if seen_accessor {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'declare' modifier cannot be used with 'accessor' modifier.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                        );
+                    }
+                    seen_declare = true;
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::DeclareKeyword, start_pos)
+                }
+                SyntaxKind::AccessorKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::AccessorKeyword, start_pos)
+                }
+                // Handle const as a modifier - error is reported by checker (1248)
+                // But only if not followed by line break (ASI would make it a property name)
+                SyntaxKind::ConstKeyword => {
+                    // Look ahead: if there's a line break after const, treat as property name not modifier
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+
+                    // Check if followed by var/let (invalid pattern: const var foo)
+                    // In this case, consume const without adding to modifiers, let var/let handler emit error
+                    if matches!(
+                        self.current_token,
+                        SyntaxKind::VarKeyword | SyntaxKind::LetKeyword
+                    ) {
+                        // Restore state, consume const, and continue - var/let will emit TS1440
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        self.next_token(); // Consume const
+                        continue;
+                    }
+
+                    if self.scanner.has_preceding_line_break() {
+                        // Restore and break - const is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+                    self.arena
+                        .create_modifier(SyntaxKind::ConstKeyword, start_pos)
+                }
+                // Handle 'export' - not valid as class member modifier
+                SyntaxKind::ExportKeyword => {
+                    // Skip emitting generic unexpected modifier for export when it
+                    // introduces a constructor declaration. Constructor-specific
+                    // validation emits TS1031.
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let next_is_constructor = self.current_token == SyntaxKind::ConstructorKeyword
+                        && !self.scanner.has_preceding_line_break();
+                    // Skip TS1031 for index signatures (e.g., `export [x: string]: string`).
+                    // The checker emits the more specific TS1071 instead.
+                    let next_is_index_sig = self.current_token == SyntaxKind::OpenBracketToken
+                        && !self.scanner.has_preceding_line_break();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if !next_is_constructor && !next_is_index_sig {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'export' modifier cannot appear on class elements of this kind.",
+                            diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                        );
+                    }
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::ExportKeyword, start_pos)
+                }
+                // Handle 'let' and 'var' - could be property names or invalid modifiers
+                SyntaxKind::LetKeyword | SyntaxKind::VarKeyword => {
+                    // Look ahead to distinguish between property name and modifier
+                    // var() { } or var followed by line break -> property name (valid)
+                    // public var foo -> modifier (invalid)
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+
+                    // If followed by open paren, it's a method name (valid)
+                    if self.current_token == SyntaxKind::OpenParenToken {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
+                    // If followed by line break, ASI makes it a property name (valid)
+                    if self.scanner.has_preceding_line_break() {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
+                    // If followed by semicolon, comma, equals, or closing brace, it's a property name (valid)
+                    // Examples: var; | var, | var = | var }
+                    if matches!(
+                        self.current_token,
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::EqualsToken
+                            | SyntaxKind::CloseBraceToken
+                    ) {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
+                    // Otherwise it's being used as a modifier (invalid)
+                    // Restore state to emit error at var/let position, then consume it
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    // Check if followed by 'constructor' - emit TS1068 instead of TS1440
+                    let is_followed_by_constructor = if self.current_token == SyntaxKind::VarKeyword
+                        || self.current_token == SyntaxKind::LetKeyword
+                    {
+                        let snapshot2 = self.scanner.save_state();
+                        let saved_token2 = self.current_token;
+                        self.next_token();
+                        let result = self.current_token == SyntaxKind::ConstructorKeyword;
+                        self.scanner.restore_state(snapshot2);
+                        self.current_token = saved_token2;
+                        result
+                    } else {
+                        false
+                    };
+
+                    if is_followed_by_constructor {
+                        self.parse_error_at_current_token(
+                            "Unexpected token. A constructor, method, accessor, or property was expected.",
+                            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Variable declaration not allowed at this location.",
+                            diagnostic_codes::VARIABLE_DECLARATION_NOT_ALLOWED_AT_THIS_LOCATION,
+                        );
+                    }
+                    // Consume var/let and add to modifiers list
+                    // This prevents parse_constructor_with_modifiers from being called
+                    let var_token = self.token();
+                    self.next_token();
+
+                    // Add var/let to modifiers and return early
+                    // Don't continue parsing modifiers (e.g., don't process 'export' in 'var export foo')
+                    let var_modifier = self.arena.create_modifier(var_token, start_pos);
+                    modifiers.push(var_modifier);
+                    return Some(self.make_node_list(modifiers));
+                }
+                // `in` / `out` are variance modifiers that only apply to type
+                // parameters (of class/interface/type alias). When they appear on a
+                // class member, `should_stop_class_member_modifier` already verified
+                // the next token looks like a property name, so consume them as
+                // modifiers and let the checker emit TS1274 — much better than the
+                // generic TS1434 we used to fall through to.
+                SyntaxKind::InKeyword => {
+                    self.next_token();
+                    self.arena.create_modifier(SyntaxKind::InKeyword, start_pos)
+                }
+                SyntaxKind::OutKeyword => {
+                    self.next_token();
+                    self.arena
+                        .create_modifier(SyntaxKind::OutKeyword, start_pos)
+                }
+                _ => break,
+            };
+            modifiers.push(modifier);
+        }
+
+        if modifiers.is_empty() {
+            None
+        } else {
+            Some(self.make_node_list(modifiers))
+        }
+    }
+
+    pub(crate) fn should_stop_class_member_modifier(&mut self) -> bool {
+        if !matches!(
+            self.token(),
+            SyntaxKind::StaticKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::InKeyword
+                | SyntaxKind::OutKeyword
+        ) {
+            return false;
+        }
+
+        if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
+            return true;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let next = self.current_token;
+        let has_line_break = self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        // ASI: if the next token is on a new line, treat the keyword as a property name.
+        // `static` is still a modifier before `accessor` even across a line break;
+        // the accessor token itself can then decide whether it is a modifier or name.
+        if has_line_break {
+            if current == SyntaxKind::StaticKeyword && next == SyntaxKind::AccessorKeyword {
+                return false;
+            }
+            return true;
+        }
+
+        matches!(
+            next,
+            SyntaxKind::OpenParenToken
+                | SyntaxKind::LessThanToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::EqualsToken
+                | SyntaxKind::SemicolonToken
+                // When followed by } or EOF, treat the keyword as a property name, not a modifier
+                // This allows patterns like: class C { public }
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::EndOfFileToken
+        )
+    }
+
+    /// Parse constructor with modifiers
+    pub(crate) fn parse_constructor_with_modifiers(
+        &mut self,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::ConstructorKeyword);
+
+        // Check for type parameters on constructor (invalid but parse for better error reporting)
+        // tsc emits TS1092 in the checker at the typeParameters NodeArray position,
+        // which starts after '<' (i.e., at the first type parameter or '>' if empty).
+        // We emit it here in the parser but must match tsc's position: after '<'.
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
+            let less_than_end = self.token_end();
+            let type_params = self.parse_type_parameters();
+            self.parse_error_at(
+                less_than_end,
+                0,
+                "Type parameters cannot appear on a constructor declaration.",
+                diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+            );
+            type_params
+        });
+
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS;
+        let parameters = if has_open_paren {
+            let params = self.parse_parameter_list();
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        } else {
+            // When `(` is missing (e.g., `constructor\n}`), skip parameter parsing
+            // and `)` expectation to avoid cascading `')' expected` errors.
+            self.context_flags = saved_flags;
+            NodeList::new()
+        };
+
+        // Recovery: Handle return type annotation on constructor (invalid but users write it)
+        if self.parse_optional(SyntaxKind::ColonToken) {
+            if self.should_recover_constructor_return_type_at_class_member_boundary() {
+                self.error_type_expected();
+            } else {
+                let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+                if !missing_type {
+                    self.parse_error_at_current_token(
+                        "Type annotation cannot appear on a constructor declaration.",
+                        diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                    );
+                }
+                // Consume the type annotation for recovery (use parse_return_type to match tsc,
+                // which parses type predicates even in invalid constructor return types)
+                let _ = self.parse_return_type();
+            }
+        }
+
+        // Push a new label scope for the constructor body
+        // Clear static block flag - constructor creates a new function boundary
+        let body_saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+        self.push_label_scope();
+        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_block()
+        } else {
+            NodeIndex::NONE
+        };
+        self.pop_label_scope();
+        self.context_flags = body_saved_flags;
+
+        let end_pos = self.token_end();
+        self.arena.add_constructor(
+            syntax_kind_ext::CONSTRUCTOR,
+            start_pos,
+            end_pos,
+            crate::parser::node::ConstructorData {
+                modifiers,
+                type_parameters,
+                parameters,
+                body,
+            },
+        )
+    }
+
+    fn should_recover_constructor_return_type_at_class_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() {
+            return false;
+        }
+
+        if matches!(
+            self.current_token,
+            SyntaxKind::CloseBraceToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::EndOfFileToken
+        ) {
+            return false;
+        }
+
+        if self.is_constructor_return_type_recovery_class_member_start() {
+            return true;
+        }
+
+        if !self.is_property_name() {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && matches!(
+                self.current_token,
+                SyntaxKind::OpenParenToken
+                    | SyntaxKind::LessThanToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::ExclamationToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::SemicolonToken
+            );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    const fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AtToken
+                | SyntaxKind::AsteriskToken
+        )
+    }
+
+    /// Parse get accessor with modifiers: static get `foo()` { }
+    pub(crate) fn parse_get_accessor_with_modifiers(
+        &mut self,
+        modifiers: Option<NodeList>,
+        start_pos: u32,
+    ) -> NodeIndex {
+        self.parse_expected(SyntaxKind::GetKeyword);
+
+        let name = self.parse_property_name();
+
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An accessor cannot have type parameters.",
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+            );
+            self.parse_type_parameters()
+        });
+
+        self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
+            self.make_node_list(vec![])
+        } else if self.is_token(SyntaxKind::CommaToken) {
+            // `get x(,)` — comma can't start a parameter declaration.
+            // tsc emits TS1138 "Parameter declaration expected" here,
+            // NOT TS1054 (which is for getters that have actual parameters).
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            );
+            // Skip the comma and continue parsing to recover
+            self.next_token();
+            self.make_node_list(vec![])
+        } else {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            }
+            self.parse_parameter_list()
+        };
+        self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // Optional return type (supports type predicates)
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let body = self.parse_accessor_body(&modifiers);
+
+        let end_pos = self.token_end();
+        self.arena.add_accessor(
+            syntax_kind_ext::GET_ACCESSOR,
+            start_pos,
+            end_pos,
+            crate::parser::node::AccessorData {
+                modifiers,
+                name,
+                type_parameters,
+                parameters,
+                type_annotation,
+                body,
+            },
+        )
+    }
+
+    /// Parse the body of an accessor (get or set).
+    /// Returns `NodeIndex::NONE` for ambient or abstract accessors with no body.
+    fn parse_accessor_body(&mut self, modifiers: &Option<NodeList>) -> NodeIndex {
+        // Clear static block flag - accessor creates a new function boundary
+        let saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+        self.push_label_scope();
+        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_block()
+        } else {
+            let has_abstract = modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&idx| {
+                    self.arena
+                        .nodes
+                        .get(idx.0 as usize)
+                        .is_some_and(|node| node.kind == SyntaxKind::AbstractKeyword as u16)
+                })
+            });
+
+            // tsc's parser accepts accessors without bodies even in non-abstract,
+            // non-ambient contexts — the grammar checker handles this later with
+            // TS2378/TS1049 ("A 'get' accessor must have a body"). We do NOT emit
+            // TS1005 here to match tsc's parser behavior and avoid false positives
+            // that would incorrectly suppress TS5107 deprecation diagnostics.
+            let _ = has_abstract;
+            self.parse_semicolon();
+            NodeIndex::NONE
+        };
+        self.pop_label_scope();
+        self.context_flags = saved_flags;
+        body
+    }
+
+    /// Emit TS1031 at the position of a specific modifier keyword in the modifier list.
+    /// Used for constructor declarations where tsc's grammarErrorOnNode anchors at the modifier.
+    fn emit_modifier_error_on_constructor(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        kind: SyntaxKind,
+        message: &str,
+        code: u32,
+    ) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == kind as u16
+                {
+                    self.parse_error_at(node.pos, node.end - node.pos, message, code);
+                    return;
+                }
+            }
+        }
+        // Fallback if modifier not found in list
+        self.parse_error_at_current_token(message, code);
+    }
+
+    /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
+    /// at the position of the `declare` modifier in the given modifier list.
+    fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        node.pos,
+                        node.end - node.pos,
+                        "'declare' modifier cannot appear on class elements of this kind.",
+                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Emit TS1275 "'accessor' modifier can only appear on a property declaration."
+    /// at the position of the `accessor` modifier in the given modifier list.
+    /// Used when a class member with an `accessor` modifier turns out to be a
+    /// constructor, method, getter, or setter rather than a property declaration.
+    pub(crate) fn emit_accessor_modifier_only_on_property_error(
+        &mut self,
+        modifiers: &Option<NodeList>,
+    ) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::AccessorKeyword as u16
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        node.pos,
+                        node.end - node.pos,
+                        "'accessor' modifier can only appear on a property declaration.",
+                        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Modifier scan + classification phase.
+    ///
+    /// Parses keyword modifiers, combines them with any already-parsed
+    /// decorators, handles a misplaced `@` after keywords, and returns a
+    /// [`ClassMemberModifierSet`] whose boolean fields let `construct_class_member`
+    /// branch on named flags instead of repeated linear scans over the node list.
+    fn scan_class_member_modifier_phase(
+        &mut self,
+        decorators: Option<NodeList>,
+    ) -> ClassMemberModifierSet {
+        let has_decorators = decorators.is_some();
+        let diag_len_before_modifiers = self.parse_diagnostics.len();
+        let parsed_modifiers = self.parse_class_member_modifiers();
+        let had_keyword_modifiers = parsed_modifiers.is_some();
+
+        let mut combined = match (decorators, parsed_modifiers) {
+            (Some(dec), Some(kw)) => {
+                let mut nodes = dec.nodes;
+                nodes.extend(kw.nodes);
+                Some(NodeList {
+                    nodes,
+                    pos: dec.pos,
+                    end: kw.end,
+                    has_trailing_comma: false,
+                })
+            }
+            (Some(dec), None) => Some(dec),
+            (None, Some(kw)) => Some(kw),
+            (None, None) => None,
+        };
+
+        // TS1436: `@` appearing after keyword modifiers (e.g., `public @dec prop`).
+        if had_keyword_modifiers && self.is_token(SyntaxKind::AtToken) {
+            self.parse_error_at_current_token(
+                "Decorators must precede the name and all keywords of property declarations.",
+                diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
+            );
+            if let Some(late_decs) = self.parse_decorators() {
+                match combined {
+                    Some(ref mut mods) => {
+                        mods.nodes.extend(late_decs.nodes);
+                        mods.end = late_decs.end;
+                    }
+                    None => combined = Some(late_decs),
+                }
+            }
+        }
+
+        let mut has_var_let = false;
+        let mut has_static = false;
+        let mut has_export = false;
+        let mut has_declare = false;
+        let mut has_accessor = false;
+        let mut has_async = false;
+        if let Some(ref mods) = combined {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && let Some(kind) = SyntaxKind::try_from_u16(node.kind)
+                {
+                    match kind {
+                        SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => has_var_let = true,
+                        SyntaxKind::StaticKeyword => has_static = true,
+                        SyntaxKind::ExportKeyword => has_export = true,
+                        SyntaxKind::DeclareKeyword => has_declare = true,
+                        SyntaxKind::AccessorKeyword => has_accessor = true,
+                        SyntaxKind::AsyncKeyword => has_async = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        ClassMemberModifierSet {
+            modifiers: combined,
+            has_decorators,
+            has_var_let,
+            has_static,
+            has_export,
+            has_declare,
+            has_accessor,
+            has_async,
+            diag_len_before_modifiers,
+        }
+    }
+
+    /// Parse set accessor with modifiers: static set foo(value) { }
+    pub(crate) fn parse_set_accessor_with_modifiers(
+        &mut self,
+        modifiers: Option<NodeList>,
+        start_pos: u32,
+    ) -> NodeIndex {
+        self.parse_expected(SyntaxKind::SetKeyword);
+
+        let name = self.parse_property_name();
+
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An accessor cannot have type parameters.",
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+            );
+            self.parse_type_parameters()
+        });
+
+        self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
+            self.make_node_list(vec![])
+        } else {
+            self.parse_parameter_list()
+        };
+        self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // TS1051: A 'set' accessor cannot have an optional parameter
+        // tsc anchors the error at the `?` token, which is right after the
+        // parameter name.
+        if let Some(&first_param) = parameters.nodes.first()
+            && let Some(param_node) = self.arena.get(first_param)
+        {
+            let data_idx = param_node.data_index as usize;
+            if let Some(param_data) = self.arena.parameters.get(data_idx)
+                && param_data.question_token
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                // Anchor at the `?` token: it starts at param_name.end
+                let question_pos = self
+                    .arena
+                    .get(param_data.name)
+                    .map_or(param_node.pos, |name_node| name_node.end);
+                self.parse_error_at(
+                    question_pos,
+                    1, // `?` is a single character
+                    "A 'set' accessor cannot have an optional parameter.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_AN_OPTIONAL_PARAMETER,
+                );
+            }
+        }
+
+        // Parse return type annotation for error recovery (tsc preserves it in JS output).
+        // Setters cannot legally have return type annotations, but we store it so the
+        // emitter can preserve it.
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            }
+            // Use parse_return_type to match tsc, which parses type predicates
+            // even in invalid setter return types
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let body = self.parse_accessor_body(&modifiers);
+
+        let end_pos = self.token_end();
+        self.arena.add_accessor(
+            syntax_kind_ext::SET_ACCESSOR,
+            start_pos,
+            end_pos,
+            crate::parser::node::AccessorData {
+                modifiers,
+                name,
+                type_parameters,
+                parameters,
+                type_annotation,
+                body,
+            },
+        )
+    }
+
+    /// Parse class members
+    pub(crate) fn parse_class_members(&mut self) -> NodeList {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        let mut members = Vec::new();
+
+        while !matches!(
+            self.token(),
+            SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+        ) {
+            if let Some(close_pos) = self.class_member_list_outer_declaration_recovery_close_pos() {
+                self.parse_error_at(
+                    close_pos,
+                    1,
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
+            if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+                break;
+            }
+
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
+            if self.recover_module_like_class_member_as_outer_statement() {
+                break;
+            }
+
+            let member = self.parse_class_member();
+            if member.is_some() {
+                let recovered_invalid_if_member =
+                    self.class_member_is_recovered_invalid_if_method(member);
+                // Don't consume trailing semicolon if the member itself is a
+                // SemicolonClassElement — that would eat the next standalone `;`.
+                let is_semi_element = self
+                    .arena
+                    .get(member)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
+                if !is_semi_element {
+                    self.parse_optional(SyntaxKind::SemicolonToken);
+                }
+                members.push(member);
+
+                if recovered_invalid_if_member
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword
+                    )
+                {
+                    break;
+                }
+
+                if recovered_invalid_if_member
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::ExclamationEqualsToken
+                            | SyntaxKind::ExclamationEqualsEqualsToken
+                            | SyntaxKind::EqualsEqualsToken
+                            | SyntaxKind::EqualsEqualsEqualsToken
+                            | SyntaxKind::LessThanToken
+                            | SyntaxKind::LessThanEqualsToken
+                            | SyntaxKind::GreaterThanToken
+                            | SyntaxKind::GreaterThanEqualsToken
+                    )
+                {
+                    self.suppress_next_missing_class_close_brace_error_once = true;
+                    break;
+                }
+
+                if self.is_token(SyntaxKind::OpenBraceToken)
+                    && !self.scanner.has_preceding_line_break()
+                    && self
+                        .arena
+                        .get(member)
+                        .and_then(|node| self.arena.get_property_decl(node))
+                        .is_some_and(|prop| prop.initializer.is_some())
+                {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.suppress_next_missing_class_close_brace_error_once = true;
+                    break;
+                }
+
+                if self.is_token(SyntaxKind::ColonToken) {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.next_token();
+                    continue;
+                }
+
+                // After a successfully parsed member without a trailing semicolon,
+                // if the next token cannot start a new class member, emit TS1068
+                // and skip. This matches tsc's parseList/abortParsingListOrMoveToNextToken
+                // behavior for ClassMembers context. If a prior TS1005 was already emitted
+                // at this exact position (from parseSemicolon within the member), the
+                // parse_error_at dedup will suppress this TS1068, preserving the TS1005.
+                if !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::AtToken) // decorator
+                    && !self.is_token(SyntaxKind::AsteriskToken) // generator method
+                    && !self.is_property_name()
+                {
+                    if self.is_token(SyntaxKind::Unknown) {
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                            diagnostic_codes::INVALID_CHARACTER,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Unexpected token. A constructor, method, accessor, or property was expected.",
+                            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                        );
+                    }
+                    self.next_token();
+                }
+            }
+        }
+
+        self.make_node_list(members)
+    }
+
+    fn class_member_list_outer_declaration_recovery_close_pos(&mut self) -> Option<u32> {
+        if !self.is_token(SyntaxKind::ClassKeyword)
+            || !self.scanner.has_preceding_line_break()
+            || !self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            return None;
+        }
+
+        self.previous_significant_close_brace_pos_ending_at(self.scanner.get_token_full_start())
+    }
+
+    fn previous_significant_close_brace_pos_ending_at(&self, token_end: usize) -> Option<u32> {
+        let close_pos = token_end.checked_sub(1)?;
+        (self.get_source_text().as_bytes().get(close_pos) == Some(&b'}'))
+            .then(|| self.u32_from_usize(close_pos))
+    }
+
+    fn look_ahead_is_try_block_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let is_try_block =
+            self.is_token(SyntaxKind::OpenBraceToken) && !self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_try_block
+    }
+
+    fn recover_invalid_character_class_member(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.current_unknown_starts_braced_unicode_escape_debris() {
+            self.parse_error_at_current_token(
+                diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+            if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
+                self.parse_error_at_current_token(
+                    "Unexpected keyword or identifier.",
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                self.next_token();
+            }
+            return;
+        }
+
+        while self.is_token(SyntaxKind::Unknown) {
+            self.parse_error_at_current_token(
+                diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+        }
+
+        if matches!(
+            self.token(),
+            SyntaxKind::ColonToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::EqualsToken
+        ) {
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+        }
+    }
+
+    /// Parse a single class member
+    pub(crate) fn parse_class_member(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let start_pos = self.token_pos();
+
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            let end_pos = self.token_end();
+            self.next_token();
+            return self.arena.add_token(
+                syntax_kind_ext::SEMICOLON_CLASS_ELEMENT,
+                start_pos,
+                end_pos,
+            );
+        }
+
+        // Note: Reserved keywords like `if`, `for`, `delete`, `function`, etc. are valid
+        // property names in class bodies (e.g., `class C { delete; for; if() {} }`).
+        // We do NOT reject them here — they flow through to normal class member parsing
+        // where is_property_name() correctly accepts them.
+
+        if self.is_token(SyntaxKind::Unknown) {
+            self.recover_invalid_character_class_member();
+            return NodeIndex::NONE;
+        }
+
+        // `case` and `default` are valid property names by themselves, but when
+        // followed by another property name on the same line they are usually a
+        // misplaced switch clause in a class body. Match tsc's class-member list
+        // recovery by reporting TS1068 at the clause keyword and retrying from
+        // the following token.
+        if matches!(
+            self.token(),
+            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword
+        ) && self.look_ahead_is_property_name_same_line()
+        {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
+            self.next_token();
+        }
+
+        // Handle bare `#` that can't become a PrivateIdentifier.
+        // Preserve standalone `#` as a recovered private name at boundaries.
+        if self.is_token(SyntaxKind::HashToken) {
+            let rescanned = self.scanner.re_scan_hash_token();
+            if rescanned != SyntaxKind::PrivateIdentifier {
+                self.report_bare_hash_invalid_character();
+                if self.bare_hash_is_followed_by_statement_boundary() {
+                    self.current_token = SyntaxKind::PrivateIdentifier;
+                } else {
+                    self.next_token();
+                    return NodeIndex::NONE;
+                }
+            } else {
+                self.current_token = rescanned;
+            }
+        }
+
+        let decorators = self.parse_decorators();
+
+        // If decorators were found before a static block, emit TS1206
+        // TSC anchors this error at the decorator position, not the `static` keyword.
+        if decorators.is_some()
+            && self.is_token(SyntaxKind::StaticKeyword)
+            && self.look_ahead_is_static_block()
+        {
+            if let Some(ref dec_list) = decorators
+                && let Some(&first_dec_idx) = dec_list.nodes.first()
+                && let Some(dec_node) = self.arena.get(first_dec_idx)
+            {
+                let start = dec_node.pos;
+                let length = dec_node.end.saturating_sub(dec_node.pos);
+                self.parse_error_at(
+                    start,
+                    length,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+            }
+            return self.parse_static_block();
+        }
+
+        // Handle static block: static { ... }
+        if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
+            return self.parse_static_block();
+        }
+
+        if matches!(
+            self.token(),
+            SyntaxKind::GlobalKeyword | SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword
+        ) && self.look_ahead_is_module_declaration()
+        {
+            self.recover_invalid_module_like_class_member();
+            return NodeIndex::NONE;
+        }
+
+        if self.look_ahead_is_class_body_function_statement() {
+            self.recover_invalid_class_body_function_statement();
+            return NodeIndex::NONE;
+        }
+
+        if self.look_ahead_is_class_body_variable_statement() {
+            self.recover_invalid_class_body_variable_statement();
+            return NodeIndex::NONE;
+        }
+
+        let mods = self.scan_class_member_modifier_phase(decorators);
+
+        // Handle static block after modifiers: { ... }
+        // Case 1: `static` not yet consumed (no preceding modifiers or only decorators)
+        if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
+            if let Some(ref ml) = mods.modifiers {
+                // Truncate modifier-ordering diagnostics (TS1028/TS1029) emitted
+                // during parse_class_member_modifiers — tsc only emits TS1184 here.
+                self.parse_diagnostics
+                    .truncate(mods.diag_len_before_modifiers);
+                if let Some(first_node) = self.arena.get(ml.nodes[0]) {
+                    self.parse_error_at(
+                        first_node.pos,
+                        first_node.end - first_node.pos,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+            }
+            return self.parse_static_block();
+        }
+        // Case 2: `static` was consumed as a modifier and `{` follows (e.g. `async static {`)
+        // The last modifier is `static` and current token is `{` — this is a static block
+        // with invalid preceding modifiers.
+        if self.is_token(SyntaxKind::OpenBraceToken)
+            && let Some(ref ml) = mods.modifiers
+        {
+            let last_is_static = ml
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16);
+            if last_is_static {
+                // Truncate modifier-ordering diagnostics — tsc only emits TS1184.
+                self.parse_diagnostics
+                    .truncate(mods.diag_len_before_modifiers);
+                // Emit TS1184 at the first modifier's position (matches tsc).
+                if let Some(first_node) = self.arena.get(ml.nodes[0]) {
+                    self.parse_error_at(
+                        first_node.pos,
+                        first_node.end - first_node.pos,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                return self.parse_static_block();
+            }
+        }
+
+        // ── Member construction ───────────────────────────────────────────────
+        self.construct_class_member(start_pos, mods)
+    }
+}

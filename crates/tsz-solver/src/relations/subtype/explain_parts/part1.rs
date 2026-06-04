@@ -1,0 +1,1416 @@
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn shape_or_type_requires_declared_index_signature(
+        &self,
+        shape: &ObjectShape,
+        type_id: TypeId,
+    ) -> bool {
+        let is_named_non_enum = |shape: &ObjectShape| {
+            shape.symbol.is_some()
+                && !shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::ENUM_NAMESPACE)
+        };
+        if is_named_non_enum(shape) {
+            return true;
+        }
+
+        let receiver_shape = object_with_index_shape_id(self.interner, type_id).or_else(|| {
+            let app_id = application_id(self.interner, type_id)?;
+            let app = self.interner.type_application(app_id);
+            object_with_index_shape_id(self.interner, app.base)
+        });
+
+        receiver_shape
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| is_named_non_enum(&shape))
+    }
+
+    /// Collect source properties including those from intersection members.
+    /// This ensures merged types (e.g., `{ a: string } & { b: number }`) have
+    /// all properties available for missing property checks.
+    fn collect_source_properties(&self, source: TypeId) -> Vec<PropertyInfo> {
+        use crate::type_queries::data::get_intersection_members;
+
+        let mut props = Vec::new();
+
+        // Get base shape properties
+        if let Some(shape_id) = object_shape_id(self.interner, source) {
+            let shape = self.interner.object_shape(shape_id);
+            props.extend(shape.properties.iter().cloned());
+        }
+
+        // Add properties from intersection members
+        if let Some(members) = get_intersection_members(self.interner, source) {
+            for member in members {
+                if let Some(shape_id) = object_shape_id(self.interner, member) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in shape.properties.iter() {
+                        if !props.iter().any(|p| p.name == prop.name) {
+                            props.push(prop.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        props
+    }
+
+    /// Append the deduplicated property-name keys of `shape_id` to `names`.
+    fn push_object_shape_property_names(
+        &self,
+        shape_id: crate::types::ObjectShapeId,
+        names: &mut Vec<tsz_common::interner::Atom>,
+    ) {
+        for prop in self.interner.object_shape(shape_id).properties.iter() {
+            if !names.contains(&prop.name) {
+                names.push(prop.name);
+            }
+        }
+    }
+
+    /// Resolve `type_id` to its apparent structural form, resolving lazy
+    /// aliases and expanding a generic application one level.
+    fn apparent_type_for_keys(&mut self, type_id: TypeId) -> TypeId {
+        let mut resolved = self.resolve_lazy_type(type_id);
+        if let Some(app_id) = application_id(self.interner, resolved)
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved = self.resolve_lazy_type(expanded);
+        }
+        resolved
+    }
+
+    /// Collect the property-name keys of an object-like type, resolving lazy
+    /// aliases / expanding generic applications and folding intersection
+    /// members. Used to score union-member overlap the way tsc's
+    /// `findMostOverlappyType` intersects `keyof source` with `keyof member`.
+    fn object_like_property_names(&mut self, type_id: TypeId) -> Vec<tsz_common::interner::Atom> {
+        use crate::type_queries::data::get_intersection_members;
+
+        let resolved = self.apparent_type_for_keys(type_id);
+        let mut names: Vec<tsz_common::interner::Atom> = Vec::new();
+        if let Some(sid) = object_shape_id(self.interner, resolved)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved))
+        {
+            self.push_object_shape_property_names(sid, &mut names);
+        }
+        if let Some(members) = get_intersection_members(self.interner, resolved) {
+            for member in members {
+                let resolved_member = self.apparent_type_for_keys(member);
+                if let Some(sid) = object_shape_id(self.interner, resolved_member)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_member))
+                {
+                    self.push_object_shape_property_names(sid, &mut names);
+                }
+            }
+        }
+        names
+    }
+
+    fn is_late_bound_symbol_property_name(&self, name: tsz_common::interner::Atom) -> bool {
+        let name = self.interner.resolve_atom_ref(name);
+        name.starts_with("[Symbol.") || name.starts_with("__@")
+    }
+
+    /// Returns `true` if `type_id` is function-like — i.e. has at least one
+    /// call or construct signature. Used by TS2739/TS2741 explain code to skip
+    /// `prototype` from the missing-property list (tsc treats `prototype` as
+    /// implicit on any callable value).
+    fn type_has_callable_signature(&self, type_id: TypeId) -> bool {
+        use crate::type_queries::has_call_signatures;
+        if has_call_signatures(self.interner, type_id) {
+            return true;
+        }
+        if let Some(cid) = callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(cid);
+            return !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty();
+        }
+        if function_shape_id(self.interner, type_id).is_some() {
+            return true;
+        }
+        false
+    }
+
+    /// Explain why `source` is not assignable to `target`.
+    ///
+    /// This is the "slow path" - called only when `is_assignable_to` returns false
+    /// and we need to generate an error message. Re-runs the subtype logic with
+    /// tracing enabled to produce a structured failure reason.
+    ///
+    /// Returns `None` if the types are actually compatible (shouldn't happen
+    /// if called correctly after a failed check).
+    pub fn explain_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let pair = (source, target);
+        match self.guard.enter(pair) {
+            crate::recursion::RecursionResult::Entered => {}
+            crate::recursion::RecursionResult::Cycle
+            | crate::recursion::RecursionResult::DepthExceeded
+            | crate::recursion::RecursionResult::IterationExceeded => {
+                return Some(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+        let result = self.explain_failure_guarded(source, target);
+        self.guard.leave(pair);
+        result
+    }
+
+    fn explain_failure_guarded(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        // Fast path: if types are equal, no failure
+        if source == target {
+            return None;
+        }
+
+        if !self.strict_null_checks && source.is_nullish() {
+            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
+            if !null_to_void {
+                return None;
+            }
+        }
+
+        // Check for any/unknown/never special cases
+        if source.is_any() || target.is_any_or_unknown() {
+            return None;
+        }
+        if source.is_never() {
+            return None;
+        }
+        // ERROR types should produce ErrorType failure reason
+        if source.is_error() || target.is_error() {
+            return Some(SubtypeFailureReason::ErrorType {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
+        // Removed redundant check here to avoid double-checking which caused false positives.
+
+        self.explain_failure_inner(source, target)
+    }
+
+    /// Resolve a `TypeQuery(SymbolRef)` type to its structural form for explain.
+    ///
+    /// Delegates to `resolve_type_query_symbol` (defined in generics.rs) which
+    /// resolves via `resolve_ref` (value-space / constructor type) first, then
+    /// falls back to `resolve_lazy` for non-class symbols (e.g., namespaces).
+    fn resolve_type_query_for_explain(&self, type_id: TypeId) -> TypeId {
+        if let Some(sym_ref) =
+            crate::type_queries::get_type_query_symbol_ref(self.interner, type_id)
+        {
+            self.resolve_type_query_symbol(sym_ref)
+                .map(|resolved| self.resolve_lazy_type(resolved))
+                .unwrap_or(type_id)
+        } else {
+            type_id
+        }
+    }
+
+    fn explain_failure_inner(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters:
+        // surface the tsc-parity TS2322 + TS5075 elaboration chain. Done
+        // before any resolution/evaluation so the user-written types
+        // appear verbatim and the IndexAccess shape isn't collapsed by
+        // evaluate_type into an opaque defer. This is the defense-in-depth
+        // path; in the common checker pipeline the inputs are evaluated
+        // before reaching here and the same elaboration is surfaced from
+        // the checker boundary.
+        if let Some(reason) = self.explain_index_access_distinct_type_param_keys(source, target) {
+            return Some(reason);
+        }
+
+        // Resolve lazy types (interfaces, type aliases) to their structural forms.
+        // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
+        // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
+        let mut resolved_source = self.resolve_lazy_type(source);
+        let mut resolved_target = self.resolve_lazy_type(target);
+
+        // Resolve TypeQuery types (typeof X) to their value-space structural forms.
+        // Without this, `typeof Namespace` types remain as TypeQuery(SymbolRef) and
+        // skip property comparison, preventing TS2741 from being emitted.
+        resolved_source = self.resolve_type_query_for_explain(resolved_source);
+        resolved_target = self.resolve_type_query_for_explain(resolved_target);
+
+        // Same-generic application (`C<A..>` vs `C<B..>`): tsc elaborates the
+        // differing type arguments directly rather than recursing into a
+        // structural property comparison. Detect this before expanding the
+        // applications below — expansion would replace them with object shapes
+        // and route into the `Types of property 'x' are incompatible.` path
+        // that tsc does not emit for same-generic argument mismatches.
+        if let Some(reason) =
+            self.explain_same_generic_type_arguments(resolved_source, resolved_target)
+        {
+            return Some(reason);
+        }
+
+        // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
+        if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved_source = self.resolve_lazy_type(expanded);
+        }
+        if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_target)
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved_target = self.resolve_lazy_type(expanded);
+        }
+
+        // TSC emits TS4104 when a readonly array/tuple is assigned to a mutable
+        // array/tuple target. This check must happen before structural analysis —
+        // readonly-to-mutable is the primary failure reason and short-circuits further
+        // elaboration. When the target is a type parameter (not a concrete
+        // array/tuple), the short-circuit depends on the source: readonly plain
+        // arrays may still produce TS4104 via the existing constraint heuristic,
+        // but a readonly source whose inner is a *tuple* (e.g. `readonly [...T]`)
+        // must fall through to structural analysis so the tsc-parity TS2322 path
+        // can report it — see variadicTuples1.ts:160 where `t: T` (target is a
+        // type parameter) gets TS2322, while `m: [...T]` on line 162 gets TS4104.
+        if let Some(readonly_source_inner) = readonly_inner_type(self.interner, resolved_source)
+            && readonly_inner_type(self.interner, resolved_target).is_none()
+        {
+            let is_mutable_array_or_tuple = array_element_type(self.interner, resolved_target)
+                .is_some()
+                || tuple_list_id(self.interner, resolved_target).is_some();
+            let source_inner_is_tuple =
+                tuple_list_id(self.interner, readonly_source_inner).is_some();
+            let is_type_param_with_array_constraint = !is_mutable_array_or_tuple
+                && !source_inner_is_tuple
+                && is_type_parameter(self.interner, resolved_target)
+                && crate::visitor::type_param_info(self.interner, resolved_target)
+                    .and_then(|info| info.constraint)
+                    .is_some_and(|constraint| {
+                        let resolved_constraint = self.resolve_lazy_type(constraint);
+                        array_element_type(self.interner, resolved_constraint).is_some()
+                            || tuple_list_id(self.interner, resolved_constraint).is_some()
+                    });
+            if is_mutable_array_or_tuple || is_type_param_with_array_constraint {
+                return Some(SubtypeFailureReason::ReadonlyToMutableAssignment {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+
+        // TSC emits TS2322 (generic "not assignable") instead of TS2741/TS2739
+        // when the target type is an intersection. Intersection types combine
+        // constraints from multiple sources, so drilling into individual member
+        // properties is misleading. Return TypeMismatch so the checker emits TS2322.
+        // Check BEFORE evaluate_type, which may merge intersection members into
+        // a single object, losing the intersection information.
+        if crate::visitor::intersection_list_id(self.interner, resolved_target).is_some() {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Evaluate meta-types (Mapped, Conditional, KeyOf, etc.) to structural forms.
+        // Application expansion may produce a Mapped type (e.g., Required<Foo> →
+        // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete
+        // object type so property enumeration can generate TS2739/TS2741 diagnostics.
+        let eval_source = self.evaluate_type(resolved_source);
+        if eval_source != resolved_source {
+            resolved_source = eval_source;
+        }
+        let eval_target = self.evaluate_type(resolved_target);
+        if eval_target != resolved_target {
+            resolved_target = eval_target;
+        }
+
+        if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
+            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &shape.properties,
+                    None,
+                    &t_shape.properties,
+                );
+            }
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                let source_kind = self.apparent_primitive_kind(resolved_source);
+                let has_string_index = t_shape.string_index.is_some();
+                let has_number_index = t_shape.number_index.is_some();
+                let allow_indexed_structural = !has_string_index
+                    && (!has_number_index || source_kind == Some(IntrinsicKind::String));
+                if !allow_indexed_structural {
+                    return Some(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    });
+                }
+                return self.explain_indexed_object_failure(source, target, &shape, None, &t_shape);
+            }
+        }
+
+        // Handle `object` intrinsic (non-primitive type) as source when target is an object.
+        // `object` has no own properties, so all required target properties are "missing".
+        // This produces TS2741/TS2739 instead of generic TS2322.
+        if resolved_source == TypeId::OBJECT
+            || intrinsic_kind(self.interner, resolved_source) == Some(IntrinsicKind::Object)
+        {
+            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_object_failure(source, target, &[], None, &t_shape.properties);
+            }
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_indexed_object_failure(
+                    source,
+                    target,
+                    &ObjectShape::default(),
+                    None,
+                    &t_shape,
+                );
+            }
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, resolved_source),
+            object_shape_id(self.interner, resolved_target),
+        ) {
+            let s_props = self.collect_source_properties(resolved_source);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_object_failure(
+                source,
+                target,
+                &s_props,
+                Some(s_shape_id),
+                &t_shape.properties,
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, resolved_source),
+            object_with_index_shape_id(self.interner, resolved_target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_indexed_object_failure(
+                source,
+                target,
+                &s_shape,
+                Some(s_shape_id),
+                &t_shape,
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, resolved_source),
+            object_shape_id(self.interner, resolved_target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_object_with_index_to_object_failure(
+                source,
+                target,
+                &s_shape,
+                s_shape_id,
+                &t_shape.properties,
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, resolved_source),
+            object_with_index_shape_id(self.interner, resolved_target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_indexed_object_failure(
+                source,
+                target,
+                &s_shape,
+                Some(s_shape_id),
+                &t_shape,
+            );
+        }
+
+        // Intersection source vs object target: collect merged properties from all
+        // object-like members of the intersection, then check for missing properties.
+        // This produces TS2739/TS2741 for branded/intersection types like
+        // `number & { __brand: T }` assigned to an object type.
+        if crate::visitor::intersection_list_id(self.interner, resolved_source).is_some() {
+            let t_shape_id = object_shape_id(self.interner, resolved_target)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
+            if let Some(t_sid) = t_shape_id {
+                let collected = crate::objects::collect_properties(
+                    resolved_source,
+                    self.interner,
+                    self.resolver,
+                );
+                if let crate::objects::PropertyCollectionResult::Properties { properties, .. } =
+                    collected
+                {
+                    let t_shape = self.interner.object_shape(t_sid);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &properties,
+                        None,
+                        &t_shape.properties,
+                    );
+                }
+            }
+        }
+
+        // Object source vs array target: resolve Array<T> to its interface properties
+        // and find missing members. TSC emits TS2740 here (missing properties from array).
+        if let Some(t_elem) = array_element_type(self.interner, resolved_target) {
+            let s_shape_id = object_shape_id(self.interner, resolved_source)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_source));
+            if let Some(s_sid) = s_shape_id
+                && let Some(array_base) = self.resolver.get_array_base_type()
+            {
+                let params = self.resolver.get_array_base_type_params();
+                let instantiated = if params.is_empty() {
+                    array_base
+                } else {
+                    let subst = TypeSubstitution::from_args(self.interner, params, &[t_elem]);
+                    instantiate_type(self.interner, array_base, &subst)
+                };
+                let resolved_inst = self.resolve_lazy_type(instantiated);
+                // The Array interface may resolve to an object shape or a callable shape
+                // (with properties like length, push, concat, etc.)
+                let s_shape = self.interner.object_shape(s_sid);
+                if let Some(t_obj_sid) = object_shape_id(self.interner, resolved_inst)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
+                {
+                    let t_shape = self.interner.object_shape(t_obj_sid);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &s_shape.properties,
+                        Some(s_sid),
+                        &t_shape.properties,
+                    );
+                }
+                // Array interface resolved to a callable shape — use its properties
+                if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
+                    let callable = self.interner.callable_shape(callable_sid);
+                    if !callable.properties.is_empty() {
+                        return self.explain_object_failure(
+                            source,
+                            target,
+                            &s_shape.properties,
+                            Some(s_sid),
+                            &callable.properties,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Array source vs Object target: resolve Array<T> to its interface properties
+        // and find missing members. TSC emits TS2739/TS2741 here.
+        if let Some(s_elem) = array_element_type(self.interner, resolved_source) {
+            let t_shape_id = object_shape_id(self.interner, resolved_target)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
+            if let Some(t_sid) = t_shape_id
+                && let Some(array_base) = self.resolver.get_array_base_type()
+            {
+                let params = self.resolver.get_array_base_type_params();
+                let instantiated = if params.is_empty() {
+                    array_base
+                } else {
+                    let subst = TypeSubstitution::from_args(self.interner, params, &[s_elem]);
+                    instantiate_type(self.interner, array_base, &subst)
+                };
+                let resolved_inst = self.resolve_lazy_type(instantiated);
+                // The Array interface may resolve to an object shape or a callable shape
+                let t_shape = self.interner.object_shape(t_sid);
+                if let Some(s_obj_sid) = object_shape_id(self.interner, resolved_inst)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
+                {
+                    let s_shape = self.interner.object_shape(s_obj_sid);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &s_shape.properties,
+                        Some(s_obj_sid),
+                        &t_shape.properties,
+                    );
+                }
+                if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
+                    let callable = self.interner.callable_shape(callable_sid);
+                    if !callable.properties.is_empty() {
+                        return self.explain_object_failure(
+                            source,
+                            target,
+                            &callable.properties,
+                            None,
+                            &t_shape.properties,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let (Some(s_fn_id), Some(t_fn_id)) = (
+            function_shape_id(self.interner, source),
+            function_shape_id(self.interner, target),
+        ) {
+            let s_fn = self.interner.function_shape(s_fn_id);
+            let t_fn = self.interner.function_shape(t_fn_id);
+            return self.explain_function_failure(&s_fn, &t_fn);
+        }
+
+        if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
+            let t_callable = self.interner.callable_shape(t_callable_id);
+            let source_intersection_members =
+                crate::type_queries::data::get_intersection_members(self.interner, resolved_source);
+            let prefer_property_failure = !t_callable.properties.is_empty()
+                && !self.callable_properties_are_only_function_members(&t_callable.properties);
+            if !prefer_property_failure && !t_callable.call_signatures.is_empty() {
+                if let Some(s_fn_id) = function_shape_id(self.interner, resolved_source) {
+                    let s_fn = self.interner.function_shape(s_fn_id);
+                    if let Some(reason) =
+                        self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+
+                if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
+                    let s_callable = self.interner.callable_shape(s_callable_id);
+                    if let Some(reason) = self
+                        .explain_callable_to_callable_signature_failure(&s_callable, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+
+                if let Some(members) = &source_intersection_members {
+                    for member in members.iter() {
+                        if let Some(s_fn_id) = function_shape_id(self.interner, *member) {
+                            let s_fn = self.interner.function_shape(s_fn_id);
+                            if let Some(reason) =
+                                self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                            {
+                                return Some(reason);
+                            }
+                        }
+                        if let Some(s_callable_id) = callable_shape_id(self.interner, *member) {
+                            let s_callable = self.interner.callable_shape(s_callable_id);
+                            if let Some(reason) = self
+                                .explain_callable_to_callable_signature_failure(
+                                    &s_callable,
+                                    &t_callable,
+                                )
+                            {
+                                return Some(reason);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Emit TS2741/TS2739 for missing properties instead of generic TS2322.
+            if !t_callable.properties.is_empty() {
+                let source_props: Vec<PropertyInfo> = if let Some(s_callable_id) =
+                    callable_shape_id(self.interner, resolved_source)
+                {
+                    self.interner
+                        .callable_shape(s_callable_id)
+                        .properties
+                        .clone()
+                } else if let Some(s_shape_id) = object_shape_id(self.interner, resolved_source) {
+                    self.interner.object_shape(s_shape_id).properties.clone()
+                } else if source_intersection_members.is_some() {
+                    match crate::objects::collect_properties(
+                        resolved_source,
+                        self.interner,
+                        self.resolver,
+                    ) {
+                        crate::objects::PropertyCollectionResult::Properties {
+                            properties, ..
+                        } => properties,
+                        _ => vec![],
+                    }
+                } else {
+                    vec![]
+                };
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &source_props,
+                    None,
+                    &t_callable.properties,
+                );
+            }
+        }
+
+        // Callable source vs Object target: when a callable type is assigned to an
+        // object type, check for missing properties to produce TS2741/TS2739 instead
+        // of generic TS2322.
+        //
+        // This applies to all callable types (functions, methods, constructors).
+        // When a function is assigned to an object type, we should report which
+        // properties are missing (TS2741/TS2739) rather than just saying it's not
+        // assignable (TS2322).
+        if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
+            let s_callable = self.interner.callable_shape(s_callable_id);
+            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_target))
+            {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &s_callable.properties,
+                    None,
+                    &t_shape.properties,
+                );
+            }
+        }
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            array_element_type(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            if !self.check_subtype(s_elem, t_elem).is_true() {
+                // Recurse into the element failure so the rendered chain carries
+                // the inner reason (matching tsc, which walks an array element
+                // exactly like a single-element tuple / numerically keyed
+                // property: `number[][]` -> `string[][]` peels one array level
+                // at a time, `{ b: T }[]` drills into the offending property).
+                let nested_reason = self.explain_failure(s_elem, t_elem).map(Box::new);
+                return Some(SubtypeFailureReason::ArrayElementMismatch {
+                    source_element: s_elem,
+                    target_element: t_elem,
+                    nested_reason,
+                });
+            }
+            return None;
+        }
+
+        // Object-with-index source vs Tuple target: check for missing numeric properties.
+        // When an array-like object type (e.g., interface StrNum extends Array { 0: string; ... })
+        // is assigned to a tuple type (e.g., [number, number, number]), detect missing
+        // required numeric index properties and produce TS2741 instead of generic TS2322.
+        // Only applies to types with index signatures (array-like); plain object types without
+        // index signatures fall through to the generic TypeMismatch path, matching tsc behavior.
+        if let Some(t_tuple_id) = tuple_list_id(self.interner, resolved_target)
+            && let Some(s_sid) = object_with_index_shape_id(self.interner, resolved_source)
+        {
+            let t_elems = self.interner.tuple_list(t_tuple_id);
+            let s_shape = self.interner.object_shape(s_sid);
+            let mut missing_props: Vec<tsz_common::interner::Atom> = Vec::new();
+            for (i, t_elem) in t_elems.iter().enumerate() {
+                if t_elem.is_required() {
+                    let prop_name = self.interner.intern_string(&i.to_string());
+                    let has_prop = s_shape.properties.iter().any(|p| p.name == prop_name);
+                    if !has_prop {
+                        missing_props.push(prop_name);
+                    }
+                }
+            }
+            if missing_props.len() > 1 {
+                return Some(SubtypeFailureReason::MissingProperties {
+                    property_names: missing_props,
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            if missing_props.len() == 1 {
+                return Some(SubtypeFailureReason::MissingProperty {
+                    property_name: missing_props[0],
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+
+        if let (Some(s_elems), Some(t_elems)) = (
+            tuple_list_id(self.interner, source),
+            tuple_list_id(self.interner, target),
+        ) {
+            let s_elems = self.interner.tuple_list(s_elems);
+            let t_elems = self.interner.tuple_list(t_elems);
+            return self.explain_tuple_failure(&s_elems, &t_elems);
+        }
+
+        if union_list_id(self.interner, resolved_target).is_some() {
+            // Prefer the original target's union members so member display keeps
+            // user-facing aliases (e.g. an identity mapped type `Mapped<B>` that
+            // structurally simplifies to `B` in `resolved_target` must still
+            // render as `Mapped<B>` in the elaboration, matching tsc). Fall back
+            // to the resolved union when the target is itself a lazy alias.
+            let members_id = union_list_id(self.interner, target)
+                .or_else(|| union_list_id(self.interner, resolved_target))
+                .expect("resolved_target is a union");
+            let members = self.interner.type_list(members_id);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
+            let source_members = union_list_id(self.interner, resolved_source)
+                .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+                .unwrap_or_else(|| vec![resolved_source]);
+
+            // Application-shaped comparison (e.g. assigning to `Foo<X>` that
+            // resolves to a union): tsc collapses the elaboration to a direct
+            // missing-property line against the application target rather than
+            // the structural union members, so keep that first-failing-member
+            // behavior here.
+            if application_shaped_comparison {
+                for &member in members.iter() {
+                    if self.check_subtype(resolved_source, member).is_true() {
+                        continue;
+                    }
+                    for &source_member in &source_members {
+                        if self.check_subtype(source_member, member).is_true() {
+                            continue;
+                        }
+                        let member_reason = self.explain_failure_guarded(source_member, member);
+                        let missing_property = match member_reason {
+                            Some(SubtypeFailureReason::MissingProperty {
+                                property_name, ..
+                            }) => Some(property_name),
+                            Some(SubtypeFailureReason::MissingProperties {
+                                property_names,
+                                ..
+                            }) => property_names.first().copied(),
+                            _ => None,
+                        };
+                        if let Some(property_name) = missing_property {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                    }
+                }
+                return Some(SubtypeFailureReason::NoUnionMemberMatches {
+                    source_type: source,
+                    target_union_members: members.to_vec(),
+                });
+            }
+
+            // Structural union target: select the best-matching member the way
+            // tsc's `getBestMatchingType` -> `findMostOverlappyType` does — the
+            // member sharing the most property-name keys with the source, ties
+            // broken by the *last* such member (tsc compares overlap with `>=`).
+            // Any case where a discriminant would prefer a different member than
+            // overlap necessarily carries an excess property, which surfaces as
+            // the separate TS2353 elaboration, so overlap selection is faithful
+            // for the missing-property path handled here.
+            let source_names = self.object_like_property_names(resolved_source);
+            let mut best_member: Option<TypeId> = None;
+            let mut best_overlap = 0usize;
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                let overlap = if source_names.is_empty() {
+                    0
+                } else {
+                    let member_names = self.object_like_property_names(member);
+                    source_names
+                        .iter()
+                        .filter(|name| member_names.contains(name))
+                        .count()
+                };
+                if best_member.is_none() || overlap >= best_overlap {
+                    best_overlap = overlap;
+                    best_member = Some(member);
+                }
+            }
+
+            // Elaborate against the best member, but only when its failure is a
+            // missing required property. Property-type mismatches and excess
+            // properties on object literals are reported by the checker's
+            // object-literal elaboration at the offending property's location;
+            // surfacing the bare union line keeps parity for those.
+            if let Some(member) = best_member {
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    if let Some(
+                        reason @ (SubtypeFailureReason::MissingProperty { .. }
+                        | SubtypeFailureReason::MissingProperties { .. }),
+                    ) = self.explain_failure_guarded(source_member, member)
+                    {
+                        return Some(SubtypeFailureReason::UnionTargetMismatch {
+                            source_type: source,
+                            target_type: target,
+                            member_type: member,
+                            nested_reason: Box::new(reason),
+                        });
+                    }
+                }
+            }
+
+            return Some(SubtypeFailureReason::NoUnionMemberMatches {
+                source_type: source,
+                target_union_members: members.to_vec(),
+            });
+        }
+
+        if let (Some(s_kind), Some(t_kind)) = (
+            intrinsic_kind(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            if s_kind != t_kind {
+                return Some(SubtypeFailureReason::IntrinsicTypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            return None;
+        }
+
+        if literal_value(self.interner, source).is_some()
+            && literal_value(self.interner, target).is_some()
+        {
+            return Some(SubtypeFailureReason::LiteralTypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        if let (Some(lit), Some(t_kind)) = (
+            literal_value(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            let compatible = match lit {
+                LiteralValue::String(_) => t_kind == IntrinsicKind::String,
+                LiteralValue::Number(_) => t_kind == IntrinsicKind::Number,
+                LiteralValue::BigInt(_) => t_kind == IntrinsicKind::Bigint,
+                LiteralValue::Boolean(_) => t_kind == IntrinsicKind::Boolean,
+            };
+            if !compatible {
+                return Some(SubtypeFailureReason::LiteralTypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            return None;
+        }
+
+        if intrinsic_kind(self.interner, source).is_some()
+            && literal_value(self.interner, target).is_some()
+        {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Union source: the relation failed, so at least one member is not
+        // assignable to the target. tsc keeps the root mismatch visible by
+        // elaborating the first failing member beneath the union-to-target line
+        // (`Type 'A | B' is not assignable to type 'T'.` -> `Type 'B' is not
+        // assignable to type 'T'.`). Without this, the chain stops at the bare
+        // union line and hides why the assignment fails (e.g. the `undefined`
+        // member contributed by an optional property).
+        if let Some(member_list) = union_list_id(self.interner, resolved_source) {
+            let members = self.interner.type_list(member_list);
+            for &member in members.iter() {
+                if member == source || member == resolved_source {
+                    // Defensive: avoid self-recursion on a degenerate union.
+                    continue;
+                }
+                if self.check_subtype(member, target).is_true() {
+                    continue;
+                }
+                // Elaborate the first failing member beneath the union-to-target
+                // line, mirroring tsc which always drills into that member. Each
+                // arm below is a member-failure reason whose render composes
+                // under the union line:
+                //   * leaf relations, property summaries
+                //     (`MissingProperty`/`MissingProperties`), and the
+                //     array-element and readonly-to-mutable reasons self-head —
+                //     their rendered line already names the member
+                //     (`Property 'a' is missing in type '{ b: 2; }' …`,
+                //     `Type 'number[]' is not assignable to type 'string[]' …`,
+                //     `The type 'readonly [number]' is 'readonly' …`).
+                //   * the tuple/property element-type, index-signature, and
+                //     function-return mismatches are header-led; the union-source
+                //     renderer supplies the `Type 'M' is not assignable to type
+                //     'T'.` member header before drilling (`Type at position 0 …`
+                //     / `Types of property 'p' …` / `'string' index signatures are
+                //     incompatible.` / the bare return-relation leaf).
+                //   * `ParameterTypeMismatch` self-heads with the signature
+                //     relation line at depth >= 1, so the renderer routes it
+                //     through the self-heading path (its own first line doubles as
+                //     the member header), then drills `Types of parameters 'a' and
+                //     'b' are incompatible.` + the contravariant leaf.
+                // Without this the chain collapses to the bare union-to-target
+                // line and hides which member fails.
+                //
+                // The set is intentionally limited to member-failure shapes whose
+                // render composes exactly with `tsc` here. Notably excluded:
+                //   * `TupleElementMismatch` (fixed-arity count mismatch) — its
+                //     nested `TS2618`/`TS2619` (`Source has N element(s) but
+                //     target requires/allows only M`) leaf render is owned
+                //     separately; surfacing it before that lands emits a non-tsc
+                //     line.
+                //   * `OptionalPropertyRequired`/`ReadonlyPropertyMismatch` — `tsc`
+                //     leads these with the member header (and they only arise in
+                //     narrow `exactOptionalPropertyTypes` / readonly-index shapes),
+                //     so they need the header-led path, not this self-heading one.
+                let nested = self.explain_failure_guarded(member, target);
+                if let Some(nested) = nested
+                    && matches!(
+                        nested,
+                        SubtypeFailureReason::TypeMismatch { .. }
+                            | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                            | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                            | SubtypeFailureReason::MissingProperty { .. }
+                            | SubtypeFailureReason::MissingProperties { .. }
+                            | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::PropertyTypeMismatch { .. }
+                            | SubtypeFailureReason::ArrayElementMismatch { .. }
+                            | SubtypeFailureReason::IndexSignatureMismatch { .. }
+                            | SubtypeFailureReason::ReturnTypeMismatch { .. }
+                            | SubtypeFailureReason::ParameterTypeMismatch { .. }
+                            | SubtypeFailureReason::ReadonlyToMutableAssignment { .. }
+                    )
+                {
+                    return Some(SubtypeFailureReason::UnionSourceMismatch {
+                        source_type: source,
+                        target_type: target,
+                        member_type: member,
+                        nested_reason: Box::new(nested),
+                    });
+                }
+                break;
+            }
+        }
+
+        // Conditional types that survived `evaluate_type` (i.e. deferred
+        // conditionals like `T extends U ? X : Y` where `T` is a type
+        // parameter) are not handled by any structural shape arm above and
+        // would otherwise collapse to the bare `TypeMismatch` fallback,
+        // hiding the actual branch-level relation failure.
+        //
+        // The structural rule, applicable on either side: a relation
+        // involving a deferred conditional fails exactly when at least one
+        // of its branches fails the corresponding branch relation. Surface
+        // that failing branch as a `ConditionalBranchMismatch` carrying the
+        // nested branch reason so the diagnostic chain stays intact.
+        if let Some(reason) = self.explain_conditional_branch_failure(
+            source,
+            target,
+            resolved_source,
+            resolved_target,
+        ) {
+            return Some(reason);
+        }
+
+        Some(SubtypeFailureReason::TypeMismatch {
+            source_type: source,
+            target_type: target,
+        })
+    }
+
+    /// Detect a deferred-conditional-shaped relation failure and surface the
+    /// failing branch as a `ConditionalBranchMismatch`.
+    ///
+    /// Applies to the three structural shapes:
+    ///
+    /// 1. **Concrete source vs deferred-conditional target** —
+    ///    `S <: (T extends U ? X : Y)`. Strategy 2 of
+    ///    `subtype_of_conditional_target` requires `S <: X` *and* `S <: Y`;
+    ///    when the relation has already failed, the failing branch is the
+    ///    one for which `check_subtype` returns false. Surface that branch.
+    /// 2. **Deferred-conditional source vs concrete target** —
+    ///    `(T extends U ? X : Y) <: T'`. Strategy 2 of
+    ///    `conditional_branches_subtype` requires `X <: T'` *and* `Y <: T'`;
+    ///    pick the first failing branch.
+    /// 3. **Conditional source vs conditional target** with matching extends
+    ///    shape — both `X <: X'` and `Y <: Y'` must hold; pick the first
+    ///    failing branch pair.
+    ///
+    /// True-branch failures are reported before false-branch failures so the
+    /// elaboration order is stable across runs and matches the textual
+    /// reading order of `T extends U ? X : Y`.
+    fn explain_conditional_branch_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        resolved_source: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        use crate::type_queries::data::get_conditional_type;
+
+        // Pick the branch pairs once based on which side is conditional. The
+        // three structural shapes all reduce to "try (true-pair, false-pair)
+        // in order", so iteration is identical regardless of side. When a
+        // side is not a conditional, the same resolved type sits in both
+        // branch slots, so the corresponding `(resolved_X, branch_Y)` pair
+        // falls out of the same construction.
+        //
+        // When neither side is a conditional there is nothing to surface and
+        // we fall back to the caller's `TypeMismatch`.
+        let source_cond = get_conditional_type(self.interner, resolved_source);
+        let target_cond = get_conditional_type(self.interner, resolved_target);
+        if source_cond.is_none() && target_cond.is_none() {
+            return None;
+        }
+
+        let (s_true, s_false) = source_cond
+            .as_deref()
+            .map_or((resolved_source, resolved_source), |s| {
+                (s.true_type, s.false_type)
+            });
+        let (t_true, t_false) = target_cond
+            .as_deref()
+            .map_or((resolved_target, resolved_target), |t| {
+                (t.true_type, t.false_type)
+            });
+        let pairs = [(s_true, t_true), (s_false, t_false)];
+
+        for (branch_source, branch_target) in pairs {
+            if let Some(reason) =
+                self.conditional_branch_reason(source, target, branch_source, branch_target)
+            {
+                return Some(reason);
+            }
+        }
+        None
+    }
+
+    /// Build a `ConditionalBranchMismatch` if the branch relation
+    /// `branch_source <: branch_target` actually fails. Returns `None` when
+    /// the branch relation succeeds (so the caller can try the other
+    /// branch) or when the branch pair would re-enter the outer relation —
+    /// a self-referential conditional whose branch reinterns to the outer
+    /// `(source, target)` pair would otherwise recurse indefinitely back
+    /// into the same explain query.
+    fn conditional_branch_reason(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        branch_source: TypeId,
+        branch_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        if branch_source == branch_target {
+            return None;
+        }
+        if branch_source == source && branch_target == target {
+            return None;
+        }
+        if self.check_subtype(branch_source, branch_target).is_true() {
+            return None;
+        }
+        let nested = self.explain_failure_guarded(branch_source, branch_target)?;
+        Some(SubtypeFailureReason::ConditionalBranchMismatch {
+            source_type: source,
+            target_type: target,
+            branch_source,
+            branch_target,
+            nested_reason: Box::new(nested),
+        })
+    }
+
+    /// Detect `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+    /// and the object types resolve to the same underlying shape. Returns
+    /// the failure reason that elaborates the TS2322 + TS5075 chain.
+    ///
+    /// Independent of identifier names by construction: operates over
+    /// TypeId shapes, not surface text. Two object halves are accepted
+    /// as "the same object" when they share a TypeId, share their
+    /// resolved Lazy unwrap, or when `source <: target` holds — the
+    /// elaboration is the right shape whenever the source object is
+    /// assignable to the target object, even if `target <: source`
+    /// does not also hold.
+    fn explain_index_access_distinct_type_param_keys(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let (s_obj, s_idx) = crate::visitor::index_access_parts(self.interner, source)?;
+        let (t_obj, t_idx) = crate::visitor::index_access_parts(self.interner, target)?;
+        let same_object = s_obj == t_obj
+            || self.resolve_lazy_type(s_obj) == self.resolve_lazy_type(t_obj)
+            || self.check_subtype(s_obj, t_obj).is_true();
+        if !same_object {
+            return None;
+        }
+        self.index_access_distinct_type_param_keys_failure_reason(s_idx, t_idx)
+    }
+
+    /// Explain why an object type assignment failed.
+    fn explain_object_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_props: &[PropertyInfo],
+        source_shape_id: Option<ObjectShapeId>,
+        target_props: &[PropertyInfo],
+    ) -> Option<SubtypeFailureReason> {
+        // First pass: collect all missing required property names.
+        // tsc emits TS2739 (multiple missing) or TS2741 (single missing) before
+        // checking property type compatibility.
+        // Collect with declaration_order so we can sort by source order (tsc lists
+        // missing properties in declaration order, not Atom/hash order).
+        // For class inheritance, we need to show own properties first, then inherited.
+        let target_symbol = get_object_symbol(self.interner, target);
+        let mut missing_with_order: Vec<(
+            tsz_common::interner::Atom,
+            u32,
+            Option<tsz_binder::SymbolId>,
+        )> = Vec::new();
+        let mut seen_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            rustc_hash::FxHashSet::default();
+        for t_prop in target_props {
+            if !t_prop.optional {
+                let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
+                if s_prop.is_none() && seen_names.insert(t_prop.name) {
+                    missing_with_order.push((
+                        t_prop.name,
+                        t_prop.declaration_order,
+                        t_prop.parent_id,
+                    ));
+                }
+            }
+        }
+        missing_with_order.sort_by(
+            |(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
+                let name_order = || {
+                    self.interner
+                        .resolve_atom_ref(*left_name)
+                        .cmp(&self.interner.resolve_atom_ref(*right_name))
+                };
+                // For class types, own properties (where parent_id matches the target symbol)
+                // should come before inherited properties
+                let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
+                let right_is_own = target_symbol.is_some() && *right_parent == target_symbol;
+
+                match (left_is_own, right_is_own) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    (true, true) => {
+                        // When both are own properties of the target, tsc lists
+                        // them in source-declaration order. Genuine source
+                        // members carry non-zero `declaration_order`, so sort
+                        // by it. Synthesized members (e.g. class `prototype`)
+                        // carry `declaration_order == 0` and stay first via
+                        // the (false, true) tie-break below; stable `sort_by`
+                        // preserves their relative order.
+                        match (*left_order > 0, *right_order > 0) {
+                            (true, true) => {
+                                return left_order.cmp(right_order).then_with(name_order);
+                            }
+                            (false, true) => return std::cmp::Ordering::Less,
+                            (true, false) => return std::cmp::Ordering::Greater,
+                            (false, false) => return std::cmp::Ordering::Equal,
+                        }
+                    }
+                    (false, false) => {}
+                }
+
+                // Inherited-on-both-sides path: fall through to declaration_order
+                // (1-based) comparison, with alphabetic tie-break for synthesized
+                // properties. This preserves the prior interface-merge ordering.
+                match (*left_order > 0, *right_order > 0) {
+                    (true, true) => left_order.cmp(right_order).then_with(name_order),
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (false, false) => name_order(),
+                }
+            },
+        );
+        let has_non_symbol_missing = missing_with_order
+            .iter()
+            .any(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
+        if !has_non_symbol_missing {
+            // All missing properties are late-bound symbols (e.g. [Symbol.iterator]).
+            // tsc does not list symbol-only missing properties in TS2739/TS2741 messages;
+            // clear so we fall through to property type checking or TypeMismatch.
+            missing_with_order.clear();
+        } else if matches!(
+            crate::type_queries::extended::classify_array_like(self.interner, target),
+            crate::type_queries::extended::ArrayLikeKind::Array(_)
+                | crate::type_queries::extended::ArrayLikeKind::Tuple
+                | crate::type_queries::extended::ArrayLikeKind::Readonly(_)
+        ) {
+            // For array-like targets, tsc treats `[Symbol.iterator]` /
+            // `[Symbol.unscopables]` as implicitly satisfied by any object
+            // source (via the iteration protocol fallback), and omits them
+            // from the TS2739/TS2740 missing list. Keep this behavior so that
+            // e.g. `Type 'I1' is missing the following properties from type
+            // 'any[]': length, pop, push, concat, and 25 more` — not 27.
+            missing_with_order
+                .retain(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
+        }
+        // For non-array targets (e.g. `ArrayConstructor`), tsc lists both named
+        // and symbol-keyed properties in TS2739/TS2741 (e.g. `isArray, from,
+        // of, [Symbol.species]`). Keep the full list in that case.
+
+        // tsc treats `prototype` as implicit on callable sources (any function
+        // or class value has a `.prototype` in JS), so it never lists it as a
+        // missing property — even when comparing a plain function type against
+        // an interface like `ArrayConstructor` that declares `prototype`.
+        // Strip it here if the source has call or construct signatures.
+        if !missing_with_order.is_empty() && self.type_has_callable_signature(source) {
+            let prototype_atom = self.interner.intern_string("prototype");
+            missing_with_order.retain(|(name, _, _)| *name != prototype_atom);
+        }
+        let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+
+        if missing_props.len() > 1 {
+            return Some(SubtypeFailureReason::MissingProperties {
+                property_names: missing_props,
+                source_type: source,
+                target_type: target,
+            });
+        }
+        if missing_props.len() == 1 {
+            return Some(SubtypeFailureReason::MissingProperty {
+                property_name: missing_props[0],
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Second pass: check property type compatibility
+        for t_prop in target_props {
+            let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
+
+            if let Some(sp) = s_prop {
+                // Check nominal identity for private/protected properties.
+                // `protected` is hierarchical (shared `nominal_member_origin_ok`).
+                if t_prop.visibility != Visibility::Public {
+                    if !self.nominal_member_origin_ok(
+                        sp.parent_id,
+                        t_prop.parent_id,
+                        t_prop.visibility,
+                    ) {
+                        return Some(SubtypeFailureReason::PropertyNominalMismatch {
+                            property_name: t_prop.name,
+                        });
+                    }
+                }
+                // Cannot assign private/protected source to public target
+                else if sp.visibility != Visibility::Public {
+                    return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
+                        property_name: t_prop.name,
+                        source_visibility: sp.visibility,
+                        target_visibility: t_prop.visibility,
+                    });
+                }
+
+                // Check property type compatibility first.
+                //
+                // The optional-vs-required message (TS2327) only applies when the
+                // property *types* are otherwise compatible, so optionality is the
+                // sole reason the relation fails. When the read types are themselves
+                // incompatible (e.g. `{a?: number}` vs `{a: number}`, where the
+                // optional source contributes `number | undefined` that is not
+                // assignable to `number`), tsc reports the type-incompatibility chain
+                // ("Types of property 'a' are incompatible." -> root mismatch) and
+                // does *not* collapse it to the optional/required line. Emitting
+                // TS2327 before this check would hide that root mismatch.
+                let source_type = self.optional_property_type(sp);
+                let target_type = self.optional_property_type(t_prop);
+                let allow_bivariant = sp.is_method || t_prop.is_method;
+                if !self
+                    .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
+                    .is_true()
+                {
+                    let nested = self.explain_failure_with_method_variance(
+                        source_type,
+                        target_type,
+                        allow_bivariant,
+                    );
+                    return Some(SubtypeFailureReason::PropertyTypeMismatch {
+                        property_name: t_prop.name,
+                        source_property_type: source_type,
+                        target_property_type: target_type,
+                        nested_reason: nested.map(Box::new),
+                    });
+                }
+
+                // Read types are compatible: now optionality presence is the only
+                // remaining incompatibility (TS2327). This also covers
+                // `{a?: T}` vs `{a: T | undefined}` and exactOptionalPropertyTypes,
+                // where the read types match but the source may still be absent.
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
+                    });
+                }
+                if !t_prop.readonly
+                    && !sp.readonly
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
+                {
+                    let source_write = self.optional_property_write_type(sp);
+                    let target_write = self.optional_property_write_type(t_prop);
+                    if !self
+                        .check_subtype_with_method_variance(
+                            target_write,
+                            source_write,
+                            allow_bivariant,
+                        )
+                        .is_true()
+                    {
+                        let nested = self.explain_failure_with_method_variance(
+                            target_write,
+                            source_write,
+                            allow_bivariant,
+                        );
+                        return Some(SubtypeFailureReason::PropertyTypeMismatch {
+                            property_name: t_prop.name,
+                            source_property_type: source_write,
+                            target_property_type: target_write,
+                            nested_reason: nested.map(Box::new),
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Build the `IndexSignatureMismatch` reason for a failing index-to-index or
+    /// property-to-index check, applying the `MissingProperty` priority rule:
+    /// when the nested failure is `MissingProperty` or `MissingProperties`,
+    /// bubble it up directly so the diagnostic reports the missing property
+    /// rather than wrapping it in an index-signature incompatibility.
+    fn make_index_sig_reason(
+        &mut self,
+        index_kind: &'static str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let nested = self.explain_failure(source_value_type, target_value_type);
+        if matches!(
+            nested,
+            Some(
+                SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+            )
+        ) {
+            return nested;
+        }
+        Some(SubtypeFailureReason::IndexSignatureMismatch {
+            index_kind,
+            source_value_type,
+            target_value_type,
+            nested_reason: nested.map(Box::new),
+        })
+    }
+}

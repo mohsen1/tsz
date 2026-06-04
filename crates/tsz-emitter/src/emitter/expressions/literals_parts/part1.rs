@@ -1,0 +1,1478 @@
+impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_array_literal(&mut self, node: &Node) {
+        let Some(array) = self.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        if array.elements.nodes.is_empty() {
+            // Emit any comments inside the brackets (e.g., `[ /* comment */]`).
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end);
+            self.write("[");
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_pos > bracket_pos && c_end < node.end {
+                        self.write_space();
+                        if let Ok(comment_text) =
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                        {
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        }
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.write("]");
+            return;
+        }
+
+        // Preserve multi-line formatting from source.
+        // Check for newlines BETWEEN consecutive elements, not within the overall expression.
+        // This avoids treating `[, [\n...\n]]` as multi-line when only the nested array
+        // is multi-line, not the outer array's element separation.
+        let is_multiline = self.source_text.is_some_and(|text| {
+            // Check between consecutive elements for newlines
+            for i in 0..array.elements.nodes.len().saturating_sub(1) {
+                let curr = array.elements.nodes[i];
+                let next = array.elements.nodes[i + 1];
+                if let (Some(curr_node), Some(next_node)) =
+                    (self.arena.get(curr), self.arena.get(next))
+                {
+                    let curr_end = std::cmp::min(curr_node.end as usize, text.len());
+                    let next_start = std::cmp::min(next_node.pos as usize, text.len());
+                    if curr_end <= next_start && text[curr_end..next_start].contains('\n') {
+                        return true;
+                    }
+                }
+            }
+            // Also check between '[' and first element
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+            if let Some(first_node) = array
+                .elements
+                .nodes
+                .first()
+                .and_then(|&n| self.arena.get(n))
+            {
+                let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+                let start = std::cmp::min(bracket_pos, first_pos);
+                if start < first_pos && text[start..first_pos].contains('\n') {
+                    return true;
+                }
+            } else if !array.elements.nodes.is_empty() {
+                // First element is NONE (elision); only the source span up to the first
+                // top-level comma belongs to the outer array's element separation. A
+                // newline nested inside a later element must not force the outer array
+                // to multi-line, so bound the scan to the first elided element's region.
+                // `find_comma_pos_after` must start *after* the opening `[` so the array's
+                // own bracket does not raise the nesting depth.
+                let scan_end = self
+                    .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                    .map(|c| c as usize)
+                    .unwrap_or(node.end as usize);
+                let end = std::cmp::min(scan_end, text.len());
+                if bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n') {
+                    return true;
+                }
+            }
+            if self.array_last_element_has_newline_before_close(node, &array.elements.nodes) {
+                return true;
+            }
+            false
+        });
+        let has_trailing_comma = self.has_trailing_comma_in_source(node, &array.elements.nodes);
+
+        if !is_multiline {
+            // Emit any inline leading comment before the first element.
+            // e.g., `[/* comment */ 1]` or `[/* c */ a, b]`
+            // Skip for NONE-first (elision) arrays; those comments are trailing, handled below.
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end);
+            let first_elem_is_none = array
+                .elements
+                .nodes
+                .first()
+                .is_some_and(|&idx| idx.is_none());
+            let first_elem_pos = if first_elem_is_none {
+                bracket_pos + 1 // empty range → emit nothing as leading
+            } else {
+                array
+                    .elements
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.pos)
+                    .unwrap_or(node.end)
+            };
+            self.write("[");
+            self.increase_indent();
+            self.emit_unemitted_comments_between(bracket_pos + 1, first_elem_pos);
+            self.emit_comma_separated(&array.elements.nodes);
+            // Preserve trailing comma for elisions: [,,] must keep both commas
+            // Elided elements are represented as NodeIndex::NONE, not OMITTED_EXPRESSION nodes
+            if has_trailing_comma || array.elements.nodes.last().is_some_and(|idx| idx.is_none()) {
+                self.write(",");
+            }
+            // Emit any trailing inline comments between last element and ']'.
+            // e.g., `[1 /* comment */]` or `[1, /* comment */]`
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end < node.end {
+                        self.write_space();
+                        if let Ok(comment_text) =
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                        {
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        }
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.decrease_indent();
+            self.write("]");
+        } else {
+            // Check if the first element is on a new line after '[' in the source.
+            // TypeScript preserves the source formatting:
+            // - `[elem1,\n  elem2]` -> first element on same line
+            // - `[\n  elem1,\n  elem2\n]` -> first element on new line
+            let first_elem_on_new_line = self.source_text.is_some_and(|text| {
+                if let Some(first_elem) = array.elements.nodes.first() {
+                    if let Some(first_node) = self.arena.get(*first_elem) {
+                        let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                        let first_pos = first_node.pos as usize;
+                        let end = std::cmp::min(first_pos, text.len());
+                        let start = std::cmp::min(bracket_pos, end);
+                        text[start..end].contains('\n')
+                    } else {
+                        // NONE (elision) first element: only scan the first elided element's
+                        // region (up to the first top-level comma), mirroring the multiline
+                        // detection above so a newline nested in a later element does not
+                        // count as the outer array's first element being on a new line.
+                        let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                        let scan_end = self
+                            .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                            .map(|c| c as usize)
+                            .unwrap_or(node.end as usize);
+                        let end = std::cmp::min(scan_end, text.len());
+                        bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n')
+                    }
+                } else {
+                    false
+                }
+            });
+
+            if first_elem_on_new_line {
+                // Format: [\n  elem1,\n  elem2\n]
+                //
+                // Key invariant: the comma separator for element i is written AFTER
+                // element i's content (and any "pre-separator" comments that precede the
+                // comma in the source).  This mirrors TypeScript's emitter which treats
+                // the separator comma as a pseudo-token with its own leading trivia.
+                self.write("[");
+                self.increase_indent();
+                let elems: Vec<_> = array.elements.nodes.to_vec();
+                let last_idx = elems.len().saturating_sub(1);
+                for (i, &elem) in elems.iter().enumerate() {
+                    let is_elision = elem.is_none();
+                    self.write_line();
+
+                    // --- Step A: emit leading comments before this element ---
+                    // Only real elements have source positions; elisions don't.
+                    if !is_elision {
+                        let actual_start = self
+                            .arena
+                            .get(elem)
+                            .map(|n| self.skip_trivia_forward(n.pos, n.end))
+                            .unwrap_or(0);
+                        if let Some(text) = self.source_text {
+                            while self.comment_emit_idx < self.all_comments.len() {
+                                let c_end = self.all_comments[self.comment_emit_idx].end;
+                                if c_end <= actual_start {
+                                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                                    if let Ok(comment_text) = crate::safe_slice::slice(
+                                        text,
+                                        c_pos as usize,
+                                        c_end as usize,
+                                    ) {
+                                        self.write_comment_with_reindent(comment_text, Some(c_pos));
+                                    }
+                                    // Determine separation from what follows (next comment or element):
+                                    // if there's a newline between this comment's end and
+                                    // actual_start, put on a new line; otherwise add a space.
+                                    let c_end_u = c_end as usize;
+                                    let gap_has_newline = c_end_u < actual_start as usize
+                                        && text[c_end_u..actual_start as usize].contains('\n');
+                                    if gap_has_newline {
+                                        self.write_line();
+                                    } else {
+                                        self.write_space();
+                                    }
+                                    self.comment_emit_idx += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Step B: emit the element ---
+                    self.emit(elem);
+
+                    // --- Step C: emit pre-separator comments then write comma ---
+                    // Only needed for non-last elements.
+                    if i < last_idx {
+                        if is_elision {
+                            // Elisions have no content; write comma directly.
+                            self.write(",");
+                        } else {
+                            // Find the separator comma in the source that follows this element.
+                            let elem_end = self.arena.end_at(elem).unwrap_or(0);
+
+                            // Some element nodes (e.g. function expressions) include the
+                            // trailing comma and whitespace in their `end` span.  In that
+                            // case, `find_comma_pos_after(elem_end, ...)` would skip the
+                            // real separator and find the NEXT comma.  Detect this by
+                            // scanning backward from `elem_end` through trivia for a comma.
+                            let comma_already_past = self.source_text.is_some_and(|text| {
+                                let bytes = text.as_bytes();
+                                let mut j = (elem_end as usize).min(bytes.len());
+                                while j > 0 {
+                                    j -= 1;
+                                    match bytes[j] {
+                                        b',' => return true,
+                                        b' ' | b'\t' | b'\n' | b'\r' => continue,
+                                        _ => return false,
+                                    }
+                                }
+                                false
+                            });
+
+                            if comma_already_past {
+                                // Comma is within the element's span – just write it.
+                                self.write(",");
+                            } else {
+                                let comma_pos = self.find_comma_pos_after(elem_end, node.end);
+                                // Emit any comments between the element's end and the comma.
+                                // A comment on its own line → write_line() before it, then ` ,`.
+                                // A same-line comment (e.g. `1 /* c */,`) → write_space(), then `,`.
+                                let mut wrote_pre_sep = false;
+                                let mut last_was_newline_comment = false;
+                                if let (Some(sep), Some(text)) = (comma_pos, self.source_text) {
+                                    while self.comment_emit_idx < self.all_comments.len() {
+                                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                                        if c_pos >= elem_end && c_end <= sep {
+                                            let preceded_by_newline =
+                                                self.comment_preceded_by_newline(c_pos);
+                                            if preceded_by_newline {
+                                                self.write_line();
+                                            } else {
+                                                self.write_space();
+                                            }
+                                            if let Ok(comment_text) = crate::safe_slice::slice(
+                                                text,
+                                                c_pos as usize,
+                                                c_end as usize,
+                                            ) {
+                                                self.write_comment_with_reindent(
+                                                    comment_text,
+                                                    Some(c_pos),
+                                                );
+                                            }
+                                            wrote_pre_sep = true;
+                                            last_was_newline_comment = preceded_by_newline;
+                                            self.comment_emit_idx += 1;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if wrote_pre_sep && last_was_newline_comment {
+                                    self.write(" ,");
+                                } else {
+                                    self.write(",");
+                                }
+                            }
+
+                            // --- Step D: emit trailing same-line comments after the comma ---
+                            // In source like `elem, // comment\n`, the comment follows the
+                            // comma on the same line.  Emit it inline so it stays on the
+                            // same output line; otherwise Step A of the next element would
+                            // place it on its own line.
+                            if let Some(text) = self.source_text {
+                                let comma_source_pos = self
+                                    .find_comma_pos_after(elem_end, node.end)
+                                    .unwrap_or(elem_end)
+                                    as usize;
+                                while self.comment_emit_idx < self.all_comments.len() {
+                                    let c_pos =
+                                        self.all_comments[self.comment_emit_idx].pos as usize;
+                                    let c_end =
+                                        self.all_comments[self.comment_emit_idx].end as usize;
+                                    // Only consider comments after the comma and on the same
+                                    // source line (no newline between comma and comment start).
+                                    if c_pos >= comma_source_pos
+                                        && c_end <= node.end as usize
+                                        && !text[comma_source_pos.min(text.len())
+                                            ..c_pos.min(text.len())]
+                                            .contains('\n')
+                                    {
+                                        self.write_space();
+                                        if let Ok(comment_text) =
+                                            crate::safe_slice::slice(text, c_pos, c_end)
+                                        {
+                                            self.write_comment_with_reindent(
+                                                comment_text,
+                                                Some(c_pos as u32),
+                                            );
+                                        }
+                                        self.comment_emit_idx += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Trailing comma for elisions (last element is None) or explicit trailing comma.
+                if has_trailing_comma
+                    || array.elements.nodes.last().is_some_and(|idx| idx.is_none())
+                {
+                    self.write(",");
+                }
+
+                // Emit any comments that appear between the last element and ']'.
+                // Same-line comments (e.g. `, /* comment */`) are written inline with a space;
+                // comments on their own line are written with write_line().
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= node.end {
+                            if self.comment_preceded_by_newline(c_pos) {
+                                self.write_line();
+                            } else {
+                                self.write_space();
+                            }
+                            if let Ok(comment_text) =
+                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                            {
+                                self.write_comment_with_reindent(comment_text, Some(c_pos));
+                            }
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                self.write_line();
+                self.decrease_indent();
+                self.write("]");
+            } else {
+                // Format: [elem1,\n  elem2,\n  elem3]
+                self.write("[");
+                self.emit(array.elements.nodes[0]);
+                self.increase_indent();
+                for &elem in &array.elements.nodes[1..] {
+                    self.write(",");
+                    self.write_line();
+                    self.emit(elem);
+                }
+                // Trailing comma for elisions
+                if has_trailing_comma
+                    || array.elements.nodes.last().is_some_and(|idx| idx.is_none())
+                {
+                    self.write(",");
+                }
+                if self.array_last_element_has_newline_before_close(node, &array.elements.nodes) {
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("]");
+            }
+        }
+    }
+
+    fn array_last_element_has_newline_before_close(
+        &self,
+        array_node: &Node,
+        elements: &[NodeIndex],
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(&last_idx) = elements.last() else {
+            return false;
+        };
+        let Some(last_node) = self.arena.get(last_idx) else {
+            return false;
+        };
+
+        let bytes = text.as_bytes();
+        let mut close = std::cmp::min(array_node.end as usize, bytes.len());
+        while close > 0 {
+            close -= 1;
+            if bytes[close] == b']' {
+                break;
+            }
+        }
+        if close <= last_node.pos as usize {
+            return false;
+        }
+
+        let last_content_end = if last_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            self.arena
+                .get_spread(last_node)
+                .and_then(|spread| self.arena.get(spread.expression))
+                .map_or(last_node.end, |expr_node| expr_node.end)
+        } else {
+            self.find_token_end_before_trivia(last_node.pos, close as u32)
+        };
+        let start = std::cmp::min(last_content_end as usize, close);
+        text[start..close].contains('\n')
+    }
+
+    pub(in crate::emitter) fn emit_object_literal(&mut self, node: &Node) {
+        let Some(obj) = self.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        if obj.elements.nodes.is_empty() {
+            if let Some((open_brace_end, close_brace_pos)) =
+                self.empty_object_literal_comment_range(node)
+            {
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                let wrote_newline =
+                    self.emit_unemitted_comments_between(open_brace_end, close_brace_pos);
+                if !wrote_newline {
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("}");
+                return;
+            }
+            self.write("{}");
+            return;
+        }
+
+        let emitted_properties: Vec<NodeIndex> = obj
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&idx| !self.should_drop_recovered_object_method_without_body(idx))
+            .collect();
+
+        if emitted_properties.is_empty() {
+            self.write("{}");
+            return;
+        }
+
+        // ES5 computed/spread lowering is handled via TransformDirective::ES5ObjectLiteral.
+        // For ES2015-ES2017 targets, object spread must be lowered to Object.assign().
+        // (ES2018+ supports native object spread syntax.)
+        {
+            use super::super::ScriptTarget;
+            let has_spread = emitted_properties.iter().any(|&idx| {
+                self.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+            });
+            let target_num = self.ctx.options.target as u32;
+            let es2018_num = ScriptTarget::ES2018 as u32;
+            if has_spread && target_num < es2018_num {
+                // Target is ES2015/ES2016/ES2017: lower to Object.assign()
+                self.emit_object_literal_with_object_assign(node, &emitted_properties);
+                if self.object_spread_has_recovered_trailing_empty_object(node, &emitted_properties)
+                {
+                    self.write(", {}");
+                }
+                return;
+            }
+        }
+
+        // Check if source had a trailing comma after the last element
+        let has_trailing_comma = obj.elements.nodes.last().copied()
+            == emitted_properties.last().copied()
+            && self.has_trailing_comma_in_source(node, &emitted_properties);
+        let has_recovered_class_member_tail =
+            self.object_literal_has_recovered_class_member_tail(node, &emitted_properties);
+
+        // Preserve single-line formatting from source by looking only at separators
+        // between properties (not inside member bodies).
+        let source_single_line = self.source_text.is_some_and(|text| {
+            let start = std::cmp::min(node.pos as usize, text.len());
+            let end = std::cmp::min(node.end as usize, text.len());
+            if start >= end || emitted_properties.is_empty() {
+                return false;
+            }
+
+            let Some(first_node) = self.arena.get(emitted_properties[0]) else {
+                return false;
+            };
+            let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+            if start < first_pos && text[start..first_pos].contains('\n') {
+                return false;
+            }
+
+            for pair in emitted_properties.windows(2) {
+                let Some(curr) = self.arena.get(pair[0]) else {
+                    continue;
+                };
+                let Some(next) = self.arena.get(pair[1]) else {
+                    continue;
+                };
+                let curr_end = std::cmp::min(curr.end as usize, text.len());
+                let next_pos = std::cmp::min(next.pos as usize, text.len());
+                if curr_end < next_pos && text[curr_end..next_pos].contains('\n') {
+                    return false;
+                }
+            }
+
+            let Some(last_node) = emitted_properties
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+            else {
+                return false;
+            };
+            let last_end = std::cmp::min(last_node.end as usize, text.len());
+            if last_end < end && text[last_end..end].contains('\n') {
+                return false;
+            }
+
+            true
+        });
+        let has_multiline_object_member = if emitted_properties.len() == 1 {
+            false
+        } else {
+            emitted_properties.iter().any(|&prop| {
+                let Some(prop_node) = self.arena.get(prop) else {
+                    return false;
+                };
+
+                match prop_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.arena.get_method_decl(prop_node) else {
+                            return false;
+                        };
+                        if method.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(method.body)
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR => {
+                        let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                            return false;
+                        };
+                        if accessor.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(accessor.body)
+                    }
+                    k if k == syntax_kind_ext::SET_ACCESSOR => {
+                        let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                            return false;
+                        };
+                        if accessor.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(accessor.body)
+                    }
+                    _ => false,
+                }
+            })
+        };
+
+        if emitted_properties.len() == 1 {
+            let prop = emitted_properties[0];
+            let Some(prop_node) = self.arena.get(prop) else {
+                return;
+            };
+            let is_callable_member = prop_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || prop_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || prop_node.kind == syntax_kind_ext::SET_ACCESSOR;
+            if !is_callable_member {
+                // Fall through to the regular object-literal formatter so comments/trailing
+                // commas on property assignments are preserved.
+            } else {
+                let newline_before_prop = self.source_text.is_some_and(|text| {
+                    let start = std::cmp::min(node.pos as usize, text.len());
+                    let prop_start = std::cmp::min(prop_node.pos as usize, text.len());
+                    start < prop_start && text[start..prop_start].contains('\n')
+                });
+                let mut newline_before_close = self.source_text.is_some_and(|text| {
+                    let bytes = text.as_bytes();
+                    let mut close = std::cmp::min(node.end as usize, text.len());
+                    while close > 0 {
+                        close -= 1;
+                        if bytes[close] == b'}' {
+                            break;
+                        }
+                    }
+                    let prop_end = std::cmp::min(prop_node.end as usize, close);
+                    prop_end < close && text[prop_end..close].contains('\n')
+                });
+                if !newline_before_close {
+                    newline_before_close = self.source_text.is_some_and(|text| {
+                        let start = std::cmp::min(node.pos as usize, text.len());
+                        let mut close = std::cmp::min(node.end as usize, text.len());
+                        let bytes = text.as_bytes();
+                        while close > 0 {
+                            close -= 1;
+                            if bytes[close] == b'}' {
+                                break;
+                            }
+                        }
+                        if close <= start {
+                            return false;
+                        }
+                        text[start..close].contains('\n')
+                    });
+                }
+
+                self.write("{");
+                if newline_before_prop {
+                    self.write_line();
+                    self.increase_indent();
+                } else {
+                    self.write(" ");
+                    self.increase_indent();
+                }
+
+                let open_brace_end = self.source_text.map_or(node.pos + 1, |text| {
+                    let bytes = text.as_bytes();
+                    let start = node.pos as usize;
+                    let end = std::cmp::min(node.end as usize, bytes.len());
+                    bytes[start..end]
+                        .iter()
+                        .position(|&b| b == b'{')
+                        .map(|off| (start + off + 1) as u32)
+                        .unwrap_or(node.pos + 1)
+                });
+                let wrote_leading_newline =
+                    self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                if !wrote_leading_newline
+                    && self.object_literal_comment_range_ends_with_newline(
+                        open_brace_end,
+                        prop_node.pos,
+                    )
+                {
+                    self.write_line();
+                }
+                self.emit_object_property(prop);
+                if has_trailing_comma {
+                    self.write(",");
+                }
+
+                // Emit trailing same-line comments before the closing brace,
+                // e.g. `[this.bar()]() { } // needs capture`
+                let token_end = self.find_token_end_before_trivia(prop_node.pos, prop_node.end);
+                // Bound to node.end to avoid consuming comments outside the
+                // object literal (e.g. `{ foo() { } }); // comment`).
+                self.emit_trailing_comments_before(token_end, node.end);
+
+                if newline_before_prop || newline_before_close {
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, node.end);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
+                    self.decrease_indent();
+                    self.write("}");
+                } else {
+                    self.decrease_indent();
+                    self.write(" }");
+                }
+                return;
+            }
+        }
+
+        let should_emit_single_line = source_single_line && !has_multiline_object_member;
+        if should_emit_single_line {
+            self.write("{ ");
+            let mut i = 0;
+            while i < emitted_properties.len() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                let prop = emitted_properties[i];
+                self.emit_object_property(prop);
+                if i + 1 < emitted_properties.len()
+                    && let Some(tail) = self
+                        .object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
+                {
+                    self.write(", ");
+                    self.write(&tail);
+                    i += 1;
+                }
+                i += 1;
+            }
+            if has_trailing_comma {
+                self.write(",");
+            }
+            self.write(" }");
+            if has_recovered_class_member_tail {
+                self.write(", {}");
+            }
+        } else {
+            // Multi-line format: preserve original line layout from source
+            // TSC keeps properties that are on the same line together
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            // Find the opening `{` position for leading comment scanning
+            let open_brace_end = self.source_text.map_or(node.pos + 1, |text| {
+                let bytes = text.as_bytes();
+                let start = node.pos as usize;
+                let end = std::cmp::min(node.end as usize, bytes.len());
+                bytes[start..end]
+                    .iter()
+                    .position(|&b| b == b'{')
+                    .map(|off| (start + off + 1) as u32)
+                    .unwrap_or(node.pos + 1)
+            });
+            let mut i = 0;
+            while i < emitted_properties.len() {
+                let prop = emitted_properties[i];
+                let Some(prop_node) = self.arena.get(prop) else {
+                    i += 1;
+                    continue;
+                };
+                // Skip error-recovery shorthand placeholders synthesized when the parser
+                // encounters an unexpected non-name token (e.g. extra commas: `{ x: 0,, }`).
+                // The synthesized Identifier name has zero width (pos == end) and an empty
+                // text — emitting it would produce stray commas in the output.
+                if prop_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    && let Some(shorthand) = self.arena.get_shorthand_property(prop_node)
+                    && let Some(name_node) = self.arena.get(shorthand.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && name_node.pos == name_node.end
+                {
+                    i += 1;
+                    continue;
+                }
+                // Emit leading comments before the first property (e.g. /** own x*/)
+                if i == 0 {
+                    let wrote_leading_newline =
+                        self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
+                    if !wrote_leading_newline
+                        && self.object_literal_comment_range_ends_with_newline(
+                            open_brace_end,
+                            prop_node.pos,
+                        )
+                    {
+                        self.write_line();
+                    }
+                }
+                self.emit_object_property(prop);
+
+                let recovery_tail = if i + 1 < emitted_properties.len() {
+                    self.object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
+                } else {
+                    None
+                };
+                let unit_end_index = if let Some(tail) = recovery_tail {
+                    self.write(", ");
+                    self.write(&tail);
+                    i + 1
+                } else {
+                    i
+                };
+                let unit_end_prop = emitted_properties[unit_end_index];
+                let Some(unit_end_node) = self.arena.get(unit_end_prop) else {
+                    i = unit_end_index + 1;
+                    continue;
+                };
+                let is_last = unit_end_index == emitted_properties.len() - 1;
+
+                // Use token_end (before trivia) for comment scanning.
+                // The parser's node.end extends past trailing trivia (comments,
+                // whitespace) into the next token's position, so using node.end
+                // directly would miss trailing same-line comments.
+                let token_end =
+                    self.find_token_end_before_trivia(unit_end_node.pos, unit_end_node.end);
+
+                // For the last property, has_trailing_comma_in_source may miss
+                // commas followed by inline comments (e.g., `x: 1, // comment`)
+                // because its backward scan doesn't skip inline comments.
+                // As a fallback, check if find_token_end_before_trivia landed
+                // right after a comma (it treats commas as non-trivia tokens).
+                let next_pos = if !is_last {
+                    emitted_properties
+                        .get(unit_end_index + 1)
+                        .and_then(|&next_prop| self.arena.get(next_prop))
+                        .map_or(prop_node.end, |n| n.pos)
+                } else {
+                    node.end
+                };
+                let comma_already_past = self.comma_immediately_before_pos(token_end);
+                let comma_pos = if comma_already_past {
+                    None
+                } else {
+                    self.find_comma_pos_after(token_end, next_pos)
+                };
+                let needs_comma =
+                    !is_last || has_trailing_comma || comma_already_past || comma_pos.is_some();
+                if needs_comma {
+                    if let Some(comma_pos) = comma_pos {
+                        self.emit_trailing_comments_before(token_end, comma_pos);
+                    }
+                    self.write(",");
+                }
+
+                // Check if next property is on the same line in source
+                if !is_last {
+                    let next_prop = emitted_properties[unit_end_index + 1];
+                    // Check if there's a trailing comment on the same line after the comma
+                    // If so, add a space between the comma and the comment
+                    let has_same_line_comment = self.source_text.is_some_and(|text| {
+                        let from = token_end as usize;
+                        let to = std::cmp::min(next_pos as usize, text.len());
+                        if from >= to {
+                            return false;
+                        }
+                        let gap = &text[from..to];
+                        // Check for comment on same line (no newline before comment start)
+                        // Handles both // line comments and /* block comments
+                        if let Some(slash_pos) = gap.find("//") {
+                            !gap[..slash_pos].contains('\n')
+                        } else if let Some(block_pos) = gap.find("/*") {
+                            !gap[..block_pos].contains('\n')
+                        } else {
+                            false
+                        }
+                    });
+                    let same_line = self.are_on_same_line_in_source(unit_end_prop, next_prop);
+                    if has_same_line_comment {
+                        // Same-line trailing comment after comma: space before comment
+                        self.write(" ");
+                    } else if !same_line {
+                        // Properties are on different lines and any comment is on
+                        // a subsequent line — write a newline first so the comment
+                        // appears on its own line (matching tsc).
+                        self.write_line();
+                    }
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
+                    if wrote_newline {
+                        // Comment emission already wrote the trailing newline
+                    } else if same_line {
+                        // Keep on same line
+                        self.write(" ");
+                    } else if !has_same_line_comment {
+                        // We already wrote a newline above; don't double up
+                    } else {
+                        // Same-line comment that didn't end with a newline,
+                        // but properties are on different lines
+                        self.write_line();
+                    }
+                } else {
+                    // Last property: emit same-line trailing comments first,
+                    // then any remaining comments before closing brace
+                    self.emit_trailing_comments(token_end);
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, node.end);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
+                }
+                i = unit_end_index + 1;
+            }
+            self.decrease_indent();
+            self.write("}");
+            if has_recovered_class_member_tail {
+                self.write(", {}");
+            }
+        }
+    }
+
+    fn object_literal_has_recovered_class_member_tail(
+        &self,
+        object_node: &Node,
+        properties: &[NodeIndex],
+    ) -> bool {
+        let Some(source) = self.source_text else {
+            return false;
+        };
+
+        properties.iter().enumerate().any(|(prop_i, &prop_idx)| {
+            let Some(prop_node) = self.arena.get(prop_idx) else {
+                return false;
+            };
+            if prop_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_assignment(prop_node) else {
+                return false;
+            };
+            if prop.name == prop.initializer {
+                return false;
+            }
+            let Some(name_node) = self.arena.get(prop.name) else {
+                return false;
+            };
+            let name_is_class_keyword = name_node.kind == SyntaxKind::ClassKeyword as u16
+                || self
+                    .arena
+                    .get_identifier(name_node)
+                    .is_some_and(|ident| ident.escaped_text == "class");
+            if !name_is_class_keyword {
+                return false;
+            }
+
+            let Some(init_node) = self.arena.get(prop.initializer) else {
+                return false;
+            };
+            let start = std::cmp::min(prop_node.pos as usize, source.len());
+            let end = std::cmp::min(init_node.pos as usize, source.len());
+            if start >= end {
+                return false;
+            }
+            let Ok(between) = crate::safe_slice::slice(source, start, end) else {
+                return false;
+            };
+            if between.contains(':') {
+                return false;
+            }
+
+            let body_start = std::cmp::min(init_node.end as usize, source.len());
+            let body_end = properties
+                .get(prop_i + 1)
+                .and_then(|&next_prop| self.arena.get(next_prop))
+                .map_or(object_node.end, |next_node| next_node.pos);
+            let body_end = std::cmp::min(body_end as usize, source.len());
+            if body_start >= body_end {
+                return false;
+            }
+            let Ok(after_initializer) = crate::safe_slice::slice(source, body_start, body_end)
+            else {
+                return false;
+            };
+            after_initializer.contains('{') && after_initializer.contains('}')
+        })
+    }
+
+    fn object_literal_shorthand_continuation_tail(
+        &self,
+        prop: NodeIndex,
+        next_prop: NodeIndex,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let prop_node = self.arena.get(prop)?;
+        if prop_node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            return None;
+        }
+        let shorthand = self.arena.get_shorthand_property(prop_node)?;
+        if shorthand.equals_token || shorthand.object_assignment_initializer != NodeIndex::NONE {
+            return None;
+        }
+        let name_node = self.arena.get(shorthand.name)?;
+        if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = self.arena.get_identifier(name_node)?;
+
+        let bytes = source.as_bytes();
+        let next_node = self.arena.get(next_prop)?;
+        let search_start = std::cmp::min(prop_node.pos as usize, source.len());
+        let search_end = std::cmp::min(next_node.end as usize, source.len());
+        if search_start >= search_end {
+            return None;
+        }
+        let search = crate::safe_slice::slice(source, search_start, search_end).ok()?;
+        let dot_pos = search.find('.');
+        let bracket_pos = search.find('[');
+        let tail_rel = match (dot_pos, bracket_pos) {
+            (Some(dot), Some(bracket)) => std::cmp::min(dot, bracket),
+            (Some(dot), None) => dot,
+            (None, Some(bracket)) => bracket,
+            (None, None) => return None,
+        };
+        let before_tail = &search[..tail_rel];
+        if before_tail.contains('\n') || before_tail.trim() != ident.escaped_text {
+            return None;
+        }
+        let cursor = search_start + tail_rel;
+
+        match bytes.get(cursor).copied()? {
+            b'.' => {
+                let next_shorthand = self.arena.get_shorthand_property(next_node)?;
+                if next_node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    || next_shorthand.equals_token
+                    || next_shorthand.object_assignment_initializer != NodeIndex::NONE
+                {
+                    return None;
+                }
+                let next_name = self.arena.get(next_shorthand.name)?;
+                if next_name.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let next_ident = self.arena.get_identifier(next_name)?;
+                let after_dot = cursor + 1;
+                let dot_tail = crate::safe_slice::slice(source, after_dot, search_end).ok()?;
+                let next_rel = dot_tail.find(&next_ident.escaped_text)?;
+                if dot_tail[..next_rel].contains('\n') {
+                    return None;
+                }
+                let tail_end = after_dot + next_rel + next_ident.escaped_text.len();
+                if source[cursor..tail_end].contains('\n') {
+                    return None;
+                }
+                let tail = crate::safe_slice::slice(source, cursor, tail_end).ok()?;
+                Some(format!(": {tail}"))
+            }
+            b'[' => {
+                let mut depth = 0_i32;
+                let mut tail_end = cursor;
+                while tail_end < search_end {
+                    match bytes[tail_end] {
+                        b'[' => depth += 1,
+                        b']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                tail_end += 1;
+                                break;
+                            }
+                        }
+                        b'\n' | b'\r' => return None,
+                        _ => {}
+                    }
+                    tail_end += 1;
+                }
+                if depth != 0 {
+                    return None;
+                }
+                if source[cursor..tail_end].contains('\n') {
+                    return None;
+                }
+                let tail = crate::safe_slice::slice(source, cursor, tail_end).ok()?;
+                Some(format!("{tail}: "))
+            }
+            _ => None,
+        }
+    }
+
+    fn empty_object_literal_comment_range(&self, node: &Node) -> Option<(u32, u32)> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(node.pos as usize, bytes.len());
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        if start >= end {
+            return None;
+        }
+
+        let open = bytes[start..end].iter().position(|&b| b == b'{')? + start;
+        let close = bytes[start..end].iter().rposition(|&b| b == b'}')? + start;
+        if open >= close {
+            return None;
+        }
+
+        let inner = &text[open + 1..close];
+        if inner.contains("//") || inner.contains("/*") {
+            Some(((open + 1) as u32, close as u32))
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::emitter) fn emit_property_assignment(&mut self, node: &Node) {
+        let Some(prop) = self.arena.get_property_assignment(node) else {
+            return;
+        };
+
+        // Shorthand property: parser creates PROPERTY_ASSIGNMENT with name == initializer
+        // (same NodeIndex) for { name } instead of SHORTHAND_PROPERTY_ASSIGNMENT
+        let is_shorthand = prop.name == prop.initializer;
+
+        // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
+        // ES5 doesn't support shorthand property syntax (ES6 feature)
+        if is_shorthand && self.ctx.target_es5 {
+            self.emit_property_key_name(prop.name);
+            self.write(": ");
+            self.emit_expression(prop.initializer);
+            return;
+        }
+
+        // For ES6+ target, preserve shorthand as-is — UNLESS the identifier
+        // will be import/export-substituted (e.g., `foo` → `foo_1.foo` or
+        // `test` → `exports.test`), which breaks shorthand syntax. In that
+        // case, expand to `name: substituted_value`.
+        if is_shorthand {
+            if let Some(ident) = self.arena.get_identifier(
+                self.arena
+                    .get(prop.name)
+                    .expect("property name NodeIndex must be valid in arena"),
+            ) {
+                let has_import_subst = !self.suppress_commonjs_named_import_substitution
+                    && self
+                        .commonjs_named_import_substitutions
+                        .contains_key(&ident.escaped_text);
+                let has_export_var = !self.suppress_ns_qualification
+                    && self
+                        .commonjs_exported_var_names
+                        .contains(ident.escaped_text.as_str());
+                if has_import_subst || has_export_var {
+                    // Emit name without substitution, then `: substituted_value`
+                    self.write_identifier(&ident.escaped_text);
+                    self.write(": ");
+                    self.emit(prop.initializer);
+                    return;
+                }
+            }
+            self.emit(prop.name);
+            return;
+        }
+
+        // Regular property: name: value
+        // Use emit_decl_name for simple identifier property names to suppress
+        // namespace qualification — property names are declarations, not references.
+        // Computed property names (e.g., [SYMBOL]) are expressions and should
+        // preserve namespace/export qualification.
+        let name_node = self.arena.get(prop.name);
+        let is_computed = name_node
+            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+        if self.is_tc39_decorated_anonymous_class_expression(prop.initializer) {
+            if is_computed {
+                if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
+                {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit(prop.name);
+                        self.write(": ");
+                        self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                        return;
+                    }
+                    self.write("[");
+                    let name_expr =
+                        self.emit_tc39_named_class_computed_property_name(computed.expression);
+                    self.write("]");
+                    self.write(": ");
+                    self.emit_with_tc39_class_expression_name(prop.initializer, name_expr, true);
+                    return;
+                }
+            } else if let Some(name) =
+                self.tc39_class_expression_name_from_object_property_name(prop.name)
+            {
+                self.emit_property_key_name(prop.name);
+                self.write(": ");
+                self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                return;
+            }
+        }
+        if is_computed {
+            self.emit(prop.name);
+        } else {
+            self.emit_property_key_name(prop.name);
+        }
+        self.write(": ");
+        if self.ctx.target_es5
+            && let Some(init_node) = self.arena.get(prop.initializer)
+            && let Some(func) = self.arena.get_function(init_node)
+            && func.is_async
+        {
+            let has_generator_asterisk = func.asterisk_token
+                || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                    self.source_text,
+                    init_node.pos,
+                    self.arena
+                        .get(func.body)
+                        .map_or(init_node.end, |body| body.pos),
+                );
+            if !has_generator_asterisk {
+                self.emit_expression(prop.initializer);
+                return;
+            }
+            let property_name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
+            let inner_name = (!property_name.is_empty()).then(|| format!("{property_name}_1"));
+            self.emit_async_generator_es5_function_wrapper(func, "", inner_name);
+            return;
+        }
+        self.emit_expression(prop.initializer);
+    }
+
+    pub(in crate::emitter) fn emit_shorthand_property(&mut self, node: &Node) {
+        let Some(shorthand) = self.arena.get_shorthand_property(node) else {
+            // Fallback: try to get identifier data directly
+            if let Some(ident) = self.arena.get_identifier(node) {
+                self.write(&ident.escaped_text);
+            }
+            return;
+        };
+
+        if self.is_static_block_await_identifier(shorthand.name) {
+            self.emit(shorthand.name);
+            self.write(": ");
+            return;
+        }
+
+        if shorthand.equals_token
+            && self.is_tc39_decorated_anonymous_class_expression(
+                shorthand.object_assignment_initializer,
+            )
+            && let Some(name) = self.tc39_class_expression_name_from_property_name(shorthand.name)
+        {
+            self.emit(shorthand.name);
+            self.write(" = ");
+            self.emit_with_tc39_class_expression_name(
+                shorthand.object_assignment_initializer,
+                name,
+                false,
+            );
+            return;
+        }
+
+        // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
+        // ES5 doesn't support shorthand property syntax (ES6 feature)
+        if self.ctx.target_es5 {
+            self.emit_property_key_name(shorthand.name);
+            self.write(": ");
+            self.emit(shorthand.name);
+            return;
+        }
+
+        // For ES6+ target, emit shorthand as-is — UNLESS import/export substitution
+        // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }` or `{ exports.test }`).
+        // Check both import substitutions and exported variable names.
+        // Note: don't check is_commonjs() — module kind is temporarily None inside export bodies.
+        let name_node = self.arena.get(shorthand.name);
+        if let Some(ident) = name_node.and_then(|n| self.arena.get_identifier(n)) {
+            let has_import_subst = !self.suppress_commonjs_named_import_substitution
+                && self
+                    .commonjs_named_import_substitutions
+                    .contains_key(&ident.escaped_text);
+            let has_export_var = !self.suppress_ns_qualification
+                && self
+                    .commonjs_exported_var_names
+                    .contains(ident.escaped_text.as_str());
+            let has_ns_qualification = self.in_namespace_iife
+                && !self.suppress_ns_qualification
+                && self
+                    .namespace_exported_names
+                    .contains(ident.escaped_text.as_str());
+            if has_import_subst || has_export_var || has_ns_qualification {
+                self.write_identifier(&ident.escaped_text);
+                self.write(": ");
+                self.emit(shorthand.name);
+                return;
+            }
+        }
+
+        // tsc emits `keyword: ` (non-shorthand, empty value) when the name is a reserved
+        // keyword, since shorthand property syntax like `{ return }` or `{ class }` is
+        // invalid JS. Also handles non-Identifier names (string/number literals).
+        let is_non_shorthand_name = name_node.is_some_and(|n| {
+            // Not an Identifier node kind (e.g. NumericLiteral, StringLiteral)
+            if n.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                return true;
+            }
+            // Identifier whose text is a JS reserved keyword
+            if let Some(ident) = self.arena.get_identifier(n)
+                && let Some(kw) = tsz_scanner::text_to_keyword(&ident.escaped_text)
+            {
+                return tsz_scanner::token_is_reserved_word(kw);
+            }
+            false
+        });
+        if is_non_shorthand_name {
+            self.emit(shorthand.name);
+            self.write(": ");
+            return;
+        }
+
+        self.emit(shorthand.name);
+        if shorthand.equals_token {
+            self.write(" = ");
+            self.emit(shorthand.object_assignment_initializer);
+        }
+    }
+
+    pub(in crate::emitter) fn is_tc39_decorated_anonymous_class_expression(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(node) else {
+            return false;
+        };
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
+        class.name.is_none()
+            && !self.ctx.options.legacy_decorators
+            && !target_supports_native_decorators
+            && self.class_has_tc39_decorator_nodes(class)
+    }
+
+    pub(in crate::emitter) fn emit_with_tc39_class_expression_name(
+        &mut self,
+        class_expr: NodeIndex,
+        name: String,
+        is_expression: bool,
+    ) {
+        let previous = self
+            .pending_tc39_class_expression_name
+            .replace((name, is_expression));
+        self.emit(class_expr);
+        self.pending_tc39_class_expression_name = previous;
+    }
+
+    pub(in crate::emitter) fn emit_tc39_named_class_computed_property_name(
+        &mut self,
+        expression: NodeIndex,
+    ) -> String {
+        let temp = self.make_unique_name_hoisted();
+        self.write(&temp);
+        self.write(" = ");
+        self.write_helper("__propKey");
+        self.write("(");
+        self.emit(expression);
+        self.write(")");
+        temp
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name)?;
+        if name_node.kind == SyntaxKind::Identifier as u16
+            || name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            let ident = self.arena.get_identifier(name_node)?;
+            return (!ident.escaped_text.is_empty()).then(|| ident.escaped_text.clone());
+        }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(name_node)?;
+            return Some(literal.text.clone());
+        }
+        None
+    }
+
+    fn tc39_class_expression_name_from_object_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        self.tc39_class_expression_name_from_property_name(name)
+            .map(|name| {
+                if name == "__proto__" {
+                    String::new()
+                } else {
+                    name
+                }
+            })
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_computed_property_expr(
+        &self,
+        expression: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expression)?;
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(expr_node)?;
+            return Some(literal.text.clone());
+        }
+        None
+    }
+
+    fn node_text_contains_node(&self, node_idx: tsz_parser::parser::NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        self.node_text_contains_newline(node.pos as usize, node.end as usize)
+    }
+
+    pub(in crate::emitter) fn object_literal_comment_range_ends_with_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut scan_idx = 0;
+        let mut last_comment_end = None;
+
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment.pos >= to_pos {
+                break;
+            }
+            if comment.pos >= from_pos && comment.end <= to_pos {
+                last_comment_end = Some(comment.end);
+            }
+            scan_idx += 1;
+        }
+
+        let Some(comment_end) = last_comment_end else {
+            return false;
+        };
+        let start = std::cmp::min(comment_end as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
+    }
+
+    fn should_drop_recovered_object_method_without_body(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        let Some(method) = self.arena.get_method_decl(node) else {
+            return false;
+        };
+        if method.body.is_some() {
+            return false;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let search_start = method
+            .parameters
+            .nodes
+            .last()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos as usize, |param| param.end as usize)
+            .min(text.len());
+        let node_end = (node.end as usize).min(text.len());
+        let after_close_paren = text[search_start..node_end]
+            .find(')')
+            .map_or(search_start, |offset| search_start + offset + 1);
+        let scan_start = self
+            .arena
+            .get(method.type_annotation)
+            .map_or(after_close_paren, |type_node| type_node.end as usize)
+            .min(node_end);
+        let token_pos = self.skip_trivia_forward(scan_start as u32, node.end) as usize;
+
+        matches!(text.as_bytes().get(token_pos), Some(b';' | b'}'))
+    }
+
+    fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
+        self.source_text
+            .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
+    }
+}

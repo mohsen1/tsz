@@ -1,0 +1,1371 @@
+impl DefinitionStore {
+    /// Create a new definition store.
+    pub fn new() -> Self {
+        Self::with_capacities(0, 0)
+    }
+
+    /// Create a new definition store with estimated capacities for the hot indices.
+    pub fn with_capacities(definition_capacity: usize, file_count: usize) -> Self {
+        let instance_id = NEXT_INSTANCE_ID.fetch_add(1, Ordering::SeqCst);
+        trace!(instance_id, "DefinitionStore::new - creating new instance");
+        let id_capacity = definition_capacity.max(16);
+        let file_capacity = file_count.max(4);
+        Self {
+            instance_id,
+            definitions: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
+            next_id: AtomicU32::new(DefId::FIRST_VALID),
+            generation: AtomicU64::new(1),
+            type_to_def: DefDashMap::default(),
+            type_param_for_def: DefDashMap::with_capacity_and_hasher(
+                id_capacity,
+                Default::default(),
+            ),
+            symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
+            symbol_only_index: DefDashMap::with_capacity_and_hasher(
+                id_capacity,
+                Default::default(),
+            ),
+            symbol_mappings_snapshot: Mutex::new(None),
+            body_to_alias: DefDashMap::default(),
+            computed_alias_bodies: DefDashSet::default(),
+            depth_poisoned_defs: DefDashSet::default(),
+            shape_to_def: DefDashMap::default(),
+            file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
+            class_to_constructor: DefDashMap::with_capacity_and_hasher(
+                id_capacity / 2,
+                Default::default(),
+            ),
+            class_to_instance: DefDashMap::with_capacity_and_hasher(
+                id_capacity / 2,
+                Default::default(),
+            ),
+            name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
+            resolved_cross_file_queries: DefDashMap::default(),
+            source_file_symbol_type_cache_scope: AtomicU64::new(1),
+            file_delegation_locks: DefDashMap::default(),
+            fully_populated: std::sync::atomic::AtomicBool::new(false),
+            circular_def_ids: DefDashSet::default(),
+        }
+    }
+
+    /// Compute a 64-bit `FxHash` fingerprint for an `ObjectShape`.
+    fn hash_shape(shape: &ObjectShape) -> u64 {
+        let mut hasher = rustc_hash::FxHasher::default();
+        shape.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Allocate a fresh `DefId`.
+    fn allocate(&self) -> DefId {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        trace!(
+            instance_id = self.instance_id,
+            allocated_def_id = %id,
+            next_will_be = %(id + 1),
+            "DefinitionStore::allocate"
+        );
+        DefId(id)
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current resolver-visible generation for this store.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    /// Register a new definition and return its `DefId`.
+    pub fn register(&self, info: DefinitionInfo) -> DefId {
+        let id = self.allocate();
+        trace!(
+            instance_id = self.instance_id,
+            def_id = %id.0,
+            kind = ?info.kind,
+            "DefinitionStore::register"
+        );
+
+        // Populate symbol_only_index if a symbol_id is present.
+        // Uses entry API to keep the *first* registered DefId (stable identity).
+        if let Some(sym_id) = info.symbol_id {
+            self.symbol_only_index.entry(sym_id).or_insert(id);
+        }
+
+        // Populate body_to_alias for non-generic type aliases with a body.
+        if info.kind == DefKind::TypeAlias
+            && info.type_params.is_empty()
+            && let Some(body) = info.body
+        {
+            self.body_to_alias.entry(body).or_insert(id);
+        }
+
+        // Populate shape_to_def for definitions with an instance shape.
+        if let Some(ref shape) = info.instance_shape {
+            let hash = Self::hash_shape(shape);
+            self.shape_to_def.entry(hash).or_insert(id);
+        }
+
+        // Populate file_to_defs index for per-file lookups.
+        if let Some(file_id) = info.file_id {
+            self.file_to_defs.entry(file_id).or_default().push(id);
+        }
+
+        // Populate name_to_defs index for name-based lookups.
+        self.name_to_defs.entry(info.name).or_default().push(id);
+
+        self.definitions.insert(id, info);
+        self.bump_generation();
+        id
+    }
+
+    /// Register a `(SymbolId, file_idx)` → `DefId` mapping in the authoritative index.
+    ///
+    /// This should be called whenever a new `DefId` is created from a binder symbol,
+    /// using the symbol's raw id and its `decl_file_idx`. The composite key ensures
+    /// that the same `SymbolId(u32)` from different binders maps to different `DefIds`.
+    pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
+        self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
+        // Also maintain the file-agnostic index (keeps the first registered DefId).
+        self.symbol_only_index.entry(symbol_id).or_insert(def_id);
+        self.bump_generation();
+    }
+
+    fn register_symbol_file_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
+        self.symbol_def_index.insert((symbol_id, file_idx), def_id);
+    }
+
+    /// Look up a `DefId` by `(SymbolId, file_idx)`.
+    ///
+    /// Returns `Some(def_id)` if a mapping was previously registered via
+    /// `register_symbol_mapping`. This is an O(1) lookup that replaces the
+    /// expensive multi-binder validation in `get_or_create_def_id`.
+    pub fn lookup_by_symbol(&self, symbol_id: u32, file_idx: u32) -> Option<DefId> {
+        self.symbol_def_index
+            .get(&(symbol_id, file_idx))
+            .map(|r| *r)
+    }
+
+    /// Get definition info by `DefId`.
+    pub fn get(&self, id: DefId) -> Option<DefinitionInfo> {
+        self.definitions.get(&id).as_deref().cloned()
+    }
+
+    /// Snapshot all definition name paths for consumers that need stable display names.
+    pub fn all_definition_names(&self) -> Vec<(DefId, Vec<Atom>)> {
+        let definitions: FxHashMap<_, _> = self
+            .definitions
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+        let mut parents = FxHashMap::default();
+        for (parent_id, parent) in &definitions {
+            for &(export_name, child_id) in &parent.exports {
+                parents.entry(child_id).or_insert((*parent_id, export_name));
+            }
+        }
+        definitions
+            .iter()
+            .map(|(&def_id, info)| {
+                let mut path = vec![info.name];
+                let mut current = def_id;
+                let mut seen = FxHashSet::default();
+                while seen.insert(current) {
+                    let Some(&(parent_id, export_name)) = parents.get(&current) else {
+                        break;
+                    };
+                    path[0] = export_name;
+                    path.insert(
+                        0,
+                        definitions.get(&parent_id).map_or(export_name, |p| p.name),
+                    );
+                    current = parent_id;
+                }
+                (def_id, path)
+            })
+            .collect()
+    }
+
+    /// Get the binder SymbolId for a `DefId`.
+    ///
+    /// Returns the `SymbolId` (as raw u32) that this `DefId` was created from.
+    /// This is available across checker contexts because it's stored directly
+    /// in the `DefinitionInfo` (which is shared via `DefinitionStore`).
+    pub fn get_symbol_id(&self, id: DefId) -> Option<u32> {
+        self.definitions.get(&id).and_then(|info| info.symbol_id)
+    }
+
+    /// Check if a `DefId` exists.
+    pub fn contains(&self, id: DefId) -> bool {
+        self.definitions.contains_key(&id)
+    }
+
+    /// Get the kind of a definition.
+    pub fn get_kind(&self, id: DefId) -> Option<DefKind> {
+        self.definitions.get(&id).map(|r| r.kind)
+    }
+
+    /// Get type parameters for a definition.
+    pub fn get_type_params(&self, id: DefId) -> Option<Vec<TypeParamInfo>> {
+        self.definitions.get(&id).map(|r| r.type_params.clone())
+    }
+
+    /// Get the body `TypeId` for a definition.
+    pub fn get_body(&self, id: DefId) -> Option<TypeId> {
+        self.definitions.get(&id).and_then(|r| r.body)
+    }
+
+    /// Get parent class `DefId` for a class.
+    pub fn get_extends(&self, id: DefId) -> Option<DefId> {
+        self.definitions.get(&id).and_then(|r| r.extends)
+    }
+
+    /// Set the heritage (extends + implements) for a definition after registration.
+    ///
+    /// Used for cross-batch heritage resolution: when a user class extends a lib
+    /// type, the heritage is resolved by name after all pre-population batches
+    /// have completed.
+    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = extends;
+            entry.implements = implements;
+            self.bump_generation();
+        }
+    }
+
+    /// Update the body `TypeId` for a definition (for lazy evaluation).
+    ///
+    /// If no entry exists for this `DefId` (e.g., it was created by
+    /// `get_or_create_def_id` without a full `register` call), a minimal
+    /// entry is created so that cross-file type resolution can find the
+    /// body via `get_body`.
+    pub fn set_body(&self, id: DefId, body: TypeId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.body = Some(body);
+
+            // Maintain body_to_alias index for non-generic type aliases.
+            if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
+                self.body_to_alias.entry(body).or_insert(id);
+            }
+            self.bump_generation();
+        } else {
+            // Create a minimal entry for DefIds created via get_or_create_def_id
+            // (which only populates symbol_to_def/def_to_symbol, not definitions).
+            // This ensures cross-file delegation results survive child-checker
+            // teardown and are visible to parent checkers via get_body().
+            self.definitions.insert(
+                id,
+                DefinitionInfo {
+                    kind: DefKind::Interface,
+                    name: Atom::default(),
+                    type_params: Vec::new(),
+                    body: Some(body),
+                    instance_shape: None,
+                    static_shape: None,
+                    extends: None,
+                    implements: Vec::new(),
+                    enum_members: Vec::new(),
+                    exports: Vec::new(),
+                    file_id: None,
+                    span: None,
+                    symbol_id: self.get_symbol_id(id),
+                    heritage_names: Vec::new(),
+                    is_abstract: false,
+                    is_const: false,
+                    is_exported: false,
+                    is_global_augmentation: false,
+                    is_declare: false,
+                },
+            );
+            self.bump_generation();
+        }
+    }
+
+    /// Mark a type-alias `DefId` as having an unconditionally-infinite
+    /// instantiation (TS2589). Every later application of this def resolves to
+    /// the error type.
+    pub fn mark_depth_poisoned(&self, id: DefId) {
+        if self.depth_poisoned_defs.insert(id) {
+            self.bump_generation();
+        }
+    }
+
+    /// Whether the given `DefId` was flagged via [`mark_depth_poisoned`].
+    pub fn is_depth_poisoned(&self, id: DefId) -> bool {
+        self.depth_poisoned_defs.contains(&id)
+    }
+
+    /// Whether any def has been flagged via [`mark_depth_poisoned`]. Used as a
+    /// cheap guard so hot evaluation paths skip per-application poison checks
+    /// when nothing is poisoned (the overwhelmingly common case).
+    pub fn has_any_depth_poisoned(&self) -> bool {
+        !self.depth_poisoned_defs.is_empty()
+    }
+
+    /// Update the type parameters for a definition.
+    ///
+    /// Type parameters may be computed lazily after initial registration.
+    /// Initialize per-file delegation locks for parallel checking.
+    /// Mark the store as fully populated (all `DefIds` registered, heritage resolved).
+    ///
+    /// After this is called, `is_fully_populated()` returns `true`, allowing
+    /// callers to skip redundant population passes.
+    pub fn mark_fully_populated(&self) {
+        self.fully_populated
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Check if the store has been marked as fully populated.
+    pub fn is_fully_populated(&self) -> bool {
+        self.fully_populated
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn init_file_locks(&self, file_count: usize) {
+        for i in 0..file_count {
+            self.file_delegation_locks
+                .entry(i)
+                .or_insert_with(|| Arc::new(Mutex::new(())));
+        }
+    }
+
+    /// Get the delegation lock for a target file.
+    pub fn get_file_delegation_lock(&self, file_idx: usize) -> Option<Arc<Mutex<()>>> {
+        self.file_delegation_locks
+            .get(&file_idx)
+            .map(|r| Arc::clone(r.value()))
+    }
+
+    pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
+        self.source_file_symbol_type_cache_scope
+            .load(Ordering::Relaxed)
+            .max(1)
+    }
+
+    pub fn set_source_file_symbol_type_cache_scope(&self, scope: u64) {
+        self.source_file_symbol_type_cache_scope
+            .store(scope.max(1), Ordering::Relaxed);
+    }
+
+    /// Look up a previously resolved cross-file query result.
+    pub fn get_resolved_cross_file_query(
+        &self,
+        kind: u8,
+        file_idx: u32,
+        primary: u32,
+        secondary: u32,
+        args_hash: u64,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        self.resolved_cross_file_queries
+            .get(&(kind, file_idx, primary, secondary, args_hash))
+            .map(|entry| {
+                let (type_id, params) = entry.value();
+                (*type_id, params.as_ref().clone())
+            })
+    }
+
+    /// Cache a cross-file query result. First writer wins to keep parallel
+    /// checking deterministic when equivalent queries race.
+    pub fn cache_resolved_cross_file_query(
+        &self,
+        kind: u8,
+        file_idx: u32,
+        primary: u32,
+        secondary: u32,
+        args_hash: u64,
+        type_id: TypeId,
+        type_params: Vec<TypeParamInfo>,
+    ) {
+        self.resolved_cross_file_queries
+            .entry((kind, file_idx, primary, secondary, args_hash))
+            .or_insert_with(|| (type_id, Arc::new(type_params)));
+    }
+
+    /// Mark a DefId as participating in a circular type alias cycle.
+    pub fn mark_circular_def(&self, def_id: DefId) {
+        self.circular_def_ids.insert(def_id);
+    }
+
+    /// Check whether a DefId has been marked as circular by any checker.
+    pub fn is_circular_def(&self, def_id: DefId) -> bool {
+        self.circular_def_ids.contains(&def_id)
+    }
+
+    /// This method synchronizes them into the `DefinitionInfo` so that
+    /// the `TypeFormatter` can display generic types with their type
+    /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
+    pub fn set_type_params(&self, id: DefId, params: Vec<TypeParamInfo>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            // If this is a TypeAlias that previously had empty type_params,
+            // set_body may have created a body_to_alias entry. Now that we
+            // know it's generic, remove that entry to avoid incorrect alias
+            // lookups (e.g., showing "B" instead of "B<string>").
+            if entry.kind == DefKind::TypeAlias
+                && entry.type_params.is_empty()
+                && !params.is_empty()
+                && let Some(body) = entry.body
+            {
+                self.body_to_alias.remove(&body);
+            }
+            entry.type_params = params;
+            self.bump_generation();
+        }
+    }
+
+    /// Update heritage links (extends/implements) only for non-empty values.
+    ///
+    /// Called by the checker's `resolve_cross_batch_heritage` after all
+    /// pre-population batches complete, when heritage targets from other
+    /// batches become available in the name index.
+    pub fn set_heritage_if_nonempty(
+        &self,
+        id: DefId,
+        extends: Option<DefId>,
+        implements: Vec<DefId>,
+    ) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if extends.is_some() {
+                entry.extends = extends;
+            }
+            if !implements.is_empty() {
+                entry.implements = implements;
+            }
+            self.bump_generation();
+        }
+    }
+
+    /// Update the instance shape for a type definition.
+    ///
+    /// This is used by checker code when a concrete object-like shape is computed
+    /// for an interface/class definition and should be recorded for diagnostics.
+    pub fn set_instance_shape(&self, id: DefId, shape: Arc<ObjectShape>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            let hash = Self::hash_shape(&shape);
+            entry.instance_shape = Some(shape);
+            self.shape_to_def.entry(hash).or_insert(id);
+            self.bump_generation();
+        }
+    }
+
+    /// Number of definitions.
+    pub fn len(&self) -> usize {
+        self.definitions.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.definitions.is_empty()
+    }
+
+    /// Clear all definitions (for testing).
+    pub fn clear(&self) {
+        self.definitions.clear();
+        self.type_to_def.clear();
+        self.type_param_for_def.clear();
+        self.symbol_def_index.clear();
+        self.symbol_only_index.clear();
+        self.body_to_alias.clear();
+        self.computed_alias_bodies.clear();
+        self.shape_to_def.clear();
+        self.file_to_defs.clear();
+        self.class_to_constructor.clear();
+        self.class_to_instance.clear();
+        self.name_to_defs.clear();
+        self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
+        self.bump_generation();
+    }
+
+    /// Register a mapping from a `TypeId` to its defining `DefId`.
+    ///
+    /// Called by the checker after computing class/interface instance types
+    /// so the `TypeFormatter` can display named types (e.g., "A" instead of
+    /// "{ a: string }") even across file boundaries.
+    pub fn register_type_to_def(&self, type_id: TypeId, def_id: DefId) {
+        // Intrinsic TypeIds (number, string, boolean, etc.) are universal and
+        // must never be associated with a user-named def. Their canonical
+        // display is the keyword (`number`, `string`, ...), provided by the
+        // TypeFormatter's intrinsic short-circuit. If a checker path tries to
+        // register an intrinsic type to a class/interface/alias def, that
+        // mapping would later poison `find_def_for_type` lookups and cause
+        // diagnostics like "Type 'FlatArray' is not assignable to type
+        // 'Boolean'." for `let b: Boolean; b = 1;` (where the source is the
+        // primitive `number`).  Drop the registration so the formatter falls
+        // back to the intrinsic keyword.
+        if type_id.is_intrinsic() {
+            return;
+        }
+        use dashmap::mapref::entry::Entry;
+        match self.type_to_def.entry(type_id) {
+            Entry::Vacant(e) => {
+                e.insert(def_id);
+            }
+            Entry::Occupied(mut e) => {
+                let existing = *e.get();
+                if existing == def_id {
+                    return;
+                }
+                let existing_pos = self
+                    .get(existing)
+                    .and_then(|d| Some((d.file_id?, d.span?.0)));
+                let new_pos = self.get(def_id).and_then(|d| Some((d.file_id?, d.span?.0)));
+                match (existing_pos, new_pos) {
+                    (Some((ef, ep)), Some((nf, np))) if (nf, np) < (ef, ep) => {
+                        e.insert(def_id);
+                    }
+                    (None, Some(_)) => {
+                        e.insert(def_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.bump_generation();
+    }
+
+    /// Look up the `DefId` that produced the given `TypeId`.
+    ///
+    /// Returns `Some(def_id)` if a class/interface was registered for this type.
+    pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
+        self.type_to_def.get(&type_id).map(|r| *r)
+    }
+
+    /// Look up the canonical `TypeId` previously allocated for a
+    /// type-parameter declaration's `DefId`.
+    ///
+    /// Returns `Some(type_id)` if `register_type_param_for_def` has been
+    /// called for this `DefId`. Callers reuse the returned `TypeId`
+    /// instead of allocating a fresh non-deduped one so that two
+    /// processings of the same declaration produce a single canonical
+    /// type parameter.
+    pub fn find_type_param_for_def(&self, def_id: DefId) -> Option<TypeId> {
+        self.type_param_for_def.get(&def_id).map(|r| *r)
+    }
+
+    /// Register the canonical `TypeId` for a type-parameter declaration's
+    /// `DefId`.
+    ///
+    /// Subsequent calls overwrite the previous registration, which lets a
+    /// second-pass constraint refinement replace the first-pass
+    /// unconstrained `TypeId`. The downstream identity then converges on
+    /// the most recent `(name, constraint, default, is_const)` content.
+    pub fn register_type_param_for_def(&self, def_id: DefId, type_id: TypeId) {
+        self.type_param_for_def.insert(def_id, type_id);
+    }
+
+    /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.
+    ///
+    /// Called during pre-population to establish constructor identity at merge time
+    /// rather than on-demand during type checking. The checker can then look up the
+    /// companion with `get_constructor_def` and reuse the stable identity.
+    pub fn register_constructor_companion(&self, class_def: DefId, ctor_def: DefId) {
+        self.class_to_constructor.insert(class_def, ctor_def);
+        self.bump_generation();
+    }
+
+    /// Look up the pre-populated `ClassConstructor` `DefId` for a class.
+    ///
+    /// Returns `Some(ctor_def_id)` if a constructor companion was registered
+    /// during pre-population. Returns `None` for classes without a pre-populated
+    /// companion (e.g., anonymous classes or those created on-demand).
+    pub fn get_constructor_def(&self, class_def: DefId) -> Option<DefId> {
+        self.class_to_constructor.get(&class_def).map(|r| *r)
+    }
+
+    /// Publish the resolved instance `TypeId` for a class `DefId` into the
+    /// shared cross-file cache (see `class_to_instance` field doc).
+    ///
+    /// Producer checkers call this whenever they finalize a class's instance
+    /// type. Consumer checkers in other files read it through
+    /// `get_class_instance_type` when their per-checker
+    /// `TypeEnvironment::class_instance_types` is cold.
+    pub fn register_class_instance_type(&self, class_def: DefId, instance_type: TypeId) {
+        self.class_to_instance.insert(class_def, instance_type);
+        self.bump_generation();
+    }
+
+    /// Look up the shared instance `TypeId` for a class `DefId`.
+    ///
+    /// Returns `Some(instance_type)` if some checker has already finalized
+    /// the class's instance type and published it via
+    /// `register_class_instance_type`. Returns `None` when no checker has
+    /// finished building the class yet.
+    pub fn get_class_instance_type(&self, class_def: DefId) -> Option<TypeId> {
+        self.class_to_instance.get(&class_def).map(|r| *r)
+    }
+
+    /// Get exports for a namespace/module `DefId`.
+    pub fn get_exports(&self, id: DefId) -> Option<Vec<(Atom, DefId)>> {
+        self.definitions.get(&id).map(|r| r.exports.clone())
+    }
+
+    /// Get the name of a definition.
+    pub fn get_name(&self, id: DefId) -> Option<Atom> {
+        self.definitions.get(&id).map(|r| r.name)
+    }
+
+    /// The declaring file id of a definition, if known.
+    ///
+    /// Reads the single field directly rather than cloning the whole
+    /// `DefinitionInfo` (as `get` does), matching `get_kind`/`get_name`. Lib
+    /// definitions use the `u32::MAX` sentinel.
+    pub fn get_file_id(&self, id: DefId) -> Option<u32> {
+        self.definitions.get(&id).and_then(|r| r.file_id)
+    }
+
+    /// Add an export to an existing definition.
+    pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.add_export(name, export_def);
+            self.bump_generation();
+        }
+    }
+
+    /// Set the `extends` (parent class/interface) for an existing definition.
+    ///
+    /// Used by heritage resolution at pre-populate time to wire class/interface
+    /// hierarchy from binder-owned stable identity rather than checker repair.
+    pub fn set_extends(&self, id: DefId, extends: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(extends);
+            self.bump_generation();
+        }
+    }
+
+    /// Set the `implements` list for an existing definition.
+    ///
+    /// Used by heritage resolution at pre-populate time to wire interface
+    /// implementations from binder-owned stable identity.
+    pub fn set_implements(&self, id: DefId, implements: Vec<DefId>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.implements = implements;
+            self.bump_generation();
+        }
+    }
+
+    /// Find a `DefId` by its instance shape.
+    ///
+    /// This is used by the `TypeFormatter` to preserve interface names in error messages.
+    /// When an Object type matches an interface's instance shape, we use the interface name
+    /// instead of expanding the object literal.
+    ///
+    /// O(1) via `shape_to_def` index. The index is populated by both `register()`
+    /// (when `DefinitionInfo::instance_shape` is set) and `set_instance_shape()`,
+    /// covering all registration paths.
+    pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
+        let hash = Self::hash_shape(shape);
+        self.shape_to_def.get(&hash).map(|r| *r)
+    }
+
+    /// Find a `DefId` by its associated `SymbolId` (raw u32).
+    ///
+    /// Used by the `TypeFormatter` to look up whether a symbol corresponds to a
+    /// generic definition, enabling display of type parameters in error messages
+    /// (e.g., `S18<unknown, unknown, unknown>` instead of just `S18`).
+    ///
+    /// O(1) via `symbol_only_index`. The index is populated by both `register()`
+    /// (when `DefinitionInfo::symbol_id` is set) and `register_symbol_mapping()`,
+    /// covering all registration paths.
+    pub fn find_def_by_symbol(&self, symbol_id: u32) -> Option<DefId> {
+        self.symbol_only_index.get(&symbol_id).map(|r| *r)
+    }
+
+    /// Return all `(raw_symbol_id, DefId)` pairs from the symbol-only index.
+    ///
+    /// This enables the checker to warm its local `symbol_to_def` / `def_to_symbol`
+    /// caches in a single pass from the shared `DefinitionStore`, avoiding the need
+    /// to iterate each binder's `semantic_defs` separately. The returned pairs are
+    /// collected into a `Vec` to avoid holding `DashMap` read locks across the
+    /// caller's mutation of its own maps.
+    pub fn all_symbol_mappings(&self) -> Vec<(u32, DefId)> {
+        self.all_symbol_mappings_snapshot().to_vec()
+    }
+
+    /// Return a generation-keyed immutable snapshot of all `(raw_symbol_id, DefId)`
+    /// pairs from the symbol-only index.
+    ///
+    /// The snapshot is rebuilt only when the store generation changes. If a writer
+    /// mutates the store while we are collecting, we retry so the cached generation
+    /// cannot point at a partially stale snapshot.
+    pub fn all_symbol_mappings_snapshot(&self) -> SymbolMappingsSnapshot {
+        loop {
+            let generation_before = self.generation();
+            if let Some(snapshot) = self.cached_symbol_mappings_snapshot(generation_before) {
+                return snapshot;
+            }
+
+            let mappings: SymbolMappingsSnapshot = self
+                .symbol_only_index
+                .iter()
+                .map(|entry| (*entry.key(), *entry.value()))
+                .collect::<Vec<_>>()
+                .into();
+
+            let generation_after = self.generation();
+            if generation_before != generation_after {
+                continue;
+            }
+
+            let mut cached = self
+                .symbol_mappings_snapshot
+                .lock()
+                .expect("symbol mappings snapshot lock poisoned");
+            if let Some((cached_generation, snapshot)) = cached.as_ref()
+                && *cached_generation == generation_after
+            {
+                return Arc::clone(snapshot);
+            }
+
+            *cached = Some((generation_after, Arc::clone(&mappings)));
+            return mappings;
+        }
+    }
+
+    fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<SymbolMappingsSnapshot> {
+        let cached = self
+            .symbol_mappings_snapshot
+            .lock()
+            .expect("symbol mappings snapshot lock poisoned");
+        cached.as_ref().and_then(|(cached_generation, snapshot)| {
+            (*cached_generation == generation).then(|| Arc::clone(snapshot))
+        })
+    }
+
+    /// Find a type alias `DefId` whose body matches the given `TypeId`.
+    ///
+    /// This preserves type alias names in diagnostic messages: when the formatter
+    /// encounters an Object/Union/etc. TypeId that is the body of a type alias,
+    /// it can display the alias name (e.g., "Color") instead of the expansion
+    /// (e.g., "{ r: number; g: number; b: number }").
+    ///
+    /// Only matches non-generic type aliases (no type parameters) to avoid
+    /// ambiguity with instantiated generics.
+    ///
+    /// O(1) via `body_to_alias` index. The index is populated by both `register()`
+    /// (for aliases created with a body) and `set_body()` (for lazily-evaluated aliases),
+    /// covering all registration paths.
+    pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
+        // Skip bodies that were marked as "computed" (produced by intersection
+        // reduction, conditional evaluation, etc.). tsc does not preserve alias
+        // names for such types.
+        if self.computed_alias_bodies.contains(&type_id) {
+            return None;
+        }
+        self.body_to_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Mark a body `TypeId` as "computed" so that `find_type_alias_by_body`
+    /// skips it. Called by the checker when a type alias body is produced by
+    /// intersection reduction or conditional evaluation.
+    pub fn mark_body_as_computed(&self, body: TypeId) {
+        self.computed_alias_bodies.insert(body);
+        self.bump_generation();
+    }
+
+    /// Check if a body `TypeId` was marked as "computed".
+    pub fn is_computed_body(&self, body: TypeId) -> bool {
+        self.computed_alias_bodies.contains(&body)
+    }
+
+    /// Find all `DefId`s registered under the given name.
+    pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
+        self.name_to_defs.get(&name).map(|r| r.clone())
+    }
+
+    pub fn all_type_alias_defs(&self) -> Vec<DefId> {
+        self.definitions
+            .iter()
+            .filter_map(|entry| (entry.value().kind == DefKind::TypeAlias).then_some(*entry.key()))
+            .collect()
+    }
+
+    /// Resolve heritage names to `DefId`s using an intern function for
+    /// name comparison.
+    ///
+    /// For each name in the definition's `heritage_names`, interns the name
+    /// string via `intern_fn`, looks up the `name_to_defs` index, and returns
+    /// the first matching `DefId` of kind `Class` or `Interface`.
+    ///
+    /// This enables cross-batch heritage resolution: when a user class says
+    /// `class Foo extends Array`, the lib definition for `Array` can be found
+    /// by name after all batches are registered.
+    ///
+    /// Returns a list of `(heritage_name, resolved_def_id)` pairs.
+    /// Unresolved names are silently skipped.
+    pub fn resolve_heritage(
+        &self,
+        id: DefId,
+        intern_fn: &dyn Fn(&str) -> Atom,
+    ) -> Vec<(String, DefId)> {
+        let heritage_names = match self.definitions.get(&id) {
+            Some(info) if !info.heritage_names.is_empty() => info.heritage_names.clone(),
+            _ => return Vec::new(),
+        };
+
+        let mut resolved = Vec::with_capacity(heritage_names.len());
+        for name_str in &heritage_names {
+            let name_atom = intern_fn(name_str);
+            if let Some(candidates) = self.name_to_defs.get(&name_atom) {
+                // Find the first Class or Interface that isn't self.
+                for &candidate_id in candidates.value() {
+                    if candidate_id == id {
+                        continue;
+                    }
+                    if let Some(candidate_info) = self.definitions.get(&candidate_id)
+                        && matches!(candidate_info.kind, DefKind::Class | DefKind::Interface)
+                    {
+                        resolved.push((name_str.clone(), candidate_id));
+                        break;
+                    }
+                }
+            }
+        }
+
+        resolved
+    }
+
+    /// Get all `DefId`s originating from the given file.
+    ///
+    /// Returns a clone of the `Vec<DefId>` for the file, or an empty `Vec` if
+    /// no definitions were registered with that `file_id`. This is an O(1)
+    /// lookup via the `file_to_defs` index.
+    ///
+    /// Used for incremental invalidation: when a file changes, the caller can
+    /// find all `DefId`s that need to be refreshed.
+    pub fn defs_by_file(&self, file_id: u32) -> Vec<DefId> {
+        self.file_to_defs
+            .get(&file_id)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Check whether the store has any definitions registered for the given file.
+    ///
+    /// O(1) lookup via the `file_to_defs` index.
+    pub fn has_file(&self, file_id: u32) -> bool {
+        self.file_to_defs.contains_key(&file_id)
+    }
+
+    /// Invalidate all definitions originating from the given file.
+    ///
+    /// Removes each `DefId` from the main definition store and all reverse
+    /// indices (`type_to_def`, `symbol_def_index`, `symbol_only_index`,
+    /// `body_to_alias`, `shape_to_def`). The `file_to_defs` entry itself is
+    /// also removed.
+    ///
+    /// After invalidation, the `DefId` values are "dangling" — any remaining
+    /// references to them (e.g., in `TypeData::Lazy(DefId)`) will fail to
+    /// resolve, which is the intended behavior for incremental re-checking:
+    /// the caller must re-bind and re-register the changed file's definitions.
+    ///
+    /// Returns the number of definitions invalidated.
+    pub fn invalidate_file(&self, file_id: u32) -> usize {
+        let def_ids = match self.file_to_defs.remove(&file_id) {
+            Some((_, ids)) => ids,
+            None => return 0,
+        };
+
+        let count = def_ids.len();
+        for def_id in &def_ids {
+            // Remove from the main store and capture the info for index cleanup.
+            if let Some((_, info)) = self.definitions.remove(def_id) {
+                // Clean up symbol indices.
+                if let Some(sym_id) = info.symbol_id {
+                    if let Some(fid) = info.file_id {
+                        self.symbol_def_index.remove(&(sym_id, fid));
+                    }
+                    // Only remove from symbol_only_index if it points to this DefId.
+                    if let Some(entry) = self.symbol_only_index.get(&sym_id)
+                        && *entry == *def_id
+                    {
+                        drop(entry);
+                        self.symbol_only_index.remove(&sym_id);
+                    }
+                }
+
+                // Clean up type_to_def (reverse scan is expensive, but invalidation
+                // is rare and bounded by per-file definition count).
+                self.type_to_def.retain(|_, v| *v != *def_id);
+
+                // Clean up the type-parameter canonical cache. Direct
+                // key remove: the map is keyed by `DefId`, no scan needed.
+                self.type_param_for_def.remove(def_id);
+
+                // Clean up body_to_alias.
+                if info.kind == DefKind::TypeAlias
+                    && info.type_params.is_empty()
+                    && let Some(body) = info.body
+                    && let Some(entry) = self.body_to_alias.get(&body)
+                    && *entry == *def_id
+                {
+                    drop(entry);
+                    self.body_to_alias.remove(&body);
+                }
+
+                // Clean up shape_to_def.
+                if let Some(ref shape) = info.instance_shape {
+                    let hash = Self::hash_shape(shape);
+                    if let Some(entry) = self.shape_to_def.get(&hash)
+                        && *entry == *def_id
+                    {
+                        drop(entry);
+                        self.shape_to_def.remove(&hash);
+                    }
+                }
+
+                // Clean up class_to_constructor (both directions).
+                if info.kind == DefKind::Class {
+                    self.class_to_constructor.remove(def_id);
+                    self.class_to_instance.remove(def_id);
+                } else if info.kind == DefKind::ClassConstructor {
+                    // Remove any forward mapping that points to this constructor.
+                    self.class_to_constructor.retain(|_, v| *v != *def_id);
+                }
+
+                // Clean up name_to_defs.
+                if let Some(mut name_entry) = self.name_to_defs.get_mut(&info.name) {
+                    name_entry.retain(|d| d != def_id);
+                    if name_entry.is_empty() {
+                        drop(name_entry);
+                        self.name_to_defs.remove(&info.name);
+                    }
+                }
+            }
+        }
+
+        trace!(
+            instance_id = self.instance_id,
+            file_id,
+            invalidated_count = count,
+            "DefinitionStore::invalidate_file"
+        );
+
+        count
+    }
+
+    /// Get the number of files that have definitions registered.
+    ///
+    /// Useful for diagnostics and testing.
+    pub fn file_count(&self) -> usize {
+        self.file_to_defs.len()
+    }
+
+    /// Compute a snapshot of store sizes and composition.
+    ///
+    /// This iterates all definitions once to count by `DefKind`, plus reads
+    /// the length of each reverse index. Suitable for periodic logging or
+    /// on-demand diagnostics; avoid calling on every type check.
+    pub fn statistics(&self) -> StoreStatistics {
+        let mut stats = StoreStatistics {
+            total_definitions: self.definitions.len(),
+            type_to_def_entries: self.type_to_def.len(),
+            symbol_def_index_entries: self.symbol_def_index.len(),
+            symbol_only_index_entries: self.symbol_only_index.len(),
+            body_to_alias_entries: self.body_to_alias.len(),
+            shape_to_def_entries: self.shape_to_def.len(),
+            class_to_constructor_entries: self.class_to_constructor.len(),
+            name_to_defs_entries: self.name_to_defs.len(),
+            file_count: self.file_to_defs.len(),
+            next_def_id: self.next_id.load(Ordering::Relaxed),
+            ..Default::default()
+        };
+
+        for entry in &self.definitions {
+            match entry.value().kind {
+                DefKind::TypeAlias => stats.type_aliases += 1,
+                DefKind::Interface => stats.interfaces += 1,
+                DefKind::Class => stats.classes += 1,
+                DefKind::ClassConstructor => stats.class_constructors += 1,
+                DefKind::Enum => stats.enums += 1,
+                DefKind::Namespace => stats.namespaces += 1,
+                DefKind::Function => stats.functions += 1,
+                DefKind::Variable => stats.variables += 1,
+            }
+        }
+
+        stats.estimated_size_bytes = self.estimated_size_bytes();
+        stats
+    }
+
+    /// Estimate the heap memory footprint of the store in bytes.
+    ///
+    /// Accounts for the `DashMap` overhead of each index and the `Vec`-backed
+    /// fields inside `DefinitionInfo`. The result is a rough lower bound —
+    /// `DashMap` shard overhead, alignment padding, and allocator metadata are
+    /// not included. Useful for memory pressure tracking and telemetry.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // Per-entry overhead for DashMap: key + value + ~64 bytes bucket/shard overhead.
+        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
+
+        // definitions: DefId -> DefinitionInfo
+        for entry in &self.definitions {
+            let info = entry.value();
+            size += std::mem::size_of::<DefId>() + std::mem::size_of::<DefinitionInfo>();
+            size += DASHMAP_ENTRY_OVERHEAD;
+            // Vec fields inside DefinitionInfo
+            size += info.type_params.capacity() * std::mem::size_of::<TypeParamInfo>();
+            size += info.enum_members.capacity() * std::mem::size_of::<(Atom, EnumMemberValue)>();
+            size += info.implements.capacity() * std::mem::size_of::<DefId>();
+            size += info.exports.capacity() * std::mem::size_of::<(Atom, DefId)>();
+            // Arc<ObjectShape> — count the shape itself (shared, but we include it here)
+            if let Some(ref shape) = info.instance_shape {
+                size += std::mem::size_of::<ObjectShape>();
+                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
+            }
+            if let Some(ref shape) = info.static_shape {
+                size += std::mem::size_of::<ObjectShape>();
+                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
+            }
+        }
+
+        // type_to_def: TypeId -> DefId
+        size += self.type_to_def.len()
+            * (std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // symbol_def_index: (u32, u32) -> DefId
+        size += self.symbol_def_index.len()
+            * (std::mem::size_of::<(u32, u32)>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // symbol_only_index: u32 -> DefId
+        size += self.symbol_only_index.len()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
+
+        // body_to_alias: TypeId -> DefId
+        size += self.body_to_alias.len()
+            * (std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // shape_to_def: u64 -> DefId
+        size += self.shape_to_def.len()
+            * (std::mem::size_of::<u64>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
+
+        // class_to_constructor: DefId -> DefId
+        size += self.class_to_constructor.len()
+            * (std::mem::size_of::<DefId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // class_to_instance: DefId -> TypeId
+        size += self.class_to_instance.len()
+            * (std::mem::size_of::<DefId>()
+                + std::mem::size_of::<TypeId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // file_to_defs: u32 -> Vec<DefId>
+        for entry in &self.file_to_defs {
+            size += std::mem::size_of::<u32>() + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().capacity() * std::mem::size_of::<DefId>();
+        }
+
+        // name_to_defs: Atom -> Vec<DefId>
+        for entry in &self.name_to_defs {
+            size += std::mem::size_of::<Atom>() + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().capacity() * std::mem::size_of::<DefId>();
+        }
+
+        // resolved_cross_file_queries:
+        // (kind, file_idx, primary, secondary, args_hash) -> (TypeId, params)
+        for entry in &self.resolved_cross_file_queries {
+            size += std::mem::size_of::<(u8, u32, u32, u32, u64)>()
+                + std::mem::size_of::<TypeId>()
+                + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().1.capacity() * std::mem::size_of::<TypeParamInfo>();
+        }
+
+        size
+    }
+
+    /// Create a pre-populated `DefinitionStore` from binder `SemanticDefEntry` data.
+    ///
+    /// This is the canonical factory for converting binder-owned stable identity
+    /// into solver `DefId`s. It runs as a standalone function (no checker context
+    /// needed), enabling identity creation at merge time or single-file
+    /// construction time rather than as checker-side repair.
+    ///
+    /// The function performs three passes:
+    /// 1. Create `DefId`s and `DefinitionInfo` for each `SemanticDefEntry`.
+    /// 2. Wire namespace exports from `parent_namespace` relationships.
+    /// 3. Resolve heritage names (extends/implements) to `DefId`s.
+    ///
+    /// The `intern_string` callback abstracts over `TypeInterner::intern_string`
+    /// vs `QueryDatabase::intern_string`, so both the merge pipeline and checker
+    /// constructors can use this without coupling to a specific interner type.
+    pub fn from_semantic_defs(
+        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self {
+        let entries: Vec<_> = semantic_defs
+            .iter()
+            .map(|(&sym_id, entry)| (sym_id, entry))
+            .collect();
+        Self::from_semantic_def_entries(&entries, intern_string)
+    }
+
+    /// Create a pre-populated `DefinitionStore` from a base semantic-def map plus
+    /// per-file overlay maps without cloning the base map or its entries.
+    ///
+    /// Overlay entries take precedence over base entries with the same `SymbolId`,
+    /// matching the previous clone-then-insert construction used by the CLI
+    /// shared-store setup.
+    pub fn from_semantic_defs_with_overlays<'a, I>(
+        base: &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        overlays: I,
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self
+    where
+        I: IntoIterator<
+            Item = &'a rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        >,
+    {
+        let mut overlay_entries: rustc_hash::FxHashMap<
+            tsz_binder::SymbolId,
+            &tsz_binder::SemanticDefEntry,
+        > = rustc_hash::FxHashMap::default();
+        for overlay in overlays {
+            for (&sym_id, entry) in overlay {
+                overlay_entries.insert(sym_id, entry);
+            }
+        }
+
+        let mut entries = Vec::with_capacity(base.len().saturating_add(overlay_entries.len()));
+        entries.extend(
+            base.iter()
+                .filter(|(sym_id, _)| !overlay_entries.contains_key(sym_id))
+                .map(|(&sym_id, entry)| (sym_id, entry)),
+        );
+        entries.extend(overlay_entries);
+
+        Self::from_semantic_def_entries(&entries, intern_string)
+    }
+
+    fn from_semantic_def_entries(
+        semantic_defs: &[(tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry)],
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self {
+        let class_count = semantic_defs
+            .iter()
+            .map(|(_, entry)| *entry)
+            .filter(|entry| entry.kind == tsz_binder::SemanticDefKind::Class)
+            .count();
+        let mut file_ids = FxHashSet::default();
+        for (_, entry) in semantic_defs {
+            file_ids.insert(entry.file_id);
+        }
+        let total_definitions = semantic_defs.len() + class_count;
+        let store = Self::with_capacities(total_definitions, file_ids.len());
+
+        if semantic_defs.is_empty() {
+            return store;
+        }
+
+        let mut def_infos = Vec::with_capacity(total_definitions);
+        let mut symbol_to_def: FxHashMap<u32, DefId> = FxHashMap::default();
+        let mut symbol_only_index: FxHashMap<u32, DefId> = FxHashMap::default();
+        let mut symbol_def_index_entries = Vec::with_capacity(semantic_defs.len());
+        let mut file_to_defs: FxHashMap<u32, Vec<DefId>> = FxHashMap::default();
+        let mut name_to_defs: FxHashMap<Atom, Vec<DefId>> = FxHashMap::default();
+        let mut class_to_constructor_entries = Vec::with_capacity(class_count);
+
+        symbol_to_def.reserve(semantic_defs.len());
+        symbol_only_index.reserve(semantic_defs.len());
+        file_to_defs.reserve(file_ids.len());
+        name_to_defs.reserve(semantic_defs.len());
+
+        let mut next_id = DefId::FIRST_VALID;
+
+        const fn info_index(def_id: DefId) -> usize {
+            def_id.0.saturating_sub(DefId::FIRST_VALID) as usize
+        }
+
+        fn preloaded_info(
+            definitions: &[(DefId, DefinitionInfo)],
+            def_id: DefId,
+        ) -> Option<&DefinitionInfo> {
+            definitions
+                .get(info_index(def_id))
+                .and_then(|(stored_id, info)| (*stored_id == def_id).then_some(info))
+        }
+
+        fn preloaded_info_mut(
+            definitions: &mut [(DefId, DefinitionInfo)],
+            def_id: DefId,
+        ) -> Option<&mut DefinitionInfo> {
+            definitions
+                .get_mut(info_index(def_id))
+                .and_then(|(stored_id, info)| (*stored_id == def_id).then_some(info))
+        }
+
+        fn record_preloaded_definition(
+            def_infos: &mut Vec<(DefId, DefinitionInfo)>,
+            file_to_defs: &mut FxHashMap<u32, Vec<DefId>>,
+            name_to_defs: &mut FxHashMap<Atom, Vec<DefId>>,
+            def_id: DefId,
+            info: DefinitionInfo,
+        ) {
+            if let Some(file_id) = info.file_id {
+                file_to_defs.entry(file_id).or_default().push(def_id);
+            }
+            name_to_defs.entry(info.name).or_default().push(def_id);
+            def_infos.push((def_id, info));
+        }
+
+        // Pass 1: Create DefIds and DefinitionInfo for each entry.
+        for (sym_id, entry) in semantic_defs {
+            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern_string);
+            let kind = info.kind;
+
+            let def_id = DefId(next_id);
+            next_id = next_id.saturating_add(1);
+            symbol_to_def.entry(sym_id.0).or_insert(def_id);
+            symbol_only_index.entry(sym_id.0).or_insert(def_id);
+            symbol_def_index_entries.push(((sym_id.0, entry.file_id), def_id));
+            record_preloaded_definition(
+                &mut def_infos,
+                &mut file_to_defs,
+                &mut name_to_defs,
+                def_id,
+                info,
+            );
+
+            if kind == DefKind::Class {
+                let ctor_def_id = DefId(next_id);
+                next_id = next_id.saturating_add(1);
+                let ctor_info = DefinitionInfo::class_constructor_from_semantic_def(
+                    entry,
+                    sym_id.0,
+                    &intern_string,
+                );
+                record_preloaded_definition(
+                    &mut def_infos,
+                    &mut file_to_defs,
+                    &mut name_to_defs,
+                    ctor_def_id,
+                    ctor_info,
+                );
+                class_to_constructor_entries.push((def_id, ctor_def_id));
+            }
+        }
+
+        // Pass 2: Wire namespace exports from parent_namespace relationships.
+        for (sym_id, entry) in semantic_defs {
+            if let Some(parent_sym) = entry.parent_namespace {
+                let child_def = symbol_to_def.get(&sym_id.0).copied();
+                let parent_def = symbol_to_def.get(&parent_sym.0).copied();
+                if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                    let Some(name) = preloaded_info(&def_infos, child_def_id).map(|info| info.name)
+                    else {
+                        continue;
+                    };
+                    if let Some(parent_info) = preloaded_info_mut(&mut def_infos, parent_def_id) {
+                        parent_info.add_export(name, child_def_id);
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Resolve heritage names to DefIds.
+        for (sym_id, entry) in semantic_defs {
+            let def_id = match symbol_to_def.get(&sym_id.0).copied() {
+                Some(def_id) => def_id,
+                None => continue,
+            };
+
+            // Resolve extends_names → DefinitionInfo.extends
+            let mut resolved_extends = None;
+            if !entry.extends_names.is_empty() {
+                for name_str in &entry.extends_names {
+                    if name_str.contains('.') {
+                        continue; // property-access names resolved by checker
+                    }
+                    let name_atom = intern_string(name_str);
+                    if let Some(candidates) = name_to_defs.get(&name_atom) {
+                        for &candidate_id in candidates {
+                            if candidate_id == def_id {
+                                continue;
+                            }
+                            if let Some(candidate_info) = preloaded_info(&def_infos, candidate_id)
+                                && matches!(
+                                    candidate_info.kind,
+                                    DefKind::Class | DefKind::Interface
+                                )
+                            {
+                                resolved_extends = Some(candidate_id);
+                                break;
+                            }
+                        }
+                    }
+                    break; // only first extends name for the extends field
+                }
+            }
+            if let Some(extends) = resolved_extends
+                && let Some(info) = preloaded_info_mut(&mut def_infos, def_id)
+            {
+                info.extends = Some(extends);
+            }
+
+            // Resolve implements_names → DefinitionInfo.implements
+            if !entry.implements_names.is_empty() {
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
+                for name_str in &entry.implements_names {
+                    if name_str.contains('.') {
+                        continue;
+                    }
+                    let name_atom = intern_string(name_str);
+                    if let Some(candidates) = name_to_defs.get(&name_atom) {
+                        for &candidate_id in candidates {
+                            if candidate_id == def_id {
+                                continue;
+                            }
+                            if let Some(candidate_info) = preloaded_info(&def_infos, candidate_id)
+                                && matches!(
+                                    candidate_info.kind,
+                                    DefKind::Interface | DefKind::Class
+                                )
+                            {
+                                resolved_implements.push(candidate_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !resolved_implements.is_empty()
+                    && let Some(info) = preloaded_info_mut(&mut def_infos, def_id)
+                {
+                    info.implements = resolved_implements;
+                }
+            }
+        }
+
+        for (def_id, info) in def_infos {
+            store.definitions.insert(def_id, info);
+        }
+        for (symbol_id, def_id) in symbol_only_index {
+            store.symbol_only_index.insert(symbol_id, def_id);
+        }
+        for ((symbol_id, file_id), def_id) in symbol_def_index_entries {
+            store.symbol_def_index.insert((symbol_id, file_id), def_id);
+        }
+        for (file_id, def_ids) in file_to_defs {
+            store.file_to_defs.insert(file_id, def_ids);
+        }
+        for (name, def_ids) in name_to_defs {
+            store.name_to_defs.insert(name, def_ids);
+        }
+        for (class_def, ctor_def) in class_to_constructor_entries {
+            store.class_to_constructor.insert(class_def, ctor_def);
+        }
+        store.next_id.store(next_id, Ordering::SeqCst);
+
+        // Mark as fully populated so parallel checkers skip redundant population.
+        store.mark_fully_populated();
+
+        store
+    }
+}

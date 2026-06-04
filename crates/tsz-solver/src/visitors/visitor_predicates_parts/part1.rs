@@ -1,0 +1,1406 @@
+
+
+use crate::construction::TypeDatabase;
+
+use crate::types::{IntrinsicKind, ObjectShapeId};
+
+use crate::{TypeData, TypeId};
+
+pub use identity_comparable::is_identity_comparable_type;
+
+use predicate_pool::with_predicate_buffers;
+
+use rustc_hash::FxHashMap;
+
+use tsz_common::Atom;
+
+/// Check if a type is a literal type.
+///
+/// Matches: `TypeData::Literal`(_)
+pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds whose
+    // TypeData::lookup returns Literal(Boolean), so they ARE literal types.
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
+}
+
+/// Check if a type is a union whose every member is a fresh literal.
+///
+/// Returns `true` for `"a" | "b" | "c"`, `1 | 2 | 3`, `true | false`, etc.
+/// Returns `false` for scalar `Literal` types, primitives, and any union that
+/// contains at least one non-literal member.
+pub fn is_union_of_fresh_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            !members.is_empty() && members.iter().all(|&m| is_literal_type(types, m))
+        }
+        _ => false,
+    }
+}
+
+/// Decide whether an array-element inference union should have its fresh literal
+/// members widened to their primitive base.
+///
+/// Returns `true` when the union has at least one literal member and every
+/// member is either a literal or one of the primitives that literal widening
+/// produces (`number` / `string` / `boolean` / `bigint`). This covers:
+/// - pure literal unions (`"a" | "b"`, `1 | 2`) — equivalent to
+///   `is_union_of_fresh_literals`; and
+/// - unions that mix fresh literals with an already-widened primitive, which is
+///   exactly the shape produced by spreading a widened array alongside a literal
+///   element (`number | "x"` from `[...numberArray, "x"]`). The widened
+///   primitive proves the array literal already carries a widened element, so
+///   the fresh literal siblings must widen too, matching tsc's
+///   `getWidenedLiteralType`.
+///
+/// A union whose non-literal members include `null` / `undefined` / objects is
+/// left alone, preserving the literal members for downstream narrowing (the
+/// conservative baseline for mixed literal+nullable element unions).
+pub fn array_element_union_widens_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            let mut has_literal = false;
+            for &member in members.iter() {
+                if is_literal_type(types, member) {
+                    has_literal = true;
+                } else if !matches!(
+                    member,
+                    TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT
+                ) {
+                    return false;
+                }
+            }
+            has_literal
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is a module namespace type (import * as ns).
+///
+/// Matches: `TypeData::ModuleNamespace`(_)
+pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
+}
+
+/// Check if a type is an unresolved `Lazy(DefId)` reference.
+///
+/// Returns true if the type has not been evaluated/resolved yet. This is used
+/// by the checker to determine whether the solver's `is_arithmetic_operand`
+/// result is authoritative. When the type is resolved (e.g., to `Enum`, `Literal`,
+/// etc.), `is_arithmetic_operand` can inspect the structural type and distinguish
+/// numeric from string enums. When it's still `Lazy`, the checker may need to
+/// use symbol-based fallback checks.
+pub fn is_lazy_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Lazy(_)))
+}
+
+/// Check if a type is a function type (Function or Callable).
+///
+/// This also handles intersections containing function types.
+pub fn is_function_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_function_type_impl(types, type_id)
+}
+
+fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types are never `Function` / `Callable` /
+    // `Intersection` — the existing match falls through to `_ => false`
+    // for them. `is_intrinsic()` is a free `TypeId`-range check; skip the
+    // `TypeData` lookup and match dispatch entirely. Same pattern as
+    // #2001 / #2005 / #2008 / #2009 / #2014.
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
+        Some(TypeData::Intersection(members)) => {
+            let members = types.type_list(members);
+            members
+                .iter()
+                .any(|&member| is_function_type_impl(types, member))
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is an object-like type (suitable for typeof "object").
+///
+/// Returns true for: Object, `ObjectWithIndex`, Array, Tuple, Mapped, `ReadonlyType` (of object)
+pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_object_like_type_impl(types, type_id)
+}
+
+fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsics are object-like ONLY for OBJECT and FUNCTION.
+    // All other intrinsics fall through the match to `_ => false`.
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::OBJECT || type_id == TypeId::FUNCTION;
+    }
+    match types.lookup(type_id) {
+        Some(
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Mapped(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Intrinsic(IntrinsicKind::Object | IntrinsicKind::Function),
+        ) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_object_like_type_impl(types, inner),
+        Some(TypeData::Intersection(members)) => {
+            let members = types.type_list(members);
+            members
+                .iter()
+                .all(|&member| is_object_like_type_impl(types, member))
+        }
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .is_some_and(|constraint| is_object_like_type_impl(types, constraint)),
+        // Lazy types represent unresolved type references (interfaces, classes, type aliases).
+        // These are object-like unless they resolve to the global `Function` interface.
+        Some(TypeData::Lazy(def_id)) => {
+            !types.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Function)
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type has late-bound (computed) members.
+///
+/// Returns true when the type is an object with `HAS_LATE_BOUND_MEMBERS` flag,
+/// indicating it has computed property members (e.g., `[symbol]()`) that are
+/// not directly representable as named properties in the type system.
+/// Also checks through Lazy/Application wrappers via evaluation.
+pub fn has_late_bound_members(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    has_late_bound_members_impl(types, type_id)
+}
+
+fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types (`number`, `string`, `any`, `never`, etc.)
+    // are not Object/ObjectWithIndex/Intersection, so the existing match
+    // falls through to the `_` arm. Calling `evaluate_type` on an intrinsic
+    // returns the same TypeId, which then short-circuits to `false` — but
+    // only after a `TypeData` lookup, an eight-arm match dispatch, and an
+    // `evaluate_type` call. `TypeId::is_intrinsic` is a free range check;
+    // skip the rest entirely. Same pattern as #2001 / #2005 / #2008 / #2009 /
+    // #2014 / #2015 / #2017 / #2019.
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::ObjectWithIndex(shape_id)) | Some(TypeData::Object(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            shape
+                .flags
+                .contains(crate::types::ObjectFlags::HAS_LATE_BOUND_MEMBERS)
+        }
+        Some(TypeData::Intersection(members_id)) => {
+            let members = types.type_list(members_id);
+            members
+                .iter()
+                .any(|&m| has_late_bound_members_impl(types, m))
+        }
+        _ => {
+            // Try evaluating (resolve Lazy/Application) and check the result
+            let evaluated = crate::evaluation::evaluate::evaluate_type(types, type_id);
+            if evaluated != type_id {
+                has_late_bound_members_impl(types, evaluated)
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Check if a type is an empty object type (no properties, no index signatures).
+pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Object(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            shape.properties.is_empty()
+        }
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            shape.properties.is_empty()
+                && shape.string_index.is_none()
+                && shape.number_index.is_none()
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is a "widening" primitive intrinsic — i.e., the wide
+/// `string` / `number` / `boolean` / `bigint` / `symbol` types whose
+/// literal subtypes get absorbed during union normalization.
+///
+/// Used to recognize the branded-primitive idiom (`string & {}`,
+/// `number & {}`, …): subtype-based intersection simplification must
+/// preserve the empty-object brand here so unions like
+/// `(string & {}) | "literal"` retain their literal members. Literal
+/// types like `"hello"` are NOT widening primitives — `"hello" & {}`
+/// still collapses to `"hello"`.
+pub fn is_widening_primitive_intrinsic(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match type_id {
+        TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL => true,
+        _ => matches!(
+            types.lookup(type_id),
+            Some(TypeData::Intrinsic(
+                IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol
+            ))
+        ),
+    }
+}
+
+/// Check if a type is a bare intrinsic keyword type (`any`, `unknown`, `never`,
+/// `void`, `object`, `null`, `undefined`, `boolean`, `number`, `string`,
+/// `bigint`, `symbol`) or a literal type.
+///
+/// These are exactly the types tsc does not attach an `aliasSymbol` to: they
+/// resolve to shared singleton types rather than freshly-constructed structural
+/// types. A type alias whose body resolves to one of them is therefore rendered
+/// structurally (`string`, `42`, `true`, …) in diagnostics rather than by the
+/// alias name, mirroring tsc's display policy.
+pub fn is_intrinsic_or_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        types.lookup(type_id),
+        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
+    )
+}
+
+/// Check if a type is a primitive type (intrinsic or literal).
+pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Check well-known intrinsic primitive TypeIds first.
+    // In tsc, Primitive = String | Number | BigInt | Boolean | Null | Undefined | ESSymbol | Void.
+    // Exclude non-primitive intrinsics: object, never, unknown, any, error,
+    // function, and internal sentinels. Note: void IS a primitive in tsc.
+    if type_id.is_intrinsic() {
+        return !matches!(
+            type_id,
+            TypeId::OBJECT
+                | TypeId::NEVER
+                | TypeId::UNKNOWN
+                | TypeId::ANY
+                | TypeId::ERROR
+                | TypeId::FUNCTION
+                | TypeId::PROMISE_BASE
+                | TypeId::DELEGATE
+                | TypeId::STRICT_ANY
+        );
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(
+            TypeData::Intrinsic(
+                IntrinsicKind::Void
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::String
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol,
+            ) | TypeData::Literal(_)
+        )
+    )
+}
+
+/// Check if a type is a union type.
+pub fn is_union_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Union(_)))
+}
+
+/// Check if a type is an intersection type.
+pub fn is_intersection_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Intersection(_)))
+}
+
+/// Check if a type is an array type.
+pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Array(_)))
+}
+
+/// Check if a type is a tuple type (including readonly tuples wrapped in `ReadonlyType`).
+pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Tuple(_)) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_tuple_type(types, inner),
+        _ => false,
+    }
+}
+
+/// Check if a type provides structural wrapping that breaks type alias
+/// circular reference chains.  In TypeScript, recursion through "deferred"
+/// types is legal:
+///   - Array, Tuple, `ReadonlyType` wrapping those
+///   - Object / `ObjectWithIndex` (object literal types)
+///   - Function / Callable (function/constructor types)
+///   - Mapped types, Application (generic instantiation)
+///
+/// Conversely, Lazy, Union, and Intersection are transparent -- they do NOT
+/// provide structural wrapping by themselves.
+///
+/// For union types the body is considered deferred only when **every** member
+/// is itself deferred (e.g., `JsonValue[] | readonly JsonValue[]`).
+pub fn is_structurally_deferred_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(
+            TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Mapped(_)
+            | TypeData::Application(_),
+        ) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_structurally_deferred_type(types, inner),
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&m| is_structurally_deferred_type(types, m))
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is a type parameter.
+pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+    )
+}
+
+/// Check if a type is a conditional type.
+pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Conditional(_)))
+}
+
+/// Check if a type contains a deferred conditional type, either directly
+/// or as a member of an intersection. Used to determine whether an
+/// excess property failure should be downgraded to a structural mismatch
+/// (TS2322) since the deferred conditional makes the assignment incompatible
+/// regardless of excess properties.
+pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Conditional(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = types.type_list(list_id);
+            members.iter().any(|m| {
+                !m.is_intrinsic() && matches!(types.lookup(*m), Some(TypeData::Conditional(_)))
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is a mapped type.
+pub fn is_mapped_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Mapped(_)))
+}
+
+/// Check if a type is an index access type.
+pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
+}
+
+/// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
+/// on evaluation — `Application`, `Conditional`, `Mapped`, `IndexAccess`, or
+/// `KeyOf`. Used by the checker to attribute the `tuple_too_large` flag to the
+/// alias whose body owns the synthesis, not to a transitive referrer whose body
+/// is a plain `Lazy` or already-materialized `Tuple`.
+pub fn is_fresh_tuple_synthesis_site(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_),
+        )
+    )
+}
+
+/// Check if a type is a type query (typeof) type.
+pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::TypeQuery(_)))
+}
+
+/// Check if a type is a template literal type.
+pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
+}
+
+/// Check if a type is a type reference (Lazy/DefId).
+pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(TypeData::Lazy(_) | TypeData::Recursive(_))
+    )
+}
+
+/// Check if a type is a generic type application.
+pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(types.lookup(type_id), Some(TypeData::Application(_)))
+}
+
+/// Check if a type contains any type parameters.
+pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(types, type_id, |key| {
+        matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
+    })
+}
+
+/// Check if a type contains free type parameters, excluding those bound by
+/// enclosing function/callable signatures. See `contains_free_type_parameters_db`
+/// in `content_predicates` for the full doc.
+pub fn contains_free_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut checker = FreeTypeParamChecker {
+        types,
+        memo: FxHashMap::default(),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
+    };
+    checker.check(type_id)
+}
+
+/// Check if a type contains any `infer` types.
+pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(types, type_id, |key| matches!(key, TypeData::Infer(_)))
+}
+
+/// Check if a type contains any "free" `infer` types — inference placeholders
+/// that are NOT buried inside a `TypeParameter`'s constraint or default.
+///
+/// `TypeParameter` constraints/defaults are definitional (e.g., `T extends Foo`
+/// where `Foo = X extends Bar<infer V> ? V : never`). The `infer V` there is
+/// structural and already resolved at the definition site. Walking into it
+/// produces false positives when used to decide whether to suppress diagnostics.
+///
+/// This variant is used by `should_suppress_assignability_diagnostic` to avoid
+/// suppressing real errors like TS2322 when the only `infer` types are in
+/// type parameter constraint chains.
+pub fn contains_free_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut checker = FreeInferChecker {
+        types,
+        memo: FxHashMap::default(),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
+    };
+    checker.check(type_id)
+}
+
+/// Check if a type contains the `any` intrinsic anywhere.
+pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::ANY {
+        return true;
+    }
+    contains_type_matching(types, type_id, |key| {
+        matches!(key, TypeData::Intrinsic(IntrinsicKind::Any))
+    })
+}
+
+/// Check if a type contains the error type.
+///
+/// This handles `TypeId::ERROR` directly and also detects error types nested
+/// inside Application types (e.g., `Application(Error, args)` which displays
+/// as `error<args>`). The generic `contains_type_matching` visitor can't catch
+/// these because (a) its intrinsic fast-path skips `TypeId::ERROR` and (b) it
+/// doesn't check Application bases.
+pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::ERROR {
+        return true;
+    }
+    contains_error_type_recursive(types, type_id, &mut FxHashMap::default())
+}
+
+fn contains_error_type_recursive(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    memo: &mut FxHashMap<TypeId, bool>,
+) -> bool {
+    if type_id == TypeId::ERROR {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(&cached) = memo.get(&type_id) {
+        return cached;
+    }
+    // Mark as false to break cycles
+    memo.insert(type_id, false);
+
+    let Some(key) = types.lookup(type_id) else {
+        return false;
+    };
+    if matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_)) {
+        memo.insert(type_id, true);
+        return true;
+    }
+
+    // Terminal-kind fast path. These variants have no children to recurse
+    // into and fall through the match below to `_ => false`. Short-circuiting
+    // here skips the eight-arm dispatch and the trailing memo write (we
+    // already inserted `false` at line 462 for cycle prevention, and the
+    // match's `_ => false` would just rewrite the same value).
+    if matches!(
+        key,
+        TypeData::Literal(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Intrinsic(_)
+    ) {
+        return false;
+    }
+
+    let result = match key {
+        TypeData::Application(app_id) => {
+            let app = types.type_application(app_id);
+            // Check both base AND args for error types. Unlike the generic
+            // contains_type_matching which skips bases to avoid false positives
+            // with type parameters, error types in the base are always wrong.
+            contains_error_type_recursive(types, app.base, memo)
+                || app
+                    .args
+                    .iter()
+                    .any(|&a| contains_error_type_recursive(types, a, memo))
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = types.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_error_type_recursive(types, m, memo))
+        }
+        TypeData::Tuple(tuple_list_id) => {
+            let elements = types.tuple_list(tuple_list_id);
+            elements
+                .iter()
+                .any(|elem| contains_error_type_recursive(types, elem.type_id, memo))
+        }
+        TypeData::Array(element_type) => contains_error_type_recursive(types, element_type, memo),
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = types.object_shape(shape_id);
+            shape.properties.iter().any(|prop| {
+                contains_error_type_recursive(types, prop.type_id, memo)
+                    || contains_error_type_recursive(types, prop.write_type, memo)
+            }) || shape.string_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            }) || shape.number_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            })
+        }
+        TypeData::Function(shape_id) => {
+            let shape = types.function_shape(shape_id);
+            contains_error_type_recursive(types, shape.return_type, memo)
+                || shape
+                    .params
+                    .iter()
+                    .any(|p| contains_error_type_recursive(types, p.type_id, memo))
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = types.callable_shape(shape_id);
+            shape.call_signatures.iter().any(|sig| {
+                sig.params
+                    .iter()
+                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
+                    || contains_error_type_recursive(types, sig.return_type, memo)
+                    || sig.this_type.is_some_and(|this_type| {
+                        contains_error_type_recursive(types, this_type, memo)
+                    })
+            }) || shape.construct_signatures.iter().any(|sig| {
+                sig.params
+                    .iter()
+                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
+                    || contains_error_type_recursive(types, sig.return_type, memo)
+                    || sig.this_type.is_some_and(|this_type| {
+                        contains_error_type_recursive(types, this_type, memo)
+                    })
+            }) || shape.properties.iter().any(|prop| {
+                contains_error_type_recursive(types, prop.type_id, memo)
+                    || contains_error_type_recursive(types, prop.write_type, memo)
+            }) || shape.string_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            }) || shape.number_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            })
+        }
+        _ => false,
+    };
+    memo.insert(type_id, result);
+    result
+}
+
+/// Check if a type contains the `this` type anywhere.
+///
+/// The result is stable per `TypeId` within a single `TypeInterner`, so we
+/// memoize in a project-wide `DashMap` on the interner to avoid the repeated
+/// recursive walk that profiled at ~5% of total CPU on multi-file workloads.
+#[inline]
+pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types never contain ThisType
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    // The deep walk is memoized per node in the shared `contains_this` cache,
+    // so repeated checks over the same large recursive shapes stay O(1).
+    crate::type_queries::contains_this_type_db(types, type_id)
+}
+
+/// Check if a type contains any type matching a predicate.
+pub fn contains_type_matching<F>(types: &dyn TypeDatabase, type_id: TypeId, predicate: F) -> bool
+where
+    F: Fn(&TypeData) -> bool,
+{
+    let mut checker = ContainsTypeChecker {
+        types,
+        predicate,
+        memo: FxHashMap::default(),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
+    };
+    checker.check(type_id)
+}
+
+/// Check if a type contains a type parameter with the given name.
+///
+/// This is a convenience wrapper around `contains_type_matching` that avoids
+/// requiring callers to match on `TypeData` internals directly.
+pub fn contains_type_parameter_named(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: Atom,
+) -> bool {
+    contains_type_matching(
+        types,
+        type_id,
+        |td| matches!(td, TypeData::TypeParameter(info) if info.name == name),
+    )
+}
+
+/// Check if a type contains a type parameter with the given name, WITHOUT
+/// walking into other type parameters' constraints.
+///
+/// Unlike `contains_type_parameter_named`, this does not descend into
+/// `TypeParameter.constraint` or `TypeParameter.default`. This is important
+/// for mapped type circular-constraint detection: in `{ [K in keyof T]: T[K] }`,
+/// `K`'s constraint is `keyof T`. The deep check would walk into `T`'s own
+/// constraint (which may contain `K`), falsely reporting a cycle.
+pub fn contains_type_parameter_named_shallow(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: Atom,
+) -> bool {
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            // Check predicate
+            if matches!(&data, TypeData::TypeParameter(info) if info.name == name) {
+                return true;
+            }
+
+            // Visit children but skip TypeParameter/Infer constraints/defaults.
+            // For TypeParameter/Infer, we only care about identity (name match),
+            // not what their constraints contain.
+            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+                continue;
+            }
+            // Terminal kinds have no children to enumerate. Skipping
+            // `for_each_child_by_id` (which would iterate an empty child set)
+            // saves the closure setup and visitor dispatch on the very common
+            // input shape where the predicate is the entry-point lookup result.
+            // The kinds listed here match the leaf arms of every other walker
+            // that returns `false` for them — see `ContainsTypeChecker.check_key`,
+            // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
+            if matches!(
+                &data,
+                TypeData::Literal(_)
+                    | TypeData::Error
+                    | TypeData::ThisType
+                    | TypeData::BoundParameter(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::Recursive(_)
+                    | TypeData::TypeQuery(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::ModuleNamespace(_)
+                    | TypeData::UnresolvedTypeName(_)
+            ) {
+                continue;
+            }
+            // For all other types, use the generic child visitor.
+            super::visitor::for_each_child_by_id(types, current, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    })
+}
+
+fn type_parameter_identity_matches(
+    def_store: &crate::def::DefinitionStore,
+    candidate: TypeId,
+    target: TypeId,
+) -> bool {
+    candidate == target
+        || def_store
+            .find_def_for_type(candidate)
+            .zip(def_store.find_def_for_type(target))
+            .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
+}
+
+/// Check if a type contains the target type parameter identity, without walking
+/// into other type parameters' constraints/defaults.
+pub fn contains_type_parameter_identity_shallow(
+    types: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+
+            if type_parameter_identity_matches(def_store, current, target) {
+                return true;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+                continue;
+            }
+            if matches!(
+                &data,
+                TypeData::Literal(_)
+                    | TypeData::Error
+                    | TypeData::ThisType
+                    | TypeData::BoundParameter(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::Recursive(_)
+                    | TypeData::TypeQuery(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::ModuleNamespace(_)
+                    | TypeData::UnresolvedTypeName(_)
+            ) {
+                continue;
+            }
+            super::visitor::for_each_child_by_id(types, current, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    })
+}
+
+/// Check if a type transitively references any type parameter whose name
+/// is in the given set.
+///
+/// This is more efficient than `collect_referenced_types` followed by
+/// per-element `type_param_info` checks, because it short-circuits on
+/// the first match.
+pub fn references_any_type_param_named(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    names: &rustc_hash::FxHashSet<Atom>,
+) -> bool {
+    contains_type_matching(
+        types,
+        type_id,
+        |td| matches!(td, TypeData::TypeParameter(info) if names.contains(&info.name)),
+    )
+}
+
+/// Check if a constraint type references a type parameter along the base-constraint
+/// resolution path. This mimics tsc's `getBaseConstraint` recursion, which only
+/// follows certain structural paths:
+///
+/// Descended into (these require resolving sub-constraints):
+/// - Union/intersection members
+/// - Mapped type constraint (the key source)
+/// - Conditional check/extends types
+/// - Index access object/index
+/// - `KeyOf` operand
+///
+/// NOT descended into (these are type references/wrappers — tsc treats them as opaque):
+/// - Type application arguments (e.g. `Foo<T>`)
+/// - Array/Tuple/ReadonlyType/NoInfer inner types (these are effectively type references)
+/// - Object property types
+/// - Function parameter/return types
+///
+/// This avoids false positives: `T extends Array<T>` is NOT circular,
+/// but `T extends { [P in T]: number }` IS circular.
+pub fn constraint_references_type_param_in_resolution_path(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    param_name: Atom,
+) -> bool {
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            // Found the type parameter we're looking for
+            if matches!(&data, TypeData::TypeParameter(info) if info.name == param_name) {
+                return true;
+            }
+
+            // Follow only resolution-path children (not type reference args)
+            match &data {
+                // Union/intersection: descend into all members
+                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                    for &member in types.type_list(*list_id).iter() {
+                        stack.push(member);
+                    }
+                }
+                // Mapped type: descend into the constraint (key source) only.
+                // This catches `T extends { [P in T]: number }` (genuinely circular)
+                // while NOT false-positiving on `T extends { [K in keyof T]: V }`
+                // because we don't follow through KeyOf (see below).
+                TypeData::Mapped(mapped_id) => {
+                    let mapped = types.get_mapped(*mapped_id);
+                    stack.push(mapped.constraint);
+                }
+                // Index access: descend into object and index.
+                // Catches `T extends Foo | T["hello"]` (circular through index access).
+                TypeData::IndexAccess(obj, idx) => {
+                    stack.push(*obj);
+                    stack.push(*idx);
+                }
+                // KeyOf, Conditional, and everything else (Application, Object,
+                // Function, Array, Tuple, ReadonlyType, NoInfer, etc.) are opaque
+                // at the constraint-resolution level. `T extends { [K in keyof T]: V }`
+                // is NOT circular in tsc, and neither is `T extends null extends T ? any : never`.
+                _ => {}
+            }
+        }
+        false
+    })
+}
+
+/// Identity-based variant of `constraint_references_type_param_in_resolution_path`.
+pub fn constraint_references_type_param_identity_in_resolution_path(
+    types: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+
+            if type_parameter_identity_matches(def_store, current, target) {
+                return true;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            match &data {
+                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                    stack.extend(types.type_list(*list_id).iter().copied());
+                }
+                TypeData::Mapped(mapped_id) => {
+                    stack.push(types.get_mapped(*mapped_id).constraint);
+                }
+                TypeData::IndexAccess(obj, idx) => {
+                    stack.push(*obj);
+                    stack.push(*idx);
+                }
+                _ => {}
+            }
+        }
+        false
+    })
+}
+
+/// Check if a type transitively contains a specific `TypeId`.
+///
+/// This is more efficient than `collect_referenced_types(…).contains(&target)`
+/// because it short-circuits as soon as the target is found.
+pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeId) -> bool {
+    if root == target {
+        return true;
+    }
+    let mut visited = FxHashMap::default();
+    let mut stack = vec![root];
+    while let Some(current) = stack.pop() {
+        if current == target {
+            return true;
+        }
+        if visited.contains_key(&current) {
+            continue;
+        }
+        visited.insert(current, true);
+        super::visitor::for_each_child_by_id(types, current, |child| {
+            if !visited.contains_key(&child) {
+                stack.push(child);
+            }
+        });
+    }
+    false
+}
+
+struct ContainsTypeChecker<'a, F>
+where
+    F: Fn(&TypeData) -> bool,
+{
+    types: &'a dyn TypeDatabase,
+    predicate: F,
+    memo: FxHashMap<TypeId, bool>,
+    guard: crate::recursion::RecursionGuard<TypeId>,
+}
+
+impl<'a, F> ContainsTypeChecker<'a, F>
+where
+    F: Fn(&TypeData) -> bool,
+{
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
+    fn check(&mut self, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types (primitives, any, never, etc.) have no subtypes
+        // and can never contain nested type structures.
+        if type_id.is_intrinsic() {
+            return false;
+        }
+
+        if let Some(&cached) = self.memo.get(&type_id) {
+            return cached;
+        }
+
+        let Some(key) = self.types.lookup(type_id) else {
+            return false;
+        };
+
+        if (self.predicate)(&key) {
+            self.memo.insert(type_id, true);
+            return true;
+        }
+
+        // Terminal-kind fast path: types with no children to walk and no
+        // cycle risk. The recursive `check_key` below would dispatch to its
+        // leaf arm and immediately return `false` for these kinds, so
+        // skipping the `guard.enter`/`guard.leave` HashSet round-trip is a
+        // pure win. Memo is still updated so repeat visits of the same
+        // type within one `contains_type_matching` call stay O(1).
+        //
+        // `Intrinsic` is already handled by the entry-level `is_intrinsic`
+        // check above. The remaining terminal kinds match the recursive
+        // walker's leaf arm in `check_key`.
+        if matches!(
+            key,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
+        }
+
+        let result = self.check_key(&key);
+
+        self.guard.leave(type_id);
+        self.memo.insert(type_id, result);
+
+        result
+    }
+
+    fn check_key(&mut self, key: &TypeData) -> bool {
+        match key {
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => false,
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.types.object_shape(*shape_id);
+                shape.properties.iter().any(|p| self.check(p.type_id))
+                    || shape
+                        .string_index
+                        .as_ref()
+                        .is_some_and(|i| self.check(i.value_type))
+                    || shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|i| self.check(i.value_type))
+            }
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                let members = self.types.type_list(*list_id);
+                members.iter().any(|&m| self.check(m))
+            }
+            TypeData::Array(elem) => self.check(*elem),
+            TypeData::Tuple(list_id) => {
+                let elements = self.types.tuple_list(*list_id);
+                elements.iter().any(|e| self.check(e.type_id))
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.types.function_shape(*shape_id);
+                shape.params.iter().any(|p| self.check(p.type_id))
+                    || self.check(shape.return_type)
+                    || shape.this_type.is_some_and(|t| self.check(t))
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.types.callable_shape(*shape_id);
+                shape.call_signatures.iter().any(|s| {
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
+                }) || shape.construct_signatures.iter().any(|s| {
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
+                }) || shape.properties.iter().any(|p| self.check(p.type_id))
+            }
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+                info.constraint.is_some_and(|c| self.check(c))
+                    || info.default.is_some_and(|d| self.check(d))
+            }
+            TypeData::Application(app_id) => {
+                // Only check args, not base. The base type's own type parameters
+                // are bound by the application arguments and should not count as
+                // "containing type parameters". E.g., `A<number>` is concrete even
+                // though `A`'s definition contains `TypeParameter T`.
+                let app = self.types.type_application(*app_id);
+                app.args.iter().any(|&a| self.check(a))
+            }
+            TypeData::Conditional(cond_id) => {
+                let cond = self.types.get_conditional(*cond_id);
+                self.check(cond.check_type)
+                    || self.check(cond.extends_type)
+                    || self.check(cond.true_type)
+                    || self.check(cond.false_type)
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.types.get_mapped(*mapped_id);
+                mapped.type_param.constraint.is_some_and(|c| self.check(c))
+                    || mapped.type_param.default.is_some_and(|d| self.check(d))
+                    || self.check(mapped.constraint)
+                    || self.check(mapped.template)
+                    || mapped.name_type.is_some_and(|n| self.check(n))
+            }
+            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
+            TypeData::TemplateLiteral(list_id) => {
+                let spans = self.types.template_list(*list_id);
+                spans.iter().any(|span| {
+                    if let crate::types::TemplateSpan::Type(type_id) = span {
+                        self.check(*type_id)
+                    } else {
+                        false
+                    }
+                })
+            }
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+                self.check(*inner)
+            }
+            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
+            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
+        }
+    }
+}
+
+struct FreeTypeParamChecker<'a> {
+    types: &'a dyn TypeDatabase,
+    memo: FxHashMap<TypeId, bool>,
+    guard: crate::recursion::RecursionGuard<TypeId>,
+}
+
+impl<'a> FreeTypeParamChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
+    fn check(&mut self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        if let Some(&cached) = self.memo.get(&type_id) {
+            return cached;
+        }
+        let Some(key) = self.types.lookup(type_id) else {
+            return false;
+        };
+        if matches!(
+            key,
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+        ) {
+            self.memo.insert(type_id, true);
+            return true;
+        }
+        // Terminal-kind fast path: same set that `check_key` returns `false`
+        // for unconditionally. Short-circuit before the recursion-guard
+        // enter/leave so common terminals (`Lazy(DefId)`, `TypeQuery`, etc.)
+        // skip the per-call `FxHashSet` insert + remove. Mirrors #1978/#1990.
+        if matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            self.memo.insert(type_id, false);
+            return false;
+        }
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
+        }
+        let result = self.check_key(&key);
+        self.guard.leave(type_id);
+        self.memo.insert(type_id, result);
+        result
+    }
+
+    fn check_key(&mut self, key: &TypeData) -> bool {
+        match key {
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => false,
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.types.object_shape(*shape_id);
+                shape.properties.iter().any(|p| self.check(p.type_id))
+                    || shape
+                        .string_index
+                        .as_ref()
+                        .is_some_and(|i| self.check(i.value_type))
+                    || shape
+                        .number_index
+                        .as_ref()
+                        .is_some_and(|i| self.check(i.value_type))
+            }
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                let members = self.types.type_list(*list_id);
+                members.iter().any(|&m| self.check(m))
+            }
+            TypeData::Array(elem) => self.check(*elem),
+            TypeData::Tuple(list_id) => {
+                let elements = self.types.tuple_list(*list_id);
+                elements.iter().any(|e| self.check(e.type_id))
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.types.function_shape(*shape_id);
+                if !shape.type_params.is_empty() {
+                    // Generic function: type params in body are bound, not free.
+                    // Skip body traversal to avoid counting bound params.
+                    return false;
+                }
+                shape.params.iter().any(|p| self.check(p.type_id))
+                    || self.check(shape.return_type)
+                    || shape.this_type.is_some_and(|t| self.check(t))
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.types.callable_shape(*shape_id);
+                shape.call_signatures.iter().any(|s| {
+                    if !s.type_params.is_empty() {
+                        return false;
+                    }
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
+                }) || shape.construct_signatures.iter().any(|s| {
+                    if !s.type_params.is_empty() {
+                        return false;
+                    }
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
+                }) || shape.properties.iter().any(|p| self.check(p.type_id))
+            }
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+                info.constraint.is_some_and(|c| self.check(c))
+                    || info.default.is_some_and(|d| self.check(d))
+            }
+            TypeData::Application(app_id) => {
+                let app = self.types.type_application(*app_id);
+                app.args.iter().any(|&a| self.check(a))
+            }
+            TypeData::Conditional(cond_id) => {
+                let cond = self.types.get_conditional(*cond_id);
+                self.check(cond.check_type)
+                    || self.check(cond.extends_type)
+                    || self.check(cond.true_type)
+                    || self.check(cond.false_type)
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.types.get_mapped(*mapped_id);
+                mapped.type_param.constraint.is_some_and(|c| self.check(c))
+                    || mapped.type_param.default.is_some_and(|d| self.check(d))
+                    || self.check(mapped.constraint)
+                    || self.check(mapped.template)
+                    || mapped.name_type.is_some_and(|n| self.check(n))
+            }
+            TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
+            TypeData::TemplateLiteral(list_id) => {
+                let spans = self.types.template_list(*list_id);
+                spans.iter().any(|span| {
+                    if let crate::types::TemplateSpan::Type(type_id) = span {
+                        self.check(*type_id)
+                    } else {
+                        false
+                    }
+                })
+            }
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+                self.check(*inner)
+            }
+            TypeData::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
+            TypeData::Enum(_def_id, member_type) => self.check(*member_type),
+        }
+    }
+}
+
+struct FreeInferChecker<'a> {
+    types: &'a dyn TypeDatabase,
+    memo: FxHashMap<TypeId, bool>,
+    guard: crate::recursion::RecursionGuard<TypeId>,
+}

@@ -1,0 +1,1483 @@
+impl<'a> Completions<'a> {
+    /// Create a `CheckerState` from the current provider state, re-using a
+    /// cached instance when available.
+    pub(super) fn make_checker(
+        &self,
+        cache_ref: Option<&mut Option<TypeCache>>,
+    ) -> Option<CheckerState<'a>> {
+        let interner = self.interner?;
+        let file_name = self.file_name.as_ref()?;
+        let compiler_options = self.checker_options();
+        let mut checker = if let Some(cache) = cache_ref {
+            if let Some(cache_value) = cache.take() {
+                CheckerState::with_cache(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    cache_value,
+                    compiler_options,
+                )
+            } else {
+                CheckerState::new(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    compiler_options,
+                )
+            }
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                interner,
+                file_name.clone(),
+                compiler_options,
+            )
+        };
+        if !self.lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
+        }
+        Some(checker)
+    }
+
+    /// Build the `CheckerOptions` corresponding to this provider's type-checking
+    /// configuration.
+    pub(super) fn checker_options(&self) -> tsz_checker::context::CheckerOptions {
+        self.checker_options
+            .clone()
+            .unwrap_or_else(|| tsz_checker::context::CheckerOptions {
+                strict: self.strict,
+                no_implicit_any: self.strict,
+                no_implicit_returns: false,
+                no_implicit_this: self.strict,
+                strict_null_checks: self.strict,
+                strict_function_types: self.strict,
+                strict_property_initialization: self.strict,
+                use_unknown_in_catch_variables: self.strict,
+                sound_mode: self.sound_mode,
+                isolated_modules: false,
+                ..Default::default()
+            })
+    }
+
+    pub(super) fn get_member_completions(
+        &self,
+        expr_idx: NodeIndex,
+        type_cache: Option<&mut Option<TypeCache>>,
+    ) -> Option<Vec<CompletionItem>> {
+        let interner = self.interner?;
+
+        let mut cache_ref = type_cache;
+        let mut checker = self.make_checker(cache_ref.as_deref_mut())?;
+
+        let mut items = Vec::new();
+        let mut seen_names = FxHashSet::default();
+        let mut annotation_target_symbol = None;
+
+        // Type-qualified member access (`A.B`) should prefer namespace/module exports
+        // instead of instance/member shape properties.
+        let qualified_name_target = self.is_qualified_name_member_target(expr_idx);
+        // When the expression is `this` inside a class body, all members
+        // (public, private, protected) should be visible in completions.
+        let is_this_in_class = self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+            && self.find_enclosing_class_declaration(expr_idx).is_some();
+        // When the expression is `super`, resolve base class and show its members.
+        let is_super = self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
+
+        if is_super {
+            if let Some(base_sym_id) = self.resolve_super_base_class_symbol(expr_idx) {
+                self.append_symbol_members_as_completions(
+                    base_sym_id,
+                    &mut checker,
+                    &mut seen_names,
+                    &mut items,
+                );
+            }
+        } else if !qualified_name_target {
+            let type_id = checker.get_type_of_node(expr_idx);
+            let mut visited = FxHashSet::default();
+            let mut props: FxHashMap<String, PropertyCompletion> = FxHashMap::default();
+            if is_this_in_class {
+                self.collect_all_properties_for_type(
+                    type_id,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+            } else {
+                self.collect_properties_for_type(
+                    type_id,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+            }
+
+            for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
+                let kind = if info.is_method {
+                    CompletionItemKind::Method
+                } else {
+                    CompletionItemKind::Property
+                };
+                let mut item = CompletionItem::new(name.clone(), kind);
+                let raw_detail = checker.format_type(info.type_id);
+                // Method completions use colon notation `(params): RetType`; property
+                // completions keep the type as-is (arrow types stay as arrows).
+                let detail = if info.is_method {
+                    crate::hover::format::arrow_to_colon(&raw_detail)
+                } else {
+                    raw_detail
+                };
+                item = item.with_detail(detail);
+                if name == "substr" {
+                    item.sort_text =
+                        Some(sort_priority::deprecated(sort_priority::LOCATION_PRIORITY));
+                    item.kind_modifiers = Some("deprecated".to_string());
+                } else {
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                }
+
+                // Add snippet insert text for method completions
+                if info.is_method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+
+                seen_names.insert(name);
+                items.push(item);
+            }
+        }
+
+        if items.is_empty()
+            && let Some(sym_id) = self.resolve_member_target_symbol(expr_idx)
+            && let Some(type_annotation) = self.symbol_type_annotation_node(sym_id)
+        {
+            let mut visited = FxHashSet::default();
+            let mut props: FxHashMap<String, PropertyCompletion> = FxHashMap::default();
+            let declared_type = checker.get_type_of_node(type_annotation);
+            self.collect_properties_for_type(
+                declared_type,
+                interner,
+                &mut checker,
+                &mut visited,
+                &mut props,
+            );
+            if props.is_empty()
+                && let Some(type_annotation_node) = self.arena.get(type_annotation)
+                && type_annotation_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.arena.get_type_ref(type_annotation_node)
+                && let Some(type_symbol_id) = self.resolve_member_target_symbol(type_ref.type_name)
+            {
+                annotation_target_symbol = Some(type_symbol_id);
+                let annotation_symbol_type = checker.get_type_of_symbol(type_symbol_id);
+                self.collect_properties_for_type(
+                    annotation_symbol_type,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+            } else if props.is_empty()
+                && let Some(type_annotation_node) = self.arena.get(type_annotation)
+                && type_annotation_node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(type_query) = self.arena.get_type_query(type_annotation_node)
+            {
+                let query_expr_type = checker.get_type_of_node(type_query.expr_name);
+                self.collect_properties_for_type(
+                    query_expr_type,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+                annotation_target_symbol = self.resolve_member_target_symbol(type_query.expr_name);
+                if let Some(type_symbol_id) = annotation_target_symbol {
+                    let annotation_symbol_type = checker.get_type_of_symbol(type_symbol_id);
+                    self.collect_properties_for_type(
+                        annotation_symbol_type,
+                        interner,
+                        &mut checker,
+                        &mut visited,
+                        &mut props,
+                    );
+                }
+            }
+            for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
+                let kind = if info.is_method {
+                    CompletionItemKind::Method
+                } else {
+                    CompletionItemKind::Property
+                };
+                let mut item = CompletionItem::new(name.clone(), kind);
+                item = item.with_detail(checker.format_type(info.type_id));
+                if name == "substr" {
+                    item.sort_text =
+                        Some(sort_priority::deprecated(sort_priority::LOCATION_PRIORITY));
+                    item.kind_modifiers = Some("deprecated".to_string());
+                } else {
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                }
+                if info.is_method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+                seen_names.insert(name);
+                items.push(item);
+            }
+        }
+
+        if let Some(target_symbol_id) = self.resolve_member_target_symbol(expr_idx) {
+            self.append_namespace_export_member_completions(
+                target_symbol_id,
+                &mut checker,
+                !qualified_name_target,
+                &mut seen_names,
+                &mut items,
+            );
+        }
+        if let Some(annotation_symbol_id) = annotation_target_symbol
+            && Some(annotation_symbol_id) != self.resolve_member_target_symbol(expr_idx)
+        {
+            self.append_namespace_export_member_completions(
+                annotation_symbol_id,
+                &mut checker,
+                !qualified_name_target,
+                &mut seen_names,
+                &mut items,
+            );
+        }
+
+        if items.is_empty() {
+            self.append_syntactic_member_fallback(
+                expr_idx,
+                &mut checker,
+                &mut seen_names,
+                &mut items,
+            );
+        }
+
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        if let Some(cache) = cache_ref {
+            *cache = Some(checker.extract_cache());
+        }
+        Some(items)
+    }
+
+    pub(super) fn collect_properties_for_type(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, false);
+    }
+
+    /// Collect properties including private/protected members.
+    /// Used for `this.` access inside a class body where all members are accessible.
+    pub(super) fn collect_all_properties_for_type(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, true);
+    }
+
+    fn collect_properties_for_type_inner(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        include_private: bool,
+    ) {
+        if !visited.insert(type_id) {
+            return;
+        }
+
+        let resolved = checker.resolve_lazy_type(type_id);
+        let evaluated = tsz_solver::computation::evaluate_type(interner, resolved);
+        if evaluated != type_id {
+            self.collect_properties_for_type_inner(
+                evaluated,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
+        // `ReadonlyType` and `NoInfer` are transparent wrappers for member access; strip and recurse.
+        if let Some(inner) = visitor::unwrap_readonly_or_noinfer(interner, evaluated) {
+            self.collect_properties_for_type_inner(
+                inner,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(interner, evaluated)
+            .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
+        {
+            let shape = interner.object_shape(shape_id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+
+        // TypeData::Function (function declarations/expressions) and TypeData::Callable
+        // (interface-style callables, class constructors) both expose Function.prototype
+        // members (name, length, apply, call, bind, …).
+        // Check Function first: it covers the common case (named functions, arrows, expressions).
+        let is_function = visitor::function_shape_id(interner, evaluated).is_some();
+        let callable_id = if is_function {
+            None
+        } else {
+            visitor::callable_shape_id(interner, evaluated)
+        };
+        if is_function || callable_id.is_some() {
+            // Callable shapes may also carry explicitly declared properties (e.g. class statics).
+            if let Some(id) = callable_id {
+                let shape = interner.callable_shape(id);
+                self.collect_shape_props(props, interner, &shape.properties, include_private);
+            }
+            // Prefer the lib-defined Function interface; fall back to apparent members.
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::Function,
+                interner,
+                checker,
+                visited,
+                props,
+            );
+            return;
+        }
+
+        // Array and tuple types expose Array.prototype members (push, pop, map, …).
+        // Use the lib-defined Array<T> interface when available, substituting the
+        // element type so that method return types are as precise as possible.
+        let array_elem = visitor::array_element_type(interner, evaluated).or_else(|| {
+            tsz_solver::type_queries::get_tuple_element_type_union(interner, evaluated)
+        });
+        if let Some(_elem) = array_elem {
+            if let Some(array_base) = interner.get_array_base_type() {
+                self.collect_array_prototype_props(
+                    array_base,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            } else {
+                self.collect_array_member_fallback(interner, props);
+            }
+            return;
+        }
+
+        if let Some(members_id) = visitor::union_list_id(interner, evaluated) {
+            // For unions, only include properties that exist on ALL members (intersection).
+            // E.g., `string | number` should only show `toString`, `valueOf`, `toLocaleString`
+            // — not all string methods or all number methods.
+            let members = interner.type_list(members_id);
+            if members.len() > 1 {
+                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> =
+                    Vec::with_capacity(members.len());
+                for &member in members.iter() {
+                    let mut member_props = FxHashMap::default();
+                    let mut member_visited = visited.clone();
+                    self.collect_properties_for_type_inner(
+                        member,
+                        interner,
+                        checker,
+                        &mut member_visited,
+                        &mut member_props,
+                        include_private,
+                    );
+                    per_member_props.push(member_props);
+                }
+                // Intersect: keep only properties present in ALL members,
+                // and create a union of each member's property type.
+                if let Some(first) = per_member_props.first() {
+                    for (name, info) in first {
+                        if per_member_props[1..].iter().all(|m| m.contains_key(name)) {
+                            let mut member_types = Vec::with_capacity(per_member_props.len());
+                            member_types.push(info.type_id);
+                            for member_props in &per_member_props[1..] {
+                                if let Some(mi) = member_props.get(name) {
+                                    member_types.push(mi.type_id);
+                                }
+                            }
+                            let union_type = if member_types.len() > 1 {
+                                interner.union(member_types)
+                            } else {
+                                info.type_id
+                            };
+                            self.add_property_completion(
+                                props,
+                                interner,
+                                name.clone(),
+                                union_type,
+                                info.is_method,
+                            );
+                        }
+                    }
+                }
+            } else {
+                for &member in members.iter() {
+                    self.collect_properties_for_type_inner(
+                        member,
+                        interner,
+                        checker,
+                        visited,
+                        props,
+                        include_private,
+                    );
+                }
+            }
+            return;
+        }
+
+        if let Some(members_id) = visitor::intersection_list_id(interner, evaluated) {
+            // For intersections, include properties from ALL members (union of properties).
+            let members = interner.type_list(members_id);
+            for &member in members.iter() {
+                self.collect_properties_for_type_inner(
+                    member,
+                    interner,
+                    checker,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
+            return;
+        }
+
+        if let Some(app) = visitor::application_id(interner, evaluated) {
+            let app = interner.type_application(app);
+            if interner.get_array_base_type() == Some(app.base) {
+                self.collect_array_prototype_props(
+                    app.base,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            } else {
+                self.collect_properties_for_type_inner(
+                    app.base,
+                    interner,
+                    checker,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
+            return;
+        }
+
+        if visitor::template_literal_id(interner, evaluated).is_some() {
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::String,
+                interner,
+                checker,
+                visited,
+                props,
+            );
+            return;
+        }
+
+        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
+            self.collect_intrinsic_members_or_boxed(kind, interner, checker, visited, props);
+        }
+    }
+
+    fn symbol_type_annotation_node(&self, sym_id: tsz_binder::SymbolId) -> Option<NodeIndex> {
+        let symbol = self.binder.symbols.get(sym_id)?;
+        let decl = symbol.primary_declaration()?;
+        let node = self.arena.get(decl)?;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.arena.get_variable_declaration(node)?;
+            return var_decl
+                .type_annotation
+                .is_some()
+                .then_some(var_decl.type_annotation);
+        }
+        if node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.arena.get_parameter(node)?;
+            return param
+                .type_annotation
+                .is_some()
+                .then_some(param.type_annotation);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let property = self.arena.get_property_decl(node)?;
+            return property
+                .type_annotation
+                .is_some()
+                .then_some(property.type_annotation);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || node.kind == syntax_kind_ext::METHOD_SIGNATURE
+        {
+            let signature = self.arena.get_signature(node)?;
+            return signature
+                .type_annotation
+                .is_some()
+                .then_some(signature.type_annotation);
+        }
+        None
+    }
+
+    fn is_qualified_name_member_target(&self, expr_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(expr_idx) else {
+            return false;
+        };
+        let Some(parent) = self.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+        self.arena
+            .get_qualified_name(parent)
+            .is_some_and(|qualified| qualified.left == expr_idx)
+    }
+
+    pub(super) fn resolve_member_target_symbol(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(sym_id) = self.binder.get_node_symbol(expr_idx) {
+            return Some(sym_id);
+        }
+
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.binder.resolve_identifier(self.arena, expr_idx)
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let left = self.resolve_member_target_symbol(access.expression)?;
+                let name = self.arena.get_identifier_text(access.name_or_argument)?;
+                self.resolve_exported_member_symbol(left, name)
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                let qualified = self.arena.get_qualified_name(node)?;
+                let left = self.resolve_member_target_symbol(qualified.left)?;
+                let name = self.arena.get_identifier_text(qualified.right)?;
+                self.resolve_exported_member_symbol(left, name)
+            }
+            k if k == SyntaxKind::SuperKeyword as u16 => {
+                self.resolve_super_base_class_symbol(expr_idx)
+            }
+            _ => self.binder.resolve_identifier(self.arena, expr_idx),
+        }
+    }
+
+    /// Resolve `super` to the base class symbol for completions.
+    fn resolve_super_base_class_symbol(
+        &self,
+        super_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let mut current = super_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent = self.arena.get(ext.parent)?;
+            if parent.is_class_like() {
+                let class = self.arena.get_class(parent)?;
+                let heritage = class.heritage_clauses.as_ref()?;
+                for &clause_idx in &heritage.nodes {
+                    let clause_node = self.arena.get(clause_idx)?;
+                    let hd = self.arena.get_heritage(clause_node)?;
+                    if hd.token != SyntaxKind::ExtendsKeyword as u16 {
+                        continue;
+                    }
+                    if let Some(&type_idx) = hd.types.nodes.first() {
+                        let type_node = self.arena.get(type_idx)?;
+                        let expr_idx =
+                            if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                                self.arena
+                                    .get_expr_type_args(type_node)
+                                    .map(|e| e.expression)?
+                            } else {
+                                type_idx
+                            };
+                        return self.binder.resolve_identifier(self.arena, expr_idx);
+                    }
+                }
+                return None;
+            }
+            current = ext.parent;
+        }
+    }
+
+    fn resolve_exported_member_symbol(
+        &self,
+        container: tsz_binder::SymbolId,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let container_symbol = self.binder.symbols.get(container)?;
+        if let Some(exports) = container_symbol.exports.as_ref()
+            && let Some(member) = exports.get(member_name)
+        {
+            return Some(member);
+        }
+        if let Some(members) = container_symbol.members.as_ref()
+            && let Some(member) = members.get(member_name)
+        {
+            return Some(member);
+        }
+        None
+    }
+
+    fn append_syntactic_member_fallback(
+        &self,
+        expr_idx: NodeIndex,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+
+        if expr_node.kind == SyntaxKind::RegularExpressionLiteral as u16 {
+            for (name, kind, deprecated) in [
+                ("exec", CompletionItemKind::Method, false),
+                ("test", CompletionItemKind::Method, false),
+                ("source", CompletionItemKind::Property, false),
+                ("global", CompletionItemKind::Property, false),
+                ("ignoreCase", CompletionItemKind::Property, false),
+                ("multiline", CompletionItemKind::Property, false),
+                ("lastIndex", CompletionItemKind::Property, false),
+                ("compile", CompletionItemKind::Method, true),
+            ] {
+                if !seen_names.insert(name.to_string()) {
+                    continue;
+                }
+                let mut item = CompletionItem::new(name.to_string(), kind);
+                item.sort_text = Some(if deprecated {
+                    sort_priority::deprecated(sort_priority::LOCATION_PRIORITY)
+                } else {
+                    sort_priority::MEMBER.to_string()
+                });
+                if deprecated {
+                    item.kind_modifiers = Some("deprecated".to_string());
+                }
+                if kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+                items.push(item);
+            }
+            return;
+        }
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            if let Some(sym_id) = self.resolve_member_target_symbol(access.name_or_argument) {
+                self.append_type_literal_annotation_members(sym_id, checker, seen_names, items);
+                return;
+            }
+            if let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
+                && let Some(container_sym) = self.resolve_member_target_symbol(access.expression)
+            {
+                self.append_named_property_annotation_members(
+                    container_sym,
+                    prop_name,
+                    checker,
+                    seen_names,
+                    items,
+                );
+            }
+            return;
+        }
+
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16
+            || (expr_node.kind == SyntaxKind::Identifier as u16
+                && self.arena.get_identifier_text(expr_idx) == Some("this"))
+        {
+            let Some(class_idx) = self.find_enclosing_class_declaration(expr_idx) else {
+                return;
+            };
+            let Some(class_node) = self.arena.get(class_idx) else {
+                return;
+            };
+            let Some(class_data) = self.arena.get_class(class_node) else {
+                return;
+            };
+
+            for &member_idx in &class_data.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+
+                let (name, kind) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier_node(member_idx) {
+                        continue;
+                    }
+                    let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                        continue;
+                    };
+                    (name, CompletionItemKind::Property)
+                } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier_node(member_idx) {
+                        continue;
+                    }
+                    let Some(name) = self.arena.get_identifier_text(method.name) else {
+                        continue;
+                    };
+                    (name, CompletionItemKind::Method)
+                } else {
+                    continue;
+                };
+
+                if !seen_names.insert(name.to_string()) {
+                    continue;
+                }
+                let mut item = CompletionItem::new(name.to_string(), kind);
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+                item.detail = Self::node_type_detail(checker, member_idx);
+                if kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+                items.push(item);
+            }
+        }
+    }
+
+    fn append_type_literal_annotation_members(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(type_node_idx) = self.symbol_type_annotation_node(sym_id) else {
+            return;
+        };
+        self.append_members_from_type_node(type_node_idx, checker, seen_names, items);
+    }
+
+    fn append_named_property_annotation_members(
+        &self,
+        container_sym_id: tsz_binder::SymbolId,
+        property_name: &str,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(type_node_idx) = self.symbol_type_annotation_node(container_sym_id) else {
+            return;
+        };
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return;
+        }
+        let Some(type_ref) = self.arena.get_type_ref(type_node) else {
+            return;
+        };
+        let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name) else {
+            return;
+        };
+        let type_sym = self
+            .binder
+            .file_locals
+            .get(type_name)
+            .or_else(|| self.resolve_member_target_symbol(type_ref.type_name));
+        let Some(type_sym) = type_sym else {
+            return;
+        };
+        let Some(symbol) = self.binder.symbols.get(type_sym) else {
+            return;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            match decl_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    let Some(iface) = self.arena.get_interface(decl_node) else {
+                        continue;
+                    };
+                    for &member_idx in &iface.members.nodes {
+                        let Some(member_node) = self.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+                            && member_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+                        {
+                            continue;
+                        }
+                        let Some(signature) = self.arena.get_signature(member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.arena.get_identifier_text(signature.name) else {
+                            continue;
+                        };
+                        if name != property_name || signature.type_annotation.is_none() {
+                            continue;
+                        }
+                        self.append_members_from_type_node(
+                            signature.type_annotation,
+                            checker,
+                            seen_names,
+                            items,
+                        );
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    let Some(class_data) = self.arena.get_class(decl_node) else {
+                        continue;
+                    };
+                    for &member_idx in &class_data.members.nodes {
+                        let Some(member_node) = self.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                            continue;
+                        }
+                        let Some(prop) = self.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                            continue;
+                        };
+                        if name != property_name || prop.type_annotation.is_none() {
+                            continue;
+                        }
+                        self.append_members_from_type_node(
+                            prop.type_annotation,
+                            checker,
+                            seen_names,
+                            items,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn append_members_from_type_node(
+        &self,
+        type_node_idx: NodeIndex,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(type_node) = self.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = self.arena.get_type_ref(type_node) else {
+                return;
+            };
+            let Some(type_name) = self.arena.get_identifier_text(type_ref.type_name) else {
+                return;
+            };
+            let sym_id = self
+                .binder
+                .file_locals
+                .get(type_name)
+                .or_else(|| self.resolve_member_target_symbol(type_ref.type_name));
+            let Some(sym_id) = sym_id else {
+                return;
+            };
+            let Some(symbol) = self.binder.symbols.get(sym_id) else {
+                return;
+            };
+            for &decl_idx in &symbol.declarations {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    continue;
+                }
+                let Some(class_data) = self.arena.get_class(decl_node) else {
+                    continue;
+                };
+                for &member_idx in &class_data.members.nodes {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                        continue;
+                    }
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                        continue;
+                    };
+                    if name.starts_with('#') || !seen_names.insert(name.to_string()) {
+                        continue;
+                    }
+                    let mut item =
+                        CompletionItem::new(name.to_string(), CompletionItemKind::Property);
+                    item.sort_text = Some(sort_priority::MEMBER.to_string());
+                    items.push(item);
+                }
+            }
+            return;
+        }
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return;
+        }
+        let Some(type_literal) = self.arena.get_type_literal(type_node) else {
+            return;
+        };
+
+        for &member_idx in &type_literal.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
+            let is_property = member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE;
+            if !(is_method || is_property) {
+                continue;
+            }
+            let Some(signature) = self.arena.get_signature(member_node) else {
+                continue;
+            };
+            let name_kind = self.arena.kind(signature.name).unwrap_or(0);
+            let is_quoted = name_kind == SyntaxKind::StringLiteral as u16;
+            let label = if is_quoted {
+                self.arena.get_literal_text(signature.name)
+            } else {
+                self.arena.get_identifier_text(signature.name)
+            };
+            let Some(label) = label else {
+                continue;
+            };
+            let label = label.to_string();
+            if label.is_empty() || !seen_names.insert(label.clone()) {
+                continue;
+            }
+            let kind = if is_method {
+                CompletionItemKind::Method
+            } else {
+                CompletionItemKind::Property
+            };
+            let mut item = CompletionItem::new(label.clone(), kind);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            if signature.type_annotation.is_some() {
+                item.detail = Self::node_type_detail(checker, member_idx);
+            }
+            if is_quoted {
+                item.insert_text = Some(format!("?.[\"{label}\"]"));
+            } else if is_method {
+                item.insert_text = Some(format!("{label}($1)"));
+                item.is_snippet = true;
+            }
+            items.push(item);
+        }
+    }
+
+    fn append_namespace_export_member_completions(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        checker: &mut CheckerState,
+        allow_class_prototype: bool,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+
+        let symbol_name = symbol.escaped_name.clone();
+        let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+
+        let export_entries: Vec<(String, tsz_binder::SymbolId)> = symbol
+            .exports
+            .as_ref()
+            .map(|exports| {
+                exports
+                    .iter()
+                    .map(|(name, id)| (name.clone(), *id))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (name, export_id) in export_entries {
+            if seen_names.contains(&name) {
+                continue;
+            }
+            let Some(export_symbol) = self.binder.symbols.get(export_id) else {
+                continue;
+            };
+
+            let kind = self.determine_completion_kind(export_symbol);
+            let mut item = CompletionItem::new(name.clone(), kind);
+            item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
+
+            let export_type = checker.get_type_of_symbol(export_id);
+            let detail = checker.format_type(export_type);
+            if !detail.is_empty() {
+                item = item.with_detail(detail);
+            } else if let Some(detail) = self.get_symbol_detail(export_symbol) {
+                item = item.with_detail(detail);
+            }
+
+            if let Some(modifiers) = self.build_kind_modifiers(export_symbol) {
+                item.kind_modifiers = Some(modifiers);
+            }
+
+            if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                item.insert_text = Some(format!("{name}($1)"));
+                item.is_snippet = true;
+            }
+
+            seen_names.insert(name);
+            items.push(item);
+        }
+
+        if is_class {
+            let static_member_entries: Vec<(String, tsz_binder::SymbolId)> = symbol
+                .members
+                .as_ref()
+                .map(|members| {
+                    members
+                        .iter()
+                        .map(|(name, id)| (name.clone(), *id))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for (name, member_id) in static_member_entries {
+                if seen_names.contains(&name) {
+                    continue;
+                }
+                let Some(member_symbol) = self.binder.symbols.get(member_id) else {
+                    continue;
+                };
+                if (member_symbol.flags & symbol_flags::STATIC) == 0 {
+                    continue;
+                }
+                if (member_symbol.flags & (symbol_flags::PRIVATE | symbol_flags::PROTECTED)) != 0 {
+                    continue;
+                }
+
+                let kind = self.determine_completion_kind(member_symbol);
+                let mut item = CompletionItem::new(name.clone(), kind);
+                item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
+                let member_type = checker.get_type_of_symbol(member_id);
+                let detail = checker.format_type(member_type);
+                if !detail.is_empty() {
+                    item = item.with_detail(detail);
+                } else if let Some(detail) = self.get_symbol_detail(member_symbol) {
+                    item = item.with_detail(detail);
+                }
+                if let Some(modifiers) = self.build_kind_modifiers(member_symbol) {
+                    item.kind_modifiers = Some(modifiers);
+                }
+                if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+
+                seen_names.insert(name);
+                items.push(item);
+            }
+        }
+
+        if allow_class_prototype && is_class && !seen_names.contains("prototype") {
+            let mut item =
+                CompletionItem::new("prototype".to_string(), CompletionItemKind::Property);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            item = item.with_detail(symbol_name);
+            seen_names.insert("prototype".to_string());
+            items.push(item);
+        }
+    }
+
+    /// Add instance members of a class symbol as completions (for `super.` access).
+    fn append_symbol_members_as_completions(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        checker: &mut CheckerState,
+        seen_names: &mut FxHashSet<String>,
+        items: &mut Vec<CompletionItem>,
+    ) {
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        let member_entries: Vec<(String, tsz_binder::SymbolId)> = symbol
+            .members
+            .as_ref()
+            .map(|members| {
+                members
+                    .iter()
+                    .map(|(name, id)| (name.clone(), *id))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (name, member_id) in member_entries {
+            if seen_names.contains(&name) {
+                continue;
+            }
+            let Some(member_symbol) = self.binder.symbols.get(member_id) else {
+                continue;
+            };
+            let kind = self.determine_completion_kind(member_symbol);
+            let mut item = CompletionItem::new(name.clone(), kind);
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            let member_type = checker.get_type_of_symbol(member_id);
+            let detail = checker.format_type(member_type);
+            if !detail.is_empty() {
+                item = item.with_detail(detail);
+            }
+            if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                item.insert_text = Some(format!("{name}($1)"));
+                item.is_snippet = true;
+            }
+            seen_names.insert(name);
+            items.push(item);
+        }
+    }
+
+    pub fn get_member_completion_parent_type_name(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<String> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        if let Some(parent) = self.meta_property_parent_type_name(offset) {
+            return Some(parent);
+        }
+        let node_idx = self.find_completions_node(root, offset);
+        let expr_idx = self.member_completion_target(node_idx, offset)?;
+
+        let mut checker = self.make_checker(None)?;
+        let type_id = checker.get_type_of_node(expr_idx);
+        let type_text = checker.format_type(type_id);
+        if let Some(parent) = Self::normalize_member_parent_type_name(&type_text) {
+            return Some(parent);
+        }
+        if let Some(parent) = self
+            .resolve_member_target_symbol(expr_idx)
+            .and_then(|sym_id| self.binder.symbols.get(sym_id))
+            .and_then(|symbol| {
+                use tsz_binder::symbol_flags;
+                ((symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) != 0)
+                    .then(|| symbol.escaped_name.clone())
+            })
+        {
+            return Some(parent);
+        }
+
+        // For `this.` inside a class body, use the enclosing class name.
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            let class_idx = self.find_enclosing_class_declaration(expr_idx)?;
+            let class_node = self.arena.get(class_idx)?;
+            let class_data = self.arena.get_class(class_node)?;
+            return self
+                .arena
+                .get_identifier_text(class_data.name)
+                .map(|s| s.to_string());
+        }
+
+        None
+    }
+
+    fn meta_property_parent_type_name(&self, offset: u32) -> Option<String> {
+        let end = (offset as usize).min(self.source_text.len());
+        let prefix = self.source_text[..end].trim_end();
+        let before_dot = prefix.strip_suffix('.')?;
+        let expr = before_dot.trim_end();
+        if expr.ends_with("import.meta") {
+            return Some("ImportMeta".to_string());
+        }
+        let token_start = expr
+            .rfind(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+            .map_or(0, |idx| idx + 1);
+        let token = &expr[token_start..];
+        let before_token = &expr[..token_start];
+        let has_ident_before = before_token
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+        if has_ident_before {
+            return None;
+        }
+        if token == "import" {
+            return Some("ImportMetaExpression".to_string());
+        }
+        if token == "new" && self.is_inside_function(offset) {
+            return Some("NewTargetExpression".to_string());
+        }
+        None
+    }
+
+    fn normalize_member_parent_type_name(type_text: &str) -> Option<String> {
+        let mut normalized = type_text.trim();
+        if let Some(stripped) = normalized.strip_prefix("typeof ") {
+            normalized = stripped.trim();
+        }
+        if normalized.is_empty() {
+            return None;
+        }
+        if normalized == "any" {
+            return None;
+        }
+        let mut chars = normalized.chars();
+        let first = chars.next()?;
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return None;
+        }
+        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+            Some(normalized.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Collect Array.prototype members directly from the registered `array_base_type`,
+    /// without adding Function.prototype members.
+    ///
+    /// When the Array interface has construct signatures it is lowered to
+    /// `TypeData::Callable`. The generic callable path in
+    /// `collect_properties_for_type_inner` also appends Function.prototype
+    /// members (apply, call, bind) to every Callable — correct for function
+    /// types, wrong for array types. This helper skips that step.
+    ///
+    /// Handles all structural shapes the `array_base_type` can take:
+    ///   - Callable (Array interface with construct signatures)
+    ///   - Object / `ObjectWithIndex` (plain interface without call signatures)
+    ///   - Intersection (multiple lib-file declarations merged per file)
+    fn collect_array_prototype_props(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        include_private: bool,
+    ) {
+        if !visited.insert(type_id) {
+            return;
+        }
+        if let Some(id) = visitor::callable_shape_id(interner, type_id) {
+            let shape = interner.callable_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(id) = visitor::object_shape_id(interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(members_id) = visitor::intersection_list_id(interner, type_id) {
+            let members = interner.type_list(members_id);
+            for &member in members.iter() {
+                self.collect_array_prototype_props(
+                    member,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
+        }
+    }
+
+    fn collect_shape_props(
+        &self,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        interner: &TypeInterner,
+        properties: &[tsz_solver::PropertyInfo],
+        include_private: bool,
+    ) {
+        for prop in properties {
+            if !include_private && prop.visibility != Visibility::Public {
+                continue;
+            }
+            // Symbol-keyed computed properties (e.g. `[Symbol.iterator]`,
+            // `unique symbol` keys) require bracket-notation access and are
+            // excluded from dot-access member completions, matching tsc behavior.
+            if prop.is_symbol_named {
+                continue;
+            }
+            let name = interner.resolve_atom(prop.name);
+            // Synthetic brand properties (e.g. `__private_brand_42`) are nominal
+            // class typing markers and must not appear in user-facing completions.
+            if name.starts_with("__private_brand_") {
+                continue;
+            }
+            self.add_property_completion_ex(
+                props,
+                interner,
+                name,
+                prop.type_id,
+                prop.is_method,
+                prop.optional,
+            );
+        }
+    }
+
+    fn collect_intrinsic_members(
+        &self,
+        kind: IntrinsicKind,
+        interner: &TypeInterner,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        let members = apparent_primitive_members(interner, kind);
+        for member in members {
+            if !primitive_member_is_completion_eligible(kind, member.name) {
+                continue;
+            }
+            let type_id = match member.kind {
+                ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
+            };
+            let is_method = matches!(member.kind, ApparentMemberKind::Method(_));
+            self.add_property_completion(
+                props,
+                interner,
+                member.name.to_string(),
+                type_id,
+                is_method,
+            );
+        }
+    }
+
+    /// Prefers the lib-defined boxed interface for a primitive intrinsic type when available,
+    /// falling back to the apparent-members table otherwise.
+    fn collect_intrinsic_members_or_boxed(
+        &self,
+        kind: IntrinsicKind,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        if let Some(boxed_type) = interner.get_boxed_type(kind) {
+            self.collect_properties_for_type_inner(
+                boxed_type, interner, checker, visited, props, false,
+            );
+            Self::remove_hidden_primitive_boxed_completions(props);
+        } else {
+            self.collect_intrinsic_members(kind, interner, props);
+        }
+    }
+
+    fn remove_hidden_primitive_boxed_completions(
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        for name in OBJECT_PROTOTYPE_ONLY_MEMBERS {
+            props.remove(*name);
+        }
+    }
+
+    /// No-lib fallback: emits `Array.prototype` member names with approximate return types.
+    /// Only reached when `get_array_base_type()` returns `None` (no lib loaded).
+    fn collect_array_member_fallback(
+        &self,
+        interner: &TypeInterner,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.add_property_completion(props, interner, "length".to_string(), TypeId::NUMBER, false);
+        for name in ["indexOf", "lastIndexOf", "push", "unshift", "findIndex"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::NUMBER, true);
+        }
+        for name in ["every", "some", "includes"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::BOOLEAN, true);
+        }
+        for name in ["join", "toString", "toLocaleString"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::STRING, true);
+        }
+        for name in [
+            "concat",
+            "copyWithin",
+            "entries",
+            "fill",
+            "filter",
+            "find",
+            "flat",
+            "flatMap",
+            "forEach",
+            "keys",
+            "map",
+            "pop",
+            "reduce",
+            "reduceRight",
+            "reverse",
+            "shift",
+            "slice",
+            "sort",
+            "splice",
+            "values",
+            "at",
+            "findLast",
+            "findLastIndex",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "with",
+        ] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::ANY, true);
+        }
+    }
+
+    pub(super) fn add_property_completion(
+        &self,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        interner: &TypeInterner,
+        name: String,
+        type_id: TypeId,
+        is_method: bool,
+    ) {
+        self.add_property_completion_ex(props, interner, name, type_id, is_method, false);
+    }
+}

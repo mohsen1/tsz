@@ -1,0 +1,1494 @@
+impl<'a> ES5ClassTransformer<'a> {
+    fn member_contains_new_target(
+        &self,
+        body_idx: NodeIndex,
+        params: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
+            || params.nodes.iter().any(|&param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.initializer.is_some()
+                            && contains_new_target_reference(self.arena, param.initializer)
+                    })
+            })
+    }
+
+    fn prepend_invalid_new_target_capture(body: &mut Vec<IRNode>) {
+        body.insert(
+            0,
+            IRNode::NewTargetCapture {
+                initializer: Box::new(IRNode::void_0()),
+            },
+        );
+    }
+
+    fn method_has_async_generator_asterisk(
+        &self,
+        member_idx: NodeIndex,
+        method_body: NodeIndex,
+        asterisk_token: bool,
+    ) -> bool {
+        asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                self.arena.get(member_idx).map_or(0, |node| node.pos),
+                self.arena.get(method_body).map_or_else(
+                    || self.arena.get(member_idx).map_or(0, |node| node.end),
+                    |body| body.pos,
+                ),
+            )
+    }
+
+    fn async_generator_params_need_forwarding(&self, params: &[NodeIndex]) -> bool {
+        params.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+            if param.initializer.is_some() {
+                return true;
+            }
+            self.arena
+                .get(param.name)
+                .is_some_and(|name_node| name_node.kind != SyntaxKind::Identifier as u16)
+        })
+    }
+
+    fn async_generator_outer_params(
+        &self,
+        ast_params: &[NodeIndex],
+        ir_params: &[IRParam],
+    ) -> Vec<IRParam> {
+        if !self.async_generator_params_need_forwarding(ast_params) {
+            return ir_params.to_vec();
+        }
+
+        ir_params
+            .iter()
+            .map(|param| {
+                if param.name.starts_with('_') {
+                    IRParam::new(param.name.to_string())
+                } else {
+                    IRParam::new(format!("{}_1", param.name))
+                }
+            })
+            .collect()
+    }
+
+    fn async_generator_method_body(
+        &self,
+        method_name_idx: NodeIndex,
+        params: &[NodeIndex],
+        body: NodeIndex,
+    ) -> Vec<IRNode> {
+        let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+        let method_name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
+        let mut transformer = AsyncES5Transformer::new(self.arena);
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        transformer.set_module_kind(self.module_kind);
+        transformer.set_target_es5(self.target_es5);
+        self.configure_async_disposable_context(&mut transformer);
+        let inner = transformer.transform_async_generator_inner_function(
+            inner_name,
+            params,
+            body,
+            move_params_to_generator,
+        );
+        self.sync_async_disposable_context(&mut transformer);
+        vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
+            arguments: vec![
+                IRNode::This { captured: false },
+                IRNode::id("arguments"),
+                inner,
+            ],
+        })))]
+    }
+
+    fn generator_method_body(&self, body: NodeIndex, is_static: bool) -> Vec<IRNode> {
+        let mut transformer = AsyncES5Transformer::new(self.arena).with_class_super_context(
+            self.has_extends,
+            self.super_name.clone(),
+            is_static,
+        );
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        transformer.set_module_kind(self.module_kind);
+        transformer.set_target_es5(self.target_es5);
+        self.configure_async_disposable_context(&mut transformer);
+        transformer.generator_mode = true;
+        let has_yield = transformer.body_contains_await(body);
+        let mut generator_body = transformer.transform_generator_body(body, has_yield);
+        transformer.generator_mode = false;
+        self.sync_async_disposable_context(&mut transformer);
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+
+        let mut body = Vec::new();
+        for group in hoisted_var_groups {
+            body.push(IRNode::VarDeclList(
+                group
+                    .into_iter()
+                    .map(|name| IRNode::VarDecl {
+                        name: name.into(),
+                        initializer: None,
+                    })
+                    .collect(),
+            ));
+        }
+        body.push(generator_body);
+        body
+    }
+
+    /// Build a getter function IR from an accessor node
+    fn build_getter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_getter_function_ir_impl(accessor_idx, false)
+    }
+
+    fn build_getter_function_ir_static(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_getter_function_ir_impl(accessor_idx, true)
+    }
+
+    fn build_getter_function_ir_impl(
+        &self,
+        accessor_idx: NodeIndex,
+        is_static: bool,
+    ) -> Option<IRNode> {
+        let accessor_node = self.arena.get(accessor_idx)?;
+        let accessor_data = self.arena.get_accessor(accessor_node)?;
+
+        let params = self.extract_parameters(&accessor_data.parameters);
+
+        let body_source_range = self.arena.pos_end_at(accessor_data.body);
+        let body = if accessor_data.body.is_none() {
+            vec![]
+        } else {
+            let this_capture_alias = self.this_capture_alias_for_body(accessor_data.body, None);
+            let mut body = if is_static {
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
+            } else {
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
+            };
+            if body.is_empty()
+                && let Some(block_node) = self.arena.get(accessor_data.body)
+            {
+                self.emit_empty_block_comments(&mut body, block_node);
+            }
+
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+            }
+            if self.member_contains_new_target(accessor_data.body, &accessor_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut body);
+            }
+
+            body
+        };
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: params,
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
+    }
+
+    /// Build a setter function IR from an accessor node
+    fn build_setter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_setter_function_ir_impl(accessor_idx, false)
+    }
+
+    fn build_setter_function_ir_static(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        self.build_setter_function_ir_impl(accessor_idx, true)
+    }
+
+    fn build_setter_function_ir_impl(
+        &self,
+        accessor_idx: NodeIndex,
+        is_static: bool,
+    ) -> Option<IRNode> {
+        let accessor_node = self.arena.get(accessor_idx)?;
+        let accessor_data = self.arena.get_accessor(accessor_node)?;
+
+        let mut params = self.extract_parameters(&accessor_data.parameters);
+
+        // Generate destructuring prologue for binding-pattern parameters
+        let accessor_destructuring =
+            self.generate_destructuring_prologue(&accessor_data.parameters, &params);
+
+        let body_source_range = if accessor_destructuring.is_empty() {
+            self.arena.pos_end_at(accessor_data.body)
+        } else {
+            None // Force multi-line when destructuring prologue exists
+        };
+        let mut body = if accessor_data.body.is_none() {
+            vec![]
+        } else {
+            let this_capture_alias = self
+                .this_capture_alias_for_body(accessor_data.body, Some(&accessor_data.parameters));
+            let mut body = if is_static {
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
+            } else {
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
+            };
+            if body.is_empty()
+                && let Some(block_node) = self.arena.get(accessor_data.body)
+            {
+                self.emit_empty_block_comments(&mut body, block_node);
+            }
+
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+            }
+
+            // Prepend destructuring prologue
+            if !accessor_destructuring.is_empty() {
+                let mut full = accessor_destructuring;
+                full.append(&mut body);
+                body = full;
+            }
+            if self.member_contains_new_target(accessor_data.body, &accessor_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut body);
+            }
+
+            body
+        };
+
+        self.lower_rest_parameter_for_es5(&mut params, &mut body);
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: params,
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
+    }
+
+    /// Lower a rest parameter into ES5 `arguments` collection statements.
+    /// Example: `(...v)` -> `() { var v = []; for (var _i = 0; _i < arguments.length; _i++) { ... } }`
+    fn lower_rest_parameter_for_es5(&self, params: &mut Vec<IRParam>, body: &mut Vec<IRNode>) {
+        let Some(rest_index) = params.iter().position(|param| param.rest) else {
+            return;
+        };
+
+        let rest_name = params[rest_index].name.clone();
+        params.truncate(rest_index);
+
+        let loop_var = "_i";
+        let start_index = rest_index.to_string();
+
+        let target_index = if rest_index == 0 {
+            IRNode::id(loop_var)
+        } else {
+            IRNode::binary(
+                IRNode::id(loop_var),
+                "-",
+                IRNode::number(start_index.clone()),
+            )
+        };
+
+        let assignment = IRNode::expr_stmt(IRNode::assign(
+            IRNode::elem(IRNode::id(rest_name.clone()), target_index),
+            IRNode::elem(IRNode::id("arguments"), IRNode::id(loop_var)),
+        ));
+
+        let collect_rest = IRNode::ForStatement {
+            initializer: Some(Box::new(IRNode::Raw(
+                format!("var {loop_var} = {start_index}").into(),
+            ))),
+            condition: Some(Box::new(IRNode::binary(
+                IRNode::id(loop_var),
+                "<",
+                IRNode::prop(IRNode::id("arguments"), "length"),
+            ))),
+            incrementor: Some(Box::new(IRNode::PostfixUnaryExpr {
+                operand: Box::new(IRNode::id(loop_var)),
+                operator: "++".to_string().into(),
+            })),
+            body: Box::new(IRNode::block(vec![assignment])),
+        };
+
+        body.insert(0, collect_rest);
+        body.insert(0, IRNode::var_decl(rest_name, Some(IRNode::empty_array())));
+    }
+
+    /// Get method name as IR representation.
+    /// Computed property names use static-like super access (`_super.X` not `_super.prototype.X`)
+    /// because they are evaluated at class definition time in the IIFE body, not inside methods.
+    pub(super) fn get_method_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return IRMethodName::Identifier(String::new().into());
+        };
+
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if let Some(computed) = self.arena.get_computed_property(name_node) {
+                // A computed property name in a class nested inside an enclosing
+                // *instance* member body evaluates its expression in that member.
+                // A `super` reference there binds to the outer class's prototype
+                // home, so it must lower in instance super context
+                // (`<super>.prototype.m.call(this)`) rather than the default
+                // class-definition static context (`<super>.m`). Only divert
+                // when the name actually references `super`; all other computed
+                // names keep the established static-like behavior.
+                if let Some(outer_super) = self.inherited_computed_name_super.as_ref()
+                    && tsz_parser::syntax::transform_utils::contains_super_reference(
+                        self.arena,
+                        computed.expression,
+                    )
+                {
+                    return IRMethodName::Computed(Box::new(
+                        self.convert_computed_name_expression_instance_super(
+                            computed.expression,
+                            outer_super,
+                        ),
+                    ));
+                }
+                return IRMethodName::Computed(Box::new(
+                    self.convert_computed_property_expression(computed.expression, true),
+                ));
+            }
+        } else if name_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return IRMethodName::Identifier(ident.escaped_text.clone().into());
+            }
+        } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return IRMethodName::StringLiteral(lit.text.clone().into());
+            }
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            return IRMethodName::NumericLiteral(lit.text.clone().into());
+        }
+
+        IRMethodName::Identifier(String::new().into())
+    }
+
+    pub(super) fn private_storage_declarations_in_tsc_order(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
+        let mut decls = Vec::new();
+        if let Some(instances) = self.private_instances_weakset_name.as_ref() {
+            decls.push(instances.clone());
+        }
+        let has_static_private_lowering = self.private_fields.iter().any(|field| field.is_static)
+            || self.private_methods.iter().any(|method| method.is_static)
+            || self
+                .private_accessors
+                .iter()
+                .any(|accessor| accessor.is_static);
+        if has_static_private_lowering && let Some(alias) = self.current_static_class_alias.as_ref()
+        {
+            decls.push(alias.clone());
+        }
+
+        let mut emitted_accessor_entries: FxHashSet<usize> = FxHashSet::default();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(field) = self
+                        .private_fields
+                        .iter()
+                        .find(|field| field.member_idx == member_idx)
+                    {
+                        decls.push(field.weakmap_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self
+                        .private_methods
+                        .iter()
+                        .find(|method| method.member_idx == member_idx)
+                    {
+                        decls.push(method.fn_var_name.clone());
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some((entry_idx, accessor)) = self
+                        .private_accessors
+                        .iter()
+                        .enumerate()
+                        .find(|(_, accessor)| accessor.member_indices.contains(&member_idx))
+                    {
+                        if !emitted_accessor_entries.insert(entry_idx) {
+                            continue;
+                        }
+                        if let Some(get_var) = accessor.get_var_name.as_ref() {
+                            decls.push(get_var.clone());
+                        }
+                        if let Some(set_var) = accessor.set_var_name.as_ref() {
+                            decls.push(set_var.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        decls
+    }
+
+    pub(super) fn private_method_and_accessor_init_strings(&self) -> Vec<String> {
+        let mut inits = Vec::new();
+        for method in &self.private_methods {
+            if let Some(function) = self.build_private_method_function_ir(method.member_idx) {
+                inits.push(self.private_assignment_string(&method.fn_var_name, function));
+            }
+        }
+        for accessor in &self.private_accessors {
+            if let Some(get_var) = accessor.get_var_name.as_ref()
+                && let Some(getter_idx) = accessor.getter_body.and_then(|_| {
+                    accessor.member_indices.iter().copied().find(|&idx| {
+                        self.arena
+                            .get(idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::GET_ACCESSOR)
+                    })
+                })
+                && let Some(mut function) = if accessor.is_static {
+                    self.build_getter_function_ir_static(getter_idx)
+                } else {
+                    self.build_getter_function_ir(getter_idx)
+                }
+            {
+                if let IRNode::FunctionExpr { name, .. } = &mut function {
+                    *name = Some(get_var.clone().into());
+                }
+                inits.push(self.private_assignment_string(get_var, function));
+            }
+            if let Some(set_var) = accessor.set_var_name.as_ref()
+                && let Some(setter_idx) = accessor.setter_body.and_then(|_| {
+                    accessor.member_indices.iter().copied().find(|&idx| {
+                        self.arena
+                            .get(idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::SET_ACCESSOR)
+                    })
+                })
+                && let Some(mut function) = if accessor.is_static {
+                    self.build_setter_function_ir_static(setter_idx)
+                } else {
+                    self.build_setter_function_ir(setter_idx)
+                }
+            {
+                if let IRNode::FunctionExpr { name, .. } = &mut function {
+                    *name = Some(set_var.clone().into());
+                }
+                inits.push(self.private_assignment_string(set_var, function));
+            }
+        }
+        inits
+    }
+
+    pub(super) fn static_private_field_init_strings(&self) -> Vec<String> {
+        self.private_fields
+            .iter()
+            .filter(|field| field.is_static)
+            .map(|field| {
+                let value = if field.has_initializer && field.initializer.is_some() {
+                    if let Some(alias) = self.current_static_class_alias.as_ref() {
+                        self.convert_expression_static_with_class_alias(field.initializer, alias)
+                    } else {
+                        self.convert_expression_static(field.initializer)
+                    }
+                } else {
+                    IRNode::Undefined
+                };
+                self.render_private_init_expression(&IRNode::assign(
+                    IRNode::id(field.weakmap_name.clone()),
+                    IRNode::ObjectLiteral {
+                        properties: vec![IRProperty {
+                            key: IRPropertyKey::Identifier("value".into()),
+                            value,
+                            kind: IRPropertyKind::Init,
+                        }],
+                        source_range: None,
+                        extra_indent: 0,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn build_private_method_function_ir(&self, member_idx: NodeIndex) -> Option<IRNode> {
+        let method = self
+            .private_methods
+            .iter()
+            .find(|method| method.member_idx == member_idx)?;
+        let method_node = self.arena.get(member_idx)?;
+        let method_data = self.arena.get_method_decl(method_node)?;
+        let body_idx = method.body?;
+        let params = self.extract_parameters(&method_data.parameters);
+        let destructuring_prologue =
+            self.generate_destructuring_prologue(&method_data.parameters, &params);
+        let is_async_generator = method.is_async && method.is_generator;
+        let body_source_range = if method.is_async || method.is_generator || is_async_generator {
+            None
+        } else if destructuring_prologue.is_empty() {
+            self.arena
+                .get(body_idx)
+                .map(|body_node| (body_node.pos, body_node.end))
+        } else {
+            None
+        };
+        let body = if method.is_async && !method.is_generator {
+            let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                .with_class_super_context(
+                    self.has_extends,
+                    self.super_name.clone(),
+                    method.is_static,
+                );
+            if let Some(source_text) = self.source_text {
+                async_transformer.set_source_text(source_text);
+            }
+            async_transformer.set_module_kind(self.module_kind);
+            async_transformer.set_target_es5(self.target_es5);
+            async_transformer
+                .dynamic_import_promise_counter
+                .set(self.dynamic_import_promise_counter.get());
+            self.configure_async_disposable_context(&mut async_transformer);
+            let has_await = async_transformer.body_contains_await(body_idx);
+            let mut generator_body =
+                async_transformer.transform_generator_body(body_idx, has_await);
+            self.sync_async_disposable_context(&mut async_transformer);
+            self.dynamic_import_promise_counter
+                .set(async_transformer.dynamic_import_promise_counter.get());
+            let hoisted_var_groups =
+                AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+            vec![IRNode::AwaiterCall {
+                this_arg: Box::new(IRNode::this()),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: self
+                    .async_method_promise_constructor(method_data.type_annotation),
+                multiline_callback: false,
+                directives: Vec::new(),
+            }]
+        } else if is_async_generator {
+            self.async_generator_method_body(method_data.name, &method.parameters, body_idx)
+        } else if method.is_generator {
+            self.generator_method_body(body_idx, method.is_static)
+        } else {
+            let this_capture_alias =
+                self.this_capture_alias_for_body(body_idx, Some(&method_data.parameters));
+            let mut method_body = if method.is_static {
+                self.convert_block_body_static_with_this_capture_alias(
+                    body_idx,
+                    this_capture_alias.clone(),
+                )
+            } else {
+                self.convert_block_body_with_this_capture_alias(
+                    body_idx,
+                    this_capture_alias.clone(),
+                )
+            };
+            if !destructuring_prologue.is_empty() {
+                let mut full_body = destructuring_prologue;
+                full_body.append(&mut method_body);
+                method_body = full_body;
+            }
+            if let Some(alias) = this_capture_alias {
+                method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+            }
+            if self.member_contains_new_target(body_idx, &method_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut method_body);
+            }
+            method_body
+        };
+
+        Some(IRNode::FunctionExpr {
+            name: Some(method.fn_var_name.clone().into()),
+            parameters: if is_async_generator {
+                self.async_generator_outer_params(&method.parameters, &params)
+            } else {
+                params
+            },
+            body,
+            is_expression_body: false,
+            body_source_range,
+        })
+    }
+
+    fn private_assignment_string(&self, name: &str, function: IRNode) -> String {
+        self.render_private_init_expression(&IRNode::assign(IRNode::id(name.to_string()), function))
+    }
+
+    fn render_private_init_expression(&self, node: &IRNode) -> String {
+        let mut printer = if let Some(source_text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, source_text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        printer.set_target_es5(true);
+        if let Some(transforms) = self.transforms.as_ref() {
+            printer.set_transforms(transforms.clone());
+        }
+        printer.emit(node).to_string()
+    }
+
+    /// Emit all class members (prototype and static) in source order.
+    /// This matches tsc's behavior of interleaving prototype and static members
+    /// based on their order in the source code.
+    /// Returns deferred static block IIFEs (for classes with no non-block static members).
+    pub(super) fn emit_all_members_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        class_idx: NodeIndex,
+    ) -> Vec<IRNode> {
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return Vec::new();
+        };
+        let Some(class_data) = self.arena.get_class(class_node) else {
+            return Vec::new();
+        };
+
+        // --- Static member preamble ---
+
+        // Check if class has non-block static members (properties, accessors, methods with bodies)
+        // This determines whether static blocks go inline or deferred
+        let has_static_props = class_data.members.nodes.iter().any(|&m_idx| {
+            let Some(m_node) = self.arena.get(m_idx) else {
+                return false;
+            };
+            if m_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop_data) = self.arena.get_property_decl(m_node) {
+                    return self
+                        .arena
+                        .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                        && !is_private_identifier(self.arena, prop_data.name)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                        && self.property_initializer_has_equals(m_node, prop_data);
+                }
+            } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(acc_data) = self.arena.get_accessor(m_node)
+            {
+                return self
+                    .arena
+                    .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
+                    && !(self
+                        .arena
+                        .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && acc_data.body.is_none())
+                    && !is_private_identifier(self.arena, acc_data.name);
+            }
+            false
+        });
+
+        let class_alias = self.current_static_class_alias.clone();
+
+        let mut deferred_static_block_indices = Vec::new();
+
+        // Collect accessor pairs for both instance and static
+        let instance_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, false);
+        let static_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, true);
+
+        let mut emitted_instance_accessors: FxHashSet<String> = FxHashSet::default();
+        let mut emitted_static_accessors: FxHashSet<String> = FxHashSet::default();
+
+        // Collect deferred static property initializers.
+        // tsc emits methods/accessors (both instance and static) in source order,
+        // but defers static property initializer assignments to after all methods/accessors.
+        let mut deferred_static_prop_inits: Vec<IRNode> = Vec::new();
+
+        // Single pass: emit all members in source order
+        for (member_i, &member_idx) in class_data.members.nodes.iter().enumerate() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                let Some(method_data) = self.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                if is_private_identifier(self.arena, method_data.name) {
+                    continue;
+                }
+
+                let is_static = self
+                    .arena
+                    .has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword);
+
+                // Skip if no body
+                if method_data.body.is_none() {
+                    continue;
+                }
+
+                let method_name = self.get_method_name_ir(method_data.name);
+                let params = self.extract_parameters(&method_data.parameters);
+
+                if is_static {
+                    // --- Static method ---
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = self.method_has_async_generator_asterisk(
+                        member_idx,
+                        method_data.body,
+                        method_data.asterisk_token,
+                    );
+                    let is_async = has_async_modifier && !has_generator_asterisk;
+                    let is_async_generator = has_async_modifier && has_generator_asterisk;
+                    let is_generator = !has_async_modifier && has_generator_asterisk;
+
+                    let static_destructuring =
+                        self.generate_destructuring_prologue(&method_data.parameters, &params);
+
+                    let method_body = if is_async {
+                        let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                            .with_class_super_context(
+                                self.has_extends,
+                                self.super_name.clone(),
+                                true,
+                            );
+                        if let Some(source_text) = self.source_text {
+                            async_transformer.set_source_text(source_text);
+                        }
+                        async_transformer.set_module_kind(self.module_kind);
+                        async_transformer.set_target_es5(self.target_es5);
+                        async_transformer
+                            .dynamic_import_promise_counter
+                            .set(self.dynamic_import_promise_counter.get());
+                        self.configure_async_disposable_context(&mut async_transformer);
+                        let has_await = async_transformer.body_contains_await(method_data.body);
+                        let mut generator_body =
+                            async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
+                        self.dynamic_import_promise_counter
+                            .set(async_transformer.dynamic_import_promise_counter.get());
+                        let hoisted_var_groups =
+                            AsyncES5Transformer::extract_and_remove_var_decl_groups(
+                                &mut generator_body,
+                            );
+                        vec![IRNode::AwaiterCall {
+                            this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
+                            generator_body: Box::new(generator_body),
+                            hoisted_var_groups,
+                            promise_constructor: self
+                                .async_method_promise_constructor(method_data.type_annotation),
+                            multiline_callback: false,
+                            directives: Vec::new(),
+                        }]
+                    } else if is_async_generator {
+                        self.async_generator_method_body(
+                            method_data.name,
+                            &method_data.parameters.nodes,
+                            method_data.body,
+                        )
+                    } else if is_generator {
+                        self.generator_method_body(method_data.body, true)
+                    } else {
+                        let this_capture_alias = self.this_capture_alias_for_body(
+                            method_data.body,
+                            Some(&method_data.parameters),
+                        );
+                        let mut mbody = self.convert_block_body_static_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
+                        );
+                        if !static_destructuring.is_empty() {
+                            let mut full = static_destructuring;
+                            full.append(&mut mbody);
+                            mbody = full;
+                        }
+                        if let Some(alias) = this_capture_alias {
+                            mbody.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+                        }
+                        if self
+                            .member_contains_new_target(method_data.body, &method_data.parameters)
+                        {
+                            Self::prepend_invalid_new_target_capture(&mut mbody);
+                        }
+                        mbody
+                    };
+
+                    let body_source_range = if is_async
+                        || is_async_generator
+                        || is_generator
+                        || self.has_destructured_parameters(&method_data.parameters)
+                    {
+                        None
+                    } else {
+                        self.arena
+                            .get(method_data.body)
+                            .map(|body_node| (body_node.pos, body_node.end))
+                    };
+
+                    let leading_comment = self.extract_leading_comment(member_node);
+                    let trailing_comment =
+                        self.extract_trailing_comment_for_method(method_data.body);
+
+                    let function = IRNode::FunctionExpr {
+                        name: None,
+                        parameters: if is_async_generator {
+                            self.async_generator_outer_params(
+                                &method_data.parameters.nodes,
+                                &params,
+                            )
+                        } else {
+                            params
+                        },
+                        body: method_body,
+                        is_expression_body: false,
+                        body_source_range,
+                    };
+
+                    if self.use_define_for_class_fields {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::id(self.class_name.clone())),
+                            property_name: method_name,
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: None,
+                                value: Some(Box::new(function)),
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: true,
+                                trailing_comment,
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::StaticMethod {
+                            class_name: self.class_name.clone().into(),
+                            method_name,
+                            function: Box::new(function),
+                            leading_comment,
+                            trailing_comment,
+                        });
+                    }
+                } else {
+                    // --- Instance method ---
+                    let destructuring_prologue =
+                        self.generate_destructuring_prologue(&method_data.parameters, &params);
+
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = self.method_has_async_generator_asterisk(
+                        member_idx,
+                        method_data.body,
+                        method_data.asterisk_token,
+                    );
+                    let is_async = has_async_modifier && !has_generator_asterisk;
+                    let is_async_generator = has_async_modifier && has_generator_asterisk;
+                    let is_generator = !has_async_modifier && has_generator_asterisk;
+
+                    let body_source_range = if is_async || is_async_generator || is_generator {
+                        None
+                    } else if destructuring_prologue.is_empty() {
+                        self.arena
+                            .get(method_data.body)
+                            .map(|body_node| (body_node.pos, body_node.end))
+                    } else {
+                        None
+                    };
+
+                    let method_body = if is_async {
+                        let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                            .with_class_super_context(
+                                self.has_extends,
+                                self.super_name.clone(),
+                                false,
+                            );
+                        if let Some(source_text) = self.source_text {
+                            async_transformer.set_source_text(source_text);
+                        }
+                        async_transformer.set_module_kind(self.module_kind);
+                        async_transformer.set_target_es5(self.target_es5);
+                        async_transformer
+                            .dynamic_import_promise_counter
+                            .set(self.dynamic_import_promise_counter.get());
+                        self.configure_async_disposable_context(&mut async_transformer);
+                        let has_await = async_transformer.body_contains_await(method_data.body);
+                        let mut generator_body =
+                            async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
+                        self.dynamic_import_promise_counter
+                            .set(async_transformer.dynamic_import_promise_counter.get());
+                        let hoisted_var_groups =
+                            AsyncES5Transformer::extract_and_remove_var_decl_groups(
+                                &mut generator_body,
+                            );
+                        vec![IRNode::AwaiterCall {
+                            this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
+                            generator_body: Box::new(generator_body),
+                            hoisted_var_groups,
+                            promise_constructor: self
+                                .async_method_promise_constructor(method_data.type_annotation),
+                            multiline_callback: false,
+                            directives: Vec::new(),
+                        }]
+                    } else if is_async_generator {
+                        self.async_generator_method_body(
+                            method_data.name,
+                            &method_data.parameters.nodes,
+                            method_data.body,
+                        )
+                    } else if is_generator {
+                        self.generator_method_body(method_data.body, false)
+                    } else {
+                        let this_capture_alias = self.this_capture_alias_for_body(
+                            method_data.body,
+                            Some(&method_data.parameters),
+                        );
+                        let mut method_body = self.convert_block_body_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
+                        );
+                        if !destructuring_prologue.is_empty() {
+                            let mut full_body = destructuring_prologue;
+                            full_body.append(&mut method_body);
+                            method_body = full_body;
+                        }
+                        if let Some(alias) = this_capture_alias {
+                            method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+                        }
+                        if self
+                            .member_contains_new_target(method_data.body, &method_data.parameters)
+                        {
+                            Self::prepend_invalid_new_target_capture(&mut method_body);
+                        }
+                        method_body
+                    };
+
+                    let leading_comment = self.extract_leading_comment(member_node);
+                    let trailing_comment =
+                        self.extract_trailing_comment_for_method(method_data.body);
+
+                    let function = IRNode::FunctionExpr {
+                        name: None,
+                        parameters: if is_async_generator {
+                            self.async_generator_outer_params(
+                                &method_data.parameters.nodes,
+                                &params,
+                            )
+                        } else {
+                            params
+                        },
+                        body: method_body,
+                        is_expression_body: false,
+                        body_source_range,
+                    };
+
+                    if self.use_define_for_class_fields {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: method_name,
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: None,
+                                value: Some(Box::new(function)),
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: true,
+                                trailing_comment,
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::PrototypeMethod {
+                            class_name: self.class_name.clone().into(),
+                            method_name,
+                            function: Box::new(function),
+                            leading_comment,
+                            trailing_comment,
+                        });
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
+                    let is_static =
+                        has_effective_static_modifier(self.arena, &accessor_data.modifiers);
+                    let is_abstract = self
+                        .arena
+                        .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword);
+                    let is_private = is_private_identifier(self.arena, accessor_data.name);
+
+                    if (is_abstract && accessor_data.body.is_none()) || is_private {
+                        continue;
+                    }
+
+                    let accessor_name = match get_identifier_text(self.arena, accessor_data.name) {
+                        Some(name) => name,
+                        None => format!("__computed_{}", member_idx.0),
+                    };
+
+                    if is_static {
+                        // --- Static accessor ---
+                        if emitted_static_accessors.contains(&accessor_name) {
+                            continue;
+                        }
+
+                        if let Some(&(getter_idx, setter_idx)) =
+                            static_accessor_map.get(&accessor_name)
+                        {
+                            let get_fn = if let Some(getter_idx) = getter_idx {
+                                self.build_getter_function_ir_static(getter_idx)
+                            } else {
+                                None
+                            };
+                            let set_fn = if let Some(setter_idx) = setter_idx {
+                                self.build_setter_function_ir_static(setter_idx)
+                            } else {
+                                None
+                            };
+                            body.push(IRNode::DefineProperty {
+                                target: Box::new(IRNode::id(self.class_name.clone())),
+                                property_name: self.get_method_name_ir(accessor_data.name),
+                                descriptor: IRPropertyDescriptor {
+                                    get: get_fn.map(Box::new),
+                                    set: set_fn.map(Box::new),
+                                    value: None,
+                                    get_leading_comment: getter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    set_leading_comment: setter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    enumerable: false,
+                                    configurable: true,
+                                    writable: false,
+                                    trailing_comment: None,
+                                },
+                                leading_comment: None,
+                            });
+                            emitted_static_accessors.insert(accessor_name);
+                        }
+                    } else {
+                        // --- Instance accessor ---
+                        if emitted_instance_accessors.contains(&accessor_name) {
+                            continue;
+                        }
+
+                        if let Some(&(getter_idx, setter_idx)) =
+                            instance_accessor_map.get(&accessor_name)
+                        {
+                            let get_fn = if let Some(getter_idx) = getter_idx {
+                                self.build_getter_function_ir(getter_idx)
+                            } else {
+                                None
+                            };
+                            let set_fn = if let Some(setter_idx) = setter_idx {
+                                self.build_setter_function_ir(setter_idx)
+                            } else {
+                                None
+                            };
+                            body.push(IRNode::DefineProperty {
+                                target: Box::new(IRNode::prop(
+                                    IRNode::id(self.class_name.clone()),
+                                    "prototype",
+                                )),
+                                property_name: self.get_method_name_ir(accessor_data.name),
+                                descriptor: IRPropertyDescriptor {
+                                    get: get_fn.map(Box::new),
+                                    set: set_fn.map(Box::new),
+                                    value: None,
+                                    get_leading_comment: getter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    set_leading_comment: setter_idx
+                                        .and_then(|idx| self.arena.get(idx))
+                                        .and_then(|node| self.extract_leading_comment(node)),
+                                    enumerable: false,
+                                    configurable: true,
+                                    writable: false,
+                                    trailing_comment: None,
+                                },
+                                leading_comment: None,
+                            });
+
+                            let has_explicit_semicolon_member = class_data
+                                .members
+                                .nodes
+                                .get(member_i + 1)
+                                .and_then(|&idx| self.arena.get(idx))
+                                .is_some_and(|n| {
+                                    n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
+                                });
+                            if !has_explicit_semicolon_member {
+                                let accessor_end = [getter_idx, setter_idx]
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|idx| self.arena.get(idx))
+                                    .map(|n| n.end)
+                                    .max()
+                                    .unwrap_or(member_node.end);
+                                let next_pos = class_data
+                                    .members
+                                    .nodes
+                                    .get(member_i + 1)
+                                    .and_then(|&idx| self.arena.get(idx))
+                                    .map_or(member_node.end, |n| n.pos);
+                                if self.source_has_semicolon_between(accessor_end, next_pos) {
+                                    body.push(IRNode::EmptyStatement);
+                                }
+                            }
+                            if self.source_text.is_some_and(|text| {
+                                let start = std::cmp::min(member_node.pos as usize, text.len());
+                                let end = std::cmp::min(member_node.end as usize, text.len());
+                                start < end && text[start..end].trim_end().ends_with(';')
+                            }) {
+                                body.push(IRNode::EmptyStatement);
+                            }
+
+                            emitted_instance_accessors.insert(accessor_name);
+                        }
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let Some(prop_data) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+
+                let is_static = self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword);
+                let is_abstract = self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword);
+                let is_declare = self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword);
+                let is_private_field = is_private_identifier(self.arena, prop_data.name);
+                let is_accessor_keyword = self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword);
+
+                if is_static {
+                    // --- Static property ---
+                    if self.skip_static_field_initializers {
+                        continue;
+                    }
+                    if is_accessor_keyword {
+                        let Some(accessor) = self.find_auto_accessor(member_idx) else {
+                            continue;
+                        };
+                        if is_abstract || is_declare || is_private_field {
+                            continue;
+                        }
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::id(self.class_name.clone())),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_static_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: Some(Box::new(
+                                    self.build_static_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment: self.extract_leading_comment(member_node),
+                        });
+                        continue;
+                    }
+                    if is_abstract || is_declare || is_private_field || is_accessor_keyword {
+                        continue;
+                    }
+                    if !self.property_initializer_has_equals(member_node, prop_data) {
+                        continue;
+                    }
+                    if self.tc39_es5_decorated_field(member_idx).is_some() {
+                        continue;
+                    }
+                    // Defer static property initializers to after all methods/accessors.
+                    // tsc emits methods/accessors in source order first, then static
+                    // property initializer assignments.
+
+                    if let Some(prop_name) = self.get_property_name_ir(prop_data.name) {
+                        let target = match &prop_name {
+                            PropertyNameIR::Identifier(n) => {
+                                IRNode::prop(IRNode::id(self.class_name.clone()), n.clone())
+                            }
+                            PropertyNameIR::StringLiteral(s) => IRNode::elem(
+                                IRNode::id(self.class_name.clone()),
+                                IRNode::string(s.clone()),
+                            ),
+                            PropertyNameIR::NumericLiteral(n) => IRNode::elem(
+                                IRNode::id(self.class_name.clone()),
+                                IRNode::number(n.clone()),
+                            ),
+                            PropertyNameIR::Computed(expr_idx) => {
+                                // Use hoisted temp if available
+                                if let Some(temp) = self.computed_prop_temp_map.get(expr_idx) {
+                                    IRNode::elem(
+                                        IRNode::id(self.class_name.clone()),
+                                        IRNode::id(temp.clone()),
+                                    )
+                                } else {
+                                    IRNode::elem(
+                                        IRNode::id(self.class_name.clone()),
+                                        self.convert_computed_property_expression(*expr_idx, true),
+                                    )
+                                }
+                            }
+                        };
+                        let value = if !self.class_decorators.is_empty() {
+                            if let Some(alias) = self.class_self_reference_alias.as_ref() {
+                                self.convert_expression_static_with_decorator_self_alias(
+                                    prop_data.initializer,
+                                    alias,
+                                )
+                            } else {
+                                self.convert_expression_static_with_raw_this_substitution(
+                                    prop_data.initializer,
+                                    "(void 0)",
+                                )
+                            }
+                        } else if let Some(ref alias) = class_alias {
+                            self.convert_expression_static_with_class_alias(
+                                prop_data.initializer,
+                                alias,
+                            )
+                        } else {
+                            self.convert_expression_static(prop_data.initializer)
+                        };
+                        if self.use_define_for_class_fields {
+                            deferred_static_prop_inits.push(IRNode::DefineProperty {
+                                target: Box::new(IRNode::id(self.class_name.clone())),
+                                property_name: self
+                                    .get_field_define_property_name_ir(prop_data.name),
+                                descriptor: IRPropertyDescriptor {
+                                    get: None,
+                                    set: None,
+                                    value: Some(Box::new(value)),
+                                    get_leading_comment: None,
+                                    set_leading_comment: None,
+                                    enumerable: true,
+                                    configurable: true,
+                                    writable: true,
+                                    trailing_comment: self
+                                        .extract_trailing_comment_for_class_field(member_node),
+                                },
+                                leading_comment: self.extract_leading_comment(member_node),
+                            });
+                        } else {
+                            if self
+                                .expression_contains_static_class_expression(prop_data.initializer)
+                            {
+                                deferred_static_prop_inits.push(IRNode::VarDecl {
+                                    name: self.generate_temp_name().into(),
+                                    initializer: None,
+                                });
+                            }
+                            deferred_static_prop_inits
+                                .push(IRNode::expr_stmt(IRNode::assign(target, value)));
+                        }
+                    }
+                } else {
+                    // --- Instance auto-accessor property ---
+                    let Some(accessor) = self.find_auto_accessor(member_idx) else {
+                        continue;
+                    };
+                    if is_abstract || is_private_field {
+                        continue;
+                    }
+                    let storage_inits =
+                        self.auto_accessor_instance_storage_inits_for_computed_key(member_idx);
+                    let leading_comment = self.extract_leading_comment(member_node);
+                    if storage_inits.is_empty() {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: Some(Box::new(
+                                    self.build_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: self
+                                .auto_accessor_getter_property_name(prop_data.name, &storage_inits),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: None,
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: None,
+                            },
+                            leading_comment,
+                        });
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: Some(Box::new(
+                                    self.build_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment: None,
+                        });
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                // --- Static block ---
+                if self.skip_static_field_initializers {
+                    continue;
+                }
+                if self.arena.get_block(member_node).is_some() {
+                    if has_static_props {
+                        let statements = self.convert_block_body_with_alias_impl(
+                            member_idx,
+                            class_alias.clone(),
+                            true,
+                            true,
+                        );
+                        let iife = IRNode::StaticBlockIIFE { statements };
+                        // Defer static blocks to after methods/accessors,
+                        // interleaved with static property inits in source order
+                        deferred_static_prop_inits.push(iife);
+                    } else {
+                        deferred_static_block_indices.push(member_idx);
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
+                body.push(IRNode::EmptyStatement);
+            }
+        }
+
+        // Emit deferred static property initializers and static blocks after
+        // all methods/accessors, matching tsc's ES5 class member ordering.
+        if !deferred_static_prop_inits.is_empty() {
+            if let Some(alias) = self.class_self_reference_alias.as_ref()
+                && !self.class_decorators.is_empty()
+                && self.has_static_property_initializer(&class_data.members)
+            {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+            }
+            // Emit class alias preamble before the first static property init
+            if let Some(ref alias) = class_alias {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+                body.push(IRNode::expr_stmt(IRNode::assign(
+                    IRNode::id(alias.clone()),
+                    IRNode::id(self.class_name.clone()),
+                )));
+            }
+            body.append(&mut deferred_static_prop_inits);
+        }
+
+        deferred_static_block_indices
+            .into_iter()
+            .map(|member_idx| {
+                let statements = self.convert_block_body_with_alias_impl(
+                    member_idx,
+                    class_alias.clone(),
+                    true,
+                    true,
+                );
+                IRNode::StaticBlockIIFE { statements }
+            })
+            .collect()
+    }
+}

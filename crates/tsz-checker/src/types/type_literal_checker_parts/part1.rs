@@ -1,0 +1,1012 @@
+impl<'a> CheckerState<'a> {
+    // =========================================================================
+    // Type Node Resolution in Type Literals
+    // =========================================================================
+
+    /// Get type from a type node within a type literal context.
+    ///
+    /// This handles special resolution needed for types declared within
+    /// type literals, such as recursive type references.
+    pub(crate) fn get_type_from_type_node_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+        let factory = self.ctx.types.factory();
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return self.get_type_from_type_reference_in_type_literal(idx);
+        }
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            // Check node_types cache first — resolve_type_queries_with_flow may have
+            // pre-resolved this typeof with flow narrowing.
+            if !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx)
+                && let Some(&cached) = self.ctx.node_types.get(&idx.0)
+                && cached != TypeId::ERROR
+            {
+                return cached;
+            }
+            return self.get_type_from_type_query(idx);
+        }
+        if node.kind == syntax_kind_ext::UNION_TYPE {
+            if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                let members = composite
+                    .types
+                    .nodes
+                    .iter()
+                    .map(|&member_idx| self.get_type_from_type_node_in_type_literal(member_idx))
+                    .collect::<Vec<_>>();
+                return factory.union(members);
+            }
+            return TypeId::ERROR;
+        }
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            if let Some(array_type) = self.ctx.arena.get_array_type(node) {
+                let elem_type =
+                    self.get_type_from_type_node_in_type_literal(array_type.element_type);
+                return factory.array(elem_type);
+            }
+            return TypeId::ERROR; // Missing array type data - propagate error
+        }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+            // Handle readonly and other type operators in type literals
+            return self.get_type_from_type_operator(idx);
+        }
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return self.get_type_from_type_literal(idx);
+        }
+
+        self.get_type_from_type_node(idx)
+    }
+
+    fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+        let factory = self.ctx.types.factory();
+
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return TypeId::ERROR; // Missing type reference data - propagate error
+        };
+
+        let type_name_idx = type_ref.type_name;
+        let has_type_args = type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty());
+
+        if let Some(name_node) = self.ctx.arena.get(type_name_idx)
+            && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
+        {
+            let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(sym_id) => sym_id,
+                TypeSymbolResolution::ValueOnly(sym_id) => {
+                    let name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.report_wrong_meaning(
+                        &name,
+                        type_name_idx,
+                        sym_id,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
+                    return TypeId::ERROR;
+                }
+                TypeSymbolResolution::NotFound => {
+                    let _ = self.resolve_qualified_name(type_name_idx);
+                    return TypeId::ERROR;
+                }
+            };
+            // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+            let base_type = self.resolve_symbol_as_lazy_type(sym_id);
+            if has_type_args {
+                let type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .map(|args| {
+                        args.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                return factory.application(base_type, type_args);
+            }
+            return base_type;
+        }
+
+        if let Some(name_node) = self.ctx.arena.get(type_name_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = ident.escaped_text.as_str();
+
+            // Type literal members inside namespaces should prefer same-namespace
+            // type declarations before falling back to file/global symbols.
+            if self.lookup_type_parameter(name).is_none()
+                && let Some(sym_id) =
+                    self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
+            {
+                // Validate type arguments against constraints (TS2344)
+                if has_type_args
+                    && let Some(args) = &type_ref.type_arguments
+                    && !self.is_inside_type_parameter_declaration(idx)
+                {
+                    self.validate_type_reference_type_arguments(sym_id, args, idx);
+                }
+                // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                let base_type = self.resolve_symbol_as_lazy_type_named(sym_id, name);
+                if has_type_args {
+                    let type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| {
+                                    self.get_type_from_type_node_in_type_literal(arg_idx)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    return factory.application(base_type, type_args);
+                }
+                return base_type;
+            }
+
+            if has_type_args {
+                // Handle compiler-intrinsic types that need special TypeData
+                // variants instead of generic Application types.
+                // NoInfer, Uppercase, etc. are intrinsic — their DefId has no body,
+                // so Application(Lazy(DefId), args) can never be evaluated.
+                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let type_param = self.lookup_type_parameter(name);
+                let type_resolution =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
+                let sym_id = match type_resolution {
+                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::ValueOnly(sym_id) => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => None,
+                };
+                let sym_id = sym_id.or_else(|| {
+                    self.ctx
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .filter(|&sym_id| self.symbol_has_declared_type_meaning(sym_id))
+                        .map(|sym_id| {
+                            self.ctx
+                                .binder
+                                .get_symbol(sym_id)
+                                .and_then(|symbol| {
+                                    symbol.import_module.as_ref().and_then(|module_name| {
+                                        symbol.import_name.as_deref().and_then(|import_name| {
+                                            self.resolve_cross_file_export_from_file(
+                                                module_name,
+                                                import_name,
+                                                Some(self.ctx.current_file_idx),
+                                            )
+                                        })
+                                    })
+                                })
+                                .unwrap_or_else(|| {
+                                    let mut visited = AliasCycleTracker::new();
+                                    self.resolve_alias_symbol(sym_id, &mut visited)
+                                        .unwrap_or(sym_id)
+                                })
+                        })
+                        .or_else(|| {
+                            let lib_binders = self.get_lib_binders();
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs(name, &lib_binders)
+                        })
+                });
+                let sym_id = sym_id.map(|sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().and_then(|module_name| {
+                                symbol.import_name.as_deref().and_then(|import_name| {
+                                    self.resolve_cross_file_export_from_file(
+                                        module_name,
+                                        import_name,
+                                        Some(self.ctx.current_file_idx),
+                                    )
+                                })
+                            })
+                        })
+                        .unwrap_or(sym_id)
+                });
+                let intrinsic_reference_is_unshadowed = type_param.is_none()
+                    && match sym_id {
+                        Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
+                        None => true,
+                    };
+                if intrinsic_reference_is_unshadowed {
+                    match name {
+                        "NoInfer" => {
+                            if let Some(args) = &type_ref.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let inner = self.get_type_from_type_node_in_type_literal(first_arg);
+                                return self.ctx.types.no_infer(inner);
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize" => {
+                            if let Some(args) = &type_ref.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg =
+                                    self.get_type_from_type_node_in_type_literal(first_arg);
+                                return crate::query_boundaries::type_construction::string_intrinsic_by_name(
+                                    self.ctx.types,
+                                    name,
+                                    type_arg,
+                                );
+                            }
+                            return TypeId::ERROR;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                {
+                    // Array/ReadonlyArray not found - check if lib files are loaded
+                    // When --noLib is used, emit TS2318 instead of silently creating Array type
+                    if !self.ctx.has_lib_loaded() {
+                        // No lib files loaded - emit TS2318 for missing global type
+                        self.error_cannot_find_global_type(name, type_name_idx);
+                        // Still process type arguments to avoid cascading errors
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                            }
+                        }
+                        return TypeId::ERROR;
+                    }
+                    // Lib files are loaded but Array not found - fall back to creating Array type
+                    let elem_type = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .and_then(|args| args.nodes.first().copied())
+                        .map_or(TypeId::UNKNOWN, |idx| {
+                            self.get_type_from_type_node_in_type_literal(idx)
+                        });
+                    let array_type = factory.array(elem_type);
+                    if name == "ReadonlyArray" {
+                        return factory.readonly_type(array_type);
+                    }
+                    return array_type;
+                }
+
+                if !self.ctx.compiler_options.no_lib
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && matches!(name, "Promise" | "PromiseLike")
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let type_args: Vec<TypeId> = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                        .collect();
+                    if !type_args.is_empty() {
+                        let promise_base =
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| {
+                                let _ = self.resolve_lib_type_by_name(name);
+                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                                factory.lazy(def_id)
+                            })
+                            .unwrap_or(TypeId::PROMISE_BASE);
+                        return factory.application(promise_base, type_args);
+                    }
+                }
+
+                if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                    if self.has_special_missing_lib_type_diagnostic(name) {
+                        // TS2318/TS2583: Emit error for missing global type
+                        // Process type arguments for validation first
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                            }
+                        }
+                        self.report_missing_lib_type_name(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    if name == "await" {
+                        self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                    if self.is_unresolved_import_symbol(type_name_idx) {
+                        return TypeId::ANY;
+                    }
+                    // Route through boundary for TS2304/TS2552 with spelling suggestions
+                    let _ = self.resolve_type_name_or_report(name, type_name_idx);
+                    // Preserve the user-written name in subsequent diagnostic
+                    // displays (e.g., TS2322 message for `Foo<HTMLDivElement>`
+                    // when `HTMLDivElement` is undeclared) by interning an
+                    // `UnresolvedTypeName`, which is treated structurally as
+                    // `Error` everywhere but renders the original identifier.
+                    let mut lowered_args: Vec<TypeId> = Vec::new();
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            lowered_args
+                                .push(self.get_type_from_type_node_in_type_literal(arg_idx));
+                        }
+                    }
+                    let atom = self.ctx.types.intern_string(name);
+                    let base = self.ctx.types.unresolved_type_name(atom);
+                    return if lowered_args.is_empty() {
+                        base
+                    } else {
+                        self.ctx.types.application(base, lowered_args)
+                    };
+                }
+                let array_is_unshadowed = is_builtin_array
+                    && type_param.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name);
+
+                // For Array<T> / ReadonlyArray<T> with type arguments, convert to
+                // proper array types (Array(T) / Readonly(Array(T))) instead of
+                // Application(Lazy(DefId), [T]). This matches what TypeLowering does
+                // and ensures assignability with `T[]` / `readonly T[]`.
+                if array_is_unshadowed
+                    && let Some(args) = &type_ref.type_arguments
+                    && let Some(&first_arg) = args.nodes.first()
+                {
+                    let elem_type = self.get_type_from_type_node_in_type_literal(first_arg);
+                    let array_type = factory.array(elem_type);
+                    if name == "ReadonlyArray" {
+                        return factory.readonly_type(array_type);
+                    }
+                    return array_type;
+                }
+
+                // Validate type arguments against constraints (TS2344)
+                // This mirrors the check in get_type_from_type_reference for the
+                // normal type resolution path. Without this, type references inside
+                // interface/type literal bodies (e.g., method return types) would
+                // not check that type arguments satisfy their constraints.
+                if let Some(sym_id) = sym_id
+                    && let Some(args) = &type_ref.type_arguments
+                    && !self.is_inside_type_parameter_declaration(idx)
+                {
+                    self.validate_type_reference_type_arguments(sym_id, args, idx);
+                }
+
+                let base_type = if let Some(type_param) = type_param {
+                    type_param
+                } else if let Some(sym_id) = sym_id {
+                    // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                    self.resolve_symbol_as_lazy_type_named(sym_id, name)
+                } else {
+                    TypeId::ERROR
+                };
+
+                let type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .map(|args| {
+                        args.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                return factory.application(base_type, type_args);
+            }
+
+            if name == "Array" || name == "ReadonlyArray" {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                    return self.resolve_symbol_as_lazy_type_named(sym_id, name);
+                }
+                if let Some(type_param) = self.lookup_type_parameter(name) {
+                    return type_param;
+                }
+                // Array/ReadonlyArray not found - check if lib files are loaded
+                // When --noLib is used, emit TS2318 instead of silently creating Array type
+                if !self.ctx.has_lib_loaded() {
+                    // No lib files loaded - emit TS2318 for missing global type
+                    self.error_cannot_find_global_type(name, type_name_idx);
+                    // Still process type arguments to avoid cascading errors
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                        }
+                    }
+                    return TypeId::ERROR;
+                }
+                // Lib files are loaded but Array not found - fall back to creating Array type
+                let elem_type = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.first().copied())
+                    .map_or(TypeId::UNKNOWN, |idx| {
+                        self.get_type_from_type_node_in_type_literal(idx)
+                    });
+                let array_type = factory.array(elem_type);
+                if name == "ReadonlyArray" {
+                    return factory.readonly_type(array_type);
+                }
+                return array_type;
+            }
+
+            match name {
+                "number" => return TypeId::NUMBER,
+                "string" => return TypeId::STRING,
+                "boolean" => return TypeId::BOOLEAN,
+                "void" => return TypeId::VOID,
+                "any" => return TypeId::ANY,
+                "never" => return TypeId::NEVER,
+                "unknown" => return TypeId::UNKNOWN,
+                "undefined" => return TypeId::UNDEFINED,
+                "null" => return TypeId::NULL,
+                "object" => return TypeId::OBJECT,
+                "bigint" => return TypeId::BIGINT,
+                "symbol" => return TypeId::SYMBOL,
+                _ => {}
+            }
+
+            let recovered_type_symbol = if name != "Array"
+                && let TypeSymbolResolution::ValueOnly(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+            {
+                match self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                {
+                    Some(type_sym_id) => Some(type_sym_id),
+                    None => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                }
+            } else {
+                None
+            };
+
+            if let Some(type_param) = self.lookup_type_parameter(name) {
+                return type_param;
+            }
+            if let Some(sym_id) = recovered_type_symbol.or_else(|| {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    Some(sym_id)
+                } else {
+                    None
+                }
+            }) {
+                // Prime lib generic metadata before resolving the symbol body so
+                // bare lib references inside type literals keep their default
+                // type arguments instead of caching an uninstantiated Lazy type.
+                if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+                    self.prime_lib_type_params(name);
+                }
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                let is_interface = self.get_cross_file_symbol(sym_id).is_some_and(|symbol| {
+                    symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+                });
+                if is_interface
+                    && Self::in_cross_arena_interface_delegation()
+                    && type_params.is_empty()
+                    && !self.ctx.symbol_resolution_set.contains(&sym_id)
+                {
+                    self.ctx.symbol_resolution_set.insert(sym_id);
+                    let interface_type = self.compute_interface_type_from_declarations(sym_id);
+                    self.ctx.symbol_resolution_set.remove(&sym_id);
+                    if interface_type != TypeId::ERROR && interface_type != TypeId::UNKNOWN {
+                        let has_members = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            interface_type,
+                        )
+                        .is_some_and(|shape| !shape.properties.is_empty());
+                        if has_members {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(interface_type, def_id);
+                            return interface_type;
+                        }
+                    }
+                } else {
+                    // Resolve the symbol's structural body first.
+                    let _ = self.type_reference_symbol_type(sym_id);
+                }
+                // Mirror `resolve_simple_type_reference`: when a bare type reference
+                // omits required type arguments, return ERROR so cascading TS2322
+                // checks against the naked-type-parameter form are suppressed.  The
+                // TS2314 diagnostic is emitted independently by
+                // `check_type_for_missing_names`, so we don't double-emit here.
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
+                if required_count > 0 {
+                    return TypeId::ERROR;
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
+                // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
+                // Without this, bare Lazy(DefId) misses the default instantiation and causes false
+                // TS2322 when compared against an explicit Application (e.g., Uint8Array<ArrayBuffer>).
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> =
+                        crate::query_boundaries::common::resolve_default_type_args(
+                            self.ctx.types,
+                            &type_params,
+                        );
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_with_params(sym_id, type_params);
+                    let base_type_id = factory.lazy(def_id);
+                    return factory.application(base_type_id, default_args);
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                // Stable-identity: create Lazy(DefId) (body already resolved above)
+                return self.ctx.create_lazy_type_ref(sym_id);
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && self.symbol_has_declared_type_meaning(sym_id)
+            {
+                let mut visited = AliasCycleTracker::new();
+                let sym_id = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|symbol| {
+                        symbol.import_module.as_ref().and_then(|module_name| {
+                            symbol.import_name.as_deref().and_then(|import_name| {
+                                self.resolve_cross_file_export_from_file(
+                                    module_name,
+                                    import_name,
+                                    Some(self.ctx.current_file_idx),
+                                )
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        self.resolve_alias_symbol(sym_id, &mut visited)
+                            .unwrap_or(sym_id)
+                    });
+                let _ = self.type_reference_symbol_type(sym_id);
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
+                if required_count > 0 {
+                    return TypeId::ERROR;
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> =
+                        crate::query_boundaries::common::resolve_default_type_args(
+                            self.ctx.types,
+                            &type_params,
+                        );
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_with_params(sym_id, type_params);
+                    return factory.application(factory.lazy(def_id), default_args);
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                return self.ctx.create_lazy_type_ref(sym_id);
+            }
+
+            if name == "await" {
+                self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                return TypeId::ERROR;
+            }
+            if self.has_special_missing_lib_type_diagnostic(name) {
+                // TS2318/TS2583: Emit error for missing global type
+                self.report_missing_lib_type_name(name, type_name_idx);
+                return TypeId::ERROR;
+            }
+            // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+            if self.is_unresolved_import_symbol(type_name_idx) {
+                return TypeId::ANY;
+            }
+            // Route through boundary for TS2304/TS2552 with spelling suggestions
+            let _ = self.resolve_type_name_or_report(name, type_name_idx);
+            // Preserve the user-written name as `UnresolvedTypeName` so
+            // downstream display in TS2322/TS2345 messages prints the
+            // original identifier rather than the bare `error` token.
+            let atom = self.ctx.types.intern_string(name);
+            return self.ctx.types.unresolved_type_name(atom);
+        }
+
+        TypeId::ANY
+    }
+
+    pub(crate) fn extract_params_from_signature_in_type_literal(
+        &mut self,
+        sig: &tsz_parser::parser::node::SignatureData,
+    ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
+        let Some(ref params_list) = sig.parameters else {
+            return (Vec::new(), None);
+        };
+
+        self.extract_params_from_parameter_list_impl(
+            params_list,
+            ParamTypeResolutionMode::InTypeLiteral,
+        )
+    }
+
+    fn enclosing_type_literal_owner_name(&self, idx: NodeIndex) -> Option<String> {
+        let mut current = idx;
+        let mut depth = 0usize;
+        while depth < 64 {
+            depth += 1;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    let alias = self.ctx.arena.get_type_alias(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(alias.name)?;
+                    return Some(ident.escaped_text.clone());
+                }
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.ctx.arena.get_variable_declaration(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(decl.name)?;
+                    return Some(ident.escaped_text.clone());
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn type_literal_accessor_circular_reference(
+        &self,
+        type_node_idx: NodeIndex,
+        accessor_name_idx: NodeIndex,
+        owner_name: &str,
+    ) -> bool {
+        let Some(accessor_name) = self.get_property_name(accessor_name_idx) else {
+            return false;
+        };
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+
+        if type_node.kind == syntax_kind_ext::TYPE_QUERY {
+            let Some(query) = self.ctx.arena.get_type_query(type_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.ctx.arena.get(query.expr_name) else {
+                return false;
+            };
+
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+                let object_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .map(|ident| ident.escaped_text.as_str());
+                let property_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.as_str());
+                return object_name == Some(owner_name)
+                    && property_name == Some(accessor_name.as_str());
+            }
+
+            if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) else {
+                    return false;
+                };
+                let object_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(qn.left)
+                    .map(|ident| ident.escaped_text.as_str());
+                let property_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(qn.right)
+                    .map(|ident| ident.escaped_text.as_str());
+                return object_name == Some(owner_name)
+                    && property_name == Some(accessor_name.as_str());
+            }
+        }
+
+        if type_node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            let Some(indexed) = self.ctx.arena.get_indexed_access_type(type_node) else {
+                return false;
+            };
+            let Some(object_type_node) = self.ctx.arena.get(indexed.object_type) else {
+                return false;
+            };
+            if object_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            let Some(type_ref) = self.ctx.arena.get_type_ref(object_type_node) else {
+                return false;
+            };
+            let object_name = self
+                .ctx
+                .arena
+                .get_identifier_at(type_ref.type_name)
+                .map(|ident| ident.escaped_text.as_str());
+            if object_name != Some(owner_name) {
+                return false;
+            }
+
+            let Some(index_node) = self.ctx.arena.get(indexed.index_type) else {
+                return false;
+            };
+            if let Some(lit) = self.ctx.arena.get_literal(index_node) {
+                return lit.text == accessor_name;
+            }
+            if let Some(lit_type) = self.ctx.arena.get_literal_type(index_node)
+                && let Some(inner) = self.ctx.arena.get(lit_type.literal)
+                && let Some(lit) = self.ctx.arena.get_literal(inner)
+            {
+                return lit.text == accessor_name;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn indexed_access_references_owner_property(
+        &self,
+        type_node_idx: NodeIndex,
+        owner_name: &str,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            return false;
+        }
+        let Some(indexed) = self.ctx.arena.get_indexed_access_type(type_node) else {
+            return false;
+        };
+        let Some(object_type_node) = self.ctx.arena.get(indexed.object_type) else {
+            return false;
+        };
+        if object_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(object_type_node) else {
+            return false;
+        };
+        let object_name = self
+            .ctx
+            .arena
+            .get_identifier_at(type_ref.type_name)
+            .map(|ident| ident.escaped_text.as_str());
+        if object_name != Some(owner_name) {
+            return false;
+        }
+
+        let Some(index_node) = self.ctx.arena.get(indexed.index_type) else {
+            return false;
+        };
+        if let Some(lit) = self.ctx.arena.get_literal(index_node) {
+            return lit.text == property_name;
+        }
+        if let Some(lit_type) = self.ctx.arena.get_literal_type(index_node)
+            && let Some(inner) = self.ctx.arena.get(lit_type.literal)
+            && let Some(lit) = self.ctx.arena.get_literal(inner)
+        {
+            return lit.text == property_name;
+        }
+
+        false
+    }
+
+    pub(crate) fn check_type_literal_self_indexed_property_annotations(
+        &mut self,
+        type_node_idx: NodeIndex,
+        owner_name: &str,
+    ) {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+            return;
+        };
+
+        let members: Vec<NodeIndex> = type_lit.members.nodes.to_vec();
+        for member_idx in members {
+            let Some(member) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                continue;
+            }
+            let Some(sig) = self.ctx.arena.get_signature(member) else {
+                continue;
+            };
+            if sig.type_annotation.is_none() {
+                continue;
+            }
+            let Some(name) = self.get_property_name_resolved(sig.name) else {
+                continue;
+            };
+            if !self.indexed_access_references_owner_property(
+                sig.type_annotation,
+                owner_name,
+                &name,
+            ) {
+                continue;
+            }
+            let message = format!(
+                "'{name}' is referenced directly or indirectly in its own type annotation."
+            );
+            self.error_at_node(sig.name, &message, 2502);
+        }
+    }
+
+    pub(crate) fn type_literal_has_circular_accessor_reference(
+        &self,
+        type_node_idx: NodeIndex,
+    ) -> bool {
+        struct AccessorMemberInfo {
+            circular_self_reference: bool,
+        }
+
+        #[derive(Default)]
+        struct AccessorAggregate {
+            getter: Option<AccessorMemberInfo>,
+            setter: Option<AccessorMemberInfo>,
+        }
+
+        let Some(owner_name) = self.enclosing_type_literal_owner_name(type_node_idx) else {
+            return false;
+        };
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return false;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+            return false;
+        };
+
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+
+        for &member_idx in &type_lit.members.nodes {
+            let Some(member) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if (member.kind != syntax_kind_ext::GET_ACCESSOR
+                && member.kind != syntax_kind_ext::SET_ACCESSOR)
+                || self.ctx.arena.get_accessor(member).is_none()
+            {
+                continue;
+            }
+            let Some(accessor) = self.ctx.arena.get_accessor(member) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(accessor.name) else {
+                continue;
+            };
+            let name_atom = self.ctx.types.intern_string(&name);
+            let entry = accessors.entry(name_atom).or_default();
+
+            if member.kind == syntax_kind_ext::GET_ACCESSOR {
+                let circular_self_reference = accessor.type_annotation.is_some()
+                    && self.type_literal_accessor_circular_reference(
+                        accessor.type_annotation,
+                        accessor.name,
+                        &owner_name,
+                    );
+                entry.getter = Some(AccessorMemberInfo {
+                    circular_self_reference,
+                });
+            } else {
+                let mut circular_self_reference = false;
+                if let Some(&param_idx) = accessor.parameters.nodes.first()
+                    && let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    circular_self_reference = param.type_annotation.is_some()
+                        && self.type_literal_accessor_circular_reference(
+                            param.type_annotation,
+                            accessor.name,
+                            &owner_name,
+                        );
+                }
+                entry.setter = Some(AccessorMemberInfo {
+                    circular_self_reference,
+                });
+            }
+        }
+
+        accessors.values().any(|accessor| {
+            accessor
+                .getter
+                .as_ref()
+                .is_some_and(|getter| getter.circular_self_reference)
+                || accessor
+                    .setter
+                    .as_ref()
+                    .is_some_and(|setter| setter.circular_self_reference)
+        })
+    }
+}
