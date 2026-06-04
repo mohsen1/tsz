@@ -1240,12 +1240,14 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down after arch-smoke caught current stacked-branch slack.
         #
-        # Bumped by 1 for the `keyof T` TS2322 diagnostic-display fix
-        # (#12549): `format_type_for_assignability_message` adds one
-        # `type_param_info(keyof_inner)` guard that short-circuits the
-        # anonymous-constraint evaluation path when the `keyof` operand is a
-        # free type parameter. The call reuses the existing request-shaped
-        # `type_param_info` helper already used throughout `core_formatting.rs`.
+        # Bumped from 3212 to 3213 for the `keyof T` TS2322 diagnostic-display
+        # fix (#12549). Owner: M1-A diagnostic hardcoding debt. Removal
+        # condition: ratchet this back down when `core_formatting.rs` gets a
+        # focused formatting/query-boundary helper for type-parameter `keyof`
+        # display, so `format_type_for_assignability_message` no longer needs
+        # a direct `type_param_info(keyof_inner)` quarantine read to
+        # short-circuit the anonymous-constraint evaluation path for free type
+        # parameters.
         3213,
     ),
 ]
