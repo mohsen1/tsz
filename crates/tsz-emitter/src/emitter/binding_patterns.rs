@@ -122,7 +122,79 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_some() {
             self.write(" = ");
             self.emit(elem.initializer);
+        } else if elem.dot_dot_dot_token
+            && let Some(initializer) =
+                self.recovered_root_js_rest_binding_initializer_text(node, elem.name)
+        {
+            self.write(" = ");
+            self.write(&initializer);
         }
+    }
+
+    fn recovered_root_js_rest_binding_initializer_text(
+        &self,
+        node: &Node,
+        name: NodeIndex,
+    ) -> Option<String> {
+        if !self.should_emit_recovered_root_js_declaration_modifiers() {
+            return None;
+        }
+        let Some(text) = self.source_text else {
+            return None;
+        };
+        let Some(name_node) = self.arena.get(name) else {
+            return None;
+        };
+        if name_node.end >= node.end {
+            return None;
+        }
+        let tail =
+            crate::safe_slice::slice(text, name_node.end as usize, node.end as usize).ok()?;
+        let (_, value) = tail.split_once('=')?;
+        let value = Self::trim_recovered_binding_initializer_tail(value).trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
+
+    fn trim_recovered_binding_initializer_tail(value: &str) -> &str {
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut quote = None;
+        let mut escaped = false;
+
+        for (idx, ch) in value.char_indices() {
+            if let Some(quote_ch) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote_ch {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => {
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                        return &value[..idx];
+                    }
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                ',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                    return &value[..idx];
+                }
+                _ => {}
+            }
+        }
+
+        value
     }
 
     fn binding_name_requires_property_assignment(&self, name: NodeIndex) -> bool {
