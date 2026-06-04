@@ -2,4 +2,3 @@
 # Current semantic rewrites over already-emitted JS/DTS. This file is a ratchet:
 # counts may go down as plan/IR/declaration-summary work removes debt; new or
 # increased counts require an explicit category and removal reason.
-crates/tsz-emitter/src/emitter/source_file/top_level_using.rs|resource-region-output-surgery|4|top-level using region rewrites emitted strings; migrate to disposable-region plan

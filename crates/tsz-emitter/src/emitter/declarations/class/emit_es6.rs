@@ -6,6 +6,7 @@ use super::duplicate_private_names::{
 use super::emit_es6_after_body::ClassEs6AfterBody;
 use super::emit_es6_field_inits::ClassFieldInitCollection;
 use super::emit_es6_members::ClassEs6MemberEmit;
+use super::emit_es6_options::ClassEs6EmitOptions;
 use super::emit_es6_private_accessors::{
     PrivateAutoAccessorInfo, collect_private_auto_accessors_with_reserved,
 };
@@ -38,6 +39,55 @@ impl<'a> Printer<'a> {
         static_initializer_self_alias: Option<&str>,
         emit_assignment_static_elements_as_statements: bool,
     ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers,
+                assignment_prefix,
+                assignment_alias,
+                static_initializer_self_alias,
+                emit_assignment_static_elements_as_statements,
+                assignment_suffix: None,
+            },
+        );
+    }
+
+    pub(in crate::emitter) fn emit_class_es6_assignment_with_suffix(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        assignment_target: String,
+        assignment_suffix: &str,
+    ) {
+        self.emit_class_es6_with_emit_options(
+            node,
+            _idx,
+            ClassEs6EmitOptions {
+                suppress_modifiers: false,
+                assignment_prefix: Some(("", assignment_target)),
+                assignment_alias: None,
+                static_initializer_self_alias: None,
+                emit_assignment_static_elements_as_statements: false,
+                assignment_suffix: Some(assignment_suffix),
+            },
+        );
+    }
+
+    fn emit_class_es6_with_emit_options(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        options: ClassEs6EmitOptions<'_>,
+    ) {
+        let ClassEs6EmitOptions {
+            suppress_modifiers,
+            assignment_prefix,
+            assignment_alias,
+            static_initializer_self_alias,
+            emit_assignment_static_elements_as_statements,
+            assignment_suffix,
+        } = options;
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -1849,7 +1899,7 @@ impl<'a> Printer<'a> {
             self.write("}");
         }
         if assignment_prefix.is_some() && class_expr_temp.is_none() {
-            self.write(";");
+            self.write(assignment_suffix.unwrap_or(";"));
         }
 
         if class_expr_temp.is_none() {
