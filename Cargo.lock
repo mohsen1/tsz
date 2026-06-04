@@ -1309,7 +1309,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-binder"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-checker"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "dashmap",
  "globset",
@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-cli"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "clap",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-common"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-emitter"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lowering"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lsp"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "globset",
  "json5",
@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-parser"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-scanner"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "tsz-common",
@@ -1511,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-solver"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "bitflags",
  "dashmap",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-wasm"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-website"
-version = "0.1.14"
+version = "0.1.15"
 
 [[package]]
 name = "ucd-trie"
