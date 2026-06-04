@@ -18,28 +18,7 @@ impl ParserState {
             let async_modifier =
                 self.arena
                     .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
-            let modifiers = Some(self.make_node_list(vec![async_modifier]));
-            match self.token() {
-                SyntaxKind::ClassKeyword => {
-                    self.parse_class_declaration_with_modifiers(start_pos, modifiers)
-                }
-                SyntaxKind::EnumKeyword => {
-                    self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
-                }
-                SyntaxKind::InterfaceKeyword => {
-                    self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
-                }
-                SyntaxKind::NamespaceKeyword
-                | SyntaxKind::ModuleKeyword
-                | SyntaxKind::GlobalKeyword => {
-                    if self.look_ahead_is_module_declaration() {
-                        self.parse_module_declaration_with_modifiers(start_pos, modifiers)
-                    } else {
-                        self.parse_expression_statement()
-                    }
-                }
-                _ => self.parse_expression_statement(),
-            }
+            self.parse_accessor_modified_statement(start_pos, vec![async_modifier])
         } else {
             self.parse_expression_statement()
         }
@@ -118,6 +97,13 @@ impl ParserState {
         modifiers: Vec<NodeIndex>,
     ) -> NodeIndex {
         match self.token() {
+            SyntaxKind::AsyncKeyword if self.look_ahead_is_async_function() => {
+                self.parse_expected(SyntaxKind::AsyncKeyword);
+                self.parse_function_declaration_with_async(
+                    true,
+                    Some(self.make_node_list(modifiers)),
+                )
+            }
             SyntaxKind::FunctionKeyword => self
                 .parse_function_declaration_with_async(false, Some(self.make_node_list(modifiers))),
             SyntaxKind::ClassKeyword => self.parse_class_declaration_with_modifiers(
@@ -165,6 +151,9 @@ impl ParserState {
             }
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
             SyntaxKind::ExportKeyword => {
+                if !self.look_ahead_export_has_modified_declaration() {
+                    return self.parse_export_declaration();
+                }
                 let export_start = self.token_pos();
                 self.parse_expected(SyntaxKind::ExportKeyword);
                 let export_end = self.token_end();
@@ -181,6 +170,35 @@ impl ParserState {
         }
     }
 
+    fn look_ahead_export_has_modified_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = matches!(
+            self.token(),
+            SyntaxKind::FunctionKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::UsingKeyword
+                | SyntaxKind::AwaitKeyword
+                | SyntaxKind::ImportKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::AsyncKeyword
+        );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
     pub(crate) fn parse_statement_top_level_modifier(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
 
@@ -195,6 +213,7 @@ impl ParserState {
                 self.parse_statement()
             } else {
                 // TS1044: '{0}' modifier cannot appear on a module or namespace element.
+                let modifier_start = self.token_pos();
                 let modifier_text = self.scanner.get_token_text();
                 self.parse_error_at_current_token(
                     &format!(
@@ -202,8 +221,14 @@ impl ParserState {
                     ),
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
                 );
+                let modifier_kind = self.token();
                 self.next_token();
-                self.parse_statement()
+                let modifier = self.arena.add_token(
+                    modifier_kind as u16,
+                    modifier_start,
+                    modifier_start + modifier_text.len() as u32,
+                );
+                self.parse_accessor_modified_statement(modifier_start, vec![modifier])
             }
         } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
             self.parse_error_at_current_token(

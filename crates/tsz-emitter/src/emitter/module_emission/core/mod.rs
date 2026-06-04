@@ -1086,6 +1086,7 @@ impl<'a> Printer<'a> {
                 && !namespace_iife_supplies_no_binding
             {
                 self.write("export ");
+                self.emit_recovered_root_js_export_clause_modifiers(node);
             }
             self.emit(export.export_clause);
         }
