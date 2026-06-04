@@ -16,6 +16,7 @@ import {
   parseArgs,
   queueBranchMetadata,
   queueBranchPrNumber,
+  queueInvalidationSkipReason,
   queueRunIsActive,
   queueSkipReason,
   readPaginatedObjectArray,
@@ -277,6 +278,14 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.equal(queueInvalidationSkipReason(pr({ isDraft: true }), "main"), "draft PR");
+assert.equal(queueInvalidationSkipReason(pr({ labels: [] }), "main"), "missing merge-queue label");
+assert.equal(queueInvalidationSkipReason(pr({ labels: ["WIP"] }), "main"), "ready-state WIP marker: WIP label");
+assert.equal(queueInvalidationSkipReason(pr(), "main"), null);
+assert.equal(
+  queueInvalidationSkipReason(pr({ labels: ["ready-to-merge"] }), "main", "ready-to-merge"),
+  null,
+);
 assert.deepEqual(
   normalizeRestPullRequest({
     auto_merge: { merge_method: "squash" },
@@ -436,8 +445,17 @@ assert.match(
   formatResult({
     invalidated: 12,
     skippedActiveRuns: 2,
+    skippedIneligible: 3,
   }, parseArgs(["--repository", "owner/repo", "--invalidate-open"])),
   /Preserved 2 active queue run status/,
+);
+assert.match(
+  formatResult({
+    invalidated: 12,
+    skippedActiveRuns: 2,
+    skippedIneligible: 3,
+  }, parseArgs(["--repository", "owner/repo", "--invalidate-open"])),
+  /Skipped 3 PR head\(s\) not eligible for the queue/,
 );
 
 const cleanupFormat = formatResult({
