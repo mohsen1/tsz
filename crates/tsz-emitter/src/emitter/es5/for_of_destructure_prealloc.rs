@@ -1,29 +1,28 @@
-//! ES5 for-of assignment-target destructuring temp pre-pass.
+//! ES5 assignment-target destructuring temp pre-pass.
 //!
 //! Extracted from `bindings_for_of.rs` / `helpers.rs` so the `emit.rs` and
-//! `helpers.rs` monoliths stay under their §19 size ratchet. Behavior is
-//! unchanged: this module owns the temp pre-allocation that reserves the
-//! hoisted destructuring temps for assignment-target `for-of` loops before any
-//! for-of loop-control (index/array) temp.
+//! `helpers.rs` monoliths stay under their §19 size ratchet. This module owns
+//! temp pre-allocation that reserves hoisted assignment-destructuring temps in
+//! source order before non-hoisted ES5 temps in the same scope consume names.
 
 use super::super::Printer;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::ForInOfData;
+use tsz_parser::parser::node::{ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    /// Pre-pass that allocates the hoisted destructuring-assignment temps for all
-    /// ES5 array-indexing assignment-target `for-of` statements in `statements`,
-    /// in source order, before any loop is emitted.
+    /// Pre-pass that allocates hoisted destructuring-assignment temps for ES5
+    /// statement scopes in source order, before any statement is emitted.
     ///
     /// tsc assigns auto-generated temp names at print time in source order: the
     /// hoisted `var _a, _b, ...;` declaration prints at the top of the scope, so
-    /// every assignment-target for-of destructuring temp claims a low number
-    /// before any for-of loop-control (index/array) temp. tsz allocates names
-    /// eagerly while emitting, so without this pre-pass the destructuring and
-    /// loop-control temps interleave. Running the real destructuring lowering for
-    /// each such for-of into a throwaway writer reserves those temps in the exact
-    /// order the later emit consumes them.
+    /// every hoisted assignment-destructuring temp claims a low number before
+    /// non-hoisted temps from block-scoped declarations or for-of loop-control.
+    /// tsz allocates names eagerly while emitting, so without this pre-pass those
+    /// temps can interleave. Running the real destructuring lowering for each
+    /// hoisted assignment target into a throwaway writer reserves temps in the
+    /// exact order the later emit consumes them.
     ///
     /// Runs at a scope boundary where `hoisted_assignment_temps` is empty (source
     /// file / function body). The dry-run lowering allocates names through the
@@ -69,6 +68,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if node.kind == syntax_kind_ext::FOR_STATEMENT {
+            if let Some(loop_data) = self.arena.get_loop(node) {
+                self.prealloc_for_initializer_assignment_destructure_temps(loop_data.initializer);
+                self.visit_for_of_assignment_temp_prealloc(loop_data.statement);
+            }
+            return;
+        }
+
         // Descend into nested statement containers, but stop at function/class
         // boundaries — those introduce their own temp scope and hoist pool.
         match node.kind {
@@ -97,8 +104,7 @@ impl<'a> Printer<'a> {
                     self.visit_for_of_assignment_temp_prealloc(catch_clause.block);
                 }
             }
-            k if k == syntax_kind_ext::FOR_STATEMENT
-                || k == syntax_kind_ext::FOR_IN_STATEMENT
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::WHILE_STATEMENT
                 || k == syntax_kind_ext::DO_STATEMENT =>
             {
@@ -164,5 +170,89 @@ impl<'a> Printer<'a> {
         self.emit_for_of_assignment_target_destructuring_es5(init_node, "_");
 
         self.writer = real_writer;
+    }
+
+    /// Reserve hoisted assignment-destructuring temps created by an ordinary
+    /// `for` initializer expression. The block-scoped binding declaration in
+    /// `for (let [x] = value; ...)` uses inline temps in the header, not hoisted
+    /// assignment temps, so this only descends into declaration initializers and
+    /// expression initializers.
+    fn prealloc_for_initializer_assignment_destructure_temps(&mut self, initializer: NodeIndex) {
+        if initializer.is_none() {
+            return;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    self.prealloc_expression_assignment_destructure_temps(decl.initializer);
+                }
+            }
+            return;
+        }
+
+        self.prealloc_expression_assignment_destructure_temps(initializer);
+    }
+
+    fn prealloc_expression_assignment_destructure_temps(&mut self, idx: NodeIndex) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let Some(binary) = self.arena.get_binary_expr(node) else {
+                return;
+            };
+            if binary.operator_token == SyntaxKind::CommaToken as u16 {
+                self.prealloc_expression_assignment_destructure_temps(binary.left);
+                self.prealloc_expression_assignment_destructure_temps(binary.right);
+                return;
+            }
+
+            if binary.operator_token == SyntaxKind::EqualsToken as u16
+                && let Some(left_node) = self.arena.get(binary.left)
+                && Self::is_assignment_destructure_pattern(left_node)
+            {
+                self.prealloc_assignment_destructure_expression(left_node, binary.right);
+            }
+        }
+    }
+
+    const fn is_assignment_destructure_pattern(node: &Node) -> bool {
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        )
+    }
+
+    fn prealloc_assignment_destructure_expression(&mut self, left_node: &Node, right: NodeIndex) {
+        let scratch = crate::output::source_writer::SourceWriter::new();
+        let real_writer = std::mem::replace(&mut self.writer, scratch);
+        let saved_pending_source_pos = self.pending_source_pos.take();
+        let saved_pending_block_comment_space = self.pending_block_comment_space;
+        let saved_comment_emit_idx = self.comment_emit_idx;
+
+        self.pending_block_comment_space = false;
+        self.emit_assignment_destructuring_es5(left_node, right);
+
+        self.writer = real_writer;
+        self.pending_source_pos = saved_pending_source_pos;
+        self.pending_block_comment_space = saved_pending_block_comment_space;
+        self.comment_emit_idx = saved_comment_emit_idx;
     }
 }
