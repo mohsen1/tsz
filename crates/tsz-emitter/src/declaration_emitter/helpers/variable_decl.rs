@@ -1322,23 +1322,56 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let &type_idx = heritage.types.nodes.first()?;
-            if self.is_entity_name_heritage(type_idx)
-                && (!self.js_entity_extends_needs_synthetic_alias(type_idx)
-                    || self.heritage_type_is_bare_array(type_idx))
-            {
-                return None;
-            }
-
             let expr_idx = self
                 .arena
                 .get(type_idx)
                 .and_then(|type_node| self.arena.get_expr_type_args(type_node))
                 .map(|eta| eta.expression)
                 .unwrap_or(type_idx);
+            if self.is_entity_name_heritage(type_idx)
+                && (!self.js_entity_extends_needs_synthetic_alias(type_idx)
+                    || self.heritage_type_is_bare_array(type_idx)
+                    || self.js_entity_extends_inferred_typeof_reference_is_nameable(
+                        type_idx, expr_idx,
+                    ))
+            {
+                return None;
+            }
+
             return Some((type_idx, expr_idx));
         }
 
         None
+    }
+
+    fn js_entity_extends_inferred_typeof_reference_is_nameable(
+        &self,
+        type_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(type_id) = self.get_node_type_or_names(&[expr_idx, type_idx]) else {
+            return false;
+        };
+        if type_id == tsz_solver::types::TypeId::ANY {
+            return false;
+        }
+        let type_text = self.print_type_id(type_id);
+        let Some(reference) = type_text.strip_prefix("typeof ") else {
+            return false;
+        };
+        reference.split('.').all(Self::is_plain_identifier_part)
+    }
+
+    fn is_plain_identifier_part(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(in crate::declaration_emitter) fn js_entity_extends_needs_synthetic_alias(
