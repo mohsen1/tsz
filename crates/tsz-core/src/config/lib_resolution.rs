@@ -713,7 +713,13 @@ pub fn is_known_lib_name(lib_name: &str) -> bool {
     if let Ok(lib_dir) = default_lib_dir()
         && let Ok(map) = build_lib_map(&lib_dir)
     {
-        return map.contains_key(&normalized);
+        if map.contains_key(&normalized) {
+            return true;
+        }
+        // The on-disk TypeScript installation may predate this lib name
+        // (e.g. `esnext.disposable` and `esnext.float16` were added in TS 5.8).
+        // Fall through to the embedded catalog so tsz's own snapshot is always
+        // authoritative for lib names it ships, regardless of the installed TS.
     }
     build_lib_map_from_embedded().contains_key(normalized.as_str())
 }
@@ -777,5 +783,26 @@ mod tests {
             assert_ne!(alias, target, "alias {alias} must not map to itself");
             assert!(!target.is_empty());
         }
+    }
+
+    #[test]
+    fn is_known_lib_name_recognizes_esnext_disposable_and_float16_via_embedded() {
+        // `esnext.disposable` and `esnext.float16` were added in TypeScript 5.8.
+        // Older locally-installed TypeScript versions won't have these files on
+        // disk, but tsz's embedded snapshot does. `is_known_lib_name` must
+        // recognize them by falling through to the embedded catalog.
+        assert!(
+            is_known_lib_name("esnext.disposable"),
+            "esnext.disposable must be recognized as a known lib name"
+        );
+        assert!(
+            is_known_lib_name("esnext.float16"),
+            "esnext.float16 must be recognized as a known lib name"
+        );
+        // Sanity: a bogus name must remain unknown.
+        assert!(
+            !is_known_lib_name("esnext.nonexistent"),
+            "esnext.nonexistent must not be recognized"
+        );
     }
 }

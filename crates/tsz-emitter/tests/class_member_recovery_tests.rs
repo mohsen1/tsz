@@ -480,3 +480,125 @@ fn duplicate_static_field_modifier_lowers_as_instance_field() {
         "Duplicate static field recovery must not emit a static field assignment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn orphan_case_after_malformed_if_recovers_as_class_field() {
+    let source = r#"class Program {
+    static Main() {
+        try {
+            if (retValue != 0 ^= {
+                return 1;
+            }
+            case = bfs.STATEMENTS(4);
+            if (retValue != 0) {
+                return 1;
+            ^
+            retValue = bfs.TYPES();
+            if (retValue != 0) {
+                return 1 &&
+            }
+        }
+        catch (e) {
+            console.log(e);
+        }
+        finally {
+        }
+    }
+}
+"#;
+
+    let output = print_with_printer_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "if (retValue != 0)\n                 ^= {\n                    return: 1\n                };"
+        ),
+        "Malformed assignment after a binary if-condition should remain in the body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor() {\n        this.case = bfs.STATEMENTS(4);\n    }"),
+        "Recovered orphan `case` assignment should become a class field initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if(retValue) { }"),
+        "Recovered control-keyword class member with an invalid header should emit an empty body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}\ntry {\n}\ncatch (e)"),
+        "Recovered orphan catch should be emitted after the class body, not as a class member.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}\n != 0;\n{"),
+        "Recovered comparison tail should be emitted after the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("bfs.TYPES();") && !output.contains(" = bfs.TYPES();"),
+        "Recovered leading assignment should emit the right-hand call without the synthetic `=`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("        catch(e)"),
+        "Recovered orphan catch must not remain indented inside the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn malformed_while_colon_tail_preserves_tsc_recovery_shape() {
+    let source = "public Overloads( while : string, ...rest: string[]) {  &\npublic DefaultValue(value?: string = \"Hello\") { }\n";
+    let output = print_with_printer_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("while ()\n    : string, ;\nrest: string[];"),
+        "Recovered `while : string, ...rest` tail should preserve tsc-compatible layout.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn malformed_catch_question_tail_does_not_emit_extra_semicolon() {
+    let source = r#"function f() {
+    try {
+        throw null;
+    }
+    catch (Exception)  ?
+    }
+    finally {
+        try { }
+        catch (Exception) { }
+    }
+}
+"#;
+    let output = print_with_printer_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("catch (Exception) { }"),
+        "Recovered dangling `?` after catch should still emit the catch clause.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("catch (Exception) { }\n    ;"),
+        "Recovered dangling `?` after catch must not emit an extra semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("?"),
+        "Recovered dangling `?` after catch must not survive in output.\nOutput:\n{output}"
+    );
+}

@@ -15,6 +15,7 @@ use tsz_common::perf_counters::{
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
@@ -118,6 +119,29 @@ pub(crate) fn alias_declaration_body_is_computed(
                 && !crate::query_boundaries::diagnostics::union_or_intersection_mentions_object(
                     db, result,
                 )
+        }
+        // `keyof { ... }` over an inline object *type literal* is a reducing
+        // operator like indexed access: it resolves away into the operand's key
+        // set (a literal/primitive union) and never carries the alias's
+        // `aliasSymbol`, so tsc renders the underlying union, not the alias name.
+        // Verified against tsc 6.0.2: `type K = keyof { a: 1; b: 2 }` elaborates
+        // as `"a" | "b"`, never `K`.
+        //
+        // The gate is the *syntactic* operand shape: `keyof <TypeLiteral>` is
+        // anonymous (no writable name), so the alias name is the only handle and
+        // tsc drops it. `keyof Foo` over a named type reference keeps the
+        // `keyof Foo` spelling, and a generic `keyof T` stays deferred — neither
+        // reaches this flag because their operand node is not a `TypeLiteral`.
+        // This mirrors the conditional / indexed-access arms above.
+        syntax_kind_ext::TYPE_OPERATOR
+            if arena.get_type_operator(body_node).is_some_and(|op| {
+                op.operator == SyntaxKind::KeyOfKeyword as u16
+                    && arena
+                        .get(op.type_node)
+                        .is_some_and(|operand| operand.kind == syntax_kind_ext::TYPE_LITERAL)
+            }) =>
+        {
+            true
         }
         _ => false,
     }

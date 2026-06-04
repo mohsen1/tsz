@@ -15,8 +15,6 @@ permalink: /benchmarks/index.html
 
 {{ benchmark_mean_chart | safe }}
 
-<p class="benchmark-data-link"><a href="/benchmark-data/latest.json">View the raw benchmark artifact</a></p>
-
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
   <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>
@@ -24,7 +22,7 @@ permalink: /benchmarks/index.html
 
 ## Full Project Type Checking
 
-Full-project rows use real repositories and generated app fixtures. If a project has a timing pair in the latest artifact, it is shown here even when compatibility tracking has more work left.
+Full-project rows use real repositories and generated app fixtures.
 
 {{ benchmark_charts | safe }}
 
