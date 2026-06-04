@@ -170,7 +170,71 @@ impl<'a> Printer<'a> {
                 line_offset += 1;
             }
         }
+        if let Some(class) = self.arena.get_class(node) {
+            recovered.extend(
+                self.recovered_mapped_type_member_tails(class)
+                    .into_iter()
+                    .map(|tail| format!("{tail};")),
+            );
+        }
         recovered
+    }
+
+    pub(in crate::emitter) fn class_has_recovered_mapped_type_member_tail(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        class.members.nodes.iter().any(|&member_idx| {
+            self.arena.get(member_idx).is_some_and(|member_node| {
+                self.recovered_mapped_type_member_tail(member_node)
+                    .is_some()
+            })
+        })
+    }
+
+    pub(in crate::emitter) fn recovered_mapped_type_member_tails(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
+        class
+            .members
+            .nodes
+            .iter()
+            .filter_map(|&member_idx| {
+                let member_node = self.arena.get(member_idx)?;
+                self.recovered_mapped_type_member_tail(member_node)
+            })
+            .collect()
+    }
+
+    pub(in crate::emitter) fn recovered_mapped_type_member_tail(
+        &self,
+        member_node: &Node,
+    ) -> Option<String> {
+        let text = self.source_text?;
+        let start = (member_node.pos as usize).min(text.len());
+        let end = (member_node.end as usize).min(text.len());
+        let raw = text.get(start..end)?.trim();
+        let inner = raw.strip_prefix('[')?;
+        let close = inner.find(']')?;
+        let mapped_clause = inner[..close].trim();
+        let param_len = mapped_clause
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if param_len == 0 {
+            return None;
+        }
+        let after_param = mapped_clause[param_len..].trim_start();
+        if !after_param.starts_with("in ") {
+            return None;
+        }
+        let after_close = inner[close + 1..].trim_start();
+        if !(after_close.starts_with(':') || after_close.starts_with("?:")) {
+            return None;
+        }
+        Some(mapped_clause.to_string())
     }
 
     fn recovered_class_body_empty_enum_name(&self, trimmed: &str) -> Option<String> {

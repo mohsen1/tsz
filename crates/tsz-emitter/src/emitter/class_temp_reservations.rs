@@ -246,7 +246,9 @@ impl<'a> Printer<'a> {
                 })
             });
 
-        has_static_field_comma_expr || has_static_block_comma_expr
+        has_static_field_comma_expr
+            || has_static_block_comma_expr
+            || self.class_has_recovered_mapped_type_member_tail(class)
     }
 
     fn estimate_class_expression_static_comma_computed_temp_count(

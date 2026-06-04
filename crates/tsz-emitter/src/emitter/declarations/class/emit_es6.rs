@@ -1128,8 +1128,7 @@ impl<'a> Printer<'a> {
         let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
-        // For class expressions with static field initializers, we need to wrap
-        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
+        // Class-expression tails that run after the class body use a comma wrapper.
         let has_static_field_comma_expr = self.class_has_static_field_comma_expr(
             class,
             target_needs_field_lowering,
@@ -1155,6 +1154,7 @@ impl<'a> Printer<'a> {
             && !emit_assignment_static_elements_as_statements
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
+                || self.class_has_recovered_mapped_type_member_tail(class)
                 || has_static_computed_method_or_accessor);
         let preplanned_class_expr_temp = if needs_static_comma_expr
             && private_class_alias.is_none()
@@ -1514,15 +1514,8 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
-        // expression only when the comma wrapper carries *static* state
-        // (a static field initializer, a static block, or a static
-        // private field that lowers into the same comma). Instance-only
-        // private comma forms — e.g.
-        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
-        // engine's automatic assignment-based naming and tsc does not
-        // emit the helper. Mirror this so the helper inclusion decision
-        // in lowering and the comma-item emission in the printer agree.
+        // tsc emits setFunctionName only when the comma wrapper carries
+        // real static state; recovery-only and instance-private tails do not.
         let has_static_private_member = needs_private_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena.get(member_idx).is_some_and(|m| {
@@ -1533,8 +1526,11 @@ impl<'a> Printer<'a> {
                         })
                 })
             });
-        let needs_set_function_name_comma_item =
-            needs_static_comma_expr || has_static_private_member;
+        let needs_set_function_name_comma_item = has_static_private_member
+            || (needs_static_comma_expr
+                && (has_static_field_comma_expr
+                    || has_static_block_comma_expr
+                    || has_static_computed_method_or_accessor));
         let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
             if class.name.is_none() && needs_set_function_name_comma_item {
                 self.resolve_class_expr_binding_name(_idx)
