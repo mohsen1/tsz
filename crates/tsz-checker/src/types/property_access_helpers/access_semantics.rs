@@ -619,6 +619,44 @@ impl<'a> CheckerState<'a> {
         names
     }
 
+    /// Resolve a (possibly mapped) instantiation through the type environment and,
+    /// when it reduces to a concrete object, report whether `prop_name` is absent.
+    ///
+    /// The solver's environment-free finite-name queries cannot resolve
+    /// `Lazy(DefId)` source references (type aliases / interfaces), so a mapped
+    /// type whose source is such a reference — combined with a non-identity `as`
+    /// clause — cannot be enumerated syntactically. The checker owns the
+    /// `DefId -> TypeId` resolver, so evaluating here yields the real, fully
+    /// modifier-preserving object shape. Returns:
+    /// - `Some(false)` if the property exists (named or covered by an index sig),
+    /// - `Some(true)` if it is genuinely absent from a concrete object shape,
+    /// - `None` if the type does not reduce to a concrete object (still generic),
+    ///   so the caller can fall back to the conservative syntactic heuristic.
+    fn concrete_mapped_application_lacks_property(
+        &mut self,
+        instantiated: TypeId,
+        prop_name: &str,
+    ) -> Option<bool> {
+        use crate::query_boundaries::common as common_query;
+
+        let evaluated = self.evaluate_type_with_env(instantiated);
+        // A type that still carries free type parameters is not concrete; defer.
+        if common_query::contains_type_parameters(self.ctx.types, evaluated) {
+            return None;
+        }
+        let shape = common_query::object_shape_for_type(self.ctx.types, evaluated)?;
+
+        // The property is "known" when a string index signature accepts any
+        // string-named property, a named property matches, or a numeric index
+        // signature covers a numeric-looking name. Mirrors the intersection
+        // excess-property logic so the verdict stays consistent.
+        let target_atom = self.ctx.types.intern_string(prop_name);
+        let is_known = shape.string_index.is_some()
+            || shape.properties.iter().any(|prop| prop.name == target_atom)
+            || (shape.number_index.is_some() && prop_name.parse::<f64>().is_ok());
+        Some(!is_known)
+    }
+
     fn generic_mapped_application_lacks_explicit_property(
         &mut self,
         object_type: TypeId,
@@ -651,6 +689,18 @@ impl<'a> CheckerState<'a> {
 
         let substitution = TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+
+        // Answer precisely from the real shape when the instantiation reduces to a
+        // concrete object; only genuinely generic receivers fall through to the
+        // environment-free syntactic heuristic below, which cannot enumerate a
+        // non-identity `as` clause over a `Lazy(DefId)` source (see
+        // `concrete_mapped_application_lacks_property`).
+        if let Some(verdict) =
+            self.concrete_mapped_application_lacks_property(instantiated, prop_name)
+        {
+            return Some(verdict);
+        }
+
         let instantiated_mapped_id =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)?;
         let instantiated_mapped = self.ctx.types.mapped_type(instantiated_mapped_id);
