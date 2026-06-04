@@ -280,7 +280,8 @@ impl<'a> CheckerState<'a> {
         // as `pino` + `@types/node`).
         if self
             .ctx
-            .jsdoc_global_typedef_miss_cache
+            .jsdoc_global_typedef_lookup_cache
+            .miss_cache
             .borrow()
             .contains(name)
         {
@@ -296,7 +297,8 @@ impl<'a> CheckerState<'a> {
         // records a miss.
         let is_outermost = self
             .ctx
-            .jsdoc_global_typedef_in_progress
+            .jsdoc_global_typedef_lookup_cache
+            .in_progress
             .borrow_mut()
             .insert(name.to_string());
 
@@ -304,12 +306,14 @@ impl<'a> CheckerState<'a> {
 
         if is_outermost {
             self.ctx
-                .jsdoc_global_typedef_in_progress
+                .jsdoc_global_typedef_lookup_cache
+                .in_progress
                 .borrow_mut()
                 .remove(name);
             if result.is_none() {
                 self.ctx
-                    .jsdoc_global_typedef_miss_cache
+                    .jsdoc_global_typedef_lookup_cache
+                    .miss_cache
                     .borrow_mut()
                     .insert(name.to_string());
             }

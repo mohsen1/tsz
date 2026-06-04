@@ -556,13 +556,9 @@ pub struct TypeInterner {
     pub(crate) contains_lazy_or_recursive_cache: DashMap<TypeId, bool, FxBuildHasher>,
     pub(crate) contains_unresolved_application_cache: DashMap<TypeId, bool, FxBuildHasher>,
     pub(crate) contains_resolver_dependent_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// Cache for the alias-opaque `contains Conditional` walk that backs the
-    /// `closed_eval_cache` eligibility gate (`is_closed_cacheable_kind`). The
-    /// walk treats `Lazy`/`Application` bases as opaque leaves, so the answer is
-    /// immutable per `TypeId`. Memoizing it project-wide turns the gate from an
-    /// O(subtree) walk on every cache-miss evaluation into an O(1) lookup,
-    /// eliminating the O(n^2) blow-up on dense recursive mapped/conditional/
-    /// index-access expansions (e.g. `pino.d.ts`).
+    /// Alias-opaque `contains Conditional` cache for the closed-eval gate.
+    /// The answer is immutable per `TypeId` and avoids repeated subtree walks
+    /// on dense recursive mapped/conditional/index-access expansions.
     pub(crate) contains_conditional_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of

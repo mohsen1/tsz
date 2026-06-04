@@ -105,6 +105,12 @@ impl RelationOverflowFlags {
     }
 }
 
+/// Project-run cache for global JSDoc typedef lookup.
+pub struct JSDocGlobalTypedefLookupCache {
+    pub miss_cache: RefCell<FxHashSet<String>>,
+    pub in_progress: RefCell<FxHashSet<String>>,
+}
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -445,20 +451,10 @@ pub struct CheckerContext<'a> {
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
 
-    /// Per-checker negative cache for `resolve_global_jsdoc_typedef_info`: names
-    /// that resolved to no global JSDoc `@typedef`. The global typedef set is
-    /// fixed for the project run, so a miss is stable, and the miss path scans
-    /// every source file's text (including all of `@types/*`) with `str::contains`
-    /// — re-running it for every unresolved type reference is quadratic. Caching
-    /// misses (the side-effect-free path) collapses the repeat scans to O(1).
-    pub jsdoc_global_typedef_miss_cache: RefCell<FxHashSet<String>>,
-
-    /// Names whose global JSDoc `@typedef` lookup is currently on the stack.
-    /// A self-referential typedef re-enters the lookup; the inner call's `None`
-    /// is only a cycle break, so `jsdoc_global_typedef_miss_cache` must record a
-    /// miss only at the outermost (non-re-entrant) lookup. This set tracks that
-    /// re-entrancy.
-    pub jsdoc_global_typedef_in_progress: RefCell<FxHashSet<String>>,
+    /// Negative results and re-entrancy state for global JSDoc typedef lookup.
+    /// Misses are stable for the project run; the in-progress set prevents a
+    /// recursive typedef's cycle-break `None` from poisoning that miss cache.
+    pub jsdoc_global_typedef_lookup_cache: JSDocGlobalTypedefLookupCache,
 
     /// True once `nested_namespace_candidates_cache` has been populated for every
     /// nested namespace export name visible across all binders.
