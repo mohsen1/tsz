@@ -78,14 +78,37 @@ impl<'a> Printer<'a> {
         let Some(source) = text.get(start..end) else {
             return Vec::new();
         };
+        let member_spans: Vec<(u32, u32)> = self
+            .arena
+            .get_class(node)
+            .map(|class| {
+                class
+                    .members
+                    .nodes
+                    .iter()
+                    .filter_map(|&member_idx| {
+                        let member_node = self.arena.get(member_idx)?;
+                        Some((member_node.pos, member_node.end))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut depth = 0_i32;
         let mut recovered = Vec::new();
         let mut pending_empty_enum: Option<(String, bool)> = None;
         let mut pending_empty_class: Option<(String, bool)> = None;
         let mut in_block_comment = false;
+        let mut line_offset = 0usize;
         for line in source.lines() {
             let trimmed = line.trim();
+            let trimmed_start = line.len().saturating_sub(line.trim_start().len());
+            let trimmed_pos = node
+                .pos
+                .saturating_add((line_offset + trimmed_start) as u32);
+            let inside_member_span = member_spans.iter().any(|&(member_start, member_end)| {
+                member_start <= trimmed_pos && trimmed_pos < member_end
+            });
             if let Some((class_name, has_body)) = pending_empty_class.as_mut() {
                 if depth == 2 && trimmed == "}" {
                     if !*has_body {
@@ -114,27 +137,38 @@ impl<'a> Printer<'a> {
                     *has_body = true;
                 }
             }
-            if depth == 1
+            if !inside_member_span
+                && depth == 1
                 && (trimmed.starts_with("function ")
                     || (trimmed.starts_with("var ")
                         && !trimmed.contains("//")
                         && !trimmed.contains("()")))
             {
                 recovered.push(trimmed.replace("{}", "{ }"));
-            } else if depth == 1
+            } else if !inside_member_span
+                && depth == 1
                 && let Some(enum_name) = self.recovered_class_body_empty_enum_name(trimmed)
             {
                 pending_empty_enum = Some((enum_name, false));
-            } else if depth == 1
+            } else if !inside_member_span
+                && depth == 1
                 && let Some(class_name) = self.recovered_class_body_empty_class_name(trimmed)
             {
                 pending_empty_class = Some((class_name, false));
-            } else if depth == 1
+            } else if !inside_member_span
+                && depth == 1
                 && let Some(stmt) = self.recovered_public_class_block(trimmed)
             {
                 recovered.push(stmt);
             }
             depth += class_recovery_brace_delta(line, &mut in_block_comment);
+            line_offset += line.len();
+            if source.as_bytes().get(line_offset) == Some(&b'\r') {
+                line_offset += 1;
+            }
+            if source.as_bytes().get(line_offset) == Some(&b'\n') {
+                line_offset += 1;
+            }
         }
         recovered
     }
