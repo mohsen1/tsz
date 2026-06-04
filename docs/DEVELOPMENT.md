@@ -6,7 +6,7 @@ This guide covers setting up and working with the tsz codebase.
 
 ```bash
 # Clone the repository
-git clone https://github.com/mohsen1/tsz.git
+git clone https://github.com/tsz-org/tsz.git
 cd tsz
 
 # Run the setup script (installs git hooks, initializes submodules)

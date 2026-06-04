@@ -120,6 +120,40 @@ fn invalid_var_class_keyword_emits_recovered_class_tail() {
 }
 
 #[test]
+fn class_mapped_type_member_emits_recovered_tail() {
+    let source = "type PlaceType = 'openSky' | 'roofed' | 'garage';\nclass C {\n    [P in PlaceType]: any\n}\nconst D = class {\n    [P in PlaceType]: any\n};\nconst E = class {\n    [P in 'a' | 'b']: any\n};\n";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Class expressions with recovered mapped members should reserve comma temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class C {\n}\nP in PlaceType;"),
+        "Class declarations should emit recovered mapped-member tails after the class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const D = (_a = class {\n    },\n    P in PlaceType,\n    _a);"),
+        "Class expression mapped-member tail should be a comma item before the temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const E = (_b = class {\n    },\n    P in 'a' | 'b',\n    _b);"),
+        "String-literal mapped clauses should preserve the recovered tail text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn reserved_enum_name_emits_anonymous_enum_and_reserved_statement() {
     for (source, recovered_statement) in [
         ("enum void {}", "void {};"),

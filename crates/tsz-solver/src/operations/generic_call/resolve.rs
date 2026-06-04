@@ -6,8 +6,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
-    FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
-    TypePredicate,
+    FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
@@ -20,82 +19,9 @@ use super::{
     type_references_placeholder, write_placeholder_name,
 };
 
+mod duplicate_shape;
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn duplicate_single_arg_application_value_shape(&self, arg_type: TypeId) -> Option<TypeId> {
-        let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-            self.interner.lookup(arg_type)
-        else {
-            return None;
-        };
-        let shape = self.interner.object_shape(shape_id);
-        if shape.properties.len() < 2 {
-            return None;
-        }
-
-        let mut keys_by_prop = Vec::with_capacity(shape.properties.len());
-        let mut counts: FxHashMap<(TypeId, TypeId), usize> = FxHashMap::default();
-        for prop in shape.properties.iter() {
-            let Some(alias) = self.interner.get_display_alias(prop.type_id) else {
-                keys_by_prop.push(None);
-                continue;
-            };
-            let Some(TypeData::Application(app_id)) = self.interner.lookup(alias) else {
-                keys_by_prop.push(None);
-                continue;
-            };
-            let app = self.interner.type_application(app_id);
-            let Some(&arg) = app.args.first() else {
-                keys_by_prop.push(None);
-                continue;
-            };
-            if app.args.len() != 1
-                || crate::visitor::literal_string(self.interner.as_type_database(), arg).is_none()
-            {
-                keys_by_prop.push(None);
-                continue;
-            }
-            let key = (app.base, arg);
-            *counts.entry(key).or_default() += 1;
-            keys_by_prop.push(Some(key));
-        }
-
-        if !counts.values().any(|&count| count > 1) {
-            return None;
-        }
-
-        let properties = shape
-            .properties
-            .iter()
-            .zip(keys_by_prop)
-            .map(|(prop, key)| {
-                let is_duplicate =
-                    key.is_some_and(|key| counts.get(&key).copied().unwrap_or(0) > 1);
-                let type_id = if is_duplicate {
-                    TypeId::NEVER
-                } else {
-                    TypeId::ANY
-                };
-                PropertyInfo {
-                    name: prop.name,
-                    type_id,
-                    write_type: type_id,
-                    optional: prop.optional,
-                    readonly: prop.readonly,
-                    is_method: prop.is_method,
-                    is_class_prototype: prop.is_class_prototype,
-                    visibility: prop.visibility,
-                    parent_id: prop.parent_id,
-                    declaration_order: prop.declaration_order,
-                    is_string_named: prop.is_string_named,
-                    is_symbol_named: prop.is_symbol_named,
-                    single_quoted_name: prop.single_quoted_name,
-                }
-            })
-            .collect();
-
-        Some(self.interner.object(properties))
-    }
-
     fn object_constraint_properties_are_any(&self, constraint: TypeId) -> bool {
         let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
             self.interner.lookup(constraint)
@@ -222,68 +148,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         infer_ctx.source_is_type_annotation = true;
         self.constrain_types(infer_ctx, var_map, source, target, priority);
         infer_ctx.source_is_type_annotation = was_type_annotation;
-    }
-
-    fn type_param_name_if_generic_rest_tuple_param(
-        &self,
-        func: &FunctionShape,
-        type_id: TypeId,
-    ) -> Option<tsz_common::Atom> {
-        let type_id = self.unwrap_readonly(type_id);
-        let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id) else {
-            return None;
-        };
-
-        func.type_params
-            .iter()
-            .any(|type_param| type_param.name == info.name)
-            .then_some(info.name)
-    }
-
-    /// Mirror tsc's implied-arity assignment for a non-array rest type parameter.
-    ///
-    /// When a signature ends in `...rest: T` where `T` is a bare type parameter,
-    /// the trailing arguments that fall into the rest parameter fix `T`'s arity.
-    /// Variadic tuple inference reads this to split adjacent variadic elements of
-    /// a `[...A, ...B]` target. Skips (leaves the arity unset) when a spread
-    /// argument appears among the fixed parameters, matching tsc.
-    fn record_rest_param_implied_arity(
-        &mut self,
-        infer_ctx: &mut InferenceContext,
-        func: &FunctionShape,
-        arg_types: &[TypeId],
-        type_param_vars: &[crate::inference::infer::InferenceVar],
-    ) {
-        let Some(rest_param) = func.params.last().filter(|param| param.rest) else {
-            return;
-        };
-        let Some(rest_name) =
-            self.type_param_name_if_generic_rest_tuple_param(func, rest_param.type_id)
-        else {
-            return;
-        };
-        let Some(var) = func
-            .type_params
-            .iter()
-            .zip(type_param_vars.iter())
-            .find_map(|(tp, &var)| (tp.name == rest_name).then_some(var))
-        else {
-            return;
-        };
-
-        // Fixed parameters before the rest parameter.
-        let fixed_param_count = func.params.len().saturating_sub(1);
-        let arg_count = fixed_param_count.min(arg_types.len());
-
-        // A spread argument among the fixed arguments makes the arity unknown.
-        let spread_in_fixed = arg_types[..arg_count]
-            .iter()
-            .any(|&arg| self.spread_argument_marker_inner(arg).is_some());
-        if spread_in_fixed {
-            return;
-        }
-
-        infer_ctx.set_implied_arity(var, arg_types.len().saturating_sub(arg_count));
     }
 
     fn generic_rest_tuple_callback_arity_mismatch(

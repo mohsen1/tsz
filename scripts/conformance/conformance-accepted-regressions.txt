@@ -2,132 +2,47 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
-#
-# RESTORED (M1-Opus, 2026-06-04): PR #12436 cleared this ledger to empty, but its
-# conformance-aggregate check was SKIPPED by the path-filter gate, so the clear
-# was never verified. All 12 entries below still FAIL on fresh origin/main
-# (verified by running each fixture against the pinned TSC cache at HEAD
-# 9b55c6c320), so an empty ledger leaves main red on conformance-aggregate and
-# blocks the merge queue for every PR. Re-listing the genuinely-failing fixtures
-# restores the gate. Remove an entry only after confirming its fixture passes on
-# origin/main with conformance-aggregate actually running (not skipped).
 
-# Net-positive snapshot refresh in PR #12157 (Refs #10847, instantiation
-# expression evaluation fix). The fix newly resolves 6 entries that were
-# previously accepted regressions (infiniteConstraints, longObjectInstantiationChain3,
-# nestedGlobalNamespaceInClass, tsxLibraryManagedAttributes, parserRealSource8,
-# conditionalTypes1) and introduces 2 new fingerprint-only diffs below.
-# Net change: -6 +2 = +4 wins on the aggregate gate.
-# noUnusedLocals_writeOnly.ts was fixed in the write-only destructuring PR (#12243):
-# { x: x } = src did not emit TS6133 because is_window_and_global_this_declared_expression
-# called resolve_identifier_symbol on the write target, marking it as read.
-# interfaceExtendsObjectIntersectionErrors.ts is covered by the class heritage
-# TS2416 tests for construct-signature expression bases.
-# circularReference.ts oscillates; re-accepted after REGRESSED on PR #12243 exact head.
-TypeScript/tests/cases/compiler/exportDefaultInterface.ts
-TypeScript/tests/cases/conformance/externalModules/circularReference.ts
-
-
-# Ready-review aggregate drift observed on PR #12238 exact head 7af9d315.
-# Mapped/keyof family tracked in #8432; large-union intersections tracked in
-# #12260. JSX/import.meta subset tracked in #12261 — re-verified against the
-# pinned TS 6.0.3 corpus, replacing the earlier vague "oscillates" notes with the
-# actual per-fixture fingerprints so each entry stays owner-visible:
-#   - jsxIntrinsicElementsTypeArgumentErrors.tsx: fixed by the intrinsic JSX
-#     type-argument cascade guard. Invalid or unsupported intrinsic type args
-#     still report TS1009/TS1099/TS2304/TS2344/TS2558, but no longer cascade into
-#     false React intrinsic-props TS2739 diagnostics.
-#   - importMeta.ts: fixed by PR #12377 through the global-augmentation lazy
-#     lib-member fallback. DOM interface heritage now keeps
-#     `document.body.appendChild(new Image())` aligned with tsc under `es5,dom`.
-#   - jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx: FIXED in
-#     #12261 and removed from the list below. PR #12238 had added a blanket
-#     early-return in check_jsx_attributes_against_props that skipped ALL
-#     component prop checks whenever a JSX runtime import-source error (TS2875)
-#     was deferred. tsc still checks function/class component props against the
-#     component's own signature in that case, so the early-return suppressed the
-#     legitimate TS2741 (and TS2322/excess). Removing it restores parity; the
-#     fixture now matches tsc 6.0.3 ([TS2741, TS2875]).
-# inferentialTypingWithFunctionTypeZip.ts: RESOLVED in PR #12342 aggregate run; removed.
-# intersectionsOfLargeUnions2.ts: RESOLVED in PR #12368 aggregate run; removed.
-# inferentialTypingWithFunctionTypeZip.ts then reappeared on PR #11890 exact
-# head 5266d5c0 after rebasing onto origin/main 9142cd6a95 (CI run
-# 26902607247): all six conformance shards passed, aggregate strictness was
-# 12570/12585 observed vs 12582/12585 expected with this one newly unlisted
-# inference-family drift. Re-accepted below and tracked by #8432.
-# intersectionsOfLargeUnions2.ts and inferentialTypingWithFunctionTypeZip.ts
-# resolved again on PR #11890 exact head 8403756928 after rebasing onto
-# origin/main 85a6e79034 (CI run 26904672750): all six conformance shards
-# passed, aggregate strictness was 12570/12585 observed vs 12582/12585
-# expected with two newly unlisted JSX-family drift fixtures accepted here.
-# PR #11890 exact head a5b89da5f4 after rebasing onto origin/main 85a6e79034
-# (CI run 26905754464): all six conformance shards passed, aggregate strictness
-# was 12571/12585 observed vs 12582/12585 expected. The compiler JSX drift
-# entries from run 26904672750 resolved on this head; one JSXS conformance
-# fixture newly drifted and remains accepted under #8432.
-# PR #11890 exact head 733b2b5fd8 after rebasing onto origin/main 446dd51f6d
-# (CI run 26906853841): all required jobs passed except conformance-aggregate
-# and derived CI Summary; all six conformance shards passed, aggregate
-# strictness was 12570/12585 observed vs 12582/12585 expected. The latest
-# unlisted JSX-family drift fixture is accepted below under #8432.
-# intersectionsOfLargeUnions.ts: TS2345/TS2677 fixed by PR #12326; TS2536 structural
-# logic confirmed correct by unit tests in PR #12342 (NarrowMap/WideMap pattern emits
-# exactly 2 TS2536). The aggregate conformance run with real lib types
-# (HTMLElementTagNameMap) still fails — the full lib type hierarchy exercises a
-# different code path. Tracked in #12260.
-TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
-TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
-
-# Ready-review aggregate drift observed on PR #11890 exact head f0e9bca2a1
-# (CI run 26900032045): all six conformance shards passed, aggregate strictness
-# was 12571/12585 observed vs 12582/12585 expected. These remaining unlisted
-# fixtures are same-code/fingerprint drift in mapped, conditional, inference,
-# JSX, variance, and recursive relation-policy families tracked by #8432; keep
-# them visible here until the owning parity fixes remove them.
+# Current-main aggregate drift after PR #12436 cleared the ledger.
+# Exact evidence:
+# - main run 26933754790 at 81902917fa69 listed these rows plus
+#   autoAccessorDisallowedModifiers.ts.
+# - PR #12434 run 26935984666 at 9138aa5de2 fixed
+#   autoAccessorDisallowedModifiers.ts and left exactly these 23 rows.
+# - PR #12495 run 26937965627 at 7dd0c3a441 found one additional
+#   current-main row, keyofIsLiteralContexualType.ts.
+# - PR #12495 run 26941560765 at faec9f5e found four additional current-head
+#   rows after #12491 landed the partial ledger restoration.
+# Keep these visible as accepted-regression debt until their owning parity
+# fixes remove them from exact-head aggregate output.
+TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts
+TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
+TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
+TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
+TypeScript/tests/cases/compiler/declarationsIndirectGeneratedAliasReference.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
 TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
+TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
 TypeScript/tests/cases/compiler/promisesWithConstraints.ts
+TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
+TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
+TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
+TypeScript/tests/cases/conformance/externalModules/circularReference.ts
+TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
+TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
+TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit6.ts
+TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit7.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
 TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeParameterLists/varianceAnnotations.ts
-# covariantCallbacks.ts: RESOLVED by this PR — tsz now detects nullable-union
+# covariantCallbacks.ts: RESOLVED by PR #12482. tsz now detects nullable-union
 # callback method parameters the way tsc does (getSingleCallSignature(
 # getNonNullableType(t))), so lib `Promise<A>` -> `Promise<B>` reports its
 # covariant TS2322 again. Removed from this ledger; covered by
 # nullable_union_callback_variance_tests.
 TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation.ts
-
-# PR #12491 exact-head aggregate run 26937439181 (job 79473172800) still
-# observed these 13 rows after the pre-#12436 ledger entries above were
-# restored. Keep them accepted as explicit gate debt so architecture-only split
-# PRs can land; remove each row only after exact-head aggregate CI proves it no
-# longer appears in the shard failure set.
-TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts
-TypeScript/tests/cases/compiler/declarationsIndirectGeneratedAliasReference.ts
-TypeScript/tests/cases/compiler/indexedAccessAndNullableNarrowing.ts
-TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
-TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts
-TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts
-TypeScript/tests/cases/conformance/jsdoc/importTag17.ts
-TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit6.ts
-TypeScript/tests/cases/conformance/node/nodeModulesTripleSlashReferenceModeDeclarationEmit7.ts
-
-# Recent deterministic parser-recovery regression (AgentName: M1-Opus, 2026-06-04).
-# These four were never in the ledger (so historically passed) but now fail
-# deterministically on main: tsz emits TS1109 "Expression expected" where tsc
-# emits TS1128 "Declaration or statement expected" in the syntax-error recovery
-# path (verified in isolation, e.g. compoundAssignmentLHSIsValue test.ts:59:9).
-# They fail for every PR rebased onto current main (confirmed on two unrelated
-# M1-Opus PRs #12466 and #12472), but landed unnoticed because the merge queue's
-# Queue Tested skips conformance-aggregate — so they now block the pre-merge
-# CI Summary of every Rust PR. Accepting them here to unblock enqueueing; the
-# parser-recovery diagnostic mismatch must be root-caused and removed (likely a
-# recent parser/checker PR). Coordinate with Studio-A (ledger owner, #12491).
-TypeScript/tests/cases/conformance/expressions/assignmentOperator/compoundAssignmentLHSIsValue.ts
-TypeScript/tests/cases/conformance/es7/exponentiationOperator/compoundExponentiationAssignmentLHSIsValue.ts
-TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts
-TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts

@@ -111,9 +111,14 @@ impl<'a> CheckerState<'a> {
                     if constraint_resolved == TypeId::ANY {
                         continue;
                     }
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint,
+                        type_params,
+                        &type_args,
+                    );
                     if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
                         type_arg,
-                        constraint_resolved,
+                        inst_constraint,
                         &type_arg_substitutions,
                     ) {
                         continue;
@@ -968,23 +973,12 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                             }
-                            let constraint_resolved = self.resolve_lazy_type(constraint);
-                            let mut subst =
-                                crate::query_boundaries::common::TypeSubstitution::new();
-                            for (j, p) in type_params.iter().enumerate() {
-                                if let Some(&arg) = type_args.get(j) {
-                                    subst.insert(p.name, arg);
-                                }
-                            }
-                            let inst_constraint = if subst.is_empty() {
-                                constraint_resolved
-                            } else {
-                                crate::query_boundaries::common::instantiate_type(
-                                    self.ctx.types,
-                                    constraint_resolved,
-                                    &subst,
-                                )
-                            };
+                            let inst_constraint = self.instantiate_constraint_with_type_args(
+                                constraint,
+                                type_params,
+                                &type_args,
+                            );
+                            let inst_constraint = self.resolve_lazy_type(inst_constraint);
                             if query::contains_free_type_parameters(self.ctx.types, inst_constraint)
                             {
                                 continue;
@@ -1555,22 +1549,12 @@ impl<'a> CheckerState<'a> {
                         {
                             continue;
                         }
-                        // Instantiate the constraint with all provided type arguments
-                        let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
-                        for (j, p) in type_params.iter().enumerate() {
-                            if let Some(&arg) = type_args.get(j) {
-                                subst.insert(p.name, arg);
-                            }
-                        }
-                        let inst_constraint = if subst.is_empty() {
-                            constraint_resolved
-                        } else {
-                            crate::query_boundaries::common::instantiate_type(
-                                self.ctx.types,
-                                constraint_resolved,
-                                &subst,
-                            )
-                        };
+                        let inst_constraint = self.instantiate_constraint_with_type_args(
+                            constraint,
+                            type_params,
+                            &type_args,
+                        );
+                        let inst_constraint = self.resolve_lazy_type(inst_constraint);
                         if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                             continue;
                         }
@@ -1681,7 +1665,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Resolve the constraint in case it's a Lazy type
+                // Instantiate before resolving so dependent constraints like
+                // `Required<Options>` keep the earlier type-argument binding.
+                let constraint =
+                    self.instantiate_constraint_with_type_args(constraint, type_params, &type_args);
                 let constraint = self.resolve_lazy_type(constraint);
                 let constraint = self
                     .resolve_well_known_lib_constraint_type(constraint)

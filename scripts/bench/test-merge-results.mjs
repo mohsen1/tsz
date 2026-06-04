@@ -24,7 +24,7 @@ const SAMPLE_COMPATIBILITY = {
   source_commit: "abcdef1234567890",
   workflow_name: "Bench",
   workflow_run_id: "12345",
-  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+  workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/12345",
   workflow_run_attempt: "1",
   run_status: "completed",
   state: "green",
@@ -118,7 +118,7 @@ const SAMPLE_RUN_METADATA = {
   source_commit: "abcdef1234567890",
   workflow_name: "Bench",
   workflow_run_id: "12345",
-  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+  workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/12345",
   workflow_run_attempt: "1",
   run_status: "completed",
 };
@@ -211,7 +211,7 @@ withTempDir((dir) => {
   const result = runMergeInputs(dir, [input], [], {
     BENCH_TARGET_SHA: "feedface1234567890",
     GITHUB_ACTIONS: "true",
-    GITHUB_REPOSITORY: "mohsen1/tsz",
+    GITHUB_REPOSITORY: "tsz-org/tsz",
     GITHUB_RUN_ATTEMPT: "2",
     GITHUB_RUN_ID: "67890",
     GITHUB_SERVER_URL: "https://github.com",
@@ -223,7 +223,7 @@ withTempDir((dir) => {
   assert.equal(merged.source_commit, "feedface1234567890");
   assert.equal(merged.workflow_name, "Bench");
   assert.equal(merged.workflow_run_id, "67890");
-  assert.equal(merged.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/67890");
+  assert.equal(merged.workflow_run_url, "https://github.com/tsz-org/tsz/actions/runs/67890");
   assert.equal(merged.run_status, "completed");
 });
 

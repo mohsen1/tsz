@@ -81,6 +81,13 @@ RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
 TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
 ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
 KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
+VALIBOT_DIR="$EXTERNAL_BENCH_DIR/valibot"
+MSW_DIR="$EXTERNAL_BENCH_DIR/msw"
+COMLINK_DIR="$EXTERNAL_BENCH_DIR/comlink"
+EFFECT_DIR="$EXTERNAL_BENCH_DIR/effect"
+DRIZZLE_ORM_DIR="$EXTERNAL_BENCH_DIR/drizzle-orm"
+TS_REST_DIR="$EXTERNAL_BENCH_DIR/ts-rest"
+OFETCH_DIR="$EXTERNAL_BENCH_DIR/ofetch"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -2822,6 +2829,41 @@ ensure_kysely_fixture() {
     tsz_write_kysely_config "$flat_tsconfig"
 }
 
+ensure_valibot_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "valibot" "$VALIBOT_REPO" "$VALIBOT_REF" "$VALIBOT_DIR" 1
+}
+
+ensure_msw_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "msw" "$MSW_REPO" "$MSW_REF" "$MSW_DIR" 1
+}
+
+ensure_comlink_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "comlink" "$COMLINK_REPO" "$COMLINK_REF" "$COMLINK_DIR" 1
+}
+
+ensure_effect_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "effect" "$EFFECT_REPO" "$EFFECT_REF" "$EFFECT_DIR" 1
+}
+
+ensure_drizzle_orm_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "drizzle-orm" "$DRIZZLE_ORM_REPO" "$DRIZZLE_ORM_REF" "$DRIZZLE_ORM_DIR" 1
+}
+
+ensure_ts_rest_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-rest" "$TS_REST_REPO" "$TS_REST_REF" "$TS_REST_DIR" 1
+}
+
+ensure_ofetch_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ofetch" "$OFETCH_REPO" "$OFETCH_REF" "$OFETCH_DIR" 1
+}
+
 run_utility_types_benchmarks() {
     local benchmark_names=(
         "utility-types/index.ts"
@@ -3135,6 +3177,111 @@ run_kysely_project_benchmarks() {
     echo
 }
 
+run_valibot_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "valibot-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Valibot"
+    ensure_valibot_fixture
+    local tsconfig="$VALIBOT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$VALIBOT_DIR/library/src"
+    tsz_write_valibot_config "$tsconfig"
+    run_project_benchmark "valibot-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_msw_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "msw-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - MSW"
+    ensure_msw_fixture
+    local tsconfig="$MSW_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$MSW_DIR/src"
+    tsz_write_msw_config "$tsconfig"
+    run_project_benchmark "msw-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_comlink_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "comlink-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Comlink"
+    ensure_comlink_fixture
+    local tsconfig="$COMLINK_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$COMLINK_DIR/src"
+    tsz_write_comlink_config "$tsconfig"
+    run_project_benchmark "comlink-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_effect_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "effect-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Effect"
+    ensure_effect_fixture
+    local tsconfig="$EFFECT_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$EFFECT_DIR/packages/effect/src"
+    tsz_write_effect_config "$tsconfig"
+    run_project_benchmark "effect-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_drizzle_orm_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "drizzle-orm-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - Drizzle ORM"
+    ensure_drizzle_orm_fixture
+    local tsconfig="$DRIZZLE_ORM_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$DRIZZLE_ORM_DIR/drizzle-orm/src"
+    tsz_write_drizzle_orm_config "$tsconfig"
+    run_project_benchmark "drizzle-orm-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_rest_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ts-rest-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-rest"
+    ensure_ts_rest_fixture
+    local tsconfig="$TS_REST_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$TS_REST_DIR/libs/ts-rest/core/src"
+    tsz_write_ts_rest_config "$tsconfig"
+    run_project_benchmark "ts-rest-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ofetch_project_benchmarks() {
+    should_run_compile_canary_project || return 0
+    if ! is_benchmark_selected "ofetch-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ofetch"
+    ensure_ofetch_fixture
+    local tsconfig="$OFETCH_DIR/tsconfig.tsz-bench.json"
+    local src_dir="$OFETCH_DIR/src"
+    tsz_write_ofetch_config "$tsconfig"
+    run_project_benchmark "ofetch-project" "$tsconfig" "$src_dir"
+    echo
+}
+
 run_nextjs_benchmarks() {
     if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
         return
@@ -3432,6 +3579,13 @@ main() {
     run_isolated "type-fest-project"      run_type_fest_project_benchmarks
     run_isolated "zod-project"            run_zod_project_benchmarks
     run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "valibot-project"        run_valibot_project_benchmarks
+    run_isolated "msw-project"            run_msw_project_benchmarks
+    run_isolated "comlink-project"        run_comlink_project_benchmarks
+    run_isolated "effect-project"         run_effect_project_benchmarks
+    run_isolated "drizzle-orm-project"    run_drizzle_orm_project_benchmarks
+    run_isolated "ts-rest-project"        run_ts_rest_project_benchmarks
+    run_isolated "ofetch-project"         run_ofetch_project_benchmarks
     run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks

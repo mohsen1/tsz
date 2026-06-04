@@ -239,6 +239,8 @@ impl<'a> Printer<'a> {
         self.write("/>");
         if let Some(tail) = self.recovered_numeric_jsx_tag_tail(node, jsx.tag_name) {
             self.write(&tail);
+        } else if let Some(tail) = self.recovered_invalid_jsx_attribute_tail(node, jsx.tag_name) {
+            self.write(&tail);
         }
     }
 
@@ -278,6 +280,60 @@ impl<'a> Printer<'a> {
             return None;
         }
         Some(rest[..=digits_len].to_string())
+    }
+
+    fn recovered_invalid_jsx_attribute_tail(
+        &self,
+        node: &Node,
+        tag_name: NodeIndex,
+    ) -> Option<String> {
+        if self.arena.is_missing_recovery_identifier(tag_name) {
+            return None;
+        }
+        let source = self.source_text?;
+        let tag_node = self.arena.get(tag_name)?;
+        let start = std::cmp::min(tag_node.end as usize, source.len());
+        let node_end = std::cmp::min(node.end as usize, source.len());
+        if start >= source.len() || node_end <= start {
+            return None;
+        }
+
+        let line_end = source[start..]
+            .find(['\n', '\r', ';'])
+            .map_or(source.len(), |offset| start + offset);
+        let tail = source[start..line_end].trim_start();
+        let bytes = tail.as_bytes();
+        let first = *bytes.first()?;
+
+        if first.is_ascii_digit() {
+            let digits_len = bytes
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            if tail[digits_len..]
+                .starts_with(|ch: char| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+                && tail.contains("/>")
+            {
+                return Some(format!(";\n{}", &tail[..digits_len]));
+            }
+            return None;
+        }
+
+        if matches!(first, b'-' | b'+') {
+            let rest = tail[1..].trim_start();
+            let name_len = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(*ch, '_' | '$' | '-'))
+                .map(char::len_utf8)
+                .sum::<usize>();
+            if name_len > 0 && rest[name_len..].trim_start().starts_with('=') && tail.contains("/>")
+            {
+                let op = first as char;
+                return Some(format!(" {op} {}", &rest[..name_len]));
+            }
+        }
+
+        None
     }
 
     // =========================================================================
@@ -1539,6 +1595,9 @@ impl<'a> Printer<'a> {
         if expr.expression.is_some() {
             return false;
         }
+        if !self.empty_jsx_expression_has_source_close_brace(node) {
+            return false;
+        }
         // Check that there are no comments inside the expression range
         let has_tracked_comment = self
             .all_comments
@@ -1558,6 +1617,15 @@ impl<'a> Printer<'a> {
             return false;
         }
         true
+    }
+
+    fn empty_jsx_expression_has_source_close_brace(&self, node: &Node) -> bool {
+        let Some(source) = self.source_text else {
+            return true;
+        };
+        let start = std::cmp::min(node.pos as usize, source.len());
+        let end = std::cmp::min(node.end as usize, source.len());
+        source[start..end].bytes().any(|byte| byte == b'}')
     }
 
     /// Walk all JSX children in source order, emitting non-empty children and
