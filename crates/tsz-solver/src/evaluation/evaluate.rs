@@ -1681,7 +1681,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::Application(_))
             )
             && display_provenance::display_alias(self.interner, result).is_some();
-        if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
+        // Variadic tuple aliases (`[T, ...A]`, `[...A, ...B]`) lose their alias
+        // symbol when instantiated via spreading, so tsc prints the resolved
+        // tuple structurally. Skip the repaint to match. Checked last so the
+        // resolver lookup is only paid when the earlier skips don't already fire.
+        if !skip_type_alias_repaint
+            && !keep_existing_conditional_branch_alias
+            && !self.suppress_spread_tuple_alias_repaint(result, display_origin)
+        {
             let priority = if prefer_application_display_alias
                 || (self.expand_application_display_alias_args
                     && matches!(
@@ -1805,6 +1812,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if evaluated_is_fresh
                     && (evaluated_is_mapped
                         || self.is_recursive_type_alias_application(original_type_id))
+                    && !self.suppress_spread_tuple_alias_repaint(evaluated, original_type_id)
                 {
                     self.interner
                         .store_display_alias_preferring_application(evaluated, original_type_id);
@@ -1835,6 +1843,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             },
             AliasApplicationPriority::PreferApplication,
         );
+    }
+
+    /// Classify an `Application`'s type-alias body for tuple display-alias
+    /// purposes.
+    ///
+    /// * `Some(true)`  — the alias body resolves to a *fixed* (non-spread)
+    ///   tuple literal, e.g. `Pair<A, B> = [A, B]`.
+    /// * `Some(false)` — the alias body resolves to something that yields a
+    ///   tuple through spreading or branch resolution: a spread/variadic tuple
+    ///   (`[T, ...A]`, `[...A, ...B]`) or a conditional/recursive alias that
+    ///   builds tuples (`Zip`, `Reverse`, …).
+    /// * `None`        — `application` is not a resolvable type-alias
+    ///   application; the caller keeps its existing behaviour.
+    fn application_alias_body_is_fixed_tuple(&self, application: TypeId) -> Option<bool> {
+        let TypeData::Application(app_id) = self.interner.lookup(application)? else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let def_id = self.resolve_application_def_id(app.base)?;
+        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let inner = crate::type_queries::data::unwrap_readonly(self.interner, body);
+        Some(
+            matches!(self.interner.lookup(inner), Some(TypeData::Tuple(_)))
+                && !crate::type_queries::data::is_variadic_tuple(self.interner, inner),
+        )
+    }
+
+    /// True when a display-alias repaint of `evaluated` to the named
+    /// `application` form must be skipped.
+    ///
+    /// tsc keeps an alias symbol on a tuple result only when the alias body is
+    /// a fixed (non-spread) tuple literal (`Pair<A, B> = [A, B]`). Spread
+    /// tuple aliases (`Prepend`, `Concat`, …) and conditional/recursive
+    /// aliases that build tuples by spreading (`Zip`, `Reverse`, …) produce a
+    /// fresh tuple via `getSpreadType`, which carries no `aliasSymbol`, so tsc
+    /// prints the resolved tuple structurally (`[1, 2, 3]`). Mirror that here.
+    /// When the alias body cannot be resolved, fall back to the existing
+    /// behaviour and keep the repaint.
+    pub(in crate::evaluation) fn suppress_spread_tuple_alias_repaint(
+        &self,
+        evaluated: TypeId,
+        application: TypeId,
+    ) -> bool {
+        matches!(self.interner.lookup(evaluated), Some(TypeData::Tuple(_)))
+            && self.application_alias_body_is_fixed_tuple(application) == Some(false)
     }
 
     fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {

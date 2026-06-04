@@ -997,6 +997,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::Application(_))
         ) && Self::is_displayable_conditional_branch_result(self.interner(), evaluated)
             && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), branch)
+            // tsc drops the alias symbol when a *variadic* tuple alias is
+            // instantiated: spreading `[T, ...A]` / `[...A, ...B]` builds a
+            // fresh tuple via `getSpreadType`, which carries no `aliasSymbol`,
+            // so the resolved tuple is printed structurally (e.g. `[1, 2, 3]`)
+            // rather than as the named application (`Prepend<...>`). Recursive
+            // variadic utilities (Concat, Prepend, Append, Reverse, Zip, …) are
+            // built this way, so preserving the application form here diverges
+            // from tsc's diagnostic output.
+            && !self.suppress_spread_tuple_alias_repaint(evaluated, branch)
     }
 
     fn is_displayable_conditional_branch_result(
