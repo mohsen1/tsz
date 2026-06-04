@@ -108,6 +108,9 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
+        if self.current_file_path.is_none() {
+            self.current_file_path = Some(source_file.file_name.clone());
+        }
         self.source_file_text = Some(source_file.text.clone());
         if !self.source_file_is_js(source_file) {
             self.retain_synthetic_class_extends_alias_dependencies_in_statements(

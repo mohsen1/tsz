@@ -88,6 +88,22 @@ impl<'a> DeclarationEmitter<'a> {
             .find_map(|node| arena.get_source_file(node))
     }
 
+    pub(in crate::declaration_emitter) fn source_file_for_node_from_arena<'arena>(
+        &self,
+        arena: &'arena NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<&'arena tsz_parser::parser::node::SourceFileData> {
+        let mut current = node_idx;
+        for _ in 0..256 {
+            let node = arena.get(current)?;
+            if let Some(source_file) = arena.get_source_file(node) {
+                return Some(source_file);
+            }
+            current = arena.parent_of(current)?;
+        }
+        None
+    }
+
     pub(in crate::declaration_emitter) fn source_slice_from_arena(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
