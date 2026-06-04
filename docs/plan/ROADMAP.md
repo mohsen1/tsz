@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-06-03
+Date: 2026-06-04
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -46,19 +46,20 @@ as campaigns instead of isolated conformance picks.
 
 Sources: checked-in conformance artifacts, `scripts/conformance/query-conformance.py
 --dashboard`, `scripts/emit/query-emit.py --families`, live GitHub orientation on
-2026-06-03, `scripts/bench/project-row-summary.mjs`, and public README metrics.
+2026-06-04, `scripts/bench/project-row-summary.mjs`, public README metrics, and
+`scripts/emit/audit-output-surgery.py`.
 Release planning uses exact artifact numerators and denominators; stale detail
 artifacts are triage inputs only, not current public truth.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | checked detail is `100.0%` exact (`12,582 / 12,582`), but stale versus the pinned TypeScript cache (`12,585` tests; refresh before citing as current public truth) |
-| Accepted-regression strictness | `8` listed tests (justified in `conformance-accepted-regressions.txt`, Refs PR #12157, #12260, #12261, and #12299) |
-| JavaScript emit | `99.5%` (`13,459 / 13,530`) in README/public aggregate; checked detail remains stale triage (`13,094 / 13,530`) |
-| Declaration emit | `98.5%` (`1,644 / 1,669`) in README/public aggregate; checked detail remains stale triage (`1,606 / 1,669`) |
+| Diagnostic conformance | checked detail is `100.0%` exact (`12,585 / 12,585`) |
+| Accepted-regression strictness | `13` listed tests in `conformance-accepted-regressions.txt`; the dashboard remains exact, but strictness debt must be justified or paid down before treating the runway as retired |
+| JavaScript emit | `99.5%` (`13,468 / 13,530`) in README/public aggregate and checked detail |
+| Declaration emit | `99.5%` (`1,661 / 1,669`) in README/public aggregate and checked detail |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `88` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
-| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlist budget exhausted at `20 / 20` tracked calls |
+| Open bug issues | `68` open `bug` issues in live GitHub orientation (point-in-time count; drifts daily) |
+| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlisted resource-region calls ratcheted to `4 / 6` with `2` remaining budget slots |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -70,12 +71,9 @@ The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
 remains a separate gate-strictness artifact and must be kept empty or
 explicitly justified by current CI evidence before agents treat conformance
-cleanup as complete. It currently lists `8` justified entries: the
-fingerprint-only diff introduced alongside PR #12157's net-positive snapshot
-refresh, current TypeScript-corpus drift tracked in #12260, and ready-review
-aggregate drift tracked from PR #12238 in #8432, #12260, #12261, and #12299.
-The strictness gate is non-empty and each entry should be paid down in
-follow-up PRs.
+cleanup as complete. It currently lists `13` accepted-regression entries even
+though the dashboard is exact, so the strictness gate is non-empty and each
+entry should be paid down or re-justified in follow-up PRs.
 
 ## Evidence From Current Audit
 
@@ -121,15 +119,15 @@ changes the picture.
    Architecture cleanup is part of that goal only when it ratchets a measured
    boundary counter down or unblocks one of those gates.
 7. Emit remains the largest numeric parity gap and a real architecture risk:
-   the README/public aggregate reports JavaScript emit at `13,459 / 13,530` and
-   declaration emit at `1,644 / 1,669`; `scripts/emit/emit-detail.json` still
-   trails that as historical family triage. DTS still needs to move away from
-   late semantic discovery during printing toward a precomputed
+   the README/public aggregate and checked detail agree at JavaScript emit
+   `13,468 / 13,530` and declaration emit `1,661 / 1,669`. DTS still needs to
+   move away from late semantic discovery during printing toward a precomputed
    declaration/public-API summary.
 8. Output-surgery audit is green again: the current audit reports `0`
-   unallowlisted calls and `0` stale allowlist entries. The allowlist budget is
-   still exhausted at `20 / 20` tracked calls, so Studio-C/D/F emit work should
-   pay down or justify existing entries before adding new output-surgery calls.
+   unallowlisted calls and `0` stale allowlist entries. Resource-region
+   output-surgery is now `4 / 6`; Studio emit work should keep ratcheting it
+   down and must not spend the remaining capacity without an owner, removal
+   condition, and counter update.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
