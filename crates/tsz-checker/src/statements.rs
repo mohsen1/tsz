@@ -226,6 +226,15 @@ pub trait StatementCheckCallbacks {
     /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
+    /// Reset the cumulative per-file generic-instantiation and lazy-resolution
+    /// fuel budgets before checking a statement. Called once per statement from
+    /// the statement dispatcher so every statement-list context (top level,
+    /// block/function body, switch case clause, loop and if bodies) is covered
+    /// uniformly, ensuring heavy generic work in one statement cannot starve
+    /// contextual typing of a later callback (issues #12144, #10677, #10683).
+    /// Default is a no-op for non-`CheckerState` implementors.
+    fn reset_between_statements(&mut self) {}
+
     fn check_statement_with_request(&mut self, stmt_idx: NodeIndex, request: &TypingRequest) {
         let _ = request;
         self.check_statement(stmt_idx);
@@ -443,6 +452,12 @@ impl StatementChecker {
         state: &mut S,
         request: &TypingRequest,
     ) {
+        // Give every statement a fresh per-file fuel budget so heavy generic
+        // work in one statement cannot starve the next (issues #12144, #10677,
+        // #10683). This is the single chokepoint all statement-list contexts
+        // funnel through; see `CheckerState::reset_per_statement_fuel_budgets`
+        // for the full rationale and safety argument.
+        state.reset_between_statements();
         state.report_unreachable_statement(stmt_idx);
         let non_contextual_request = request.contextual_opt(None);
 

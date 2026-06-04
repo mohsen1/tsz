@@ -864,6 +864,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_statement(self, stmt_idx);
     }
 
+    fn reset_between_statements(&mut self) {
+        CheckerState::reset_per_statement_fuel_budgets(self);
+    }
+
     fn check_statement_with_request(&mut self, stmt_idx: NodeIndex, request: &TypingRequest) {
         CheckerState::check_statement_with_request(self, stmt_idx, request);
     }
