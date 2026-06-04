@@ -215,6 +215,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
+        // A tuple-typed rest parameter that carries inference variables
+        // (`...args: [...T, ...U]`, `[H, ...T]`, …) must keep its variadic
+        // structure. Unpacking it into array-typed params (the path below)
+        // severs the link to the type variables, so adjacent-variadic arity is
+        // lost (partial application / `bind`). Pack the remaining source params
+        // into a tuple and run the faithful variadic tuple inference instead.
+        if let Some((fixed_count, rest_tuple_ty)) =
+            self.tuple_rest_param_with_infer_vars(target_params, var_map)
+            && source_params.iter().take(fixed_count).all(|p| !p.rest)
+            && source_params.len() >= fixed_count
+        {
+            for (s_p, t_p) in source_params
+                .iter()
+                .zip(target_params.iter())
+                .take(fixed_count)
+            {
+                self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
+            }
+            // Best-effort: inference errors here are non-fatal (the final
+            // argument check reports genuine mismatches).
+            let _ = ctx.infer_source_params_against_rest_tuple(
+                &source_params[fixed_count..],
+                rest_tuple_ty,
+                priority,
+            );
+            return;
+        }
+
         let s_params: Vec<ParamInfo> = source_params
             .iter()
             .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
@@ -259,6 +287,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 );
             }
         }
+    }
+
+    /// If `target_params` ends in a single rest parameter whose type is a tuple
+    /// that carries an inference variable in a rest position
+    /// (`...args: [...T, ...U]`, `[H, ...T]`, `[number, ...T, boolean]`, …),
+    /// return the count of fixed parameters before it and the tuple type itself.
+    fn tuple_rest_param_with_infer_vars(
+        &self,
+        target_params: &[ParamInfo],
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> Option<(usize, TypeId)> {
+        let last = target_params.last()?;
+        if !last.rest {
+            return None;
+        }
+        let tuple_ty = self.unwrap_readonly(last.type_id);
+        let TypeData::Tuple(list_id) = self.interner.lookup(tuple_ty)? else {
+            return None;
+        };
+        let elements = self.interner.tuple_list(list_id);
+        let has_infer_rest = elements
+            .iter()
+            .any(|elem| elem.rest && var_map.contains_key(&elem.type_id));
+        has_infer_rest.then(|| (target_params.len() - 1, tuple_ty))
     }
 
     /// Shared body for `constrain_{function,call_signature}_to_{call_signature,function}`.

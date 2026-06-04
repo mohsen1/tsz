@@ -663,6 +663,7 @@ impl<'a> Printer<'a> {
                 if preserves_native_parameter_decorators {
                     self.emit_native_parameter_decorators(param.modifiers.as_ref());
                 }
+                self.emit_recovered_root_js_declaration_modifiers(&param.modifiers, true);
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
@@ -1031,6 +1032,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.emit_recovered_root_js_declaration_modifiers(&param.modifiers, true);
         self.emit_parameter_name_js(param.name);
 
         if param.question_token {

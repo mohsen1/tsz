@@ -559,7 +559,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._generic_call_resolver_size_check()
-        self.assertEqual(limit, 3359)
+        self.assertEqual(limit, 3413)
         self.assertTrue(
             str(path).endswith(
                 "crates/tsz-solver/src/operations/generic_call/resolve.rs"

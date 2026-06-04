@@ -10,6 +10,7 @@ pub(crate) mod judge;
 pub(crate) mod mixin_constraints;
 pub(crate) mod module;
 pub(crate) mod reference_helpers;
+pub(crate) mod reference_type_params;
 pub(crate) mod shadowed_lib_heritage;
 pub(crate) mod symbol_types;
 pub(crate) mod symbol_types_dynamic_alias;

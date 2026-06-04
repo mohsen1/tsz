@@ -10,7 +10,7 @@
 //! When the result type IS a named class (or generic class with inferred args),
 //! show the class name (or `ClassName<InferredArg>`), not the variable's name.
 //!
-//! See: <https://github.com/mohsen1/tsz/issues/6373>
+//! See: <https://github.com/tsz-org/tsz/issues/6373>
 
 use crate::test_utils::check_source_code_messages as diagnostics;
 

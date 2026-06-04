@@ -77,22 +77,13 @@ impl ParserState {
                 "An import declaration cannot have modifiers.",
                 diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
             );
-            let import_decl = self.parse_import_declaration();
-            let end_pos = self.token_end();
-            return self.arena.add_export_decl(
-                syntax_kind_ext::EXPORT_DECLARATION,
+            let export_modifier = self.arena.add_token(
+                SyntaxKind::ExportKeyword as u16,
                 start_pos,
-                end_pos,
-                ExportDeclData {
-                    modifiers: None,
-                    is_type_only: false,
-                    is_default_export: false,
-                    default_keyword_pos: None,
-                    export_clause: import_decl,
-                    module_specifier: NodeIndex::NONE,
-                    attributes: NodeIndex::NONE,
-                },
+                start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
             );
+            let modifiers = Some(self.make_node_list(vec![export_modifier]));
+            return self.parse_import_declaration_with_modifiers(start_pos, modifiers);
         }
 
         // export * from "mod"
@@ -1307,8 +1298,19 @@ impl ParserState {
             self.parse_identifier()
         };
 
-        // Parse definite assignment assertion (!)
-        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+        // Inside a `for` initializer tsc clears `allowExclamation`, so a `!`
+        // here is never a definite assignment assertion.
+        let exclamation_token = false;
+
+        // A stray `!` directly after the binding name is a definite assignment
+        // assertion that is not allowed in a `for` initializer. tsc's
+        // `parseDelimitedList` recovery reports it as a missing comma between
+        // declarators (TS1005 `',' expected`) rather than a `';' expected`, so
+        // emit that and consume the `!` to keep the header parse aligned.
+        if self.is_token(SyntaxKind::ExclamationToken) {
+            self.error_comma_expected();
+            self.next_token();
+        }
 
         // Optional type annotation
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {

@@ -545,6 +545,7 @@ mod normalization;
 mod readonly_direct_inference;
 pub mod request;
 mod resolve;
+mod rest_arity;
 pub mod result;
 mod return_context;
 mod return_context_feedback;

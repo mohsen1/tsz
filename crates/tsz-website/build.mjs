@@ -417,7 +417,7 @@ function build() {
     <a href="/benchmarks/" style="color: var(--text-secondary);">Benchmarks</a>
     <a href="/architecture/" style="color: var(--text); font-weight: 600;">Deep Dive</a>
     <a href="/sound-mode/" style="color: var(--text-secondary);">Sound Mode</a>
-    <a href="https://github.com/mohsen1/tsz" style="color: var(--text-secondary); margin-left: auto;">GitHub</a>
+    <a href="https://github.com/tsz-org/tsz" style="color: var(--text-secondary); margin-left: auto;">GitHub</a>
   </nav>`;
   archHtml = archHtml.replace("</head>", `${archNavStyle}\n</head>`);
   archHtml = archHtml.replace("<body>", `<body>\n${navBanner}`);

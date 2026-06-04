@@ -10,7 +10,7 @@
 //! and a `string` key looks unusable, producing a false TS7053. tsc allows the
 //! access because the constraint's string index signature covers a `string` key.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/10674>
+//! Issue: <https://github.com/tsz-org/tsz/issues/10674>
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::test_utils::check_source;
 

@@ -7,7 +7,7 @@
 //! exactly as it does for an object constraint that lacks the key. A generic key
 //! (`K extends keyof T`) defers to instantiation and stays clean.
 //!
-//! Issue: <https://github.com/mohsen1/tsz/issues/9672>
+//! Issue: <https://github.com/tsz-org/tsz/issues/9672>
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::test_utils::check_source;
 

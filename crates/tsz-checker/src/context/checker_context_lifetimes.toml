@@ -33,6 +33,7 @@ namespace_member_resolution_cache = { lifetime = "FileLocalReset", capability = 
 export_equals_named_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 nested_namespace_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 symbol_name_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_global_typedef_lookup_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local project-run lookup cache and re-entrancy state; reset with checker file/session state" }
 nested_namespace_candidates_cache_complete = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 lowering_entity_name_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_exports_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

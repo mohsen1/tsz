@@ -702,6 +702,7 @@ impl<'a> Printer<'a> {
         };
 
         if import.import_clause.is_none() {
+            self.emit_recovered_root_js_declaration_modifiers(&import.modifiers, true);
             if self
                 .arena
                 .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)

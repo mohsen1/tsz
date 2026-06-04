@@ -427,8 +427,6 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                                 );
                             } else {
-                                let member_type_str = self.format_type(member_type);
-                                let base_type_str = self.format_type(base_type);
                                 let display_name = format_property_name_for_diagnostic(&info.name);
                                 let base_class_display_name = self
                                     .array_or_tuple_alias_target_text_for_name(base_class_name)
@@ -443,10 +441,10 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
-                                self.report_type_not_assignable_detail(
+                                self.report_type_override_incompatibility_detail(
                                     info.name_idx,
-                                    &member_type_str,
-                                    &base_type_str,
+                                    member_type,
+                                    base_type,
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
                             }
