@@ -1485,6 +1485,59 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn compile_contextually_typed_jsx_children2_include_project_has_no_ts2739() {
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx",
+    ) else {
+        return;
+    };
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    source = source.replace("\"/.lib/react16.d.ts\"", "\"./.lib/react16.d.ts\"");
+
+    write_file(&base.join("test.tsx"), &source);
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "jsx": "react",
+            "esModuleInterop": true,
+            "noEmit": true,
+            "skipLibCheck": true
+          },
+          "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2739: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        })
+        .collect();
+
+    assert!(
+        ts2739.is_empty(),
+        "Expected include-glob react16 JSX children fixture to avoid TS2739, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_react16_automatic_jsx_intrinsics_keep_children_and_img_src() {
     let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
@@ -1776,4 +1829,3 @@ fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_t
         result.file_infos
     );
 }
-

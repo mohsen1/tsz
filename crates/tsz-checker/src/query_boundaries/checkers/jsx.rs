@@ -152,18 +152,18 @@ pub(crate) fn missing_props_are_intrinsic_collection_protocol_noise(
         return false;
     }
     let mut has_iterator = false;
-    let mut has_collection_member = false;
+    let mut collection_member_count = 0;
     for prop in props {
         let name = db.resolve_atom_ref(prop.name);
         match (prop.is_symbol_named, name.as_ref()) {
             (true, "[Symbol.iterator]") => has_iterator = true,
             (false, "join" | "length" | "next" | "slice") => {
-                has_collection_member = true;
+                collection_member_count += 1;
             }
             _ => return false,
         }
     }
-    has_iterator && has_collection_member
+    (has_iterator && collection_member_count > 0) || collection_member_count >= 2
 }
 
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
