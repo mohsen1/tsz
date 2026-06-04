@@ -499,7 +499,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
@@ -515,6 +514,14 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+
+        if index_type != TypeId::ERROR
+            && self.type_literal_ast_key_space_accepts_index(data.object_type, index_type)
+        {
+            return;
+        }
+
+        let object_type = self.get_type_from_type_node(data.object_type);
 
         if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
             self.error_at_node(
