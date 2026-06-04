@@ -254,6 +254,51 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
 }
 
 #[test]
+fn test_lib_required_constraint_uses_application_arg_source() {
+    let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+
+type PathsOptions = {
+  depth: number;
+  anyArrayIndexAccessor: string;
+};
+
+type DefaultPathsOptions = {
+  depth: 7;
+  anyArrayIndexAccessor: `${number}`;
+};
+
+type UnsafePaths<Type, Options extends Required<PathsOptions>> = Type | Options;
+
+export type Paths<Type, OverridePathOptions extends Partial<PathsOptions> = {}> = UnsafePaths<
+  Type,
+  CreateTypeOptions<PathsOptions, OverridePathOptions, DefaultPathsOptions>
+>;
+"#;
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts"]);
+    let codes = crate::test_utils::check_source_with_libs(
+        source,
+        "paths.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    )
+    .into_iter()
+    .map(|diag| diag.code)
+    .collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2344),
+        "Expected no TS2344 for lib Required<Options> application constraints, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_module_local_partial_default_constraint_uses_local_alias() {
     let source = r#"
 export {};

@@ -279,31 +279,30 @@ impl<'a> CheckerState<'a> {
 
     fn required_mapped_constraint_source(&self, constraint: TypeId) -> Option<TypeId> {
         let db = self.ctx.types.as_type_database();
+        if let (Some(base_def), args) = query::application_base_def_and_args(db, constraint)
+            && args.len() == 1
+        {
+            let sym_id = self.ctx.def_to_symbol_id(base_def)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            // The shortcut treats `Required<Source>` as the lib's mapped utility
+            // and skips the constraint check by comparing the type argument
+            // against the source itself. A *user-defined* `type Required<T> = ...`
+            // with a different shape must NOT trigger the shortcut, otherwise
+            // the constraint check is silently skipped (#3061). Gate on the
+            // symbol coming from a lib file so user redeclarations fall through
+            // to the regular constraint check.
+            if symbol.escaped_name == "Required" && self.ctx.symbol_is_from_lib(sym_id) {
+                return Some(args[0]);
+            }
+        }
+
         if let Some(mapped) = crate::query_boundaries::common::mapped_type_info(db, constraint)
             && mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
         {
             return crate::query_boundaries::common::homomorphic_mapped_source(db, constraint);
         }
 
-        let (Some(base_def), args) = query::application_base_def_and_args(db, constraint)? else {
-            return None;
-        };
-        if args.len() != 1 {
-            return None;
-        }
-        let sym_id = self.ctx.def_to_symbol_id(base_def)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        // The shortcut treats `Required<Source>` as the lib's mapped utility
-        // and skips the constraint check by comparing the type argument
-        // against the source itself. A *user-defined* `type Required<T> = …`
-        // with a different shape must NOT trigger the shortcut, otherwise
-        // the constraint check is silently skipped (#3061). Gate on the
-        // symbol coming from a lib file so user redeclarations fall through
-        // to the regular constraint check.
-        if symbol.escaped_name != "Required" || !self.ctx.symbol_is_from_lib(sym_id) {
-            return None;
-        }
-        Some(args[0])
+        None
     }
 
     fn substitute_required_mapped_source(
