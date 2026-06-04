@@ -293,7 +293,7 @@ impl<'a> Printer<'a> {
         };
 
         loop {
-            rest = rest.trim_start_matches(|ch| matches!(ch, ' ' | '\t'));
+            rest = rest.trim_start_matches([' ', '\t']);
             if rest.is_empty()
                 || ["var", "let", "const", "function", "class", "import"]
                     .iter()
