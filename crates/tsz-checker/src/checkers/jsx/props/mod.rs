@@ -3,6 +3,7 @@
 //!
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
+mod alias_helpers;
 mod attr_check_pipeline;
 mod attr_value;
 mod attribute_expressions;

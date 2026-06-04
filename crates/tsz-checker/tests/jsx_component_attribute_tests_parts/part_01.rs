@@ -991,6 +991,97 @@ fn test_jsx_intrinsic_union_react16_fixture_accepts_shared_attributes() {
         !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "intrinsic JSX tag union should accept shared React HTML attributes, got: {diags:?}"
     );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+        ) && !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ),
+        "intrinsic JSX tag union should not emit missing-property diagnostics, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_import_side_effects_non_extant_no_false_intrinsic_missing_props() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx",
+    ) else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ),
+        "empty intrinsic div attrs should not report collection-protocol props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_jsxs_nested_self_closing_child_no_false_intrinsic_missing_props() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx",
+    ) else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::ReactJsx,
+        true,
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ),
+        "intrinsic div body children should not report collection-protocol props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_function_component_union_alias_keeps_missing_required_props() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react.d.ts") else {
+        return;
+    };
+    let Some(mut source) =
+        load_typescript_fixture("TypeScript/tests/cases/conformance/jsx/tsxUnionElementType6.tsx")
+    else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ) >= 2,
+        "function component union aliases should keep required prop diagnostics, got: {diags:?}"
+    );
 }
 
 // =============================================================================
