@@ -804,6 +804,14 @@ impl<'a> Printer<'a> {
                 i += 1;
                 continue;
             }
+            if i > 0 && is_class_recovery_identifier_part(bytes[i - 1]) {
+                i += 1;
+                continue;
+            }
+            if i + 3 < bytes.len() && is_class_recovery_identifier_part(bytes[i + 3]) {
+                i += 1;
+                continue;
+            }
             i += 3;
             while i < bytes.len() && bytes[i].is_ascii_whitespace() {
                 i += 1;
@@ -851,4 +859,8 @@ impl<'a> Printer<'a> {
 
         None
     }
+}
+
+const fn is_class_recovery_identifier_part(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }

@@ -650,6 +650,7 @@ fn root_js_recovery_preserves_invalid_declaration_modifiers() {
 class C {
     async constructor() { }
     async field = 1
+    set invariant() { }
 }
 async export function f() { }
 async async function g() { }
@@ -690,6 +691,7 @@ const tri = import('1','2','3')
     for expected in [
         "constructor()",
         "async field = 1;",
+        "set invariant() { }",
         "async export function f() { }",
         "async async function g() { }",
         "function params(static x, export y, async z) { }",
@@ -720,5 +722,9 @@ const tri = import('1','2','3')
     assert!(
         !output.contains("async export {"),
         "Stray async before a named export should not be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var iant"),
+        "Recovered setter name tail should not emit as a synthetic variable statement.\nOutput:\n{output}"
     );
 }
