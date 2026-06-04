@@ -694,6 +694,7 @@ impl<'a> CheckerState<'a> {
                 ]
             }
             SubtypeFailureReason::ArrayElementMismatch { .. }
+            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
             | SubtypeFailureReason::TypeArgumentMismatch { .. } => {
                 // Both reasons relate same-shaped containers whose differing
                 // *component* is the cause (array element types, or same-generic

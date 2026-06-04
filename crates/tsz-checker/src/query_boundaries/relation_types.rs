@@ -303,6 +303,11 @@ impl RelationFailure {
                 source_element,
                 target_element,
                 ..
+            }
+            | SubtypeFailureReason::TupleVariadicPositionMismatch {
+                source_element,
+                target_element,
+                ..
             } => Self::TypeMismatch {
                 source_type: source_element,
                 target_type: target_element,
