@@ -271,6 +271,22 @@ fn is_index_key_anchor(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     with_extended_visited(|visited| is_index_key_anchor_inner(db, type_id, visited))
 }
 
+/// Returns `true` if `type_id` is a valid index-signature parameter type.
+///
+/// Accepts the three index-key primitives (`string`, `number`, `symbol`),
+/// template literal types, string intrinsics, unique symbols, `keyof`
+/// expressions, and unions where **every** member is valid (e.g.
+/// `PropertyKey = string | number | symbol`). Intersections are accepted when
+/// **at least one** member is a valid anchor (e.g. `string & Brand`).
+///
+/// This is the solver-layer gate called by
+/// `query_boundaries::index_signature::is_valid_index_key_type` in
+/// `tsz-checker`. Keeping the `TypeData` inspection here prevents checker code
+/// from importing raw solver internals.
+pub fn is_valid_index_key_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_index_key_anchor(db, type_id)
+}
+
 fn is_index_key_anchor_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
