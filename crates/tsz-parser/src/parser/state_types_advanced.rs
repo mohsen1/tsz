@@ -952,8 +952,9 @@ impl ParserState {
 
         self.next_token(); // skip [
 
-        // Skip identifier
-        if self.is_token(SyntaxKind::Identifier) {
+        // Skip the type parameter name: any non-reserved keyword is valid here
+        // (e.g. `[type in keyof T]` uses `type` as a contextual identifier).
+        if self.is_identifier() {
             self.next_token();
         }
 
@@ -975,8 +976,9 @@ impl ParserState {
         // vs `[identifier :` pattern (index signature)
         let is_mapped = if self.is_token(SyntaxKind::OpenBracketToken) {
             self.next_token(); // skip [
-            if self.is_token(SyntaxKind::Identifier) {
-                self.next_token(); // skip identifier
+            // Skip the type parameter name (any non-reserved keyword, e.g. `type`)
+            if self.is_identifier() {
+                self.next_token(); // skip identifier or contextual keyword
             }
             self.is_token(SyntaxKind::InKeyword)
         } else {
