@@ -241,7 +241,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
-            "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
@@ -751,7 +750,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_environment"
         / "core.rs",
-        2568,
+        1463,
     ),
     (
         "Conformance boundary: conformance runner size ratchet",
