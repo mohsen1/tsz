@@ -111,9 +111,14 @@ impl<'a> CheckerState<'a> {
                     if constraint_resolved == TypeId::ANY {
                         continue;
                     }
+                    let required_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
                     if self.required_mapped_constraint_source_is_required_and_arg_satisfies(
                         type_arg,
-                        constraint_resolved,
+                        required_constraint,
                         &type_arg_substitutions,
                     ) {
                         continue;
@@ -1683,11 +1688,8 @@ impl<'a> CheckerState<'a> {
 
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
-                let constraint_name = self.format_type_diagnostic(constraint);
                 let constraint = self
-                    .is_well_known_lib_type_name(&constraint_name)
-                    .then(|| self.resolve_lib_type_by_name(&constraint_name))
-                    .flatten()
+                    .resolve_well_known_lib_constraint_type(constraint)
                     .unwrap_or(constraint);
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self
@@ -1726,7 +1728,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let primitive_fails_nominal_lib_object =
                     query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
-                        && self.is_nominal_lib_object_type_name(&constraint_name);
+                        && self.is_nominal_lib_object_constraint_type(constraint);
                 if primitive_fails_nominal_lib_object {
                     if let Some(&arg_idx) = type_args_list.nodes.get(i) {
                         self.error_type_constraint_not_satisfied(

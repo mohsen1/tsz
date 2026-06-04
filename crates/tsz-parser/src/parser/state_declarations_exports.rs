@@ -1307,8 +1307,19 @@ impl ParserState {
             self.parse_identifier()
         };
 
-        // Parse definite assignment assertion (!)
-        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+        // Inside a `for` initializer tsc clears `allowExclamation`, so a `!`
+        // here is never a definite assignment assertion.
+        let exclamation_token = false;
+
+        // A stray `!` directly after the binding name is a definite assignment
+        // assertion that is not allowed in a `for` initializer. tsc's
+        // `parseDelimitedList` recovery reports it as a missing comma between
+        // declarators (TS1005 `',' expected`) rather than a `';' expected`, so
+        // emit that and consume the `!` to keep the header parse aligned.
+        if self.is_token(SyntaxKind::ExclamationToken) {
+            self.error_comma_expected();
+            self.next_token();
+        }
 
         // Optional type annotation
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {

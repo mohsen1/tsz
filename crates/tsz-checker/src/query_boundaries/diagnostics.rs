@@ -2,16 +2,22 @@ use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::{DefKind, DefinitionStore};
-use tsz_solver::relations::subtype::TypeResolver;
 
 pub(crate) use super::common::{
-    PropertyAccessResult, application_info, array_element_type, callable_shape_for_type,
-    contains_free_type_parameters, enum_def_id, get_indexed_access_type, get_type_query_symbol_ref,
-    intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
-    is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type,
-    object_shape_for_type, string_literal_value, type_has_displayable_name,
-    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
-    widen_type_deep,
+    PropertyAccessResult, TypeResolver, TypeSubstitution, application_info, array_element_type,
+    callable_shape_for_type, callable_shape_for_type_extended, collect_referenced_types,
+    construct_signatures_for_type, contains_free_type_parameters,
+    contains_generic_indexed_access_surface, contains_type_parameter_named,
+    contains_type_parameters, enum_def_id, enum_member_type, function_shape_for_type,
+    get_indexed_access_type, get_type_query_symbol_ref, has_function_shape, index_access_types,
+    instantiate_type, intersection_list_id, intersection_members, is_fresh_object_type,
+    is_generic_mapped_type, is_number_literal, is_symbol_or_unique_symbol,
+    is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_info,
+    no_infer_inner_type, object_shape_for_type, readonly_inner_type, return_type_for_type,
+    string_literal_value, tuple_elements, type_has_displayable_name,
+    type_is_conditional_type_result_with_unresolved_inference, type_may_display_iterator_protocol,
+    type_param_info, type_parameter_constraint, union_list_id, union_members,
+    widen_literal_to_primitive, widen_type_deep,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
