@@ -293,17 +293,8 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 /* ── Trace step styling ── */
 .trace-step {
-  border-left: 3px solid var(--border);
-  padding-left: 1.5rem;
   margin: 1.5rem 0;
 }
-
-.trace-step.scanner { border-left-color: var(--scanner-color); }
-.trace-step.parser { border-left-color: var(--parser-color); }
-.trace-step.binder { border-left-color: var(--binder-color); }
-.trace-step.checker { border-left-color: var(--checker-color); }
-.trace-step.solver { border-left-color: var(--solver-color); }
-.trace-step.diagnostic { border-left-color: var(--emitter-color); }
 
 .step-label {
   font-weight: 700;
@@ -324,7 +315,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .callout {
   background: var(--bg-subtle);
   border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--link);
   border-radius: 6px;
   padding: 1rem 1.25rem;
   margin: 1.25rem 0;

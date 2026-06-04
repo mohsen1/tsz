@@ -1558,7 +1558,9 @@ function generateCharts(data, mode = "projects") {
       if (aScore !== bScore) return bScore - aScore;
       return categoryTitle(a).localeCompare(categoryTitle(b));
     });
-  const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
+  const visibleFailedResults = mode === "projects"
+    ? []
+    : failedResults.filter((row) => failedBelongsToMode(row, mode));
   const chartMaxMs = Math.max(
     1,
     ...visibleCategories
@@ -1617,7 +1619,7 @@ function generateCharts(data, mode = "projects") {
       html += `  <div class="bench-row">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(decorated.display_name)}</a></div>
     <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
-    <p class="bench-focus">${escapeHtml(decorated.focus)}</p>
+    ${isProject ? "" : `<p class="bench-focus">${escapeHtml(decorated.focus)}</p>`}
     <div class="bench-bars">
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
@@ -1672,73 +1674,16 @@ export function getBenchmarkMicroCharts() {
 export function getBenchmarkEnvironmentSummary() {
   const summary = runnerEnvironmentSummary(loadBenchmarks());
   if (!summary) return "";
-  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
+  return `<details class="bench-runner-details">
+  <summary>show runner info</summary>
+  <p class="bench-runner-meta">${escapeHtml(summary)}</p>
+</details>`;
 }
 
 export function getProjectCompatibilityDashboard() {
   const data = loadBenchmarks();
   const allResults = withExpectedProjectRows(data?.results);
   const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults, data));
-
-  const counts = rows.reduce((acc, row) => {
-    acc[row.className] = (acc[row.className] || 0) + 1;
-    return acc;
-  }, {});
-  const summary = [
-    `${counts.green || 0} green`,
-    `${counts.yellow || 0} yellow`,
-    `${counts.red || 0} red`,
-    `${counts.gray || 0} gray`,
-  ].join(" · ");
-
-  const detailLabel = (row) => {
-    if (row.className === "green") return "passes";
-    if (row.exitClass === "missing or incomplete artifact") return "missing artifact";
-    return row.exitClass;
-  };
-
-  const diagnosticDeltas = (row) => {
-    const deltas = Array.isArray(row.diagnosticDeltas)
-      ? row.diagnosticDeltas
-      : row.diagnosticDeltas
-        ? [row.diagnosticDeltas]
-        : [];
-    return deltas.filter(Boolean).slice(0, 20);
-  };
-
-  const measurementParts = (row) => {
-    const parts = [];
-    const filesReached = formatFilesReached(row.filesReached);
-    const peakMemory = formatPeakMemoryMiB(row.peakMemoryBytes);
-    if (filesReached) {
-      parts.push(filesReached);
-    } else if (row.filesReachedReason) {
-      parts.push(`files reached: n/a (${row.filesReachedReason})`);
-    }
-    if (peakMemory) {
-      parts.push(peakMemory);
-    } else if (row.peakMemoryBytesReason) {
-      parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
-    }
-    return parts;
-  };
-
-  const exitCodeParts = (row) => {
-    const codes = row.exitCodes || {};
-    return ["tsc", "tsz", "tsgo"]
-      .map((compiler) => {
-        const values = Array.isArray(codes[compiler]) ? codes[compiler].filter((value) => Number.isInteger(Number(value))) : [];
-        return values.length ? `${compiler} exit ${values.join("|")}` : "";
-      })
-      .filter(Boolean);
-  };
-
-  const fixtureSourceParts = (row) => {
-    const sources = Array.isArray(row.fixtureSources) ? row.fixtureSources : [];
-    return sources.map((source) => {
-      return `source: ${source.name} @ ${source.ref}`;
-    });
-  };
 
   const numericSortValue = (value) => {
     const number = finiteNumber(value);
@@ -1797,94 +1742,13 @@ export function getProjectCompatibilityDashboard() {
 })();
 </script>`;
 
-  const artifactFreshnessParts = (row) => {
-    const metadata = row.artifactMetadata || {};
-    const parts = [];
-    if (metadata.generatedAt) parts.push(`artifact generated: ${metadata.generatedAt}`);
-    if (metadata.sourceCommit) parts.push(`commit: ${shortCommit(metadata.sourceCommit)}`);
-    if (metadata.workflowRunId) {
-      const runLabel = metadata.workflowRunAttempt
-        ? `${metadata.workflowRunId} attempt ${metadata.workflowRunAttempt}`
-        : metadata.workflowRunId;
-      parts.push(`run: ${runLabel}${metadata.runStatus ? ` (${metadata.runStatus})` : ""}`);
-    } else if (metadata.runStatus) {
-      parts.push(`run: ${metadata.runStatus}`);
-    }
-    const warnings = Array.isArray(row.freshnessWarnings) ? row.freshnessWarnings : [];
-    for (const warning of warnings.slice(0, 3)) {
-      parts.push(`freshness warning: ${warning}`);
-    }
-    return parts;
-  };
-
-  const renderRowDetails = (row) => {
-    const deltas = diagnosticDeltas(row);
-    const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
-    const diagnosticSubsystems = Array.isArray(row.diagnosticSubsystems)
-      ? row.diagnosticSubsystems.filter((group) => group?.subsystem).slice(0, 8)
-      : [];
-    const reductionCandidates = Array.isArray(row.reductionCandidates)
-      ? row.reductionCandidates.filter(Boolean).slice(0, 5)
-      : [];
-    const knownBlockers = Array.isArray(row.knownBlockers)
-      ? row.knownBlockers.filter(Boolean).slice(0, 8)
-      : [];
-    const parts = [
-      `phase: ${row.phase || "unknown"}`,
-      row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
-      row.missingMetadata?.length
-        ? `artifact missing: ${
-            row.missingMetadata.slice(0, 4).join(", ")
-          }${row.missingMetadata.length > 4 ? "..." : ""}`
-        : "artifact: complete",
-      ...artifactFreshnessParts(row),
-      row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
-      row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
-      row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",
-      `owner: ${row.family || "not classified"}`,
-      row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
-      row.emitStatus ? `emit: ${row.emitStatus}` : "",
-      row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
-      ...measurementParts(row),
-      ...fixtureSourceParts(row),
-      ...exitCodeParts(row),
-    ].filter(Boolean);
-    const blockerHtml = row.className === "green" || !knownBlockers.length
-      ? ""
-      : `<div class="compat-blockers">
-          ${knownBlockers.map((blocker) => `<span>${escapeHtml(blocker)}</span>`).join("")}
-        </div>`;
-    const queueHtml = row.className === "green" || (!diagnosticCodes.length && !reductionCandidates.length)
-      ? ""
-      : `<div class="compat-queue">
-          <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
-          ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
-        </div>`;
-    const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
-      ? ""
-      : `<div class="compat-subsystems">
-          ${diagnosticSubsystems.map((group) => {
-            const codes = Array.isArray(group.codes) && group.codes.length ? ` (${group.codes.join(", ")})` : "";
-            const count = Number.isFinite(Number(group.count)) && Number(group.count) > 1 ? ` x${Number(group.count)}` : "";
-            return `<span>${escapeHtml(`${group.subsystem}${codes}${count}`)}</span>`;
-          }).join("")}
-        </div>`;
-    const deltaHtml = row.className === "green"
-      ? ""
-      : `<div class="compat-deltas">${deltas.length
-          ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
-          : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
-        </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
-  };
-
   const readiness = loadBenchReadinessStatus();
   const artifactBanner = benchReadinessBanner(readiness, loadBenchWinnerReport());
 
   return `<section class="compat-dashboard">
-  <h2>Compatibility</h2>
+  <h2>Project compatibility</h2>
   ${artifactBanner}
-  <div class="compat-summary">${escapeHtml(summary)}</div>
+  <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current blocker before timing claims are treated as release evidence.</p>
   <div class="compat-table-wrap">
     <table class="compat-table" data-compat-sortable>
       <thead>
@@ -1895,7 +1759,6 @@ export function getProjectCompatibilityDashboard() {
           <th scope="col">${sortableHeader("phase", "Phase")}</th>
           <th scope="col">${sortableHeader("files", "Files", "number")}</th>
           <th scope="col">${sortableHeader("peak", "Peak RSS", "number")}</th>
-          <th scope="col">Details</th>
         </tr>
       </thead>
       <tbody>
@@ -1906,12 +1769,6 @@ export function getProjectCompatibilityDashboard() {
           <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
           <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
           <td data-sort-key="peak" data-sort-value="${numericSortValue(row.peakMemoryBytes)}">${escapeHtml(formatPeakMemoryMiB(row.peakMemoryBytes) || "—")}</td>
-          <td>
-            <div class="compat-row-main">
-              <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
-            </div>
-            ${renderRowDetails(row)}
-          </td>
         </tr>`).join("\n")}
       </tbody>
     </table>

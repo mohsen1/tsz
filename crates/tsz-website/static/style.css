@@ -127,10 +127,12 @@ body {
 .nav-links-inner a {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   padding: 0 1rem;
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 0.875rem;
+  white-space: nowrap;
   height: 100%;
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
@@ -261,11 +263,28 @@ a:hover { text-decoration: underline; }
 .subtitle {
   font-size: 1.1rem;
   color: var(--text);
-  margin-bottom: 2rem;
+  margin-bottom: 1rem;
 }
 
 .wip-warning {
   color: var(--text-secondary);
+}
+
+.try-tsz-prompt {
+  margin: 0 0 1.5rem;
+  padding: 0.1rem 0;
+}
+
+.try-tsz-prompt h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+  padding: 0;
+}
+
+.try-tsz-prompt p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin: 0;
 }
 
 .hero-actions {
@@ -276,7 +295,27 @@ a:hover { text-decoration: underline; }
 }
 
 .hero-actions a {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.hero-actions a svg {
+  fill: none;
+  flex: 0 0 auto;
+  height: 1em;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 1em;
+}
+
+.hero-actions a[href*="github"] svg {
+  fill: currentColor;
+  stroke: none;
 }
 
 /* ── Code ── */
@@ -607,10 +646,21 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 1.08rem;
 }
 
-.bench-runner-meta {
+.bench-runner-details {
   color: var(--text-secondary);
   font-size: 0.86rem;
   margin: -0.25rem 0 1rem;
+}
+
+.bench-runner-details summary {
+  cursor: pointer;
+  display: inline-block;
+}
+
+.bench-runner-meta {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  margin: 0.5rem 0 0;
 }
 
 .bench-category-desc {
@@ -807,11 +857,10 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 2.5rem 0;
 }
 
-.compat-summary {
-  margin: 0.15rem 0 0.65rem;
-  font-family: var(--mono);
-  font-size: 0.82rem;
+.compat-dashboard-intro {
   color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin: 0.35rem 0 0.85rem;
 }
 
 .compat-list {
@@ -828,7 +877,7 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 .compat-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 640px;
   border-collapse: collapse;
   font-size: 0.86rem;
 }
@@ -888,14 +937,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: inherit;
 }
 
-.compat-row-main,
-.compat-meta {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
 .compat-item a {
   font-weight: 600;
 }
@@ -925,44 +966,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .compat-detail {
   color: var(--text-secondary);
   font-size: 0.82rem;
-}
-
-.compat-meta {
-  margin-top: 0.12rem;
-  color: var(--text-secondary);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-}
-
-.compat-deltas {
-  display: grid;
-  gap: 0.2rem;
-  margin-top: 0.25rem;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-}
-
-.compat-blockers,
-.compat-queue,
-.compat-subsystems {
-  display: grid;
-  gap: 0.18rem;
-  margin-top: 0.25rem;
-  color: var(--text-secondary);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-}
-
-.compat-deltas code {
-  display: block;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.compat-queue code {
-  display: block;
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .benchmark-mean-card {
