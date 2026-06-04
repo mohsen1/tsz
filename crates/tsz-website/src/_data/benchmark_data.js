@@ -1674,7 +1674,10 @@ export function getBenchmarkMicroCharts() {
 export function getBenchmarkEnvironmentSummary() {
   const summary = runnerEnvironmentSummary(loadBenchmarks());
   if (!summary) return "";
-  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
+  return `<details class="bench-runner-details">
+  <summary>show runner info</summary>
+  <p class="bench-runner-meta">${escapeHtml(summary)}</p>
+</details>`;
 }
 
 export function getProjectCompatibilityDashboard() {
