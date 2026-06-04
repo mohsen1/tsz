@@ -9,6 +9,7 @@ use tsz::parser::NodeIndex;
 
 mod discovery;
 mod exports_imports;
+mod fs_helpers;
 mod package_resolution;
 mod path_resolution;
 mod program_file_index;
@@ -23,6 +24,9 @@ pub(crate) use discovery::{
     collect_module_specifiers_for_check, collect_module_specifiers_from_text,
     collect_star_export_specifiers, json_type_attribute_enables_json_module,
     module_specifier_has_type_json_import_attribute,
+};
+pub(crate) use fs_helpers::{
+    canonicalize_or_owned, canonicalize_with_missing_tail, env_flag, is_declaration_file,
 };
 pub(crate) use path_resolution::{
     build_duplicate_package_redirects, normalize_path, normalize_resolved_path,
@@ -269,49 +273,6 @@ impl ModuleResolutionCache {
             current = parent;
         }
     }
-}
-
-pub(crate) fn is_declaration_file(path: &Path) -> bool {
-    tsz::module_resolver::ModuleExtension::from_path(path).is_declaration()
-}
-
-pub(crate) fn canonicalize_with_missing_tail(path: &Path) -> PathBuf {
-    if let Ok(canonical) = std::fs::canonicalize(path) {
-        return canonical;
-    }
-
-    let mut tail = Vec::new();
-    let mut current = path;
-    while !current.exists() {
-        let Some(name) = current.file_name() else {
-            return path.to_path_buf();
-        };
-        tail.push(name.to_os_string());
-        let Some(parent) = current.parent() else {
-            return path.to_path_buf();
-        };
-        current = parent;
-    }
-
-    let Ok(mut canonical) = std::fs::canonicalize(current) else {
-        return path.to_path_buf();
-    };
-    for component in tail.iter().rev() {
-        canonical.push(component);
-    }
-    canonical
-}
-
-pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-pub(crate) fn env_flag(name: &str) -> bool {
-    let Ok(value) = std::env::var(name) else {
-        return false;
-    };
-    let normalized = value.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
 #[cfg(test)]

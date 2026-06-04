@@ -356,12 +356,13 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
         1463,
     ),
-    # CLI driver resolution: split into discovery/exports_imports/package_resolution/
-    # path_resolution/type_packages submodules; ratchet holds the orchestrator at 301.
+    # CLI driver resolution: split into discovery/exports_imports/fs_helpers/
+    # package_resolution/path_resolution/type_packages submodules; ratchet holds
+    # the orchestrator at 280 after extracting the fs/env helpers into fs_helpers.
     (
         "CLI boundary: driver/resolution monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "resolution.rs",
-        301,
+        280,
     ),
     # Emitter class declarations: split by emit feature family per §19.
     (
