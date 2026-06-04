@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::{ParserState, node_flags, syntax_kind_ext};
 
+mod enclosing_scope_memo;
 mod exports_jsdoc;
 mod hoisting_scopes_flow;
 mod loop_flow;

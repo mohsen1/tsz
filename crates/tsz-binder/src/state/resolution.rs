@@ -28,6 +28,32 @@ fn reexport_type_only_cache_disabled() -> bool {
     })
 }
 
+/// Kill-switch for the [`BinderState::find_enclosing_scope`] memo. When
+/// `TSZ_DISABLE_ENCLOSING_SCOPE_CACHE` is set to a non-empty, non-`0` value the
+/// walk neither consults nor populates the cache, walking the full ancestor
+/// chain on every call. Used to prove the memo produces byte-identical
+/// diagnostics: it only ever short-circuits a walk that would reach the same
+/// scope anyway, so disabling it must not change any result.
+fn enclosing_scope_cache_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("TSZ_DISABLE_ENCLOSING_SCOPE_CACHE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
+/// Ancestor-chain depth below which [`BinderState::find_enclosing_scope`] never
+/// touches its memo. Real identifiers sit within a few nodes of their enclosing
+/// scope, so the overwhelmingly common shallow walk pays zero cache cost (no
+/// lock, no allocation) and is byte-for-byte the original algorithm. The memo
+/// engages only for pathologically deep ancestor chains — e.g. a deeply nested
+/// generic type `A<A<A<...>>>` — where the per-identifier walk is O(depth) and
+/// resolving the whole expression is O(depth^2). Chosen well above any
+/// hand-written nesting so legitimate code never reaches the memoized path.
+const ENCLOSING_SCOPE_MEMO_THRESHOLD: usize = 32;
+
 impl BinderState {
     // =========================================================================
     // Identifier & Name Resolution
@@ -832,6 +858,12 @@ impl BinderState {
     pub fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
         use tsz_parser::parser::syntax_kind_ext;
 
+        let cache_enabled = !enclosing_scope_cache_disabled();
+        // Key by the arena pointer as well as the node index: the same binder
+        // can be queried against more than one arena, and node indices are
+        // arena-local. Mirrors `resolved_identifier_cache`'s key shape.
+        let arena_key = arena as *const NodeArena as usize;
+
         let mut current = node_idx;
         // Track whether we've passed through a ComputedPropertyName while walking up.
         // If so, the enclosing class member's function scope must be skipped because
@@ -839,39 +871,91 @@ impl BinderState {
         // In `[foo<T>(a)]<T>(a: T) {}`, `T` and `a` inside `[...]` must NOT resolve
         // to the method's own type parameter/parameter.
         let mut inside_computed_property_name = false;
+        // Set once *any* ComputedPropertyName appears on the walk and never
+        // reset. The memo is only consulted/populated while this is false: on
+        // the computed-property-free prefix the enclosing scope is a pure
+        // positional function of the node (no member-scope skipping), so a
+        // cached entry always equals a fresh walk's result. Walks that touch a
+        // ComputedPropertyName fall back to the exact original algorithm.
+        let mut computed_property_on_path = false;
+        let mut hops: usize = 0;
+        // Non-scope ancestors past the threshold whose enclosing scope equals
+        // this walk's result. Empty (and unallocated) for shallow walks.
+        let mut to_memoize: Vec<u32> = Vec::new();
 
         // Walk up the AST using parent pointers to find the nearest scope
-        while current.is_some() {
-            if let Some(node) = arena.get(current) {
-                if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    inside_computed_property_name = true;
-                }
+        let resolved = loop {
+            if current.is_none() {
+                break None;
+            }
+            let Some(node) = arena.get(current) else {
+                break None;
+            };
 
-                // Check if this node creates a scope
-                if let Some(&scope_id) = self.node_scope_ids.get(&current.0) {
-                    // If we're inside a computed property name and this scope belongs
-                    // to a class member (method, accessor, property), skip it.
-                    // The computed property name should resolve in the parent (class) scope.
-                    if inside_computed_property_name && Self::is_class_member_kind(node.kind) {
-                        // Don't return this scope; continue walking to the class scope.
-                        inside_computed_property_name = false;
-                    } else {
-                        return Some(scope_id);
-                    }
-                }
+            if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                inside_computed_property_name = true;
+                computed_property_on_path = true;
+            }
 
-                if let Some(ext) = arena.get_extended(current) {
-                    current = ext.parent;
+            // The memo only participates once the walk is deep enough to matter
+            // and while still on the computed-property-free prefix.
+            let memoizable = cache_enabled
+                && hops >= ENCLOSING_SCOPE_MEMO_THRESHOLD
+                && !computed_property_on_path;
+
+            if memoizable
+                && let Some(&scope_id) = self
+                    .find_enclosing_scope_cache
+                    .read()
+                    .expect("find_enclosing_scope_cache RwLock poisoned")
+                    .get(&(arena_key, current.0))
+            {
+                break Some(scope_id);
+            }
+
+            // Check if this node creates a scope
+            if let Some(&scope_id) = self.node_scope_ids.get(&current.0) {
+                // If we're inside a computed property name and this scope belongs
+                // to a class member (method, accessor, property), skip it.
+                // The computed property name should resolve in the parent (class) scope.
+                if inside_computed_property_name && Self::is_class_member_kind(node.kind) {
+                    // Don't return this scope; continue walking to the class scope.
+                    inside_computed_property_name = false;
                 } else {
-                    break;
+                    break Some(scope_id);
                 }
+            } else if memoizable {
+                // A non-scope ancestor on the deep computed-property-free
+                // prefix: its enclosing scope equals this walk's result.
+                to_memoize.push(current.0);
+            }
+
+            if let Some(ext) = arena.get_extended(current) {
+                current = ext.parent;
+                hops += 1;
             } else {
-                break;
+                break None;
+            }
+        };
+
+        // If no scope node was found, fall back to the root scope (index 0).
+        let result = resolved.or_else(|| (!self.scopes.is_empty()).then_some(ScopeId(0)));
+
+        if cache_enabled
+            && !computed_property_on_path
+            && !to_memoize.is_empty()
+            && let Some(scope_id) = result
+        {
+            let mut cache = self
+                .find_enclosing_scope_cache
+                .write()
+                .expect("find_enclosing_scope_cache RwLock poisoned");
+            for node in to_memoize {
+                cache.insert((arena_key, node), scope_id);
             }
         }
 
-        // If no scope found, return the root scope (index 0) if it exists
-        (!self.scopes.is_empty()).then_some(ScopeId(0))
+        result
     }
 
     /// Returns true if the node kind is a class member that creates its own function scope
